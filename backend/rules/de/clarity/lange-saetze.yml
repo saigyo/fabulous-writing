@@ -1,0 +1,7 @@
+extends: occurrence
+message: "Dieser Satz hat mehr als 30 Wörter — besser aufteilen."
+level: suggestion
+category: clarity
+scope: sentence
+token: '\b\w+\b'
+max: 30

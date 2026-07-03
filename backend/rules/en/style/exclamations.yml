@@ -1,0 +1,6 @@
+extends: existence
+message: "Avoid stacked exclamation marks; one is plenty."
+level: warning
+category: style
+raw:
+  - '!{2,}'

@@ -1,0 +1,17 @@
+extends: existence
+message: "'%s' is a weasel word — be specific about how much or how many."
+level: warning
+category: style
+ignorecase: true
+tokens:
+  - very
+  - fairly
+  - extremely
+  - somewhat
+  - quite
+  - rather
+  - really
+  - relatively
+  - various
+  - a number of
+  - in some cases

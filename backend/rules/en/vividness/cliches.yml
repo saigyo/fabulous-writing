@@ -1,0 +1,15 @@
+extends: existence
+message: "'%s' is a cliché — try a fresher image."
+level: suggestion
+category: vividness
+ignorecase: true
+tokens:
+  - at the end of the day
+  - think(?:ing)? outside the box
+  - low-hanging fruit
+  - the fact of the matter
+  - in this day and age
+  - tip of the iceberg
+  - move the needle
+  - paradigm shift
+  - game.changer

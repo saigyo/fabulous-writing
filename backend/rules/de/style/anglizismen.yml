@@ -1,0 +1,14 @@
+extends: substitution
+message: "Verwende '%s' statt '%s'."
+level: suggestion
+category: style
+ignorecase: true
+swap:
+  Meeting: Besprechung
+  gecancelt: abgesagt
+  canceln: absagen
+  Deadline: Frist
+  Feedback: Rückmeldung
+  downloaden: herunterladen
+  committen: festlegen
+  Workflow: Arbeitsablauf

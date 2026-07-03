@@ -1,0 +1,16 @@
+extends: existence
+message: "'%s' ist ein Füllwort — meist kann es ersatzlos entfallen."
+level: warning
+category: style
+ignorecase: true
+tokens:
+  - halt
+  - eigentlich
+  - quasi
+  - irgendwie
+  - sozusagen
+  - gewissermaßen
+  - im Grunde
+  - im Prinzip
+  - letztendlich
+  - ziemlich

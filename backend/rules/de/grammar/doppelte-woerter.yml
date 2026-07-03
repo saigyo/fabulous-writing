@@ -1,0 +1,5 @@
+extends: repetition
+message: "'%s' ist doppelt."
+level: error
+category: grammar
+ignorecase: true

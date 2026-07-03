@@ -1,0 +1,7 @@
+extends: occurrence
+message: "This sentence is longer than 30 words — consider splitting it."
+level: suggestion
+category: clarity
+scope: sentence
+token: '\b\w+\b'
+max: 30

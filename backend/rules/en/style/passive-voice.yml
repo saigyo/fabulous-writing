@@ -1,0 +1,7 @@
+extends: existence
+message: "'%s' looks like passive voice — consider naming who does the action."
+level: suggestion
+category: style
+ignorecase: true
+raw:
+  - '\b(?:is|are|was|were|been|being)\s+\w+(?:ed|en|wn|ne)\b'
