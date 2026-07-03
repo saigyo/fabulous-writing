@@ -64,6 +64,21 @@ export function subscribeCheck(
   return () => source.close()
 }
 
+export interface SuggestionRequest {
+  text: string
+  span: { start: number; end: number }
+  message: string
+  language: Language
+  llm_provider?: string | null
+  llm_model?: string | null
+}
+
+export const postSuggestions = (body: SuggestionRequest) =>
+  request<{ suggestions: string[] }>('/api/suggestions', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+
 export const getProviders = () => request<ProviderInfo[]>('/api/providers')
 
 export const getDomains = () => request<Domain[]>('/api/domains')

@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.checks import router as checks_router
 from app.api.providers import router as providers_router
 from app.api.rules import router as rules_router
+from app.api.suggestions import router as suggestions_router
 from app.api.terminology import router as terminology_router
 from app.checkers.llm.claude import ClaudeProvider
 from app.checkers.llm.ollama import OllamaProvider
@@ -50,6 +51,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(checks_router)
     app.include_router(rules_router)
     app.include_router(providers_router)
+    app.include_router(suggestions_router)
 
     @app.get("/api/health")
     def health() -> dict[str, str]:

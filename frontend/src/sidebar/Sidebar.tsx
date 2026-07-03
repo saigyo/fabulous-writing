@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react'
+import { fetchSuggestions } from '../checking/suggest'
 import { applySuggestion, selectFinding } from '../editor/editorRef'
 import type { TrackedFinding } from '../editor/findings'
 import { groupByCategory } from '../findings/group'
+import { effectiveSuggestions } from '../findings/suggestions'
 import { useStore } from '../state/store'
 import type { Category, Finding } from '../types'
 
@@ -81,24 +83,58 @@ function FindingRow({ finding, selected }: { finding: Finding; selected: boolean
             {finding.source === 'llm' ? 'LLM' : finding.source}
             {finding.rule_id ? ` · ${finding.rule_id}` : ''}
           </p>
-          {finding.suggestions.length > 0 && (
-            <div className="suggestions">
-              {finding.suggestions.map((suggestion) => (
-                <button
-                  key={suggestion}
-                  className="suggestion-button"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    applySuggestion(finding.id, suggestion)
-                  }}
-                >
-                  {suggestion}
-                </button>
-              ))}
-            </div>
-          )}
+          <SuggestionArea finding={finding} />
         </div>
       )}
+    </div>
+  )
+}
+
+function SuggestionArea({ finding }: { finding: Finding }) {
+  const extras = useStore((s) => s.extraSuggestions)
+  const pending = useStore((s) => s.suggestPendingId === finding.id)
+  const anyPending = useStore((s) => s.suggestPendingId !== null)
+  const error = useStore((s) => s.suggestErrors[finding.id])
+  const suggestions = effectiveSuggestions(finding, extras)
+  const fetched = finding.id in extras
+
+  if (suggestions.length > 0) {
+    return (
+      <div className="suggestions">
+        {suggestions.map((suggestion) => (
+          <button
+            key={suggestion}
+            className="suggestion-button"
+            onClick={(event) => {
+              event.stopPropagation()
+              applySuggestion(finding.id, suggestion)
+            }}
+          >
+            {suggestion}
+          </button>
+        ))}
+      </div>
+    )
+  }
+  if (pending) {
+    return <p className="suggest-status">✨ asking LLM…</p>
+  }
+  if (fetched) {
+    return <p className="suggest-status">The LLM found no replacement.</p>
+  }
+  return (
+    <div className="suggestions">
+      <button
+        className="suggestion-button suggest-fix"
+        disabled={anyPending}
+        onClick={(event) => {
+          event.stopPropagation()
+          void fetchSuggestions(finding.id)
+        }}
+      >
+        ✨ {error ? 'Retry suggestion' : 'Suggest fix'}
+      </button>
+      {error && <p className="suggest-error">{error}</p>}
     </div>
   )
 }

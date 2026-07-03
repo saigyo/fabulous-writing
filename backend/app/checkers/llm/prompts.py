@@ -30,6 +30,42 @@ Rules:
 """
 
 
+_SUGGESTION_SYSTEM_TEMPLATE = """You are an expert writing coach. The writer's text is \
+in {language}. You are given a flagged passage, the issue with it, and its context. \
+Propose 1 to 3 improved replacements.
+
+Rules:
+- Each replacement must be a drop-in substitute for EXACTLY the flagged passage: it \
+must fit grammatically when swapped in, preserving the surrounding words.
+- Write replacements in {language}.
+- Keep the writer's meaning; fix only the flagged issue.
+- Respond with ONLY a JSON array of strings, e.g. ["first option", "second option"].
+"""
+
+
+def build_suggestion_prompt(
+    text: str, start: int, end: int, message: str, language: Language
+) -> tuple[str, str]:
+    """Prompt for drop-in replacements for one flagged span."""
+    from app.checkers.rules.text import split_sentences
+
+    flagged = text[start:end]
+    context_parts = [
+        sentence
+        for s_start, s_end, sentence in split_sentences(text)
+        if s_start < end and start < s_end
+    ]
+    context = " ".join(context_parts) or flagged
+    system = _SUGGESTION_SYSTEM_TEMPLATE.format(language=_LANGUAGE_NAMES[language])
+    user = (
+        f"Context:\n{context}\n\n"
+        f"Flagged passage: \"{flagged}\"\n"
+        f"Issue: {message}\n\n"
+        "Provide the JSON array of replacements now."
+    )
+    return system, user
+
+
 def build_prompt(text: str, language: Language) -> tuple[str, str]:
     categories = ", ".join(c.value for c in Category if c != Category.TERMINOLOGY)
     system = _SYSTEM_TEMPLATE.format(

@@ -21,8 +21,8 @@ class RawFinding(BaseModel):
     suggestions: list[str] = Field(default_factory=list)
 
 
-def parse_findings(response: str) -> list[RawFinding]:
-    """Extract findings from an LLM response, tolerating fences and prose."""
+def extract_json_array(response: str) -> list | None:
+    """Extract a JSON array from an LLM response, tolerating fences and prose."""
     candidates = [response, _CODE_FENCE.sub("", response).strip()]
     start, end = response.find("["), response.rfind("]")
     if start != -1 and end > start:
@@ -32,16 +32,23 @@ def parse_findings(response: str) -> list[RawFinding]:
             data = json.loads(candidate)
         except json.JSONDecodeError:
             continue
-        if not isinstance(data, list):
+        if isinstance(data, list):
+            return data
+    return None
+
+
+def parse_findings(response: str) -> list[RawFinding]:
+    """Extract findings from an LLM response, skipping invalid items."""
+    data = extract_json_array(response)
+    if data is None:
+        return []
+    findings = []
+    for item in data:
+        try:
+            findings.append(RawFinding.model_validate(item))
+        except ValidationError:
             continue
-        findings = []
-        for item in data:
-            try:
-                findings.append(RawFinding.model_validate(item))
-            except ValidationError:
-                continue
-        return findings
-    return []
+    return findings
 
 
 class LLMChecker:

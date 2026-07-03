@@ -295,6 +295,23 @@
   color: white;
 }
 
+.suggestion-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.suggest-status {
+  margin: 0.3rem 0 0;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.suggest-error {
+  margin: 0.3rem 0 0;
+  font-size: 0.75rem;
+  color: #e5484d;
+}
+
 /* ---- terminology ---- */
 
 .terminology {
