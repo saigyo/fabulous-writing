@@ -1,0 +1,118 @@
+import { EditorState } from '@codemirror/state'
+import { describe, expect, it } from 'vitest'
+import type { Finding } from '../types'
+import {
+  findingsField,
+  mergeFindingsEffect,
+  selectFindingEffect,
+  setFindingsEffect,
+  suggestionChange,
+} from './findings'
+
+function makeFinding(id: string, start: number, end: number, text: string): Finding {
+  return {
+    id,
+    category: 'style',
+    severity: 'warning',
+    source: 'rule',
+    rule_id: 'style.test',
+    message: 'test finding',
+    span: { start, end, text },
+    suggestions: ['better'],
+  }
+}
+
+function stateWithFindings(doc: string, findings: Finding[]): EditorState {
+  const state = EditorState.create({ doc, extensions: [findingsField] })
+  return state.update({ effects: setFindingsEffect.of(findings) }).state
+}
+
+describe('findingsField', () => {
+  it('tracks findings at their span positions', () => {
+    const doc = 'This is very good.'
+    const state = stateWithFindings(doc, [makeFinding('f1', 8, 12, 'very')])
+    const items = state.field(findingsField).items
+    expect(items).toHaveLength(1)
+    expect(items[0].from).toBe(8)
+    expect(items[0].to).toBe(12)
+  })
+
+  it('shifts positions when text is inserted before the span', () => {
+    const state = stateWithFindings('This is very good.', [
+      makeFinding('f1', 8, 12, 'very'),
+    ])
+    const next = state.update({ changes: { from: 0, insert: 'Hey! ' } }).state
+    const items = next.field(findingsField).items
+    expect(items[0].from).toBe(13)
+    expect(items[0].to).toBe(17)
+  })
+
+  it('drops a finding when the user edits inside its span', () => {
+    const state = stateWithFindings('This is very good.', [
+      makeFinding('f1', 8, 12, 'very'),
+    ])
+    const next = state.update({ changes: { from: 9, to: 10, insert: 'x' } }).state
+    expect(next.field(findingsField).items).toHaveLength(0)
+  })
+
+  it('drops findings whose spans do not fit the document', () => {
+    const state = stateWithFindings('short', [makeFinding('f1', 100, 110, 'nothing')])
+    expect(state.field(findingsField).items).toHaveLength(0)
+  })
+
+  it('records the selected finding id', () => {
+    const state = stateWithFindings('This is very good.', [
+      makeFinding('f1', 8, 12, 'very'),
+    ])
+    const next = state.update({ effects: selectFindingEffect.of('f1') }).state
+    expect(next.field(findingsField).selectedId).toBe('f1')
+  })
+})
+
+describe('mergeFindingsEffect', () => {
+  it('replaces findings of the given sources and keeps the rest', () => {
+    const ruleFinding = makeFinding('rule-old', 0, 4, 'This')
+    const llmFinding: Finding = {
+      ...makeFinding('llm-1', 8, 12, 'very'),
+      source: 'llm',
+    }
+    const state = stateWithFindings('This is very good.', [ruleFinding, llmFinding])
+    const replacement = makeFinding('rule-new', 5, 7, 'is')
+    const next = state.update({
+      effects: mergeFindingsEffect.of({
+        replaceSources: ['rule', 'terminology'],
+        findings: [replacement],
+      }),
+    }).state
+    const ids = next.field(findingsField).items.map((it) => it.finding.id)
+    expect(ids.sort()).toEqual(['llm-1', 'rule-new'])
+  })
+})
+
+describe('suggestionChange', () => {
+  it('replaces the tracked span and removes the finding', () => {
+    const state = stateWithFindings('This is very good.', [
+      makeFinding('f1', 8, 12, 'very'),
+    ])
+    const change = suggestionChange(state, 'f1', 'extremely')
+    expect(change).not.toBeNull()
+    const next = state.update({ changes: change! }).state
+    expect(next.doc.toString()).toBe('This is extremely good.')
+    expect(next.field(findingsField).items).toHaveLength(0)
+  })
+
+  it('uses the current (mapped) position after earlier edits', () => {
+    const state = stateWithFindings('This is very good.', [
+      makeFinding('f1', 8, 12, 'very'),
+    ])
+    const edited = state.update({ changes: { from: 0, insert: 'Hey! ' } }).state
+    const change = suggestionChange(edited, 'f1', 'so')
+    const next = edited.update({ changes: change! }).state
+    expect(next.doc.toString()).toBe('Hey! This is so good.')
+  })
+
+  it('returns null for unknown findings', () => {
+    const state = stateWithFindings('text', [])
+    expect(suggestionChange(state, 'missing', 'x')).toBeNull()
+  })
+})
