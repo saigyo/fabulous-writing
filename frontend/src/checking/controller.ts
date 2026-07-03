@@ -3,6 +3,7 @@ import { getEditorView } from '../editor/editorRef'
 import { mergeFindingsEffect } from '../editor/findings'
 import { useStore } from '../state/store'
 import type { Finding } from '../types'
+import { effectiveModel } from './model'
 
 let currentCheckId: string | null = null
 let unsubscribe: (() => void) | null = null
@@ -48,7 +49,7 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
       domain_id: state.domainId,
       checkers,
       llm_provider: state.provider,
-      llm_model: state.model,
+      llm_model: effectiveModel(state.model, state.provider, state.providers),
     })
   } catch (error) {
     useStore.setState({ checkPhase: 'idle', llmError: String(error) })

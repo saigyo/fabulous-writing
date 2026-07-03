@@ -1,0 +1,11 @@
+# Copy to config.yaml to override defaults. All keys are optional.
+# The Claude API key is read from the ANTHROPIC_API_KEY environment variable.
+
+# db_path: data/fabulous.db
+# rules_dir: rules
+
+providers:
+  ollama_base_url: http://localhost:11434
+  ollama_model: llama3.1
+  anthropic_model: claude-sonnet-5
+  default_provider: ollama

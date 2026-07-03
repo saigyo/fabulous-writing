@@ -20,12 +20,16 @@ async def list_providers(request: Request) -> list[dict[str, Any]]:
     except Exception:
         models = []
         ollama_available = False
+    # If the configured default is not installed, point clients at one that is.
+    default_model = settings.ollama_model
+    if models and default_model not in models:
+        default_model = models[0]
     return [
         {
             "name": "ollama",
             "available": ollama_available,
             "models": models,
-            "default_model": settings.ollama_model,
+            "default_model": default_model,
         },
         {
             "name": "claude",

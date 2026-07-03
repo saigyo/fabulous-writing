@@ -9,7 +9,7 @@ from app.checkers.llm.claude import ClaudeProvider
 from app.checkers.llm.ollama import OllamaProvider
 from app.checkers.llm.provider import LLMProvider
 from app.checkers.rules.engine import RuleEngine
-from app.core.config import Settings
+from app.core.config import Settings, load_settings
 from app.services.jobs import JobManager
 from app.services.terminology import TerminologyStore
 
@@ -33,7 +33,7 @@ def make_provider_factory(settings: Settings):
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
-    settings = settings or Settings()
+    settings = settings or load_settings()
     app = FastAPI(title=APP_NAME)
     app.add_middleware(
         CORSMiddleware,
