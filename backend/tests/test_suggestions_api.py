@@ -54,6 +54,7 @@ class TestSuggestionsEndpoint:
             "suggestions": ["outstanding", "remarkably clear"],
             "span": {"start": 17, "end": 26},
             "original": "very good",
+            "rejected": 0,
         }
 
     def test_filters_echo_of_original_span_and_non_strings(self, tmp_path: Path) -> None:
@@ -140,3 +141,61 @@ class TestSentenceScope:
         )
         system_prompt, _ = provider.calls[0]
         assert "split" in system_prompt.lower()
+
+
+RULES_DIR = Path(__file__).parent.parent / "rules"
+
+
+class TestVetting:
+    def make_client(
+        self, tmp_path: Path, provider: LLMProvider, *, vet: bool = True
+    ) -> TestClient:
+        settings = Settings(
+            db_path=tmp_path / "test.db", rules_dir=RULES_DIR, vet_suggestions=vet
+        )
+        app = create_app(settings)
+        app.state.provider_factory = lambda name=None, model=None: provider
+        return TestClient(app)
+
+    DE_TEXT = "Ich würde Ihnen den Editor sofort empfehlen."
+
+    def de_request(self) -> dict:
+        start = self.DE_TEXT.index("würde")
+        return {
+            "text": self.DE_TEXT,
+            "span": {"start": start, "end": self.DE_TEXT.index(" empfehlen.") + len(" empfehlen")},
+            "message": "statt würde-Form oft besser der einfache Konjunktiv II.",
+            "language": "de",
+            "rule_id": "style.wuerde-stil",
+        }
+
+    def test_archaic_and_non_fixing_candidates_rejected(self, tmp_path: Path) -> None:
+        provider = FakeProvider(
+            json.dumps(
+                [
+                    "empföhle Ihnen den Editor sofort",
+                    "empfähle Ihnen den Editor sofort",
+                    "empfehle Ihnen den Editor sofort",
+                ]
+            )
+        )
+        client = self.make_client(tmp_path, provider)
+        response = client.post("/api/suggestions", json=self.de_request())
+        assert response.status_code == 200
+        body = response.json()
+        assert body["suggestions"] == ["empfehle Ihnen den Editor sofort"]
+        assert body["rejected"] == 2
+
+    def test_all_rejected_is_200_with_empty_list(self, tmp_path: Path) -> None:
+        provider = FakeProvider(json.dumps(["empföhle Ihnen den Editor sofort"]))
+        client = self.make_client(tmp_path, provider)
+        body = client.post("/api/suggestions", json=self.de_request()).json()
+        assert body["suggestions"] == []
+        assert body["rejected"] == 1
+
+    def test_kill_switch_returns_raw_candidates(self, tmp_path: Path) -> None:
+        provider = FakeProvider(json.dumps(["empföhle Ihnen den Editor sofort"]))
+        client = self.make_client(tmp_path, provider, vet=False)
+        body = client.post("/api/suggestions", json=self.de_request()).json()
+        assert body["suggestions"] == ["empföhle Ihnen den Editor sofort"]
+        assert body["rejected"] == 0

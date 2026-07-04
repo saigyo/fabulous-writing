@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from app.checkers.llm.checker import extract_json_array
 from app.checkers.llm.prompts import build_rewrite_prompt, build_suggestion_prompt
 from app.checkers.llm.provider import LLMProvider
+from app.checkers.llm.vetting import vet_suggestions
 from app.checkers.rules.text import expand_to_sentences
 from app.core.models import Language
 
@@ -23,6 +24,7 @@ class SuggestionRequest(BaseModel):
     message: str
     language: Language
     scope: Literal["span", "sentence"] = "span"
+    rule_id: str | None = None
     llm_provider: str | None = None
     llm_model: str | None = None
 
@@ -31,6 +33,7 @@ class SuggestionResponse(BaseModel):
     suggestions: list[str]
     span: SpanRef
     original: str
+    rejected: int = 0
 
 
 @router.post("/suggestions")
@@ -70,6 +73,23 @@ async def create_suggestions(
         for item in items
         if isinstance(item, str) and item.strip() and item.strip() != original
     ]
+    rejected = 0
+    if request.app.state.settings.vet_suggestions:
+        result = vet_suggestions(
+            suggestions,
+            original=original,
+            text=body.text,
+            start=start,
+            end=end,
+            language=body.language,
+            rule_id=body.rule_id,
+            engine=request.app.state.rule_engine,
+            nlp=request.app.state.nlp,
+        )
+        suggestions, rejected = result.accepted, result.rejected
     return SuggestionResponse(
-        suggestions=suggestions, span=SpanRef(start=start, end=end), original=original
+        suggestions=suggestions,
+        span=SpanRef(start=start, end=end),
+        original=original,
+        rejected=rejected,
     )

@@ -35,6 +35,8 @@ class Settings(BaseModel):
     demos_dir: Path = BACKEND_DIR / "demos"
     # Seed an empty terminology DB with an example domain on startup.
     seed_terminology: bool = True
+    # Deterministically vet LLM-generated suggestions (spell gate + rule re-check).
+    vet_suggestions: bool = True
     providers: ProviderSettings = Field(default_factory=ProviderSettings)
     nlp: NlpSettings = Field(default_factory=NlpSettings)
 
