@@ -187,3 +187,18 @@ def _read_sse_events(stream) -> list[tuple[str, dict]]:
                 break
             event_name = None
     return events
+
+
+def test_llm_progress_events_stream(tmp_path: Path) -> None:
+    provider = FakeProvider(LLM_RESPONSE, progress_steps=[5, 40, 41])
+    with make_client(tmp_path, provider) as client:
+        check = client.post(
+            "/api/checks",
+            json={"text": "A nice text.", "language": "en", "checkers": ["llm"]},
+        ).json()
+        with client.stream("GET", f"/api/checks/{check['check_id']}/events") as stream:
+            events = _read_sse_events(stream)
+    progress = [data["tokens"] for name, data in events if name == "llm_progress"]
+    # 5 (first) and 40 (+35) pass the >=25-token throttle; 41 (+1) does not.
+    assert progress == [5, 40]
+    assert events[-1][0] == "done"

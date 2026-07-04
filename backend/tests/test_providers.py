@@ -83,3 +83,72 @@ class TestClaudeProvider:
         assert stub.messages.kwargs["messages"] == [
             {"role": "user", "content": "user prompt"}
         ]
+
+
+class TestOllamaStreaming:
+    async def test_generate_streams_and_reports_progress(self) -> None:
+        chunks = [
+            {"message": {"content": "["}, "done": False},
+            {"message": {"content": '"a"'}, "done": False},
+            {"message": {"content": "]"}, "done": True},
+        ]
+        body = "\n".join(json.dumps(c) for c in chunks)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert json.loads(request.content)["stream"] is True
+            return httpx.Response(200, text=body)
+
+        provider = OllamaProvider(
+            base_url="http://ollama.test",
+            model="llama3.1",
+            transport=httpx.MockTransport(handler),
+        )
+        progress: list[int] = []
+        result = await provider.generate("s", "u", on_progress=progress.append)
+        assert result == '["a"]'
+        assert progress == [1, 2, 3]
+
+
+class _StubStreamingMessages:
+    async def create(self, **kwargs: Any) -> Any:
+        assert kwargs["stream"] is True
+
+        class Delta:
+            type = "text_delta"
+            text = ""
+
+        def event(kind: str, text: str = "", tokens: int | None = None) -> Any:
+            class Event:
+                type = kind
+
+            e = Event()
+            if kind == "content_block_delta":
+                d = Delta()
+                d.text = text
+                e.delta = d
+            if tokens is not None:
+                class Usage:
+                    output_tokens = tokens
+
+                e.usage = Usage()
+            return e
+
+        async def stream() -> Any:
+            yield event("content_block_delta", "[")
+            yield event("message_delta", tokens=7)
+            yield event("content_block_delta", "]")
+            yield event("message_delta", tokens=12)
+
+        return stream()
+
+
+class TestClaudeStreaming:
+    async def test_generate_streams_and_reports_progress(self) -> None:
+        class Client:
+            messages = _StubStreamingMessages()
+
+        provider = ClaudeProvider(model="claude-sonnet-5", client=Client())
+        progress: list[int] = []
+        result = await provider.generate("s", "u", on_progress=progress.append)
+        assert result == "[]"
+        assert progress == [7, 12]

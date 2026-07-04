@@ -8,7 +8,7 @@ from app.core.models import Category, Finding, Language, Severity, Source
 
 from .anchoring import anchor
 from .prompts import build_prompt
-from .provider import LLMProvider
+from .provider import LLMProvider, ProgressCallback
 from .vetting import vet_candidates
 
 _CODE_FENCE = re.compile(r"^```[a-z]*\s*|\s*```$", re.MULTILINE)
@@ -64,9 +64,14 @@ class LLMChecker:
         self.vet = vet
         self.dictionaries_dir = dictionaries_dir
 
-    async def check(self, text: str, language: Language) -> list[Finding]:
+    async def check(
+        self,
+        text: str,
+        language: Language,
+        on_progress: ProgressCallback | None = None,
+    ) -> list[Finding]:
         system, user = build_prompt(text, language)
-        response = await self.provider.generate(system, user)
+        response = await self.provider.generate(system, user, on_progress)
         findings: list[Finding] = []
         for raw in parse_findings(response):
             span = anchor(text, raw.quote, raw.context_before)

@@ -17,6 +17,9 @@ router = APIRouter(prefix="/api", tags=["checks"])
 
 CheckerName = Literal["rules", "terminology", "llm"]
 
+# Emit llm_progress at most every N generated tokens (keeps SSE traffic low).
+PROGRESS_TOKEN_STEP = 25
+
 
 class CheckRequest(BaseModel):
     text: str
@@ -88,9 +91,17 @@ async def _run_llm(
     vet: bool = True,
     dictionaries_dir: Any = None,
 ) -> None:
+    emitted = -PROGRESS_TOKEN_STEP  # the first report always goes out
+
+    def on_progress(tokens: int) -> None:
+        nonlocal emitted
+        if tokens - emitted >= PROGRESS_TOKEN_STEP:
+            emitted = tokens
+            job.emit("llm_progress", {"tokens": tokens})
+
     try:
         checker = LLMChecker(provider, vet=vet, dictionaries_dir=dictionaries_dir)
-        findings = await checker.check(text, language)
+        findings = await checker.check(text, language, on_progress=on_progress)
         job.add_findings("llm", drop_overlapping(findings, job.findings))
     except Exception as exc:
         error = str(exc) or type(exc).__name__
