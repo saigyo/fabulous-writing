@@ -217,3 +217,20 @@ model takes a minute per full check.
 ## 2026-07-04 — Log book established
 This file: session summaries with commit pointers now live in the repository
 and are updated whenever a substantial piece of work lands.
+
+## 2026-07-05 — CI workflows, Dependabot, build badges
+Commit: `422b2f3`
+
+Separate GitHub Actions workflows for backend and frontend, each
+path-filtered to its subtree (plus its own workflow file) and triggered by
+pushes to main and PRs. Backend CI gets full coverage because the spaCy
+models are dev dependencies (`uv sync --locked` installs them) and the
+Hunspell dictionaries install in one script call — all 185 tests ran on the
+runner, zero skips, in 45s. Frontend CI runs lint (oxlint, previously not
+part of the routine), vitest, and the type-checked build. Dependabot covers
+uv, npm, and the workflow actions weekly with grouped PRs per ecosystem;
+it validated itself immediately by opening four PRs on push (uvicorn, two
+node deps, and newer major versions of checkout/setup-node — the workflows
+deliberately pin known-good majors and let Dependabot propose bumps).
+README carries the two status badges for main. Verified live: both
+workflows green on the trigger push.
