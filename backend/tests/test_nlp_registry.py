@@ -33,3 +33,11 @@ def test_ner_disabled_for_speed() -> None:
     pipeline = registry.get("en")
     assert pipeline is not None
     assert "ner" not in pipeline.pipe_names
+
+def test_ja_ginza_loads_despite_config_quirk() -> None:
+    # GiNZA 5.2 ships a config newer confection rejects (split_mode: None);
+    # the registry retries with an explicit split mode.
+    registry = make_registry()
+    doc = registry.analyze("最初の文です。二番目の文です。", "ja")
+    assert doc is not None
+    assert [s.text for s in doc.sents] == ["最初の文です。", "二番目の文です。"]

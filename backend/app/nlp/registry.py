@@ -10,6 +10,13 @@ class NlpStatus:
     hint: str = ""
 
 
+# GiNZA 5.2 ships a pipeline config that newer confection versions reject
+# (compound_splitter's split_mode defaults to None where a str is required).
+# Retrying with GiNZA's documented default mode "C" restores the intended
+# behavior. Part of the accepted GiNZA/spaCy version-coupling trade-off.
+_GINZA_SPLIT_MODE_FIX = {"components": {"compound_splitter": {"split_mode": "C"}}}
+
+
 class NlpRegistry:
     """Lazily loads one spaCy pipeline per language (thread-safe).
 
@@ -35,7 +42,14 @@ class NlpRegistry:
             try:
                 import spacy
 
-                pipeline = spacy.load(model, exclude=["ner"])
+                try:
+                    pipeline = spacy.load(model, exclude=["ner"])
+                except Exception as exc:
+                    if "compound_splitter" not in str(exc):
+                        raise
+                    pipeline = spacy.load(
+                        model, exclude=["ner"], config=_GINZA_SPLIT_MODE_FIX
+                    )
             except Exception as exc:
                 self._failed[language] = (
                     f"Could not load spaCy model '{model}': {exc}. "
