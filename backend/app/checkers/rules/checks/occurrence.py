@@ -13,7 +13,7 @@ def check_occurrence(rule: LoadedRule, ctx: CheckContext) -> list[Finding]:
     flags = re.IGNORECASE if spec.ignorecase else 0
     pattern = re.compile(spec.token, flags)
     findings: list[Finding] = []
-    for start, end, sentence in split_sentences(ctx.text):
+    for start, end, sentence in split_sentences(ctx.text, doc=ctx.doc):
         count = len(pattern.findall(sentence))
         too_many = spec.max is not None and count > spec.max
         too_few = spec.min is not None and count < spec.min

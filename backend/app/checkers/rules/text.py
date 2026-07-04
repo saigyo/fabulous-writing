@@ -1,14 +1,25 @@
 import re
 
-_SENTENCE_CHUNK = re.compile(r"[^.!?\n]+[.!?]*")
+_SENTENCE_CHUNK = re.compile(r"[^.!?。！？\n]+[.!?。！？]*")
 
 
-def split_sentences(text: str) -> list[tuple[int, int, str]]:
+def split_sentences(text: str, doc: object | None = None) -> list[tuple[int, int, str]]:
     """Split text into sentences, returning (start, end, sentence) tuples.
 
-    Offsets refer to the original text; surrounding whitespace is excluded.
+    Uses spaCy sentence boundaries when a parsed doc is given; otherwise a
+    punctuation regex (including CJK 。！？). Offsets refer to the original
+    text; surrounding whitespace is excluded.
     """
-    sentences: list[tuple[int, int, str]] = []
+    if doc is not None:
+        sentences: list[tuple[int, int, str]] = []
+        for sent in doc.sents:  # type: ignore[attr-defined]
+            stripped = sent.text.strip()
+            if not stripped:
+                continue
+            start = sent.start_char + (len(sent.text) - len(sent.text.lstrip()))
+            sentences.append((start, start + len(stripped), stripped))
+        return sentences
+    sentences = []
     for match in _SENTENCE_CHUNK.finditer(text):
         chunk = match.group()
         stripped = chunk.strip()
