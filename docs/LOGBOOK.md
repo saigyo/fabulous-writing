@@ -229,8 +229,9 @@ Hunspell dictionaries install in one script call — all 185 tests ran on the
 runner, zero skips, in 45s. Frontend CI runs lint (oxlint, previously not
 part of the routine), vitest, and the type-checked build. Dependabot covers
 uv, npm, and the workflow actions weekly with grouped PRs per ecosystem;
-it validated itself immediately by opening four PRs on push (uvicorn, two
-node deps, and newer major versions of checkout/setup-node — the workflows
-deliberately pin known-good majors and let Dependabot propose bumps).
+it validated itself immediately by opening five PRs on push (uvicorn, two
+node deps, and newer majors of setup-uv/checkout/setup-node — the workflows
+deliberately pin known-good majors and let Dependabot propose bumps); the
+setup-uv bump landed on main minutes later (`d3ca9d7`).
 README carries the two status badges for main. Verified live: both
 workflows green on the trigger push.
