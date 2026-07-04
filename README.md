@@ -83,6 +83,9 @@ cd backend && uv run pytest
 cd frontend && npm test && npm run build
 ```
 
+To refresh the README screenshots after UI changes (with both dev servers running):
+`cd frontend && npm run screenshots` (needs `npx playwright install --only-shell chromium` once).
+
 ## Writing rules
 
 Rules live in `backend/rules/<language>/<group>/<name>.yml` and are picked up on
