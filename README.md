@@ -58,7 +58,9 @@ cd frontend && npm test && npm run build
 ## Writing rules
 
 Rules live in `backend/rules/<language>/<group>/<name>.yml` and are picked up on
-startup or via `POST /api/rules/reload`. Four check types:
+startup or via `POST /api/rules/reload`. A catalog of all shipped rules — with
+what each one demonstrates — is in [backend/rules/README.md](backend/rules/README.md).
+Four check types:
 
 ```yaml
 # existence: flag words/phrases (tokens get word boundaries; raw is verbatim regex)
