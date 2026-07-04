@@ -76,3 +76,39 @@ pattern:
         )
         engine = make_engine(rules_dir)
         assert len(engine.errors) == 1
+
+
+DEP_RULE = """
+extends: dependency
+message: "Passive voice — consider naming who acts."
+level: suggestion
+category: style
+pattern:
+  - {RIGHT_ID: verb, RIGHT_ATTRS: {TAG: VBN}}
+  - {LEFT_ID: verb, REL_OP: ">", RIGHT_ID: aux, RIGHT_ATTRS: {DEP: auxpass}}
+"""
+
+
+class TestDependency:
+    def test_flags_passive_not_active(self, rules_dir: Path, registry: NlpRegistry) -> None:
+        write_rule(rules_dir, "en", "style/passive.yml", DEP_RULE)
+        engine = make_engine(rules_dir)
+
+        passive = "The report was written by the team."
+        doc = registry.analyze(passive, "en")
+        findings = engine.check(passive, Language.EN, doc=doc)
+        assert len(findings) == 1
+        assert findings[0].span.text == "was written"
+
+        active = "The team wrote the report."
+        doc = registry.analyze(active, "en")
+        assert engine.check(active, Language.EN, doc=doc) == []
+
+    def test_regex_false_positive_is_gone(self, rules_dir: Path, registry: NlpRegistry) -> None:
+        # The old regex heuristic flagged be+adjective like "was tired".
+        write_rule(rules_dir, "en", "style/passive.yml", DEP_RULE)
+        engine = make_engine(rules_dir)
+        text = "The team was tired."
+        doc = registry.analyze(text, "en")
+        assert engine.check(text, Language.EN, doc=doc) == []
+
