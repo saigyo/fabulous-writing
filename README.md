@@ -161,3 +161,7 @@ curl localhost:8000/api/providers                     # LLM provider availabilit
 curl localhost:8000/api/rules                         # loaded rules + errors
 curl localhost:8000/api/domains                       # terminology CRUD under /api/domains, /api/terms
 ```
+
+## License
+
+[MIT](LICENSE)
