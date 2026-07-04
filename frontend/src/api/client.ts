@@ -69,12 +69,19 @@ export interface SuggestionRequest {
   span: { start: number; end: number }
   message: string
   language: Language
+  scope?: 'span' | 'sentence'
   llm_provider?: string | null
   llm_model?: string | null
 }
 
+export interface SuggestionResponse {
+  suggestions: string[]
+  span: { start: number; end: number }
+  original: string
+}
+
 export const postSuggestions = (body: SuggestionRequest) =>
-  request<{ suggestions: string[] }>('/api/suggestions', {
+  request<SuggestionResponse>('/api/suggestions', {
     method: 'POST',
     body: JSON.stringify(body),
   })

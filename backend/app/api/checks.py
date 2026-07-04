@@ -69,7 +69,8 @@ async def _run_llm(
         findings = await LLMChecker(provider).check(text, language)
         job.add_findings("llm", drop_overlapping(findings, job.findings))
     except Exception as exc:
-        job.emit("checker_error", {"checker": "llm", "error": str(exc)})
+        error = str(exc) or type(exc).__name__
+        job.emit("checker_error", {"checker": "llm", "error": error})
     finally:
         job.finish()
 

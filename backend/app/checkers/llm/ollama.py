@@ -18,7 +18,7 @@ class OllamaProvider:
 
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
-            base_url=self.base_url, transport=self._transport, timeout=120.0
+            base_url=self.base_url, transport=self._transport, timeout=300.0
         )
 
     async def generate(self, system: str, user: str) -> str:

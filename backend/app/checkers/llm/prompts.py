@@ -43,6 +43,31 @@ must fit grammatically when swapped in, preserving the surrounding words.
 """
 
 
+_REWRITE_SYSTEM_TEMPLATE = """You are an expert writing coach. The writer's text is \
+in {language}. You are given a passage (one or more full sentences) and an issue that \
+was flagged inside it. Rewrite the passage to fix the issue.
+
+Rules:
+- Provide 1 or 2 rewrites. Each must be a complete replacement for the whole passage.
+- You may split a long sentence into several shorter ones.
+- Write in {language}, keep the writer's meaning and tone; fix only the flagged issue.
+- Respond with ONLY a JSON array of strings, e.g. ["first rewrite", "second rewrite"].
+"""
+
+
+def build_rewrite_prompt(
+    passage: str, message: str, language: Language
+) -> tuple[str, str]:
+    """Prompt for full rewrites of the sentence(s) containing a finding."""
+    system = _REWRITE_SYSTEM_TEMPLATE.format(language=_LANGUAGE_NAMES[language])
+    user = (
+        f"Passage:\n{passage}\n\n"
+        f"Flagged issue: {message}\n\n"
+        "Provide the JSON array of rewrites now."
+    )
+    return system, user
+
+
 def build_suggestion_prompt(
     text: str, start: int, end: int, message: str, language: Language
 ) -> tuple[str, str]:

@@ -22,6 +22,9 @@ interface AppState {
   extraSuggestions: Record<string, string[]>
   suggestPendingId: string | null
   suggestErrors: Record<string, string>
+  rewrites: Record<string, Rewrite>
+  rewritePendingId: string | null
+  rewriteErrors: Record<string, string>
 
   setLanguage: (language: Language) => void
   setDomainId: (domainId: number | null) => void
@@ -37,6 +40,25 @@ interface AppState {
   setSuggestPending: (findingId: string | null) => void
   setExtraSuggestions: (findingId: string, suggestions: string[]) => void
   setSuggestError: (findingId: string, error: string | null) => void
+  setRewritePending: (findingId: string | null) => void
+  setRewrite: (findingId: string, rewrite: Rewrite | null) => void
+  setRewriteError: (findingId: string, error: string | null) => void
+}
+
+export interface Rewrite {
+  original: string
+  options: string[]
+}
+
+function withEntry<T>(
+  map: Record<string, T>,
+  key: string,
+  value: T | null,
+): Record<string, T> {
+  const next = { ...map }
+  if (value === null) delete next[key]
+  else next[key] = value
+  return next
 }
 
 function pruneByFinding<T>(
@@ -65,6 +87,9 @@ export const useStore = create<AppState>()(
       extraSuggestions: {},
       suggestPendingId: null,
       suggestErrors: {},
+      rewrites: {},
+      rewritePendingId: null,
+      rewriteErrors: {},
 
       setLanguage: (language) => set({ language }),
       setDomainId: (domainId) => set({ domainId }),
@@ -76,9 +101,11 @@ export const useStore = create<AppState>()(
         set((state) => ({
           tracked,
           selectedId,
-          // Cached LLM suggestions die with their finding.
+          // Cached LLM suggestions and rewrites die with their finding.
           extraSuggestions: pruneByFinding(state.extraSuggestions, tracked),
           suggestErrors: pruneByFinding(state.suggestErrors, tracked),
+          rewrites: pruneByFinding(state.rewrites, tracked),
+          rewriteErrors: pruneByFinding(state.rewriteErrors, tracked),
         })),
       setCheckPhase: (checkPhase) => set({ checkPhase }),
       setLlmError: (llmError) => set({ llmError }),
@@ -90,12 +117,18 @@ export const useStore = create<AppState>()(
           extraSuggestions: { ...state.extraSuggestions, [findingId]: suggestions },
         })),
       setSuggestError: (findingId, error) =>
-        set((state) => {
-          const suggestErrors = { ...state.suggestErrors }
-          if (error === null) delete suggestErrors[findingId]
-          else suggestErrors[findingId] = error
-          return { suggestErrors }
-        }),
+        set((state) => ({
+          suggestErrors: withEntry(state.suggestErrors, findingId, error),
+        })),
+      setRewritePending: (rewritePendingId) => set({ rewritePendingId }),
+      setRewrite: (findingId, rewrite) =>
+        set((state) => ({
+          rewrites: withEntry(state.rewrites, findingId, rewrite),
+        })),
+      setRewriteError: (findingId, error) =>
+        set((state) => ({
+          rewriteErrors: withEntry(state.rewriteErrors, findingId, error),
+        })),
     }),
     {
       name: 'fabulous-writing-settings',

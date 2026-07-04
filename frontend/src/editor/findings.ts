@@ -78,6 +78,36 @@ function buildDecorations(state: FindingsState): DecorationSet {
   return Decoration.set(ranges, true)
 }
 
+/**
+ * Change spec replacing the sentence a finding sits in. The sentence is
+ * located by its fetch-time text in the current document (never by stale
+ * offsets), picking the occurrence that overlaps the finding's tracked
+ * span. Returns null if the finding is gone or the sentence was edited.
+ */
+export function rewriteChange(
+  state: EditorState,
+  findingId: string,
+  original: string,
+  replacement: string,
+): ChangeSpec | null {
+  const item = state
+    .field(findingsField)
+    .items.find((it) => it.finding.id === findingId)
+  if (!item) return null
+  const doc = state.doc.toString()
+  for (
+    let index = doc.indexOf(original);
+    index !== -1;
+    index = doc.indexOf(original, index + 1)
+  ) {
+    const end = index + original.length
+    if (index < item.to && item.from < end) {
+      return { from: index, to: end, insert: replacement }
+    }
+  }
+  return null
+}
+
 /** Change spec that applies a suggestion to a finding's current span. */
 export function suggestionChange(
   state: EditorState,

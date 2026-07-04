@@ -1,6 +1,7 @@
 import { EditorView } from '@codemirror/view'
 import {
   findingsField,
+  rewriteChange,
   selectFindingEffect,
   suggestionChange,
 } from './findings'
@@ -37,4 +38,21 @@ export function applySuggestion(id: string, suggestion: string): void {
   if (!change) return
   view.dispatch({ changes: change })
   view.focus()
+}
+
+/**
+ * Replace the sentence around a finding with a rewrite.
+ * Returns false when the sentence changed since the rewrite was fetched.
+ */
+export function applyRewrite(
+  id: string,
+  original: string,
+  replacement: string,
+): boolean {
+  if (!view) return false
+  const change = rewriteChange(view.state, id, original, replacement)
+  if (!change) return false
+  view.dispatch({ changes: change })
+  view.focus()
+  return true
 }

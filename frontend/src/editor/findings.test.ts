@@ -4,6 +4,7 @@ import type { Finding } from '../types'
 import {
   findingsField,
   mergeFindingsEffect,
+  rewriteChange,
   selectFindingEffect,
   setFindingsEffect,
   suggestionChange,
@@ -86,6 +87,52 @@ describe('mergeFindingsEffect', () => {
     }).state
     const ids = next.field(findingsField).items.map((it) => it.finding.id)
     expect(ids.sort()).toEqual(['llm-1', 'rule-new'])
+  })
+})
+
+describe('rewriteChange', () => {
+  const doc = 'First part. This is very good. Last part.'
+  const sentence = 'This is very good.'
+
+  function stateWithVeryFinding(text = doc) {
+    const start = text.indexOf('very')
+    return stateWithFindings(text, [makeFinding('f1', start, start + 4, 'very')])
+  }
+
+  it('replaces the sentence containing the finding', () => {
+    const state = stateWithVeryFinding()
+    const change = rewriteChange(state, 'f1', sentence, 'This shines.')
+    expect(change).not.toBeNull()
+    const next = state.update({ changes: change! }).state
+    expect(next.doc.toString()).toBe('First part. This shines. Last part.')
+    expect(next.field(findingsField).items).toHaveLength(0)
+  })
+
+  it('picks the occurrence overlapping the finding among duplicates', () => {
+    const dupDoc = `${sentence} Middle. ${sentence}`
+    const start = dupDoc.lastIndexOf('very')
+    const state = stateWithFindings(dupDoc, [makeFinding('f1', start, start + 4, 'very')])
+    const change = rewriteChange(state, 'f1', sentence, 'Rewritten.')
+    const next = state.update({ changes: change! }).state
+    expect(next.doc.toString()).toBe(`${sentence} Middle. Rewritten.`)
+  })
+
+  it('still finds the sentence after unrelated earlier edits', () => {
+    const state = stateWithVeryFinding()
+    const edited = state.update({ changes: { from: 0, insert: 'Intro! ' } }).state
+    const change = rewriteChange(edited, 'f1', sentence, 'This shines.')
+    const next = edited.update({ changes: change! }).state
+    expect(next.doc.toString()).toBe('Intro! First part. This shines. Last part.')
+  })
+
+  it('returns null when the sentence was edited away', () => {
+    const state = stateWithVeryFinding('First part. This is so very good. Last part.')
+    expect(rewriteChange(state, 'f1', sentence, 'x')).toBeNull()
+  })
+
+  it('returns null for unknown findings', () => {
+    const state = stateWithVeryFinding()
+    expect(rewriteChange(state, 'missing', sentence, 'x')).toBeNull()
   })
 })
 

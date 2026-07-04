@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
-import { fetchSuggestions } from '../checking/suggest'
-import { applySuggestion, selectFinding } from '../editor/editorRef'
+import { fetchRewrite, fetchSuggestions } from '../checking/suggest'
+import { applyRewrite, applySuggestion, selectFinding } from '../editor/editorRef'
 import type { TrackedFinding } from '../editor/findings'
 import { groupByCategory } from '../findings/group'
 import { effectiveSuggestions } from '../findings/suggestions'
@@ -84,6 +84,7 @@ function FindingRow({ finding, selected }: { finding: Finding; selected: boolean
             {finding.rule_id ? ` · ${finding.rule_id}` : ''}
           </p>
           <SuggestionArea finding={finding} />
+          <RewriteArea finding={finding} />
         </div>
       )}
     </div>
@@ -93,7 +94,9 @@ function FindingRow({ finding, selected }: { finding: Finding; selected: boolean
 function SuggestionArea({ finding }: { finding: Finding }) {
   const extras = useStore((s) => s.extraSuggestions)
   const pending = useStore((s) => s.suggestPendingId === finding.id)
-  const anyPending = useStore((s) => s.suggestPendingId !== null)
+  const anyPending = useStore(
+    (s) => s.suggestPendingId !== null || s.rewritePendingId !== null,
+  )
   const error = useStore((s) => s.suggestErrors[finding.id])
   const suggestions = effectiveSuggestions(finding, extras)
   const fetched = finding.id in extras
@@ -133,6 +136,65 @@ function SuggestionArea({ finding }: { finding: Finding }) {
         }}
       >
         ✨ {error ? 'Retry suggestion' : 'Suggest fix'}
+      </button>
+      {error && <p className="suggest-error">{error}</p>}
+    </div>
+  )
+}
+
+function RewriteArea({ finding }: { finding: Finding }) {
+  const rewrite = useStore((s) => s.rewrites[finding.id])
+  const pending = useStore((s) => s.rewritePendingId === finding.id)
+  const anyPending = useStore(
+    (s) => s.suggestPendingId !== null || s.rewritePendingId !== null,
+  )
+  const error = useStore((s) => s.rewriteErrors[finding.id])
+
+  function apply(option: string) {
+    if (!rewrite) return
+    if (!applyRewrite(finding.id, rewrite.original, option)) {
+      const store = useStore.getState()
+      store.setRewrite(finding.id, null)
+      store.setRewriteError(finding.id, 'The sentence changed — rewrite again.')
+    }
+  }
+
+  if (pending) {
+    return <p className="suggest-status">↻ rewriting sentence…</p>
+  }
+  if (rewrite && rewrite.options.length > 0) {
+    return (
+      <div className="rewrites">
+        {rewrite.options.map((option) => (
+          <button
+            key={option}
+            className="rewrite-option"
+            title="Replace the sentence with this rewrite"
+            onClick={(event) => {
+              event.stopPropagation()
+              apply(option)
+            }}
+          >
+            {option}
+          </button>
+        ))}
+      </div>
+    )
+  }
+  if (rewrite) {
+    return <p className="suggest-status">The LLM offered no rewrite.</p>
+  }
+  return (
+    <div className="rewrites">
+      <button
+        className="suggestion-button suggest-fix"
+        disabled={anyPending}
+        onClick={(event) => {
+          event.stopPropagation()
+          void fetchRewrite(finding.id)
+        }}
+      >
+        ↻ {error ? 'Retry rewrite' : 'Rewrite sentence'}
       </button>
       {error && <p className="suggest-error">{error}</p>}
     </div>

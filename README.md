@@ -104,6 +104,10 @@ curl -X POST localhost:8000/api/checks -H 'Content-Type: application/json' \
 curl -N localhost:8000/api/checks/<check_id>/events   # SSE stream
 curl localhost:8000/api/checks/<check_id>             # polling fallback
 
+# LLM fix for one finding: scope "span" = drop-in replacement, "sentence" = whole-sentence rewrite
+curl -X POST localhost:8000/api/suggestions -H 'Content-Type: application/json' \
+  -d '{"text": "It is very good.", "span": {"start": 6, "end": 10}, "message": "Weasel word.", "language": "en", "scope": "sentence"}'
+
 curl localhost:8000/api/providers                     # LLM provider availability
 curl localhost:8000/api/rules                         # loaded rules + errors
 curl localhost:8000/api/domains                       # terminology CRUD under /api/domains, /api/terms

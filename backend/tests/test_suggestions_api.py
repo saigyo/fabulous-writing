@@ -45,25 +45,28 @@ class TestSuggestionPrompt:
 
 
 class TestSuggestionsEndpoint:
-    def test_returns_parsed_suggestions(self, tmp_path: Path) -> None:
+    def test_returns_parsed_suggestions_and_echoes_span(self, tmp_path: Path) -> None:
         provider = FakeProvider(json.dumps(["outstanding", "remarkably clear"]))
         client = make_client(tmp_path, provider)
         response = client.post("/api/suggestions", json=suggestion_request())
         assert response.status_code == 200
-        assert response.json() == {"suggestions": ["outstanding", "remarkably clear"]}
+        assert response.json() == {
+            "suggestions": ["outstanding", "remarkably clear"],
+            "span": {"start": 17, "end": 26},
+            "original": "very good",
+        }
 
     def test_filters_echo_of_original_span_and_non_strings(self, tmp_path: Path) -> None:
         provider = FakeProvider(json.dumps(["very good", "excellent", 42]))
         client = make_client(tmp_path, provider)
         response = client.post("/api/suggestions", json=suggestion_request())
-        assert response.json() == {"suggestions": ["excellent"]}
+        assert response.json()["suggestions"] == ["excellent"]
 
     def test_tolerates_code_fences(self, tmp_path: Path) -> None:
         provider = FakeProvider('```json\n["excellent"]\n```')
         client = make_client(tmp_path, provider)
-        assert client.post("/api/suggestions", json=suggestion_request()).json() == {
-            "suggestions": ["excellent"]
-        }
+        response = client.post("/api/suggestions", json=suggestion_request())
+        assert response.json()["suggestions"] == ["excellent"]
 
     def test_unparseable_response_is_502(self, tmp_path: Path) -> None:
         provider = FakeProvider("I have no suggestions for you.")
@@ -90,3 +93,50 @@ class TestSuggestionsEndpoint:
             "/api/suggestions", json=suggestion_request(start, end)
         )
         assert response.status_code == 422
+
+
+class TestSentenceScope:
+    def test_expands_span_to_sentence_and_prompts_with_it(self, tmp_path: Path) -> None:
+        provider = FakeProvider(json.dumps(["The results impressed everyone."]))
+        client = make_client(tmp_path, provider)
+        response = client.post(
+            "/api/suggestions", json={**suggestion_request(), "scope": "sentence"}
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["original"] == "The results were very good."
+        assert body["span"] == {"start": 0, "end": len("The results were very good.")}
+        assert body["suggestions"] == ["The results impressed everyone."]
+        _, user_prompt = provider.calls[0]
+        assert "The results were very good." in user_prompt
+        assert "'very good' is vague praise." in user_prompt
+
+    def test_span_across_sentences_covers_both(self, tmp_path: Path) -> None:
+        provider = FakeProvider(json.dumps(["Rewritten."]))
+        client = make_client(tmp_path, provider)
+        start = TEXT.index("good")
+        end = TEXT.index("move")
+        response = client.post(
+            "/api/suggestions",
+            json={**suggestion_request(start, end), "scope": "sentence"},
+        )
+        assert response.json()["original"] == TEXT
+
+    def test_filters_echo_of_expanded_sentence(self, tmp_path: Path) -> None:
+        provider = FakeProvider(
+            json.dumps(["The results were very good.", "The results shone."])
+        )
+        client = make_client(tmp_path, provider)
+        response = client.post(
+            "/api/suggestions", json={**suggestion_request(), "scope": "sentence"}
+        )
+        assert response.json()["suggestions"] == ["The results shone."]
+
+    def test_rewrite_prompt_allows_splitting(self, tmp_path: Path) -> None:
+        provider = FakeProvider("[]")
+        client = make_client(tmp_path, provider)
+        client.post(
+            "/api/suggestions", json={**suggestion_request(), "scope": "sentence"}
+        )
+        system_prompt, _ = provider.calls[0]
+        assert "split" in system_prompt.lower()

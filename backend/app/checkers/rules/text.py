@@ -19,6 +19,21 @@ def split_sentences(text: str) -> list[tuple[int, int, str]]:
     return sentences
 
 
+def expand_to_sentences(text: str, start: int, end: int) -> tuple[int, int]:
+    """Expand a span to the boundaries of the sentence(s) it overlaps.
+
+    Returns the span unchanged if no sentence overlaps it.
+    """
+    overlapping = [
+        (s_start, s_end)
+        for s_start, s_end, _ in split_sentences(text)
+        if s_start < end and start < s_end
+    ]
+    if not overlapping:
+        return start, end
+    return min(s for s, _ in overlapping), max(e for _, e in overlapping)
+
+
 def format_message(template: str, *args: str) -> str:
     """Fill printf-style %s placeholders, tolerating fewer placeholders than args."""
     count = template.count("%s")

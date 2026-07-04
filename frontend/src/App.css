@@ -312,6 +312,29 @@
   color: #e5484d;
 }
 
+.rewrites {
+  margin-top: 0.4rem;
+}
+
+.rewrite-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--text);
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  margin: 0.3rem 0;
+  cursor: pointer;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.rewrite-option:hover {
+  background: var(--accent-soft);
+}
+
 /* ---- terminology ---- */
 
 .terminology {
