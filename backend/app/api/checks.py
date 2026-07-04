@@ -48,7 +48,7 @@ async def create_check(request: Request, body: CheckRequest) -> CheckStatus:
         findings = app.state.rule_engine.check(body.text, body.language, doc=doc)
         job.add_findings("rules", findings)
     if "terminology" in body.checkers and body.domain_id is not None:
-        checker = TerminologyChecker(app.state.terminology_store)
+        checker = TerminologyChecker(app.state.terminology_store, nlp=app.state.nlp)
         job.add_findings(
             "terminology", checker.check(body.text, body.language, body.domain_id)
         )

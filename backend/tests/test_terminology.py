@@ -118,3 +118,59 @@ class TestChecker:
         assert checker.check("einloggen", Language.EN, domain.id) == []
         assert checker.check("einloggen", Language.DE, other.id) == []
         assert len(checker.check("einloggen", Language.DE, domain.id)) == 1
+
+
+class TestCjkChecker:
+    def test_ja_terminology_matches_via_tokens(self, store: TerminologyStore) -> None:
+        from app.core.config import NlpSettings
+        from app.nlp.registry import NlpRegistry
+
+        domain = store.create_domain("dev")
+        store.create_term(
+            domain.id,
+            language=Language.JA,
+            preferred="利用者",
+            forbidden_variants=["ユーザー"],
+        )
+        checker = TerminologyChecker(store, nlp=NlpRegistry(NlpSettings().models))
+        text = "ユーザーはこの機能を使います。"
+        findings = checker.check(text, Language.JA, domain.id)
+        assert len(findings) == 1
+        assert findings[0].span.text == "ユーザー"
+        assert text[findings[0].span.start : findings[0].span.end] == "ユーザー"
+        assert findings[0].suggestions == ["利用者"]
+
+    def test_zh_terminology_matches_without_whitespace(
+        self, store: TerminologyStore
+    ) -> None:
+        from app.core.config import NlpSettings
+        from app.nlp.registry import NlpRegistry
+
+        domain = store.create_domain("dev")
+        store.create_term(
+            domain.id,
+            language=Language.ZH,
+            preferred="用户",
+            forbidden_variants=["使用者"],
+        )
+        checker = TerminologyChecker(store, nlp=NlpRegistry(NlpSettings().models))
+        findings = checker.check("使用者可以使用这个功能。", Language.ZH, domain.id)
+        assert len(findings) == 1
+        assert findings[0].span.text == "使用者"
+
+    def test_cjk_falls_back_to_substring_without_model(
+        self, store: TerminologyStore
+    ) -> None:
+        from app.nlp.registry import NlpRegistry
+
+        domain = store.create_domain("dev")
+        store.create_term(
+            domain.id,
+            language=Language.JA,
+            preferred="利用者",
+            forbidden_variants=["ユーザー"],
+        )
+        checker = TerminologyChecker(store, nlp=NlpRegistry({"ja": "xx_bogus_model"}))
+        findings = checker.check("ユーザーは使います。", Language.JA, domain.id)
+        assert len(findings) == 1
+        assert findings[0].span.text == "ユーザー"
