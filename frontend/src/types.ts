@@ -61,6 +61,31 @@ export interface Term {
   case_sensitive: boolean
 }
 
+export type CheckType =
+  | 'existence'
+  | 'substitution'
+  | 'occurrence'
+  | 'repetition'
+  | 'token_pattern'
+  | 'dependency'
+
+export interface RuleInfo {
+  rule_id: string
+  language: Language
+  category: Category
+  level: Severity
+  extends: CheckType
+  message: string
+  requires_nlp: boolean
+  file: string
+  detail: Record<string, unknown>
+}
+
+export interface RuleError {
+  file: string
+  error: string
+}
+
 export interface ProviderInfo {
   name: string
   available: boolean

@@ -4,6 +4,7 @@ import { getDemoText, getDomains, getLanguages, getProviders } from './api/clien
 import { runCheck } from './checking/controller'
 import { Editor } from './editor/Editor'
 import { setEditorText } from './editor/editorRef'
+import { RulesView } from './rules/RulesView'
 import { Sidebar } from './sidebar/Sidebar'
 import { languageLabel } from './languages'
 import { useStore } from './state/store'
@@ -16,14 +17,14 @@ export default function App() {
   return (
     <div className="app">
       <Header />
-      {activeView === 'editor' ? (
+      {activeView === 'editor' && (
         <main className="workspace">
           <Editor />
           <Sidebar />
         </main>
-      ) : (
-        <TerminologyView />
       )}
+      {activeView === 'rules' && <RulesView />}
+      {activeView === 'terminology' && <TerminologyView />}
     </div>
   )
 }
@@ -50,6 +51,12 @@ function Header() {
           onClick={() => store.setActiveView('editor')}
         >
           Editor
+        </button>
+        <button
+          className={store.activeView === 'rules' ? 'active' : ''}
+          onClick={() => store.setActiveView('rules')}
+        >
+          Rules
         </button>
         <button
           className={store.activeView === 'terminology' ? 'active' : ''}

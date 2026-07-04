@@ -63,7 +63,9 @@ cd frontend && npm test && npm run build
 
 Rules live in `backend/rules/<language>/<group>/<name>.yml` and are picked up on
 startup or via `POST /api/rules/reload`. A catalog of all shipped rules — with
-what each one demonstrates — is in [backend/rules/README.md](backend/rules/README.md).
+what each one demonstrates — is in [backend/rules/README.md](backend/rules/README.md);
+the app's *Rules* tab shows the live catalog for the selected language (from
+`GET /api/rules?language=…`).
 Four check types:
 
 ```yaml
@@ -186,7 +188,7 @@ curl -X POST localhost:8000/api/suggestions -H 'Content-Type: application/json' 
 curl localhost:8000/api/languages                     # languages + NLP model availability
 curl localhost:8000/api/languages/en/demo             # flawed demo text per language
 curl localhost:8000/api/providers                     # LLM provider availability
-curl localhost:8000/api/rules                         # loaded rules + errors
+curl localhost:8000/api/rules?language=de             # rule catalog (+ load errors); language optional
 curl localhost:8000/api/domains                       # terminology CRUD under /api/domains, /api/terms
 ```
 

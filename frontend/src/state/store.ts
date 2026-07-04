@@ -5,7 +5,7 @@ import { FALLBACK_LANGUAGES } from '../languages'
 import type { Domain, Language, LanguageInfo, ProviderInfo } from '../types'
 
 export type CheckPhase = 'idle' | 'fast' | 'llm'
-export type ActiveView = 'editor' | 'terminology'
+export type ActiveView = 'editor' | 'rules' | 'terminology'
 
 interface AppState {
   language: Language

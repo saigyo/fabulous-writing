@@ -5,6 +5,8 @@ import type {
   Language,
   LanguageInfo,
   ProviderInfo,
+  RuleError,
+  RuleInfo,
   Term,
 } from '../types'
 
@@ -90,6 +92,14 @@ export const postSuggestions = (body: SuggestionRequest) =>
 export const getProviders = () => request<ProviderInfo[]>('/api/providers')
 
 export const getLanguages = () => request<LanguageInfo[]>('/api/languages')
+
+export interface RulesResponse {
+  rules: RuleInfo[]
+  errors: RuleError[]
+}
+
+export const getRules = (language: Language) =>
+  request<RulesResponse>(`/api/rules?language=${language}`)
 
 export const getDemoText = (language: Language) =>
   request<{ text: string }>(`/api/languages/${language}/demo`)
