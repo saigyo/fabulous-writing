@@ -14,6 +14,7 @@ class CheckJob:
         self.id = job_id
         self.status = "running"
         self.findings: list[Finding] = []
+        self.skipped_rules: list[str] = []
         self.events: list[tuple[str, dict[str, Any]]] = []
         self._task: asyncio.Task[None] | None = None
         self._new_event = asyncio.Event()

@@ -11,6 +11,7 @@ from app.checkers.llm.ollama import OllamaProvider
 from app.checkers.llm.provider import LLMProvider
 from app.checkers.rules.engine import RuleEngine
 from app.core.config import Settings, load_settings
+from app.nlp.registry import NlpRegistry
 from app.services.jobs import JobManager
 from app.services.terminology import TerminologyStore
 
@@ -46,6 +47,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.terminology_store = TerminologyStore(settings.db_path)
     app.state.rule_engine = RuleEngine(settings.rules_dir)
     app.state.jobs = JobManager()
+    app.state.nlp = NlpRegistry(settings.nlp.models)
     app.state.provider_factory = make_provider_factory(settings)
     app.include_router(terminology_router)
     app.include_router(checks_router)

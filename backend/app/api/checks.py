@@ -33,6 +33,7 @@ class CheckStatus(BaseModel):
     check_id: str
     status: str
     findings: list[Finding]
+    skipped_rules: list[str] = Field(default_factory=list)
 
 
 @router.post("/checks", status_code=202)
@@ -41,7 +42,10 @@ async def create_check(request: Request, body: CheckRequest) -> CheckStatus:
     job: CheckJob = app.state.jobs.create()
 
     if "rules" in body.checkers:
-        findings = app.state.rule_engine.check(body.text, body.language)
+        doc = app.state.nlp.analyze(body.text, body.language.value)
+        if doc is None:
+            job.skipped_rules = app.state.rule_engine.nlp_rule_ids(body.language)
+        findings = app.state.rule_engine.check(body.text, body.language, doc=doc)
         job.add_findings("rules", findings)
     if "terminology" in body.checkers and body.domain_id is not None:
         checker = TerminologyChecker(app.state.terminology_store)
@@ -59,7 +63,12 @@ async def create_check(request: Request, body: CheckRequest) -> CheckStatus:
     else:
         job.finish()
 
-    return CheckStatus(check_id=job.id, status=job.status, findings=job.findings)
+    return CheckStatus(
+        check_id=job.id,
+        status=job.status,
+        findings=job.findings,
+        skipped_rules=job.skipped_rules,
+    )
 
 
 async def _run_llm(
@@ -80,7 +89,12 @@ def get_check(request: Request, check_id: str) -> CheckStatus:
     job = request.app.state.jobs.get(check_id)
     if job is None:
         raise HTTPException(404, "Check not found")
-    return CheckStatus(check_id=job.id, status=job.status, findings=job.findings)
+    return CheckStatus(
+        check_id=job.id,
+        status=job.status,
+        findings=job.findings,
+        skipped_rules=job.skipped_rules,
+    )
 
 
 @router.get("/checks/{check_id}/events")

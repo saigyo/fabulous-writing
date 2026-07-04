@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.checkers.llm.provider import FakeProvider, LLMProvider
-from app.core.config import Settings
+from app.core.config import NlpSettings, Settings
 from app.main import create_app
 
 RULES_DIR = Path(__file__).parent.parent / "rules"
@@ -121,6 +121,45 @@ def _assert_llm_failure_handled(client: TestClient) -> None:
     final = client.get(f"/api/checks/{check_id}").json()
     assert final["status"] == "done"
     assert any(f["source"] == "rule" for f in final["findings"])
+
+
+def test_nlp_rules_run_when_model_available(client: TestClient) -> None:
+    response = client.post(
+        "/api/checks",
+        json={
+            "text": "The report was written by the team.",
+            "language": "en",
+            "checkers": ["rules"],
+        },
+    )
+    body = response.json()
+    rule_ids = {f["rule_id"] for f in body["findings"]}
+    assert "style.passive-voice" in rule_ids
+    assert body["skipped_rules"] == []
+
+
+def test_missing_model_skips_nlp_rules_but_runs_regex(tmp_path: Path) -> None:
+    settings = Settings(
+        db_path=tmp_path / "test.db",
+        rules_dir=RULES_DIR,
+        nlp=NlpSettings(models={"en": "xx_totally_missing"}),
+    )
+    app = create_app(settings)
+    app.state.provider_factory = lambda name=None, model=None: FakeProvider("[]")
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/checks",
+            json={
+                "text": "This is very nice and it was written quickly.",
+                "language": "en",
+                "checkers": ["rules"],
+            },
+        )
+        body = response.json()
+        rule_ids = {f["rule_id"] for f in body["findings"]}
+        assert "style.weasel-words" in rule_ids
+        assert "style.passive-voice" not in rule_ids
+        assert "style.passive-voice" in body["skipped_rules"]
 
 
 def test_get_unknown_check_is_404(client: TestClient) -> None:
