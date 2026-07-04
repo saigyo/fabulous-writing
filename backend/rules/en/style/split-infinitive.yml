@@ -1,0 +1,9 @@
+# Demonstrates: token_pattern mixing fine-grained tags (TAG) with POS and OP.
+extends: token_pattern
+message: "'%s' splits the infinitive — consider moving the adverb."
+level: suggestion
+category: style
+pattern:
+  - {TAG: TO}
+  - {POS: ADV, OP: "+"}
+  - {TAG: VB}

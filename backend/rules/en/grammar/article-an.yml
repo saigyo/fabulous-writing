@@ -1,0 +1,8 @@
+# Demonstrates: token_pattern with a REGEX text condition.
+extends: token_pattern
+message: "'%s' — use 'a' before a consonant sound."
+level: warning
+category: grammar
+pattern:
+  - {LOWER: an}
+  - {TEXT: {REGEX: '^[bcdfgjklmnpqrstvwz]'}}

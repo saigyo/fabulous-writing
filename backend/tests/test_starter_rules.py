@@ -202,3 +202,166 @@ def test_zh_long_sentence_token_count(engine: RuleEngine, registry: NlpRegistry)
     assert "clarity.long-sentence" not in nlp_rule_ids(
         engine, registry, "这个方法有效。", Language.ZH
     )
+
+
+# --- Illustrative rule examples (showcasing pattern features) ---
+
+
+def test_en_an_before_consonant(engine: RuleEngine, registry: NlpRegistry) -> None:
+    assert "grammar.article-an" in nlp_rule_ids(
+        engine, registry, "She gave an presentation about writing.", Language.EN
+    )
+    assert "grammar.article-an" not in nlp_rule_ids(
+        engine, registry, "She gave an honest answer in an hour.", Language.EN
+    )
+
+
+def test_en_split_infinitive(engine: RuleEngine, registry: NlpRegistry) -> None:
+    assert "style.split-infinitive" in nlp_rule_ids(
+        engine, registry, "We want to quickly finish the report.", Language.EN
+    )
+    assert "style.split-infinitive" not in nlp_rule_ids(
+        engine, registry, "We want to finish the report quickly.", Language.EN
+    )
+
+
+def test_en_expletive_opener(engine: RuleEngine, registry: NlpRegistry) -> None:
+    assert "vividness.expletive-opener" in nlp_rule_ids(
+        engine, registry, "There are many issues in the draft.", Language.EN
+    )
+    assert "vividness.expletive-opener" not in nlp_rule_ids(
+        engine, registry, "The draft has many issues.", Language.EN
+    )
+
+
+def test_de_einzigste(engine: RuleEngine) -> None:
+    findings = engine.check("Das ist das einzigste Problem.", Language.DE)
+    hits = [f for f in findings if f.rule_id == "grammar.einzigste"]
+    assert hits and hits[0].suggestions == ["einzige"]
+
+
+def test_de_wuerde_stil(engine: RuleEngine, registry: NlpRegistry) -> None:
+    assert "style.wuerde-stil" in nlp_rule_ids(
+        engine, registry, "Ich würde das Angebot gerne annehmen.", Language.DE
+    )
+    assert "style.wuerde-stil" not in nlp_rule_ids(
+        engine, registry, "Ich nehme das Angebot gerne an.", Language.DE
+    )
+
+
+def test_de_schachtelsaetze(engine: RuleEngine) -> None:
+    nested = "Der Satz, der viele Nebensätze, die stören, enthält, ist lang."
+    assert "clarity.schachtelsaetze" in rule_ids(engine, nested, Language.DE)
+    assert "clarity.schachtelsaetze" not in rule_ids(
+        engine, "Der Satz ist kurz, klar und gut.", Language.DE
+    )
+
+
+def test_fr_voix_passive(engine: RuleEngine, registry: NlpRegistry) -> None:
+    assert "style.voix-passive" in nlp_rule_ids(
+        engine, registry, "Le rapport a été écrit par l'équipe.", Language.FR
+    )
+    assert "style.voix-passive" not in nlp_rule_ids(
+        engine, registry, "L'équipe a écrit le rapport.", Language.FR
+    )
+
+
+def test_fr_lourdeurs_and_malgre_que(engine: RuleEngine) -> None:
+    findings = engine.check(
+        "Suite à votre message, nous répondrons. Malgré que ce soit difficile.",
+        Language.FR,
+    )
+    by_rule = {f.rule_id: f for f in findings if f.rule_id}
+    assert by_rule["clarity.lourdeurs"].suggestions == ["après"]
+    assert by_rule["grammar.malgre-que"].suggestions == ["bien que"]
+
+
+def test_es_voz_pasiva(engine: RuleEngine, registry: NlpRegistry) -> None:
+    assert "style.voz-pasiva" in nlp_rule_ids(
+        engine, registry, "El informe fue escrito por el equipo.", Language.ES
+    )
+    assert "style.voz-pasiva" not in nlp_rule_ids(
+        engine, registry, "El equipo escribió el informe.", Language.ES
+    )
+
+
+def test_es_dequeismo(engine: RuleEngine, registry: NlpRegistry) -> None:
+    assert "grammar.dequeismo" in nlp_rule_ids(
+        engine, registry, "Pienso de que es una buena idea.", Language.ES
+    )
+    assert "grammar.dequeismo" not in nlp_rule_ids(
+        engine, registry, "Pienso que es una buena idea.", Language.ES
+    )
+
+
+def test_es_circunloquios(engine: RuleEngine) -> None:
+    findings = engine.check("En base a los datos, decidimos.", Language.ES)
+    hits = [f for f in findings if f.rule_id == "clarity.circunloquios"]
+    assert hits and hits[0].suggestions == ["según"]
+
+
+def test_it_forma_passiva(engine: RuleEngine, registry: NlpRegistry) -> None:
+    assert "style.forma-passiva" in nlp_rule_ids(
+        engine, registry, "Il rapporto è stato scritto dal team.", Language.IT
+    )
+    assert "style.forma-passiva" in nlp_rule_ids(
+        engine, registry, "Il rapporto viene scritto ogni anno.", Language.IT
+    )
+    assert "style.forma-passiva" not in nlp_rule_ids(
+        engine, registry, "Il team ha scritto il rapporto.", Language.IT
+    )
+
+
+def test_it_ma_pero(engine: RuleEngine) -> None:
+    findings = engine.check("Ma però questo non funziona.", Language.IT)
+    hits = [f for f in findings if f.rule_id == "grammar.ma-pero"]
+    assert hits and hits[0].suggestions == ["ma"]
+
+
+def test_it_burocratese(engine: RuleEngine) -> None:
+    findings = engine.check("Al fine di migliorare, cambiamo processo.", Language.IT)
+    hits = [f for f in findings if f.rule_id == "clarity.burocratese"]
+    assert hits and hits[0].suggestions == ["per"]
+
+
+def test_ja_double_negative(engine: RuleEngine, registry: NlpRegistry) -> None:
+    assert "style.double-negative" in nlp_rule_ids(
+        engine, registry, "できないことはない。", Language.JA
+    )
+    assert "style.double-negative" not in nlp_rule_ids(
+        engine, registry, "できます。", Language.JA
+    )
+
+
+def test_ja_mazu_saisho(engine: RuleEngine, registry: NlpRegistry) -> None:
+    assert "style.mazu-saisho" in nlp_rule_ids(
+        engine, registry, "まず最初に、計画を説明します。", Language.JA
+    )
+
+
+def test_ja_touten_kajou(engine: RuleEngine, registry: NlpRegistry) -> None:
+    heavy = "これは、とても、長い、複雑な、例文で、あります。"
+    assert "clarity.touten-kajou" in nlp_rule_ids(engine, registry, heavy, Language.JA)
+    assert "clarity.touten-kajou" not in nlp_rule_ids(
+        engine, registry, "これは短い文です。", Language.JA
+    )
+
+
+def test_zh_jinxing(engine: RuleEngine, registry: NlpRegistry) -> None:
+    assert "style.jinxing" in nlp_rule_ids(
+        engine, registry, "他对这个项目进行了分析。", Language.ZH
+    )
+    assert "style.jinxing" in nlp_rule_ids(
+        engine, registry, "我们明天进行讨论。", Language.ZH
+    )
+    assert "style.jinxing" not in nlp_rule_ids(
+        engine, registry, "我们明天讨论这个项目。", Language.ZH
+    )
+
+
+def test_zh_douhao_guoduo(engine: RuleEngine, registry: NlpRegistry) -> None:
+    heavy = "这个方法很好，操作简单，成本很低，效果明显，大家都很满意，值得推广，应该继续。"
+    assert "clarity.douhao-guoduo" in nlp_rule_ids(engine, registry, heavy, Language.ZH)
+    assert "clarity.douhao-guoduo" not in nlp_rule_ids(
+        engine, registry, "这个方法有效。", Language.ZH
+    )

@@ -1,0 +1,10 @@
+# Demonstrates: token_pattern mixing LEMMA and TEXT for a fixed expression.
+extends: token_pattern
+message: "「%s」の二重否定は遠回しです — 肯定形を検討してください。"
+level: suggestion
+category: style
+pattern:
+  - {LEMMA: ない}
+  - {TEXT: こと}
+  - {TEXT: は}
+  - {TEXT: ない}

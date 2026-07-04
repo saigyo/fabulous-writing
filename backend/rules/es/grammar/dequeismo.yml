@@ -1,0 +1,9 @@
+# Demonstrates: token_pattern with lemma sets (dequeísmo).
+extends: token_pattern
+message: "«%s» es dequeísmo — se dice «pensar que», no «pensar de que»."
+level: error
+category: grammar
+pattern:
+  - {LEMMA: {IN: [pensar, creer, opinar]}}
+  - {LOWER: de}
+  - {LOWER: que}

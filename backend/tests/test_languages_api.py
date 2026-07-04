@@ -28,4 +28,6 @@ def test_languages_endpoint_lists_all_seven(client: TestClient) -> None:
     }
     assert by_code["ja"]["nlp_available"] is True  # ginza is a dev dependency
     assert by_code["ja"]["model"] == "ja_ginza"
-    assert by_code["fr"]["nlp_available"] is False  # model not installed in dev
+    # All seven models are dev dependencies, so everything is available here;
+    # the not-installed case is covered by the registry unit tests.
+    assert all(item["nlp_available"] for item in data)

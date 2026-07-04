@@ -1,0 +1,9 @@
+extends: substitution
+message: "«%s» es un circunloquio — mejor «%s»."
+level: suggestion
+category: clarity
+ignorecase: true
+swap:
+  en base a: según
+  en el día de hoy: hoy
+  a la mayor brevedad: pronto

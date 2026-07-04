@@ -1,0 +1,8 @@
+# Demonstrates: token_pattern with MORPH (participle after "ser").
+extends: token_pattern
+message: "«%s» está en voz pasiva — considera nombrar quién actúa."
+level: suggestion
+category: style
+pattern:
+  - {LEMMA: ser}
+  - {POS: VERB, MORPH: {IS_SUPERSET: ["VerbForm=Part"]}}

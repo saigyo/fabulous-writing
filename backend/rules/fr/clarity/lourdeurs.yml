@@ -1,0 +1,9 @@
+extends: substitution
+message: "« %s » est lourd — préférez « %s »."
+level: suggestion
+category: clarity
+ignorecase: true
+swap:
+  au niveau de: concernant
+  dans le cadre de: dans
+  suite à: après

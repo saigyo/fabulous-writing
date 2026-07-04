@@ -1,0 +1,11 @@
+# Demonstrates: substitution for a common inflected error.
+extends: substitution
+message: "„%s“ — „einzig“ hat keinen Superlativ; richtig ist „%s“."
+level: error
+category: grammar
+ignorecase: true
+swap:
+  einzigste: einzige
+  einzigster: einziger
+  einzigstes: einziges
+  einzigsten: einzigen

@@ -1,0 +1,7 @@
+extends: substitution
+message: "« %s » est critiqué — préférez « %s »."
+level: warning
+category: grammar
+ignorecase: true
+swap:
+  malgré que: bien que

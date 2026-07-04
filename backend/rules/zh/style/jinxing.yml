@@ -1,0 +1,9 @@
+# Demonstrates: token_pattern with optional tokens (aspect marker 了) and TAG.
+extends: token_pattern
+message: "“%s”可以简化 — 直接使用动词（如“进行讨论”→“讨论”）。"
+level: suggestion
+category: style
+pattern:
+  - {TEXT: 进行}
+  - {TEXT: 了, OP: "?"}
+  - {TAG: NN}

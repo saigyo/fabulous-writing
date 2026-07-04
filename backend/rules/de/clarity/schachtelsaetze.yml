@@ -1,0 +1,8 @@
+# Demonstrates: occurrence counting arbitrary regex matches (here: commas).
+extends: occurrence
+message: "Mehr als drei Kommas — der Satz ist wahrscheinlich verschachtelt."
+level: suggestion
+category: clarity
+scope: sentence
+token: ','
+max: 3

@@ -1,0 +1,9 @@
+extends: substitution
+message: "«%s» è burocratese — meglio «%s»."
+level: suggestion
+category: clarity
+ignorecase: true
+swap:
+  al fine di: per
+  in data odierna: oggi
+  in ottemperanza a: secondo

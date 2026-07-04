@@ -1,0 +1,8 @@
+# Demonstrates: occurrence counting regex matches works for CJK punctuation too.
+extends: occurrence
+message: "読点（、）が多すぎます — 文の分割を検討してください。"
+level: suggestion
+category: clarity
+scope: sentence
+token: '、'
+max: 4

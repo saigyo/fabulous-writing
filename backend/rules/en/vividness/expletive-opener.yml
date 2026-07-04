@@ -1,0 +1,8 @@
+# Demonstrates: token_pattern using a dependency label (DEP) on a token.
+extends: token_pattern
+message: "'%s' is a weak opener — name the subject and use a stronger verb."
+level: suggestion
+category: vividness
+pattern:
+  - {LOWER: there, DEP: expl}
+  - {LEMMA: be}

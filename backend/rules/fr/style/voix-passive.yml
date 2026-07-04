@@ -1,0 +1,8 @@
+# Demonstrates: dependency rule via the UD relation aux:pass.
+extends: dependency
+message: "« %s » est à la voix passive — envisagez de nommer qui agit."
+level: suggestion
+category: style
+pattern:
+  - {RIGHT_ID: verb, RIGHT_ATTRS: {POS: VERB}}
+  - {LEFT_ID: verb, REL_OP: ">", RIGHT_ID: aux, RIGHT_ATTRS: {DEP: "aux:pass"}}

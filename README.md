@@ -120,6 +120,12 @@ pattern:
   - {LEFT_ID: verb, REL_OP: ">", RIGHT_ID: aux, RIGHT_ATTRS: {DEP: auxpass}}
 ```
 
+Patterns support the full Matcher vocabulary — `LEMMA`, `POS`, `TAG`, `DEP`,
+`MORPH`, `REGEX`, `IN`/`NOT_IN` sets, and `OP` quantifiers. The rule files under
+`backend/rules/` double as a cookbook: see e.g. `en/grammar/article-an.yml`
+(REGEX), `de/style/wuerde-stil.yml` (MORPH + OP gap), `fr/style/voix-passive.yml`
+(dependency via `aux:pass`), and `zh/style/jinxing.yml` (optional tokens).
+
 These rules need the language's spaCy model:
 
 ```sh

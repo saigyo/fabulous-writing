@@ -1,0 +1,9 @@
+# Demonstrates: token_pattern with MORPH features (Konjunktiv) and an OP gap.
+extends: token_pattern
+message: "„%s“ — statt würde-Form oft besser der einfache Konjunktiv II."
+level: suggestion
+category: style
+pattern:
+  - {LEMMA: werden, MORPH: {IS_SUPERSET: ["Mood=Sub"]}}
+  - {OP: "{,6}", TAG: {NOT_IN: [VVINF, $.]}}
+  - {TAG: VVINF}

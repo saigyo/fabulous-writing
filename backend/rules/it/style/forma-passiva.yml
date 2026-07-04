@@ -1,0 +1,8 @@
+# Demonstrates: dependency rule via aux:pass (covers "essere" and "venire").
+extends: dependency
+message: "«%s» è in forma passiva — valuta di nominare chi agisce."
+level: suggestion
+category: style
+pattern:
+  - {RIGHT_ID: verb, RIGHT_ATTRS: {POS: VERB}}
+  - {LEFT_ID: verb, REL_OP: ">", RIGHT_ID: aux, RIGHT_ATTRS: {DEP: "aux:pass"}}

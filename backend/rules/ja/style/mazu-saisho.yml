@@ -1,0 +1,8 @@
+extends: token_pattern
+message: "「%s」は重複表現です —「まず」か「最初に」のどちらかで十分です。"
+level: suggestion
+category: style
+pattern:
+  - {TEXT: まず}
+  - {TEXT: 最初}
+suggestions: [最初]

@@ -1,0 +1,7 @@
+extends: substitution
+message: "«%s» è ridondante — basta «%s» (o solo «però»)."
+level: warning
+category: grammar
+ignorecase: true
+swap:
+  ma però: ma

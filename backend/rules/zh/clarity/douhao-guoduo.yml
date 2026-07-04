@@ -1,0 +1,7 @@
+extends: occurrence
+message: "逗号过多 — 考虑把句子拆开。"
+level: suggestion
+category: clarity
+scope: sentence
+token: '，'
+max: 5
