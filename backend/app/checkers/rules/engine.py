@@ -24,6 +24,16 @@ class RuleEngine:
     def list_rules(self) -> list[LoadedRule]:
         return list(self._rules)
 
+    def nlp_rule_ids(self, language: Language) -> list[str]:
+        """Rule ids that need a spaCy doc and are skipped without one."""
+        from .loader import NLP_CHECK_TYPES
+
+        return [
+            rule.rule_id
+            for rule in self._rules
+            if rule.language == language and rule.spec.extends in NLP_CHECK_TYPES
+        ]
+
     def check(
         self, text: str, language: Language, doc: object | None = None
     ) -> list[Finding]:

@@ -6,7 +6,16 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from app.core.models import Category, Language, Severity
 
-CheckType = Literal["existence", "substitution", "occurrence", "repetition"]
+CheckType = Literal[
+    "existence",
+    "substitution",
+    "occurrence",
+    "repetition",
+    "token_pattern",
+    "dependency",
+]
+
+NLP_CHECK_TYPES = {"token_pattern", "dependency"}
 
 
 class RuleSpec(BaseModel):
@@ -25,6 +34,10 @@ class RuleSpec(BaseModel):
     token: str | None = None
     max: int | None = None
     min: int | None = None
+    # token_pattern / dependency (spaCy Matcher / DependencyMatcher patterns)
+    pattern: list[dict] = Field(default_factory=list)
+    # optional static suggestions (used by NLP rule types)
+    suggestions: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def check_required_fields(self) -> "RuleSpec":
@@ -37,6 +50,8 @@ class RuleSpec(BaseModel):
                 raise ValueError("occurrence rules need 'token'")
             if self.max is None and self.min is None:
                 raise ValueError("occurrence rules need 'max' or 'min'")
+        if self.extends in NLP_CHECK_TYPES and not self.pattern:
+            raise ValueError(f"{self.extends} rules need 'pattern'")
         return self
 
 
@@ -52,6 +67,18 @@ class RuleError(BaseModel):
     error: str
 
 
+def _validate_nlp_pattern(spec: RuleSpec, language: Language) -> None:
+    """Compile the pattern against a blank vocab so bad attributes fail at load."""
+    import spacy
+    from spacy.matcher import DependencyMatcher, Matcher
+
+    vocab = spacy.blank(language.value).vocab
+    if spec.extends == "token_pattern":
+        Matcher(vocab, validate=True).add("_", [spec.pattern])
+    else:
+        DependencyMatcher(vocab, validate=True).add("_", [spec.pattern])
+
+
 def load_rules(rules_dir: Path) -> tuple[list[LoadedRule], list[RuleError]]:
     rules: list[LoadedRule] = []
     errors: list[RuleError] = []
@@ -64,7 +91,9 @@ def load_rules(rules_dir: Path) -> tuple[list[LoadedRule], list[RuleError]]:
             try:
                 data = yaml.safe_load(path.read_text(encoding="utf-8"))
                 spec = RuleSpec.model_validate(data)
-            except (yaml.YAMLError, ValidationError, ValueError) as exc:
+                if spec.extends in NLP_CHECK_TYPES:
+                    _validate_nlp_pattern(spec, language)
+            except Exception as exc:
                 errors.append(RuleError(file=str(path), error=str(exc)))
                 continue
             relative = path.relative_to(lang_dir).with_suffix("")
