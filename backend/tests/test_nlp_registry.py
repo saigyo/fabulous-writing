@@ -41,3 +41,20 @@ def test_ja_ginza_loads_despite_config_quirk() -> None:
     doc = registry.analyze("最初の文です。二番目の文です。", "ja")
     assert doc is not None
     assert [s.text for s in doc.sents] == ["最初の文です。", "二番目の文です。"]
+
+def test_is_available_for_installed_model_without_loading() -> None:
+    registry = make_registry({"en": "en_core_web_sm"})
+    assert registry.is_available("en") is True
+    assert registry._pipelines == {}  # availability check must not load
+
+
+def test_is_available_false_for_missing_model_or_language() -> None:
+    registry = make_registry({"en": "xx_bogus_model"})
+    assert registry.is_available("en") is False
+    assert registry.is_available("tlh") is False
+
+
+def test_model_name() -> None:
+    registry = make_registry({"en": "en_core_web_sm"})
+    assert registry.model_name("en") == "en_core_web_sm"
+    assert registry.model_name("tlh") is None

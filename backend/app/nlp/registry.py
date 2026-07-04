@@ -59,6 +59,26 @@ class NlpRegistry:
             self._pipelines[language] = pipeline
             return pipeline
 
+    def model_name(self, language: str) -> str | None:
+        return self._models.get(language)
+
+    def is_available(self, language: str) -> bool:
+        """Model loaded, or at least installed. Does not load the pipeline."""
+        model = self._models.get(language)
+        if model is None:
+            return False
+        with self._lock:
+            if language in self._pipelines:
+                return True
+            if language in self._failed:
+                return False
+        import importlib.util
+
+        try:
+            return importlib.util.find_spec(model) is not None
+        except (ImportError, ValueError):
+            return False
+
     def analyze(self, text: str, language: str) -> Any | None:
         pipeline = self.get(language)
         return pipeline(text) if pipeline is not None else None

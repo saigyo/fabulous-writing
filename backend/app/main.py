@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.checks import router as checks_router
+from app.api.languages import router as languages_router
 from app.api.providers import router as providers_router
 from app.api.rules import router as rules_router
 from app.api.suggestions import router as suggestions_router
@@ -51,6 +52,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.provider_factory = make_provider_factory(settings)
     app.include_router(terminology_router)
     app.include_router(checks_router)
+    app.include_router(languages_router)
     app.include_router(rules_router)
     app.include_router(providers_router)
     app.include_router(suggestions_router)
