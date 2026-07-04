@@ -6,7 +6,9 @@ See docs/superpowers/specs/2026-07-04-suggestion-vetting-design.md.
 
 import re
 import threading
+from collections import Counter
 from dataclasses import dataclass
+from typing import Any
 
 from app.core.models import Language
 
@@ -81,5 +83,70 @@ def vet_candidates(
         for candidate in candidates
         if _sane(candidate, original)
         and not _has_unknown_words(candidate, language, whitelist)
+    ]
+    return VetResult(accepted=accepted, rejected=len(candidates) - len(accepted))
+
+
+def _finding_counts(
+    engine: Any, text: str, language: Language, nlp: Any
+) -> Counter[str]:
+    doc = nlp.analyze(text, language.value) if nlp is not None else None
+    return Counter(
+        finding.rule_id
+        for finding in engine.check(text, language, doc=doc)
+        if finding.rule_id
+    )
+
+
+def _passes_rule_recheck(
+    candidate: str,
+    *,
+    before: Counter[str],
+    text: str,
+    start: int,
+    end: int,
+    language: Language,
+    rule_id: str | None,
+    engine: Any,
+    nlp: Any,
+) -> bool:
+    patched = text[:start] + candidate + text[end:]
+    after = _finding_counts(engine, patched, language, nlp)
+    if any(count > before[rid] for rid, count in after.items()):
+        return False  # the fix introduces new problems
+    if rule_id is not None and rule_id in before and after[rule_id] >= before[rule_id]:
+        return False  # the fix does not resolve the rule it addresses
+    return True
+
+
+def vet_suggestions(
+    candidates: list[str],
+    *,
+    original: str,
+    text: str,
+    start: int,
+    end: int,
+    language: Language,
+    rule_id: str | None,
+    engine: Any,
+    nlp: Any,
+) -> VetResult:
+    """All three stages; for on-demand suggestions where the span is known."""
+    result = vet_candidates(candidates, original=original, text=text, language=language)
+    before = _finding_counts(engine, text, language, nlp)
+    accepted = [
+        candidate
+        for candidate in result.accepted
+        if _passes_rule_recheck(
+            candidate,
+            before=before,
+            text=text,
+            start=start,
+            end=end,
+            language=language,
+            rule_id=rule_id,
+            engine=engine,
+            nlp=nlp,
+        )
     ]
     return VetResult(accepted=accepted, rejected=len(candidates) - len(accepted))
