@@ -3,6 +3,7 @@ from pathlib import Path
 from app.core.models import Finding, Language
 
 from .checks import CHECKS
+from .context import CheckContext
 from .loader import LoadedRule, RuleError, load_rules
 
 
@@ -23,11 +24,14 @@ class RuleEngine:
     def list_rules(self) -> list[LoadedRule]:
         return list(self._rules)
 
-    def check(self, text: str, language: Language) -> list[Finding]:
+    def check(
+        self, text: str, language: Language, doc: object | None = None
+    ) -> list[Finding]:
+        ctx = CheckContext(text=text, doc=doc)
         findings: list[Finding] = []
         for rule in self._rules:
             if rule.language != language:
                 continue
-            findings.extend(CHECKS[rule.spec.extends](rule, text))
+            findings.extend(CHECKS[rule.spec.extends](rule, ctx))
         findings.sort(key=lambda f: (f.span.start, f.span.end))
         return findings

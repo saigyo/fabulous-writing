@@ -2,16 +2,17 @@ import re
 
 from app.core.models import Finding, Source, Span
 
+from ..context import CheckContext
 from ..loader import LoadedRule
 from ..text import format_message
 
 
-def check_substitution(rule: LoadedRule, text: str) -> list[Finding]:
+def check_substitution(rule: LoadedRule, ctx: CheckContext) -> list[Finding]:
     spec = rule.spec
     flags = re.IGNORECASE if spec.ignorecase else 0
     findings: list[Finding] = []
     for bad, good in spec.swap.items():
-        for match in re.finditer(rf"\b(?:{bad})\b", text, flags):
+        for match in re.finditer(rf"\b(?:{bad})\b", ctx.text, flags):
             findings.append(
                 Finding(
                     category=spec.category,
