@@ -47,6 +47,10 @@ Rules:
 must fit grammatically when swapped in, preserving the surrounding words.
 - Write replacements in {language}.
 - Keep the writer's meaning; fix only the flagged issue.
+- The issue description explains the problem; it is not a transformation recipe. \
+Choose the most natural, contemporary wording a professional writer would use — \
+rephrasing is allowed — and never use archaic, stilted, or uncommon forms even if \
+they are technically correct.
 - Respond with ONLY a JSON array of strings, e.g. ["first option", "second option"].
 """
 
@@ -59,6 +63,10 @@ Rules:
 - Provide 1 or 2 rewrites. Each must be a complete replacement for the whole passage.
 - You may split a long sentence into several shorter ones.
 - Write in {language}, keep the writer's meaning and tone; fix only the flagged issue.
+- The issue description explains the problem; it is not a transformation recipe. \
+Choose the most natural, contemporary wording a professional writer would use — \
+rephrasing is allowed — and never use archaic, stilted, or uncommon forms even if \
+they are technically correct.
 - Respond with ONLY a JSON array of strings, e.g. ["first rewrite", "second rewrite"].
 """
 

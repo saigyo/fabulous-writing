@@ -102,3 +102,15 @@ def test_prompt_language_names_cover_all_languages():
     from app.core.models import Language
 
     assert set(_LANGUAGE_NAMES) == set(Language)
+
+
+def test_fix_prompts_steer_toward_idiomatic_wording():
+    from app.checkers.llm.prompts import build_rewrite_prompt, build_suggestion_prompt
+    from app.core.models import Language
+
+    for system in (
+        build_suggestion_prompt("It is very good.", 6, 10, "Weasel word.", Language.EN)[0],
+        build_rewrite_prompt("It is very good.", "Weasel word.", Language.EN)[0],
+    ):
+        assert "not a transformation recipe" in system
+        assert "archaic" in system
