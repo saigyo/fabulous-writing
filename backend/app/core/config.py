@@ -13,10 +13,27 @@ class ProviderSettings(BaseModel):
     default_provider: str = "ollama"
 
 
+class NlpSettings(BaseModel):
+    # Language code -> spaCy pipeline package. ja uses GiNZA (see design spec);
+    # ja_core_news_sm is the documented fallback.
+    models: dict[str, str] = Field(
+        default_factory=lambda: {
+            "en": "en_core_web_sm",
+            "de": "de_core_news_sm",
+            "fr": "fr_core_news_sm",
+            "es": "es_core_news_sm",
+            "it": "it_core_news_sm",
+            "ja": "ja_ginza",
+            "zh": "zh_core_web_sm",
+        }
+    )
+
+
 class Settings(BaseModel):
     db_path: Path = BACKEND_DIR / "data" / "fabulous.db"
     rules_dir: Path = BACKEND_DIR / "rules"
     providers: ProviderSettings = Field(default_factory=ProviderSettings)
+    nlp: NlpSettings = Field(default_factory=NlpSettings)
 
 
 def load_settings(config_file: Path | None = None) -> Settings:
