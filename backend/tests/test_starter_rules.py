@@ -35,7 +35,13 @@ def nlp_rule_ids(
 def test_starter_rules_load_without_errors(engine: RuleEngine) -> None:
     assert engine.errors == []
     languages = {rule.language for rule in engine.list_rules()}
-    assert languages == {Language.EN, Language.DE}
+    assert languages == {
+        Language.EN,
+        Language.DE,
+        Language.FR,
+        Language.ES,
+        Language.IT,
+    }
 
 
 def test_en_weasel_words(engine: RuleEngine) -> None:
@@ -116,3 +122,39 @@ def test_de_doppelte_woerter(engine: RuleEngine) -> None:
     assert "grammar.doppelte-woerter" in rule_ids(
         engine, "Das ist ist ein Fehler.", Language.DE
     )
+
+
+def test_fr_starter_rules(engine: RuleEngine) -> None:
+    assert "style.mots-flous" in rule_ids(engine, "C'est très intéressant.", Language.FR)
+    assert "vividness.cliches" in rule_ids(
+        engine, "Au bout du compte, ça marche.", Language.FR
+    )
+    assert "grammar.mots-repetes" in rule_ids(
+        engine, "C'est est une erreur.", Language.FR
+    )
+    long_sentence = " ".join(["mot"] * 35) + "."
+    assert "clarity.phrase-longue" in rule_ids(engine, long_sentence, Language.FR)
+
+
+def test_es_starter_rules(engine: RuleEngine) -> None:
+    assert "style.muletillas" in rule_ids(engine, "Es muy interesante.", Language.ES)
+    assert "vividness.cliches" in rule_ids(
+        engine, "Al fin y al cabo, funciona.", Language.ES
+    )
+    assert "grammar.palabras-repetidas" in rule_ids(
+        engine, "Esto es es un error.", Language.ES
+    )
+    long_sentence = " ".join(["palabra"] * 35) + "."
+    assert "clarity.frase-larga" in rule_ids(engine, long_sentence, Language.ES)
+
+
+def test_it_starter_rules(engine: RuleEngine) -> None:
+    assert "style.parole-vaghe" in rule_ids(engine, "È molto interessante.", Language.IT)
+    assert "vividness.cliches" in rule_ids(
+        engine, "Alla fine dei conti, funziona.", Language.IT
+    )
+    assert "grammar.parole-ripetute" in rule_ids(
+        engine, "Questo è è un errore.", Language.IT
+    )
+    long_sentence = " ".join(["parola"] * 35) + "."
+    assert "clarity.frase-lunga" in rule_ids(engine, long_sentence, Language.IT)

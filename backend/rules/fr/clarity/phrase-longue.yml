@@ -1,0 +1,7 @@
+extends: occurrence
+message: "Phrase de plus de 30 mots — pensez à la découper."
+level: suggestion
+category: clarity
+scope: sentence
+token: '\b\w+\b'
+max: 30

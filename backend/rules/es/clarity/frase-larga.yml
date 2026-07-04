@@ -1,0 +1,7 @@
+extends: occurrence
+message: "Frase de más de 30 palabras — considera dividirla."
+level: suggestion
+category: clarity
+scope: sentence
+token: '\b\w+\b'
+max: 30

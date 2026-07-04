@@ -1,0 +1,6 @@
+extends: existence
+message: "«%s» è una parola vaga — sii più preciso."
+level: warning
+category: style
+ignorecase: true
+tokens: [molto, davvero, abbastanza, praticamente, semplicemente]

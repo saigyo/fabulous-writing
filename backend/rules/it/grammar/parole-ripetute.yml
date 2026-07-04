@@ -1,0 +1,4 @@
+extends: repetition
+message: "«%s» è ripetuta."
+level: error
+category: grammar

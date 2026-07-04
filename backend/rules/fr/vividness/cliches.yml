@@ -1,0 +1,6 @@
+extends: existence
+message: "« %s » est un cliché — trouvez une image plus concrète."
+level: suggestion
+category: vividness
+ignorecase: true
+tokens: ["au bout du compte", "le revers de la médaille", "à la croisée des chemins"]

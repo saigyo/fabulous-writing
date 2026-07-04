@@ -1,0 +1,6 @@
+extends: existence
+message: "«%s» es un cliché — busca una imagen más concreta."
+level: suggestion
+category: vividness
+ignorecase: true
+tokens: ["al fin y al cabo", "en el fondo", "a día de hoy"]

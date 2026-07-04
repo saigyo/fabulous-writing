@@ -1,0 +1,6 @@
+extends: existence
+message: "«%s» è un cliché — trova un'immagine più concreta."
+level: suggestion
+category: vividness
+ignorecase: true
+tokens: ["alla fine dei conti", "in fin dei conti", "a conti fatti"]

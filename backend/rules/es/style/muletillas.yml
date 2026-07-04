@@ -1,0 +1,6 @@
+extends: existence
+message: "«%s» es una muletilla — sé más preciso."
+level: warning
+category: style
+ignorecase: true
+tokens: [muy, realmente, bastante, básicamente, simplemente]

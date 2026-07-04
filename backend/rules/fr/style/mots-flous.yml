@@ -1,0 +1,6 @@
+extends: existence
+message: "« %s » est un mot flou — soyez précis."
+level: warning
+category: style
+ignorecase: true
+tokens: [très, vraiment, assez, plutôt, simplement, quasiment]

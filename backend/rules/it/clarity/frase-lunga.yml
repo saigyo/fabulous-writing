@@ -1,0 +1,7 @@
+extends: occurrence
+message: "Frase di oltre 30 parole — valuta di spezzarla."
+level: suggestion
+category: clarity
+scope: sentence
+token: '\b\w+\b'
+max: 30
