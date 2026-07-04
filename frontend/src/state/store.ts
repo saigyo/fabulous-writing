@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { TrackedFinding } from '../editor/findings'
+import { mapEquivalentIds } from '../findings/equivalence'
 import { FALLBACK_LANGUAGES } from '../languages'
 import type { Domain, Language, LanguageInfo, ProviderInfo, Severity } from '../types'
 
@@ -68,12 +69,20 @@ function withEntry<T>(
   return next
 }
 
-function pruneByFinding<T>(
+/**
+ * Carry per-finding caches over to the new check results: entries move to
+ * the equivalent finding's (fresh) id and die only when their finding has
+ * no equivalent anymore.
+ */
+function migrateByFinding<T>(
   map: Record<string, T>,
-  tracked: TrackedFinding[],
+  idMap: Record<string, string>,
 ): Record<string, T> {
-  const alive = new Set(tracked.map((item) => item.finding.id))
-  return Object.fromEntries(Object.entries(map).filter(([id]) => alive.has(id)))
+  return Object.fromEntries(
+    Object.entries(map)
+      .filter(([id]) => id in idMap)
+      .map(([id, value]) => [idMap[id], value]),
+  )
 }
 
 export const useStore = create<AppState>()(
@@ -107,15 +116,17 @@ export const useStore = create<AppState>()(
       setLlmAuto: (llmAuto) => set({ llmAuto }),
       setActiveView: (activeView) => set({ activeView }),
       setTracked: (tracked, selectedId) =>
-        set((state) => ({
-          tracked,
-          selectedId,
-          // Cached LLM suggestions and rewrites die with their finding.
-          extraSuggestions: pruneByFinding(state.extraSuggestions, tracked),
-          suggestErrors: pruneByFinding(state.suggestErrors, tracked),
-          rewrites: pruneByFinding(state.rewrites, tracked),
-          rewriteErrors: pruneByFinding(state.rewriteErrors, tracked),
-        })),
+        set((state) => {
+          const idMap = mapEquivalentIds(state.tracked, tracked)
+          return {
+            tracked,
+            selectedId,
+            extraSuggestions: migrateByFinding(state.extraSuggestions, idMap),
+            suggestErrors: migrateByFinding(state.suggestErrors, idMap),
+            rewrites: migrateByFinding(state.rewrites, idMap),
+            rewriteErrors: migrateByFinding(state.rewriteErrors, idMap),
+          }
+        }),
       setSeverityFilter: (severityFilter) => set({ severityFilter }),
       setCheckPhase: (checkPhase) => set({ checkPhase }),
       setLlmError: (llmError) => set({ llmError }),

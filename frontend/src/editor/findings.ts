@@ -1,6 +1,7 @@
 import type { ChangeSpec, EditorState } from '@codemirror/state'
 import { StateEffect, StateField } from '@codemirror/state'
 import { Decoration, EditorView, type DecorationSet } from '@codemirror/view'
+import { findEquivalent } from '../findings/equivalence'
 import type { Finding, Source } from '../types'
 
 export interface TrackedFinding {
@@ -80,19 +81,7 @@ function equivalentId(
   items: TrackedFinding[],
   previous: TrackedFinding | undefined,
 ): string | null {
-  if (!previous) return null
-  const candidates = items.filter(
-    (item) =>
-      item.finding.category === previous.finding.category &&
-      item.finding.rule_id === previous.finding.rule_id &&
-      item.finding.span.text === previous.finding.span.text &&
-      item.from < previous.to &&
-      previous.from < item.to,
-  )
-  candidates.sort(
-    (a, b) => Math.abs(a.from - previous.from) - Math.abs(b.from - previous.from),
-  )
-  return candidates[0]?.finding.id ?? null
+  return findEquivalent(items, previous)?.finding.id ?? null
 }
 
 function buildDecorations(state: FindingsState): DecorationSet {
