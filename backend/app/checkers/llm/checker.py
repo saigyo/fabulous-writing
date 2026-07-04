@@ -1,5 +1,6 @@
 import json
 import re
+from pathlib import Path
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -53,9 +54,15 @@ def parse_findings(response: str) -> list[RawFinding]:
 
 
 class LLMChecker:
-    def __init__(self, provider: LLMProvider, vet: bool = True) -> None:
+    def __init__(
+        self,
+        provider: LLMProvider,
+        vet: bool = True,
+        dictionaries_dir: "Path | None" = None,
+    ) -> None:
         self.provider = provider
         self.vet = vet
+        self.dictionaries_dir = dictionaries_dir
 
     async def check(self, text: str, language: Language) -> list[Finding]:
         system, user = build_prompt(text, language)
@@ -69,7 +76,11 @@ class LLMChecker:
             if self.vet and suggestions:
                 # Cheap stages only; a bad fix does not invalidate the diagnosis.
                 suggestions = vet_candidates(
-                    suggestions, original=span.text, text=text, language=language
+                    suggestions,
+                    original=span.text,
+                    text=text,
+                    language=language,
+                    dictionaries_dir=self.dictionaries_dir,
                 ).accepted
             findings.append(
                 Finding(

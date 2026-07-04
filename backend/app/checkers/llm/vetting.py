@@ -8,6 +8,7 @@ import re
 import threading
 from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from app.core.models import Language
@@ -29,6 +30,13 @@ _MAX_LENGTH_RATIO = 4.0
 _checkers: dict[str, object] = {}
 _checkers_lock = threading.Lock()
 
+# Hunspell dictionaries (spylls) keyed by (directory, language code). When
+# installed via scripts/install-dictionaries.sh they make the gate
+# morphology-aware: affix forms and German compounds resolve properly instead
+# of relying on the frequency list alone.
+_dictionaries: dict[tuple[str, str], object] = {}
+_dictionaries_lock = threading.Lock()
+
 
 @dataclass
 class VetResult:
@@ -48,6 +56,25 @@ def _spell_checker(code: str):
         return _checkers[code]
 
 
+def _hunspell(code: str, dictionaries_dir: Path | None):
+    if dictionaries_dir is None:
+        return None
+    key = (str(dictionaries_dir), code)
+    with _dictionaries_lock:
+        if key not in _dictionaries:
+            _dictionaries[key] = None  # degrade open
+            if (dictionaries_dir / f"{code}.dic").is_file():
+                try:
+                    from spylls.hunspell import Dictionary
+
+                    _dictionaries[key] = Dictionary.from_files(
+                        str(dictionaries_dir / code)
+                    )
+                except Exception:
+                    pass
+        return _dictionaries[key]
+
+
 def _sane(candidate: str, original: str) -> bool:
     stripped = candidate.strip()
     if not stripped or stripped == original.strip():
@@ -58,7 +85,12 @@ def _sane(candidate: str, original: str) -> bool:
     return _MIN_LENGTH_RATIO <= ratio <= _MAX_LENGTH_RATIO
 
 
-def _has_unknown_words(candidate: str, language: Language, whitelist: set[str]) -> bool:
+def _has_unknown_words(
+    candidate: str,
+    language: Language,
+    whitelist: set[str],
+    dictionaries_dir: Path | None = None,
+) -> bool:
     code = _SPELL_LANGUAGES.get(language)
     if code is None:
         return False
@@ -66,15 +98,34 @@ def _has_unknown_words(candidate: str, language: Language, whitelist: set[str]) 
     if checker is None:
         return False
     words = [
-        word.lower()
+        word
         for word in _WORD.findall(candidate)
         if not any(ch.isdigit() for ch in word) and word.lower() not in whitelist
     ]
-    return bool(checker.unknown(words))
+    unknown = {word.lower() for word in words} & checker.unknown(
+        [word.lower() for word in words]
+    )
+    if not unknown:
+        return False
+    dictionary = _hunspell(code, dictionaries_dir)
+    if dictionary is None:
+        return True
+    # Union gate: hunspell rescues frequency-unknown words that are
+    # morphologically valid (inflections, German compounds).
+    return any(
+        not dictionary.lookup(word)  # type: ignore[attr-defined]
+        for word in words
+        if word.lower() in unknown
+    )
 
 
 def vet_candidates(
-    candidates: list[str], *, original: str, text: str, language: Language
+    candidates: list[str],
+    *,
+    original: str,
+    text: str,
+    language: Language,
+    dictionaries_dir: Path | None = None,
 ) -> VetResult:
     """Stages 1–2: sanity filters and the spell gate with a document whitelist."""
     whitelist = {word.lower() for word in _WORD.findall(text)}
@@ -82,7 +133,7 @@ def vet_candidates(
         candidate.strip()
         for candidate in candidates
         if _sane(candidate, original)
-        and not _has_unknown_words(candidate, language, whitelist)
+        and not _has_unknown_words(candidate, language, whitelist, dictionaries_dir)
     ]
     return VetResult(accepted=accepted, rejected=len(candidates) - len(accepted))
 
@@ -130,9 +181,16 @@ def vet_suggestions(
     rule_id: str | None,
     engine: Any,
     nlp: Any,
+    dictionaries_dir: Path | None = None,
 ) -> VetResult:
     """All three stages; for on-demand suggestions where the span is known."""
-    result = vet_candidates(candidates, original=original, text=text, language=language)
+    result = vet_candidates(
+        candidates,
+        original=original,
+        text=text,
+        language=language,
+        dictionaries_dir=dictionaries_dir,
+    )
     before = _finding_counts(engine, text, language, nlp)
     accepted = [
         candidate

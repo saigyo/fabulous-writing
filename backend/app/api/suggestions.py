@@ -85,6 +85,7 @@ async def create_suggestions(
             rule_id=body.rule_id,
             engine=request.app.state.rule_engine,
             nlp=request.app.state.nlp,
+            dictionaries_dir=request.app.state.settings.dictionaries_dir,
         )
         suggestions, rejected = result.accepted, result.rejected
     return SuggestionResponse(

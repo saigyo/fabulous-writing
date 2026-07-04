@@ -65,6 +65,7 @@ async def create_check(request: Request, body: CheckRequest) -> CheckStatus:
                     body.text,
                     body.language,
                     vet=app.state.settings.vet_suggestions,
+                    dictionaries_dir=app.state.settings.dictionaries_dir,
                 )
             )
         )
@@ -80,10 +81,16 @@ async def create_check(request: Request, body: CheckRequest) -> CheckStatus:
 
 
 async def _run_llm(
-    job: CheckJob, provider: LLMProvider, text: str, language: Language, vet: bool = True
+    job: CheckJob,
+    provider: LLMProvider,
+    text: str,
+    language: Language,
+    vet: bool = True,
+    dictionaries_dir: Any = None,
 ) -> None:
     try:
-        findings = await LLMChecker(provider, vet=vet).check(text, language)
+        checker = LLMChecker(provider, vet=vet, dictionaries_dir=dictionaries_dir)
+        findings = await checker.check(text, language)
         job.add_findings("llm", drop_overlapping(findings, job.findings))
     except Exception as exc:
         error = str(exc) or type(exc).__name__

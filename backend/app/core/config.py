@@ -37,6 +37,9 @@ class Settings(BaseModel):
     seed_terminology: bool = True
     # Deterministically vet LLM-generated suggestions (spell gate + rule re-check).
     vet_suggestions: bool = True
+    # Hunspell dictionaries (<lang>.aff/.dic) for the morphology-aware spell
+    # gate; install via scripts/install-dictionaries.sh. Missing files are fine.
+    dictionaries_dir: Path = BACKEND_DIR / "dictionaries"
     providers: ProviderSettings = Field(default_factory=ProviderSettings)
     nlp: NlpSettings = Field(default_factory=NlpSettings)
 

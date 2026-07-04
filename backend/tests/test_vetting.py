@@ -1,3 +1,7 @@
+from pathlib import Path
+
+import pytest
+
 from app.checkers.llm.vetting import vet_candidates
 from app.core.models import Language
 
@@ -159,3 +163,61 @@ class TestRuleRecheck:
             rule_id=None,
         )
         assert result.accepted == ["really"]
+
+
+DICTS = Path(__file__).parent.parent / "dictionaries"
+
+needs_dictionaries = pytest.mark.skipif(
+    not (DICTS / "de.dic").is_file(),
+    reason="hunspell dictionaries not installed (scripts/install-dictionaries.sh)",
+)
+
+
+@needs_dictionaries
+class TestHunspellGate:
+    def test_novel_compound_accepted_with_dictionary(self) -> None:
+        # "Satzumstellung" is in neither the document nor the frequency list;
+        # only hunspell compounding recognizes it. M1 rejected this (false reject).
+        candidate = "eine Satzumstellung würde helfen"
+        without = vet_candidates(
+            [candidate], original=DE_ORIGINAL, text=DE_TEXT, language=Language.DE
+        )
+        assert without.rejected == 1
+        with_dict = vet_candidates(
+            [candidate],
+            original=DE_ORIGINAL,
+            text=DE_TEXT,
+            language=Language.DE,
+            dictionaries_dir=DICTS,
+        )
+        assert with_dict.rejected == 0
+
+    def test_archaic_forms_still_rejected_with_dictionary(self) -> None:
+        result = vet_candidates(
+            ["empföhle Ihnen den Editor sofort", "empfähle Ihnen den Editor sofort"],
+            original=DE_ORIGINAL,
+            text=DE_TEXT,
+            language=Language.DE,
+            dictionaries_dir=DICTS,
+        )
+        assert result.rejected == 2
+
+    def test_english_typo_still_rejected_with_dictionary(self) -> None:
+        result = vet_candidates(
+            ["you will recieve updates"],
+            original="you will get updates",
+            text="Sign up. You will get updates.",
+            language=Language.EN,
+            dictionaries_dir=DICTS,
+        )
+        assert result.rejected == 1
+
+    def test_missing_dictionary_directory_degrades_to_frequency(self) -> None:
+        result = vet_candidates(
+            ["you will receive updates"],
+            original="you will get updates",
+            text="Sign up. You will get updates.",
+            language=Language.EN,
+            dictionaries_dir=Path("/nonexistent"),
+        )
+        assert result.rejected == 0
