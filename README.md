@@ -13,7 +13,11 @@ Checking happens in two phases:
 2. **Deterministic local rules** in a Vale-style YAML formalism — easy to read, easy to
    extend by hand or with an agentic coding tool.
 
-Domain-specific terminology is managed per domain and language (English and German).
+Supported languages: English, German, French, Spanish, Italian, Japanese, and
+Chinese. Domain-specific terminology is managed per domain and language.
+`GET /api/languages` reports which languages have their spaCy model installed;
+without it a language still gets regex rules, terminology, and LLM checks
+("basic checks only" in the UI).
 
 ## Structure
 
@@ -78,6 +82,9 @@ message: "Sentence longer than 30 words — consider splitting it."
 scope: sentence
 token: '\b\w+\b'
 max: 30
+# For languages without whitespace word boundaries (ja/zh), count spaCy
+# tokens instead of regex matches (requires the language's spaCy model):
+#   count: tokens
 
 # repetition: flag adjacent duplicated words ("the the")
 extends: repetition
@@ -128,7 +135,9 @@ Patterns are validated when rules load; errors appear in `GET /api/rules`.
 `ja_ginza` model — it parses Japanese markedly better than the generic alternative and
 adds bunsetsu APIs and Sudachi normalized forms. Accepted trade-off: GiNZA's releases
 lag spaCy's and pin the usable spaCy version; if that ever blocks an upgrade, switch
-Japanese to the lighter official model in `config.yaml`:
+Japanese to the lighter official model in `config.yaml` (known instance: GiNZA 5.2's
+pipeline config is rejected by newer confection versions; the backend transparently
+retries loading with an explicit `split_mode`):
 
 ```yaml
 nlp:
@@ -141,6 +150,11 @@ nlp:
 Manage domains and terms in the app's *Terminology* view or via the API. A term has a
 preferred form, forbidden variants, an optional definition, and a language; forbidden
 variants found in the text are flagged with the preferred term as a one-click fix.
+
+For Japanese and Chinese, variants are matched over spaCy tokens (PhraseMatcher) —
+`\b` word boundaries don't exist in CJK scripts. Without the language's model,
+matching falls back to plain substring search, which may over-match inside longer
+words.
 
 ## API
 
@@ -157,6 +171,7 @@ curl localhost:8000/api/checks/<check_id>             # polling fallback
 curl -X POST localhost:8000/api/suggestions -H 'Content-Type: application/json' \
   -d '{"text": "It is very good.", "span": {"start": 6, "end": 10}, "message": "Weasel word.", "language": "en", "scope": "sentence"}'
 
+curl localhost:8000/api/languages                     # languages + NLP model availability
 curl localhost:8000/api/providers                     # LLM provider availability
 curl localhost:8000/api/rules                         # loaded rules + errors
 curl localhost:8000/api/domains                       # terminology CRUD under /api/domains, /api/terms
