@@ -42,6 +42,10 @@ npm install
 npm run dev          # http://localhost:5173
 ```
 
+The header's **Example** button fills the editor with a deliberately flawed demo
+text for the selected language (from `backend/demos/`) — a quick way to see the
+rules, terminology, and LLM checks in action.
+
 For LLM checking, either run [Ollama](https://ollama.com) locally (models are
 discovered automatically) or export `ANTHROPIC_API_KEY` and pick the `claude`
 provider in the header. Rules and terminology checks work without any LLM.
@@ -180,6 +184,7 @@ curl -X POST localhost:8000/api/suggestions -H 'Content-Type: application/json' 
   -d '{"text": "It is very good.", "span": {"start": 6, "end": 10}, "message": "Weasel word.", "language": "en", "scope": "sentence"}'
 
 curl localhost:8000/api/languages                     # languages + NLP model availability
+curl localhost:8000/api/languages/en/demo             # flawed demo text per language
 curl localhost:8000/api/providers                     # LLM provider availability
 curl localhost:8000/api/rules                         # loaded rules + errors
 curl localhost:8000/api/domains                       # terminology CRUD under /api/domains, /api/terms

@@ -16,6 +16,15 @@ export function getEditorView(): EditorView | null {
   return view
 }
 
+/** Replace the whole document (e.g. with a demo text). */
+export function setEditorText(text: string): void {
+  if (!view) return
+  view.dispatch({
+    changes: { from: 0, to: view.state.doc.length, insert: text },
+  })
+  view.focus()
+}
+
 /** Select a finding: highlight it in the editor and scroll it into view. */
 export function selectFinding(id: string | null): void {
   if (!view) return

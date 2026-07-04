@@ -91,6 +91,9 @@ export const getProviders = () => request<ProviderInfo[]>('/api/providers')
 
 export const getLanguages = () => request<LanguageInfo[]>('/api/languages')
 
+export const getDemoText = (language: Language) =>
+  request<{ text: string }>(`/api/languages/${language}/demo`)
+
 export const getDomains = () => request<Domain[]>('/api/domains')
 export const createDomain = (name: string, description = '') =>
   request<Domain>('/api/domains', {

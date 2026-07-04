@@ -1,8 +1,9 @@
 import { useEffect } from 'react'
 import './App.css'
-import { getDomains, getLanguages, getProviders } from './api/client'
+import { getDemoText, getDomains, getLanguages, getProviders } from './api/client'
 import { runCheck } from './checking/controller'
 import { Editor } from './editor/Editor'
+import { setEditorText } from './editor/editorRef'
 import { Sidebar } from './sidebar/Sidebar'
 import { languageLabel } from './languages'
 import { useStore } from './state/store'
@@ -125,6 +126,18 @@ function Header() {
           />
           auto
         </label>
+        <button
+          className="example-button"
+          title="Replace the editor content with a flawed example text for the selected language"
+          onClick={() => {
+            store.setActiveView('editor')
+            void getDemoText(store.language)
+              .then(({ text }) => setEditorText(text))
+              .catch(() => {})
+          }}
+        >
+          Example
+        </button>
         <button
           className="check-button"
           disabled={store.checkPhase !== 'idle'}

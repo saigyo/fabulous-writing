@@ -68,6 +68,20 @@
   color: var(--text);
 }
 
+.example-button {
+  padding: 0.35rem 0.8rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.example-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .check-button {
   padding: 0.35rem 1.1rem;
   border-radius: 6px;
