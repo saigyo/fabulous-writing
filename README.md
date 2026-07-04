@@ -5,6 +5,13 @@ editor is continuously checked for spelling, grammar, style, clarity, vividness,
 correctness, and domain terminology. A sidebar shows findings per category; clicking a
 finding highlights it in the text, explains the issue, and offers one-click suggestions.
 
+![Editor with categorized findings; the selected terminology finding offers a one-click fix](docs/images/editor.png)
+
+<p>
+  <img src="docs/images/rules.png" alt="Live rule catalog for the selected language" width="49.5%" />
+  <img src="docs/images/terminology.png" alt="Terminology management with the seeded example domain" width="49.5%" />
+</p>
+
 Checking happens in two phases:
 
 1. **LLM checking** with pluggable providers — local Ollama models or the Claude API.
