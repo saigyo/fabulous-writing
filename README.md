@@ -87,6 +87,55 @@ message: "'%s' is repeated."
 Invalid rule files are reported by `GET /api/rules` (and at startup) but never break
 the engine.
 
+### Advanced linguistic rules (spaCy)
+
+Two further rule types use [spaCy](https://spacy.io) for tokenization, POS tags, and
+dependency parses. They embed spaCy's native pattern syntax directly:
+
+```yaml
+# token_pattern: match token sequences (spaCy Matcher syntax)
+# https://spacy.io/usage/rule-based-matching#matcher
+extends: token_pattern
+message: "'%s' hides the action in a noun — use the verb directly."
+category: style
+pattern:
+  - {LEMMA: make}
+  - {POS: DET, OP: "?"}
+  - {LOWER: {IN: [decision, assessment]}}
+
+# dependency: match syntax trees (spaCy DependencyMatcher syntax)
+# https://spacy.io/usage/rule-based-matching#dependencymatcher
+extends: dependency
+message: "'%s' is passive voice — consider naming who does the action."
+category: style
+pattern:
+  - {RIGHT_ID: verb, RIGHT_ATTRS: {TAG: VBN}}
+  - {LEFT_ID: verb, REL_OP: ">", RIGHT_ID: aux, RIGHT_ATTRS: {DEP: auxpass}}
+```
+
+These rules need the language's spaCy model:
+
+```sh
+cd backend
+./scripts/install-models.sh en de        # or: fr es it ja zh
+```
+
+Without the model, NLP rules are skipped (reported in the check response's
+`skipped_rules`) while regex rules, terminology, and LLM checks keep working.
+Patterns are validated when rules load; errors appear in `GET /api/rules`.
+
+**Japanese and GiNZA:** Japanese defaults to [GiNZA](https://github.com/megagonlabs/ginza)'s
+`ja_ginza` model — it parses Japanese markedly better than the generic alternative and
+adds bunsetsu APIs and Sudachi normalized forms. Accepted trade-off: GiNZA's releases
+lag spaCy's and pin the usable spaCy version; if that ever blocks an upgrade, switch
+Japanese to the lighter official model in `config.yaml`:
+
+```yaml
+nlp:
+  models:
+    ja: ja_core_news_sm
+```
+
 ## Terminology
 
 Manage domains and terms in the app's *Terminology* view or via the API. A term has a

@@ -9,3 +9,15 @@ providers:
   ollama_model: llama3.1
   anthropic_model: claude-sonnet-5
   default_provider: ollama
+
+# spaCy models per language for token_pattern/dependency rules.
+# Install via ./scripts/install-models.sh <lang>...
+# nlp:
+#   models:
+#     en: en_core_web_sm
+#     de: de_core_news_sm
+#     fr: fr_core_news_sm
+#     es: es_core_news_sm
+#     it: it_core_news_sm
+#     ja: ja_ginza          # fallback: ja_core_news_sm (see README)
+#     zh: zh_core_web_sm
