@@ -36,39 +36,41 @@ export function Sidebar() {
 
   return (
     <aside className="sidebar">
-      <div className="sidebar-header">
-        <h2>
-          Findings <span className="count-badge">{total}</span>
-        </h2>
-        {checkPhase !== 'idle' && (
-          <span className="check-status">
-            {checkPhase === 'llm' ? 'LLM checking…' : 'checking…'}
-          </span>
+      <div className="sidebar-top">
+        <div className="sidebar-header">
+          <h2>
+            Findings <span className="count-badge">{total}</span>
+          </h2>
+          {checkPhase !== 'idle' && (
+            <span className="check-status">
+              {checkPhase === 'llm' ? 'LLM checking…' : 'checking…'}
+            </span>
+          )}
+        </div>
+        {total > 0 && (
+          <div className="severity-filter">
+            {SEVERITIES.map((severity) => (
+              <button
+                key={severity}
+                className={`severity-filter-button severity-${severity}${
+                  severityFilter === severity ? ' active' : ''
+                }`}
+                title={
+                  severityFilter === severity
+                    ? 'Click to show all findings again'
+                    : `Show only ${severity}s`
+                }
+                onClick={() =>
+                  setSeverityFilter(severityFilter === severity ? null : severity)
+                }
+              >
+                {counts[severity]} {severity}
+                {counts[severity] === 1 ? '' : 's'}
+              </button>
+            ))}
+          </div>
         )}
       </div>
-      {total > 0 && (
-        <div className="severity-filter">
-          {SEVERITIES.map((severity) => (
-            <button
-              key={severity}
-              className={`severity-filter-button severity-${severity}${
-                severityFilter === severity ? ' active' : ''
-              }`}
-              title={
-                severityFilter === severity
-                  ? 'Click to show all findings again'
-                  : `Show only ${severity}s`
-              }
-              onClick={() =>
-                setSeverityFilter(severityFilter === severity ? null : severity)
-              }
-            >
-              {counts[severity]} {severity}
-              {counts[severity] === 1 ? '' : 's'}
-            </button>
-          ))}
-        </div>
-      )}
       {llmError && <div className="llm-error">LLM check failed: {llmError}</div>}
       {total === 0 && checkPhase === 'idle' && (
         <p className="all-clear">No issues found. Fabulous!</p>
