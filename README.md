@@ -48,6 +48,7 @@ without it a language still gets regex rules, terminology, and LLM checks
 - `backend/` — Python/FastAPI checking service (rule engine, terminology, LLM providers, check API)
 - `frontend/` — React single-page app (CodeMirror editor + findings sidebar)
 - `docs/superpowers/specs/` — design documents
+- `docs/LOGBOOK.md` — development log: session summaries with commit pointers
 
 ## Running
 
