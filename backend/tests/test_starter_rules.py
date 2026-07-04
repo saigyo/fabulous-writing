@@ -3,7 +3,9 @@ from pathlib import Path
 import pytest
 
 from app.checkers.rules.engine import RuleEngine
+from app.core.config import NlpSettings
 from app.core.models import Language
+from app.nlp.registry import NlpRegistry
 
 RULES_DIR = Path(__file__).parent.parent / "rules"
 
@@ -13,8 +15,21 @@ def engine() -> RuleEngine:
     return RuleEngine(RULES_DIR)
 
 
+@pytest.fixture(scope="module")
+def registry() -> NlpRegistry:
+    return NlpRegistry(NlpSettings().models)
+
+
 def rule_ids(engine: RuleEngine, text: str, language: Language) -> set[str]:
     return {f.rule_id for f in engine.check(text, language) if f.rule_id}
+
+
+def nlp_rule_ids(
+    engine: RuleEngine, registry: NlpRegistry, text: str, language: Language
+) -> set[str]:
+    doc = registry.analyze(text, language.value)
+    assert doc is not None
+    return {f.rule_id for f in engine.check(text, language, doc=doc) if f.rule_id}
 
 
 def test_starter_rules_load_without_errors(engine: RuleEngine) -> None:
@@ -52,9 +67,31 @@ def test_en_cliches(engine: RuleEngine) -> None:
     )
 
 
-def test_en_passive_voice_heuristic(engine: RuleEngine) -> None:
-    assert "style.passive-voice" in rule_ids(
-        engine, "The report was written by the team.", Language.EN
+def test_en_passive_voice_dependency(engine: RuleEngine, registry: NlpRegistry) -> None:
+    assert "style.passive-voice" in nlp_rule_ids(
+        engine, registry, "The report was written by the team.", Language.EN
+    )
+    assert "style.passive-voice" not in nlp_rule_ids(
+        engine, registry, "The team wrote the report.", Language.EN
+    )
+    # be + adjective must not be flagged (old regex false positive).
+    assert "style.passive-voice" not in nlp_rule_ids(
+        engine, registry, "The team was tired.", Language.EN
+    )
+
+
+def test_en_nominalizations(engine: RuleEngine, registry: NlpRegistry) -> None:
+    assert "style.nominalizations" in nlp_rule_ids(
+        engine, registry, "We made a decision to proceed.", Language.EN
+    )
+
+
+def test_de_passiv(engine: RuleEngine, registry: NlpRegistry) -> None:
+    assert "style.passiv" in nlp_rule_ids(
+        engine, registry, "Der Bericht wurde vom Team geschrieben.", Language.DE
+    )
+    assert "style.passiv" not in nlp_rule_ids(
+        engine, registry, "Das Team schrieb den Bericht.", Language.DE
     )
 
 

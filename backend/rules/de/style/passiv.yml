@@ -1,0 +1,8 @@
+extends: token_pattern
+message: "'%s' ist Passiv — wer handelt?"
+level: suggestion
+category: style
+pattern:
+  - {LEMMA: werden}
+  - {OP: "{,4}", TAG: {NOT_IN: [VVPP, $.]}}
+  - {TAG: VVPP}

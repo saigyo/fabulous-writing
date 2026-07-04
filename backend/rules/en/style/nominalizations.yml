@@ -1,0 +1,8 @@
+extends: token_pattern
+message: "'%s' hides the action in a noun — use the verb directly (decide, assess, conclude ...)."
+level: suggestion
+category: style
+pattern:
+  - {LEMMA: {IN: [make, take, give, have, reach]}}
+  - {POS: DET, OP: "?"}
+  - {LOWER: {IN: [decision, decisions, assessment, assumption, consideration, conclusion]}}

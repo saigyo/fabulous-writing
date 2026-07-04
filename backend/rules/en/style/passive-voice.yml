@@ -1,7 +1,7 @@
-extends: existence
-message: "'%s' looks like passive voice — consider naming who does the action."
+extends: dependency
+message: "'%s' is passive voice — consider naming who does the action."
 level: suggestion
 category: style
-ignorecase: true
-raw:
-  - '\b(?:is|are|was|were|been|being)\s+\w+(?:ed|en|wn|ne)\b'
+pattern:
+  - {RIGHT_ID: verb, RIGHT_ATTRS: {TAG: VBN}}
+  - {LEFT_ID: verb, REL_OP: ">", RIGHT_ID: aux, RIGHT_ATTRS: {DEP: auxpass}}
