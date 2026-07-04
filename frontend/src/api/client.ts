@@ -3,6 +3,7 @@ import type {
   Domain,
   Finding,
   Language,
+  LanguageInfo,
   ProviderInfo,
   Term,
 } from '../types'
@@ -87,6 +88,8 @@ export const postSuggestions = (body: SuggestionRequest) =>
   })
 
 export const getProviders = () => request<ProviderInfo[]>('/api/providers')
+
+export const getLanguages = () => request<LanguageInfo[]>('/api/languages')
 
 export const getDomains = () => request<Domain[]>('/api/domains')
 export const createDomain = (name: string, description = '') =>

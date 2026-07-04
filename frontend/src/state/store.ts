@@ -1,7 +1,8 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { TrackedFinding } from '../editor/findings'
-import type { Domain, Language, ProviderInfo } from '../types'
+import { FALLBACK_LANGUAGES } from '../languages'
+import type { Domain, Language, LanguageInfo, ProviderInfo } from '../types'
 
 export type CheckPhase = 'idle' | 'fast' | 'llm'
 export type ActiveView = 'editor' | 'terminology'
@@ -19,6 +20,7 @@ interface AppState {
   llmError: string | null
   providers: ProviderInfo[]
   domains: Domain[]
+  languages: LanguageInfo[]
   extraSuggestions: Record<string, string[]>
   suggestPendingId: string | null
   suggestErrors: Record<string, string>
@@ -37,6 +39,7 @@ interface AppState {
   setLlmError: (error: string | null) => void
   setProviders: (providers: ProviderInfo[]) => void
   setDomains: (domains: Domain[]) => void
+  setLanguages: (languages: LanguageInfo[]) => void
   setSuggestPending: (findingId: string | null) => void
   setExtraSuggestions: (findingId: string, suggestions: string[]) => void
   setSuggestError: (findingId: string, error: string | null) => void
@@ -84,6 +87,7 @@ export const useStore = create<AppState>()(
       llmError: null,
       providers: [],
       domains: [],
+      languages: FALLBACK_LANGUAGES,
       extraSuggestions: {},
       suggestPendingId: null,
       suggestErrors: {},
@@ -111,6 +115,7 @@ export const useStore = create<AppState>()(
       setLlmError: (llmError) => set({ llmError }),
       setProviders: (providers) => set({ providers }),
       setDomains: (domains) => set({ domains }),
+      setLanguages: (languages) => set({ languages }),
       setSuggestPending: (suggestPendingId) => set({ suggestPendingId }),
       setExtraSuggestions: (findingId, suggestions) =>
         set((state) => ({

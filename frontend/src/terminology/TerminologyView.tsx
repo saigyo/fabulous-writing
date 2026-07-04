@@ -102,6 +102,7 @@ interface TermTableProps {
 }
 
 function TermTable({ domainId, terms, onChanged }: TermTableProps) {
+  const languages = useStore((s) => s.languages)
   const [language, setLanguage] = useState<Language>('en')
   const [preferred, setPreferred] = useState('')
   const [variants, setVariants] = useState('')
@@ -163,8 +164,11 @@ function TermTable({ domainId, terms, onChanged }: TermTableProps) {
                 value={language}
                 onChange={(event) => setLanguage(event.target.value as Language)}
               >
-                <option value="en">en</option>
-                <option value="de">de</option>
+                {languages.map((info) => (
+                  <option key={info.code} value={info.code}>
+                    {info.code}
+                  </option>
+                ))}
               </select>
             </td>
             <td>

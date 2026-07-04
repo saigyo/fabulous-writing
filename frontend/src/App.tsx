@@ -1,9 +1,10 @@
 import { useEffect } from 'react'
 import './App.css'
-import { getDomains, getProviders } from './api/client'
+import { getDomains, getLanguages, getProviders } from './api/client'
 import { runCheck } from './checking/controller'
 import { Editor } from './editor/Editor'
 import { Sidebar } from './sidebar/Sidebar'
+import { languageLabel } from './languages'
 import { useStore } from './state/store'
 import { TerminologyView } from './terminology/TerminologyView'
 import type { Language } from './types'
@@ -32,6 +33,7 @@ function Header() {
   useEffect(() => {
     getProviders().then(store.setProviders).catch(() => store.setProviders([]))
     getDomains().then(store.setDomains).catch(() => store.setDomains([]))
+    getLanguages().then(store.setLanguages).catch(() => {})
   }, [])
 
   const activeProvider = store.providers.find((p) => p.name === store.provider)
@@ -62,8 +64,11 @@ function Header() {
             value={store.language}
             onChange={(e) => store.setLanguage(e.target.value as Language)}
           >
-            <option value="en">English</option>
-            <option value="de">Deutsch</option>
+            {store.languages.map((info) => (
+              <option key={info.code} value={info.code}>
+                {languageLabel(info)}
+              </option>
+            ))}
           </select>
         </label>
         <label>

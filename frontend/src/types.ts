@@ -9,7 +9,14 @@ export type Category =
 
 export type Severity = 'error' | 'warning' | 'suggestion'
 export type Source = 'llm' | 'rule' | 'terminology'
-export type Language = 'en' | 'de'
+export type Language = 'en' | 'de' | 'fr' | 'es' | 'it' | 'ja' | 'zh'
+
+export interface LanguageInfo {
+  code: Language
+  name: string
+  nlp_available: boolean
+  model: string | null
+}
 
 export interface Span {
   start: number
