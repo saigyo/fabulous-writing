@@ -66,7 +66,12 @@ const loginRow = page.locator('.finding-row', { hasText: 'login' }).first()
 await loginRow.click()
 await page.waitForTimeout(400)
 await loginRow.evaluate((el) => el.closest('.sidebar')?.scrollBy(0, 200))
-await page.waitForTimeout(200)
+// Catch the live LLM status with its token counter (needs a running Ollama).
+await page
+  .locator('.check-status', { hasText: 'tokens' })
+  .waitFor({ timeout: 30000 })
+  .catch(() => console.log('note: no LLM token status captured (LLM idle or too fast)'))
+await page.waitForTimeout(3000) // let the timer/counter reach a representative value
 await page.screenshot({ path: `${outDir}/editor.png` })
 console.log('editor.png captured, findings:', await page.locator('.finding-row').count())
 
