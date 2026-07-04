@@ -1,0 +1,6 @@
+extends: occurrence
+message: "句子过长（超过 40 个词）— 建议拆分。"
+level: suggestion
+category: clarity
+count: tokens
+max: 40

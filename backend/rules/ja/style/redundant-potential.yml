@@ -1,0 +1,9 @@
+extends: token_pattern
+message: "「%s」は冗長です —「できる」の形で十分です。"
+level: suggestion
+category: style
+pattern:
+  - {LEMMA: する}
+  - {TEXT: こと}
+  - {TEXT: が}
+  - {LEMMA: できる}

@@ -1,0 +1,6 @@
+extends: token_pattern
+message: "“%s”是填充词 — 可以删去或改为具体说明。"
+level: suggestion
+category: style
+pattern:
+  - {TEXT: {IN: [基本上, 众所周知]}}

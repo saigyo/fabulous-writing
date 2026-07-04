@@ -1,0 +1,6 @@
+extends: occurrence
+message: "文が長すぎます（50トークン超）— 分割を検討してください。"
+level: suggestion
+category: clarity
+count: tokens
+max: 50

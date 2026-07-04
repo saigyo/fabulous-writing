@@ -35,13 +35,7 @@ def nlp_rule_ids(
 def test_starter_rules_load_without_errors(engine: RuleEngine) -> None:
     assert engine.errors == []
     languages = {rule.language for rule in engine.list_rules()}
-    assert languages == {
-        Language.EN,
-        Language.DE,
-        Language.FR,
-        Language.ES,
-        Language.IT,
-    }
+    assert languages == set(Language)
 
 
 def test_en_weasel_words(engine: RuleEngine) -> None:
@@ -158,3 +152,53 @@ def test_it_starter_rules(engine: RuleEngine) -> None:
     )
     long_sentence = " ".join(["parola"] * 35) + "."
     assert "clarity.frase-lunga" in rule_ids(engine, long_sentence, Language.IT)
+
+
+def test_ja_redundant_potential(engine: RuleEngine, registry: NlpRegistry) -> None:
+    assert "style.redundant-potential" in nlp_rule_ids(
+        engine, registry, "私たちはこの機能を使用することができます。", Language.JA
+    )
+    assert "style.redundant-potential" not in nlp_rule_ids(
+        engine, registry, "私たちはこの機能を使えます。", Language.JA
+    )
+
+
+def test_ja_long_sentence_token_count(engine: RuleEngine, registry: NlpRegistry) -> None:
+    long_sentence = "この機能はとても便利で、" * 12 + "使いやすいです。"
+    assert "clarity.long-sentence" in nlp_rule_ids(
+        engine, registry, long_sentence, Language.JA
+    )
+    assert "clarity.long-sentence" not in nlp_rule_ids(
+        engine, registry, "短い文です。", Language.JA
+    )
+
+
+def test_ja_sentence_splitting_on_kuten(registry: NlpRegistry) -> None:
+    from app.checkers.rules.text import split_sentences
+
+    text = "最初の文です。二番目の文です。"
+    doc = registry.analyze(text, "ja")
+    assert doc is not None
+    assert [s for _, _, s in split_sentences(text, doc=doc)] == [
+        "最初の文です。",
+        "二番目の文です。",
+    ]
+
+
+def test_zh_filler(engine: RuleEngine, registry: NlpRegistry) -> None:
+    assert "style.filler" in nlp_rule_ids(
+        engine, registry, "基本上，这个方法有效。", Language.ZH
+    )
+    assert "style.filler" not in nlp_rule_ids(
+        engine, registry, "这个方法有效。", Language.ZH
+    )
+
+
+def test_zh_long_sentence_token_count(engine: RuleEngine, registry: NlpRegistry) -> None:
+    long_sentence = "这个功能非常好用而且" * 10 + "大家都喜欢。"
+    assert "clarity.long-sentence" in nlp_rule_ids(
+        engine, registry, long_sentence, Language.ZH
+    )
+    assert "clarity.long-sentence" not in nlp_rule_ids(
+        engine, registry, "这个方法有效。", Language.ZH
+    )
