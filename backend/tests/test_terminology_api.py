@@ -9,7 +9,11 @@ from app.main import create_app
 
 @pytest.fixture
 def client(tmp_path: Path) -> TestClient:
-    settings = Settings(db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules")
+    settings = Settings(
+        db_path=tmp_path / "test.db",
+        rules_dir=tmp_path / "rules",
+        seed_terminology=False,  # CRUD tests assert exact domain lists
+    )
     return TestClient(create_app(settings))
 
 

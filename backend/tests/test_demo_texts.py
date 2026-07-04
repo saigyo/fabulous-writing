@@ -100,3 +100,20 @@ def test_demo_text_triggers_marquee_rules(
     triggered = {f.rule_id for f in engine.check(text, language, doc=doc) if f.rule_id}
     missing = EXPECTED[language] - triggered
     assert not missing, f"demo text does not trigger: {sorted(missing)}"
+
+
+@pytest.mark.parametrize("language", list(Language))
+def test_demo_text_triggers_terminology(
+    language: Language, registry: NlpRegistry, tmp_path: Path
+) -> None:
+    from app.checkers.terminology import TerminologyChecker
+    from app.services.seed import seed_terminology
+    from app.services.terminology import TerminologyStore
+
+    store = TerminologyStore(tmp_path / "test.db")
+    seed_terminology(store)
+    domain = store.list_domains()[0]
+    checker = TerminologyChecker(store, nlp=registry)
+    text = (DEMOS_DIR / f"{language.value}.txt").read_text(encoding="utf-8")
+    findings = checker.check(text, language, domain.id)
+    assert findings, f"demo text for {language.value} triggers no terminology finding"

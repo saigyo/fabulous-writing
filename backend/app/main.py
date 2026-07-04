@@ -14,6 +14,7 @@ from app.checkers.rules.engine import RuleEngine
 from app.core.config import Settings, load_settings
 from app.nlp.registry import NlpRegistry
 from app.services.jobs import JobManager
+from app.services.seed import seed_terminology
 from app.services.terminology import TerminologyStore
 
 APP_NAME = "Fabulous Writing"
@@ -46,6 +47,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.terminology_store = TerminologyStore(settings.db_path)
+    if settings.seed_terminology:
+        seed_terminology(app.state.terminology_store)
     app.state.rule_engine = RuleEngine(settings.rules_dir)
     app.state.jobs = JobManager()
     app.state.nlp = NlpRegistry(settings.nlp.models)

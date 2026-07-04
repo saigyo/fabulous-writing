@@ -138,6 +138,10 @@ function Header() {
           title="Replace the editor content with a flawed example text for the selected language"
           onClick={() => {
             store.setActiveView('editor')
+            // Terminology only runs with a domain; default to the first one.
+            if (store.domainId === null && store.domains.length > 0) {
+              store.setDomainId(store.domains[0].id)
+            }
             void getDemoText(store.language)
               .then(({ text }) => setEditorText(text))
               .catch(() => {})

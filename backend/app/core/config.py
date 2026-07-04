@@ -33,6 +33,8 @@ class Settings(BaseModel):
     db_path: Path = BACKEND_DIR / "data" / "fabulous.db"
     rules_dir: Path = BACKEND_DIR / "rules"
     demos_dir: Path = BACKEND_DIR / "demos"
+    # Seed an empty terminology DB with an example domain on startup.
+    seed_terminology: bool = True
     providers: ProviderSettings = Field(default_factory=ProviderSettings)
     nlp: NlpSettings = Field(default_factory=NlpSettings)
 

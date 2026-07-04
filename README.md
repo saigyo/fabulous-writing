@@ -165,6 +165,11 @@ Manage domains and terms in the app's *Terminology* view or via the API. A term 
 preferred form, forbidden variants, an optional definition, and a language; forbidden
 variants found in the text are flagged with the preferred term as a one-click fix.
 
+A fresh installation seeds an example **Product docs** domain with a few style-guide
+terms per language (e.g. *sign in* ← "login", *Anwendung* ← "App", *用户* ← "使用者") —
+edit or delete it freely; it is only created when no domains exist. Disable with
+`seed_terminology: false` in `config.yaml`.
+
 For Japanese and Chinese, variants are matched over spaCy tokens (PhraseMatcher) —
 `\b` word boundaries don't exist in CJK scripts. Without the language's model,
 matching falls back to plain substring search, which may over-match inside longer
