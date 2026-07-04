@@ -19,7 +19,10 @@ dependencies = [
 dev = [
     "de-core-news-sm",
     "en-core-web-sm",
+    "es-core-news-sm>=3.8.0",
+    "fr-core-news-sm>=3.8.0",
     "ginza>=5.2.0",
+    "it-core-news-sm>=3.8.0",
     "ja-ginza>=5.2.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
@@ -32,4 +35,7 @@ asyncio_mode = "auto"
 [tool.uv.sources]
 en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
 de-core-news-sm = { url = "https://github.com/explosion/spacy-models/releases/download/de_core_news_sm-3.8.0/de_core_news_sm-3.8.0-py3-none-any.whl" }
+fr-core-news-sm = { url = "https://github.com/explosion/spacy-models/releases/download/fr_core_news_sm-3.8.0/fr_core_news_sm-3.8.0-py3-none-any.whl" }
+es-core-news-sm = { url = "https://github.com/explosion/spacy-models/releases/download/es_core_news_sm-3.8.0/es_core_news_sm-3.8.0-py3-none-any.whl" }
+it-core-news-sm = { url = "https://github.com/explosion/spacy-models/releases/download/it_core_news_sm-3.8.0/it_core_news_sm-3.8.0-py3-none-any.whl" }
 zh-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/zh_core_web_sm-3.8.0/zh_core_web_sm-3.8.0-py3-none-any.whl" }
