@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { TrackedFinding } from '../editor/findings'
 import { FALLBACK_LANGUAGES } from '../languages'
-import type { Domain, Language, LanguageInfo, ProviderInfo } from '../types'
+import type { Domain, Language, LanguageInfo, ProviderInfo, Severity } from '../types'
 
 export type CheckPhase = 'idle' | 'fast' | 'llm'
 export type ActiveView = 'editor' | 'rules' | 'terminology'
@@ -16,6 +16,9 @@ interface AppState {
   activeView: ActiveView
   tracked: TrackedFinding[]
   selectedId: string | null
+  // Persists across checks and resolved findings by design; only explicit
+  // clicks change it.
+  severityFilter: Severity | null
   checkPhase: CheckPhase
   llmError: string | null
   providers: ProviderInfo[]
@@ -35,6 +38,7 @@ interface AppState {
   setLlmAuto: (llmAuto: boolean) => void
   setActiveView: (view: ActiveView) => void
   setTracked: (tracked: TrackedFinding[], selectedId: string | null) => void
+  setSeverityFilter: (severityFilter: Severity | null) => void
   setCheckPhase: (phase: CheckPhase) => void
   setLlmError: (error: string | null) => void
   setProviders: (providers: ProviderInfo[]) => void
@@ -83,6 +87,7 @@ export const useStore = create<AppState>()(
       activeView: 'editor',
       tracked: [],
       selectedId: null,
+      severityFilter: null,
       checkPhase: 'idle',
       llmError: null,
       providers: [],
@@ -111,6 +116,7 @@ export const useStore = create<AppState>()(
           rewrites: pruneByFinding(state.rewrites, tracked),
           rewriteErrors: pruneByFinding(state.rewriteErrors, tracked),
         })),
+      setSeverityFilter: (severityFilter) => set({ severityFilter }),
       setCheckPhase: (checkPhase) => set({ checkPhase }),
       setLlmError: (llmError) => set({ llmError }),
       setProviders: (providers) => set({ providers }),

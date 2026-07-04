@@ -566,3 +566,31 @@ input {
   padding: 0.5rem;
   overflow-x: auto;
 }
+
+/* ---- severity filter ---- */
+
+.severity-filter {
+  display: flex;
+  gap: 0.4rem;
+  margin: -0.3rem 0 0.7rem;
+}
+
+.severity-filter-button {
+  font-size: 0.72rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  padding: 0.1rem 0.55rem;
+  cursor: pointer;
+  color: var(--text-dim);
+}
+
+.severity-filter-button.severity-error { color: #e5484d; }
+.severity-filter-button.severity-warning { color: #f76b15; }
+.severity-filter-button.severity-suggestion { color: #0090ff; }
+
+.severity-filter-button.active {
+  border-color: currentColor;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  font-weight: 600;
+}

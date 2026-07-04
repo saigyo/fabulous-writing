@@ -46,14 +46,20 @@ export const findingsField = StateField.define<FindingsState>({
     }
     for (const effect of tr.effects) {
       if (effect.is(setFindingsEffect)) {
+        const previous = items.find((item) => item.finding.id === selectedId)
         items = toTracked(effect.value, tr.newDoc.length)
-        if (!items.some((item) => item.finding.id === selectedId)) selectedId = null
+        if (!items.some((item) => item.finding.id === selectedId)) {
+          selectedId = equivalentId(items, previous)
+        }
       } else if (effect.is(mergeFindingsEffect)) {
         const { replaceSources, findings } = effect.value
+        const previous = items.find((item) => item.finding.id === selectedId)
         items = items
           .filter((item) => !replaceSources.includes(item.finding.source))
           .concat(toTracked(findings, tr.newDoc.length))
-        if (!items.some((item) => item.finding.id === selectedId)) selectedId = null
+        if (!items.some((item) => item.finding.id === selectedId)) {
+          selectedId = equivalentId(items, previous)
+        }
       } else if (effect.is(selectFindingEffect)) {
         selectedId = effect.value
       }
@@ -65,6 +71,29 @@ export const findingsField = StateField.define<FindingsState>({
   provide: (field) =>
     EditorView.decorations.from(field, (state) => buildDecorations(state)),
 })
+
+/**
+ * Findings get fresh ids on every check; keep the open card open by
+ * re-selecting the finding that says the same thing about the same text.
+ */
+function equivalentId(
+  items: TrackedFinding[],
+  previous: TrackedFinding | undefined,
+): string | null {
+  if (!previous) return null
+  const candidates = items.filter(
+    (item) =>
+      item.finding.category === previous.finding.category &&
+      item.finding.rule_id === previous.finding.rule_id &&
+      item.finding.span.text === previous.finding.span.text &&
+      item.from < previous.to &&
+      previous.from < item.to,
+  )
+  candidates.sort(
+    (a, b) => Math.abs(a.from - previous.from) - Math.abs(b.from - previous.from),
+  )
+  return candidates[0]?.finding.id ?? null
+}
 
 function buildDecorations(state: FindingsState): DecorationSet {
   const ranges = [...state.items]

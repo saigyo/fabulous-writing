@@ -3,6 +3,7 @@ import { fetchRewrite, fetchSuggestions } from '../checking/suggest'
 import { applyRewrite, applySuggestion, selectFinding } from '../editor/editorRef'
 import type { TrackedFinding } from '../editor/findings'
 import { groupByCategory } from '../findings/group'
+import { countBySeverity, filterBySeverity, SEVERITIES } from '../findings/severity'
 import { effectiveSuggestions } from '../findings/suggestions'
 import { useStore } from '../state/store'
 import type { Category, Finding } from '../types'
@@ -12,9 +13,16 @@ export function Sidebar() {
   const selectedId = useStore((s) => s.selectedId)
   const checkPhase = useStore((s) => s.checkPhase)
   const llmError = useStore((s) => s.llmError)
+  const severityFilter = useStore((s) => s.severityFilter)
+  const setSeverityFilter = useStore((s) => s.setSeverityFilter)
   const [collapsed, setCollapsed] = useState<Set<Category>>(new Set())
 
-  const groups = useMemo(() => groupByCategory(withCurrentSpans(tracked)), [tracked])
+  const findings = useMemo(() => withCurrentSpans(tracked), [tracked])
+  const counts = useMemo(() => countBySeverity(findings), [findings])
+  const groups = useMemo(
+    () => groupByCategory(filterBySeverity(findings, severityFilter)),
+    [findings, severityFilter],
+  )
   const total = tracked.length
 
   function toggle(category: Category) {
@@ -38,9 +46,35 @@ export function Sidebar() {
           </span>
         )}
       </div>
+      {total > 0 && (
+        <div className="severity-filter">
+          {SEVERITIES.map((severity) => (
+            <button
+              key={severity}
+              className={`severity-filter-button severity-${severity}${
+                severityFilter === severity ? ' active' : ''
+              }`}
+              title={
+                severityFilter === severity
+                  ? 'Click to show all findings again'
+                  : `Show only ${severity}s`
+              }
+              onClick={() =>
+                setSeverityFilter(severityFilter === severity ? null : severity)
+              }
+            >
+              {counts[severity]} {severity}
+              {counts[severity] === 1 ? '' : 's'}
+            </button>
+          ))}
+        </div>
+      )}
       {llmError && <div className="llm-error">LLM check failed: {llmError}</div>}
       {total === 0 && checkPhase === 'idle' && (
         <p className="all-clear">No issues found. Fabulous!</p>
+      )}
+      {total > 0 && groups.length === 0 && (
+        <p className="all-clear">No {severityFilter}s among the current findings.</p>
       )}
       {groups.map((group) => (
         <section key={group.category} className="category-group">

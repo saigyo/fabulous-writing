@@ -163,3 +163,55 @@ describe('suggestionChange', () => {
     expect(suggestionChange(state, 'missing', 'x')).toBeNull()
   })
 })
+
+describe('selection survival across checks', () => {
+  const doc = 'This is very good.'
+  const selected = () => {
+    const state = stateWithFindings(doc, [makeFinding('f1', 8, 12, 'very')])
+    return state.update({ effects: selectFindingEffect.of('f1') }).state
+  }
+
+  it('re-selects the equivalent finding when a check returns new ids', () => {
+    const next = selected().update({
+      effects: setFindingsEffect.of([makeFinding('f2', 8, 12, 'very')]),
+    }).state
+    expect(next.field(findingsField).selectedId).toBe('f2')
+  })
+
+  it('re-selects through mergeFindingsEffect as well', () => {
+    const next = selected().update({
+      effects: mergeFindingsEffect.of({
+        replaceSources: ['rule', 'terminology'],
+        findings: [makeFinding('f3', 8, 12, 'very')],
+      }),
+    }).state
+    expect(next.field(findingsField).selectedId).toBe('f3')
+  })
+
+  it('clears the selection when no equivalent finding comes back', () => {
+    const different: Finding = {
+      ...makeFinding('f2', 8, 12, 'very'),
+      rule_id: 'style.other',
+    }
+    const next = selected().update({
+      effects: setFindingsEffect.of([different]),
+    }).state
+    expect(next.field(findingsField).selectedId).toBeNull()
+  })
+
+  it('picks the nearest candidate among duplicates', () => {
+    const dupDoc = 'very good and very good.'
+    const state = stateWithFindings(dupDoc, [
+      makeFinding('a1', 0, 4, 'very'),
+      makeFinding('a2', 14, 18, 'very'),
+    ])
+    const chosen = state.update({ effects: selectFindingEffect.of('a2') }).state
+    const next = chosen.update({
+      effects: setFindingsEffect.of([
+        makeFinding('b1', 0, 4, 'very'),
+        makeFinding('b2', 14, 18, 'very'),
+      ]),
+    }).state
+    expect(next.field(findingsField).selectedId).toBe('b2')
+  })
+})
