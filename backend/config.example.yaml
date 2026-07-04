@@ -4,6 +4,7 @@
 # db_path: data/fabulous.db
 # rules_dir: rules
 # seed_terminology: true   # seed an example domain into an empty terminology DB
+# vet_suggestions: true    # deterministic vetting of LLM-generated fixes
 
 providers:
   ollama_base_url: http://localhost:11434

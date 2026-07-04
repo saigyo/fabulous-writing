@@ -9,7 +9,12 @@ Checking happens in two phases:
 
 1. **LLM checking** with pluggable providers — local Ollama models or the Claude API.
    The LLM must quote each problem verbatim; quotes are re-anchored deterministically
-   and findings that cannot be anchored are discarded.
+   and findings that cannot be anchored are discarded. LLM-generated *fixes* pass a
+   deterministic gate too: a spell check against frequency dictionaries (words already
+   in your document are trusted) plus — for on-demand suggestions and rewrites — a
+   rule-engine re-check that rejects fixes which don't resolve the triggering rule or
+   introduce new findings. If nothing survives, the UI says so instead of showing a
+   bad fix. Disable with `vet_suggestions: false` in `config.yaml`.
 2. **Deterministic local rules** in a Vale-style YAML formalism — easy to read, easy to
    extend by hand or with an agentic coding tool.
 
