@@ -26,12 +26,12 @@ class RuleEngine:
 
     def nlp_rule_ids(self, language: Language) -> list[str]:
         """Rule ids that need a spaCy doc and are skipped without one."""
-        from .loader import NLP_CHECK_TYPES
+        from .loader import rule_requires_doc
 
         return [
             rule.rule_id
             for rule in self._rules
-            if rule.language == language and rule.spec.extends in NLP_CHECK_TYPES
+            if rule.language == language and rule_requires_doc(rule.spec)
         ]
 
     def check(

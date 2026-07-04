@@ -112,3 +112,47 @@ class TestDependency:
         doc = registry.analyze(text, "en")
         assert engine.check(text, Language.EN, doc=doc) == []
 
+
+TOKEN_COUNT_RULE = """
+extends: occurrence
+message: "Sentence has too many tokens — split it."
+level: warning
+category: clarity
+count: tokens
+max: 10
+"""
+
+
+class TestOccurrenceTokenCount:
+    def test_counts_tokens_per_sentence(self, rules_dir: Path, registry: NlpRegistry) -> None:
+        write_rule(rules_dir, "en", "clarity/long.yml", TOKEN_COUNT_RULE)
+        engine = make_engine(rules_dir)
+        text = "One two three four five six seven eight nine ten eleven twelve. Short one."
+        doc = registry.analyze(text, "en")
+        findings = engine.check(text, Language.EN, doc=doc)
+        assert len(findings) == 1
+        assert findings[0].span.text.startswith("One two")
+
+    def test_punctuation_not_counted(self, rules_dir: Path, registry: NlpRegistry) -> None:
+        write_rule(rules_dir, "en", "clarity/long.yml", TOKEN_COUNT_RULE)
+        engine = make_engine(rules_dir)
+        text = "One, two, three, four, five, six, seven, eight, nine, ten."
+        doc = registry.analyze(text, "en")
+        assert engine.check(text, Language.EN, doc=doc) == []
+
+    def test_skipped_and_reported_without_doc(self, rules_dir: Path) -> None:
+        write_rule(rules_dir, "en", "clarity/long.yml", TOKEN_COUNT_RULE)
+        engine = make_engine(rules_dir)
+        long_text = " ".join(["word"] * 20) + "."
+        assert engine.check(long_text, Language.EN, doc=None) == []
+        assert engine.nlp_rule_ids(Language.EN) == ["clarity.long"]
+
+    def test_matches_mode_still_requires_token(self, rules_dir: Path) -> None:
+        write_rule(
+            rules_dir,
+            "en",
+            "clarity/bad.yml",
+            "extends: occurrence\nmessage: x\ncategory: clarity\nmax: 3\n",
+        )
+        engine = make_engine(rules_dir)
+        assert len(engine.errors) == 1

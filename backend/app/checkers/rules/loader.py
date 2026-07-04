@@ -32,6 +32,7 @@ class RuleSpec(BaseModel):
     # occurrence
     scope: Literal["sentence"] = "sentence"
     token: str | None = None
+    count: Literal["matches", "tokens"] = "matches"
     max: int | None = None
     min: int | None = None
     # token_pattern / dependency (spaCy Matcher / DependencyMatcher patterns)
@@ -46,8 +47,8 @@ class RuleSpec(BaseModel):
         if self.extends == "substitution" and not self.swap:
             raise ValueError("substitution rules need 'swap'")
         if self.extends == "occurrence":
-            if not self.token:
-                raise ValueError("occurrence rules need 'token'")
+            if self.count == "matches" and not self.token:
+                raise ValueError("occurrence rules with count: matches need 'token'")
             if self.max is None and self.min is None:
                 raise ValueError("occurrence rules need 'max' or 'min'")
         if self.extends in NLP_CHECK_TYPES and not self.pattern:
@@ -65,6 +66,13 @@ class LoadedRule(BaseModel):
 class RuleError(BaseModel):
     file: str
     error: str
+
+
+def rule_requires_doc(spec: RuleSpec) -> bool:
+    """NLP-backed rules are skipped (and reported) when no doc is available."""
+    return spec.extends in NLP_CHECK_TYPES or (
+        spec.extends == "occurrence" and spec.count == "tokens"
+    )
 
 
 def _validate_nlp_pattern(spec: RuleSpec, language: Language) -> None:
