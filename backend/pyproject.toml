@@ -10,14 +10,21 @@ dependencies = [
     "httpx2>=2.5.0",
     "pydantic>=2.13.4",
     "pyyaml>=6.0.3",
+    "spacy>=3.8.14",
     "uvicorn[standard]>=0.49.0",
 ]
 
 [dependency-groups]
 dev = [
+    "de-core-news-sm",
+    "en-core-web-sm",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
 ]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.uv.sources]
+en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
+de-core-news-sm = { url = "https://github.com/explosion/spacy-models/releases/download/de_core_news_sm-3.8.0/de_core_news_sm-3.8.0-py3-none-any.whl" }
