@@ -8,6 +8,7 @@ from app.core.models import Category, Finding, Language, Severity, Source
 from .anchoring import anchor
 from .prompts import build_prompt
 from .provider import LLMProvider
+from .vetting import vet_candidates
 
 _CODE_FENCE = re.compile(r"^```[a-z]*\s*|\s*```$", re.MULTILINE)
 
@@ -52,8 +53,9 @@ def parse_findings(response: str) -> list[RawFinding]:
 
 
 class LLMChecker:
-    def __init__(self, provider: LLMProvider) -> None:
+    def __init__(self, provider: LLMProvider, vet: bool = True) -> None:
         self.provider = provider
+        self.vet = vet
 
     async def check(self, text: str, language: Language) -> list[Finding]:
         system, user = build_prompt(text, language)
@@ -63,6 +65,12 @@ class LLMChecker:
             span = anchor(text, raw.quote, raw.context_before)
             if span is None:
                 continue
+            suggestions = raw.suggestions
+            if self.vet and suggestions:
+                # Cheap stages only; a bad fix does not invalidate the diagnosis.
+                suggestions = vet_candidates(
+                    suggestions, original=span.text, text=text, language=language
+                ).accepted
             findings.append(
                 Finding(
                     category=raw.category,
@@ -70,7 +78,7 @@ class LLMChecker:
                     source=Source.LLM,
                     message=raw.message,
                     span=span,
-                    suggestions=raw.suggestions,
+                    suggestions=suggestions,
                 )
             )
         findings.sort(key=lambda f: (f.span.start, f.span.end))

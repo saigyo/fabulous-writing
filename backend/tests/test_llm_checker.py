@@ -114,3 +114,32 @@ def test_fix_prompts_steer_toward_idiomatic_wording():
     ):
         assert "not a transformation recipe" in system
         assert "archaic" in system
+
+
+async def test_inline_suggestions_are_vetted_but_finding_survives():
+    import json
+
+    from app.checkers.llm.checker import LLMChecker
+    from app.checkers.llm.provider import FakeProvider
+    from app.core.models import Language
+
+    text = "You will get updates."
+    response = json.dumps(
+        [
+            {
+                "category": "style",
+                "severity": "suggestion",
+                "quote": "get updates",
+                "message": "Vague verb.",
+                "suggestions": ["recieve updates", "receive updates"],
+            }
+        ]
+    )
+    findings = await LLMChecker(FakeProvider(response)).check(text, Language.EN)
+    assert len(findings) == 1
+    assert findings[0].suggestions == ["receive updates"]
+
+    unvetted = await LLMChecker(FakeProvider(response), vet=False).check(
+        text, Language.EN
+    )
+    assert unvetted[0].suggestions == ["recieve updates", "receive updates"]

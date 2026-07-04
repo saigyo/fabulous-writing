@@ -58,7 +58,15 @@ async def create_check(request: Request, body: CheckRequest) -> CheckStatus:
             body.llm_provider, body.llm_model
         )
         job.attach_task(
-            asyncio.create_task(_run_llm(job, provider, body.text, body.language))
+            asyncio.create_task(
+                _run_llm(
+                    job,
+                    provider,
+                    body.text,
+                    body.language,
+                    vet=app.state.settings.vet_suggestions,
+                )
+            )
         )
     else:
         job.finish()
@@ -72,10 +80,10 @@ async def create_check(request: Request, body: CheckRequest) -> CheckStatus:
 
 
 async def _run_llm(
-    job: CheckJob, provider: LLMProvider, text: str, language: Language
+    job: CheckJob, provider: LLMProvider, text: str, language: Language, vet: bool = True
 ) -> None:
     try:
-        findings = await LLMChecker(provider).check(text, language)
+        findings = await LLMChecker(provider, vet=vet).check(text, language)
         job.add_findings("llm", drop_overlapping(findings, job.findings))
     except Exception as exc:
         error = str(exc) or type(exc).__name__
