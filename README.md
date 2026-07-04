@@ -15,6 +15,18 @@ Checking happens in two phases:
    rule-engine re-check that rejects fixes which don't resolve the triggering rule or
    introduce new findings. If nothing survives, the UI says so instead of showing a
    bad fix. Disable with `vet_suggestions: false` in `config.yaml`.
+
+   For morphology-aware spelling (proper inflections, German compounds — far fewer
+   false rejects, especially for Spanish/Italian), install Hunspell dictionaries:
+
+   ```sh
+   cd backend && ./scripts/install-dictionaries.sh en de fr es it
+   ```
+
+   Words unknown to the frequency list are then rescued when the language's
+   dictionary knows them. Dictionaries come from
+   [wooorm/dictionaries](https://github.com/wooorm/dictionaries) and keep their own
+   licenses; `scripts/vetting-benchmark.py` reports false-reject rates.
 2. **Deterministic local rules** in a Vale-style YAML formalism — easy to read, easy to
    extend by hand or with an agentic coding tool.
 

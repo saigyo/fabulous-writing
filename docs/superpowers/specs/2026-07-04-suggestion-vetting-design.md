@@ -99,13 +99,18 @@ Inline check-time suggestions (up to 15 findings × several candidates) get stag
 - **M1 — Vetting gate (this design):** prompts, vetting module (sanity + spell gate +
   rule re-check), API/checker wiring, config flag, frontend messaging, tests incl.
   the screenshot regression.
-- **M2 — Morphology-aware spelling (phase 2, not built yet):** replace the frequency
-  lists with real Hunspell dictionaries via [spylls](https://github.com/zverok/spylls)
-  (pure-Python Hunspell): proper German compound handling (`Basisversion` resolves by
-  compounding rules instead of the whitelist), affix-aware inflection for FR/ES/IT,
-  per-language dictionary paths in `config.yaml` (`vetting.dictionaries.<lang>`),
-  and a benchmark comparing false-reject rates on the demo texts. Candidates beyond
-  spylls: LanguageTool (local server) as an optional grammar-level gate.
+- **M2 — Morphology-aware spelling (delivered 2026-07-04):** Hunspell dictionaries
+  via [spylls](https://github.com/zverok/spylls) as a **union gate**: a
+  frequency-unknown word is rescued when the language's dictionary knows it (affix
+  forms, German compounds). Not a replacement — igerman98 happens to exclude
+  empföhle/empfähle so the regression holds, but the frequency list stays as the
+  baseline and for languages without an installed dictionary. Simplifications vs.
+  the original sketch: one `dictionaries_dir` setting with a `<lang>.aff/.dic`
+  convention (instead of per-language paths); dictionaries downloaded on demand by
+  `scripts/install-dictionaries.sh` (own licenses, not bundled). Benchmark
+  (`scripts/vetting-benchmark.py`, demo texts, empty whitelist): false rejects
+  ES 12→1, IT 6→1, FR 2→0; all planted errors still caught. Parked: LanguageTool
+  as an optional grammar-level gate.
 
 ## Out of scope
 

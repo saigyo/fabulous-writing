@@ -5,6 +5,7 @@
 # rules_dir: rules
 # seed_terminology: true   # seed an example domain into an empty terminology DB
 # vet_suggestions: true    # deterministic vetting of LLM-generated fixes
+# dictionaries_dir: dictionaries  # hunspell dicts (scripts/install-dictionaries.sh)
 
 providers:
   ollama_base_url: http://localhost:11434
