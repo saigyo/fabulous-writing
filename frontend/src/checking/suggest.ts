@@ -3,6 +3,7 @@ import { getEditorView } from '../editor/editorRef'
 import { findingsField } from '../editor/findings'
 import { useStore } from '../state/store'
 import { effectiveModel } from './model'
+import { noReliableSuggestionMessage } from './vetMessage'
 
 /**
  * Ask the LLM for drop-in replacements for one finding's current span.
@@ -15,7 +16,11 @@ export async function fetchSuggestions(findingId: string): Promise<void> {
   state.setSuggestPending(findingId)
   try {
     const result = await requestForFinding(findingId, 'span')
-    if (result) useStore.getState().setExtraSuggestions(findingId, result.suggestions)
+    if (result) {
+      const vetoed = noReliableSuggestionMessage(result.suggestions, result.rejected)
+      if (vetoed) useStore.getState().setSuggestError(findingId, vetoed)
+      else useStore.getState().setExtraSuggestions(findingId, result.suggestions)
+    }
   } catch (error) {
     useStore.getState().setSuggestError(findingId, String(error))
   } finally {
@@ -35,10 +40,15 @@ export async function fetchRewrite(findingId: string): Promise<void> {
   try {
     const result = await requestForFinding(findingId, 'sentence')
     if (result) {
-      useStore.getState().setRewrite(findingId, {
-        original: result.original,
-        options: result.suggestions,
-      })
+      const vetoed = noReliableSuggestionMessage(result.suggestions, result.rejected)
+      if (vetoed) {
+        useStore.getState().setRewriteError(findingId, vetoed)
+      } else {
+        useStore.getState().setRewrite(findingId, {
+          original: result.original,
+          options: result.suggestions,
+        })
+      }
     }
   } catch (error) {
     useStore.getState().setRewriteError(findingId, String(error))
@@ -66,6 +76,7 @@ async function requestForFinding(findingId: string, scope: 'span' | 'sentence') 
     message: item.finding.message,
     language: state.language,
     scope,
+    rule_id: item.finding.rule_id,
     llm_provider: state.provider,
     llm_model: effectiveModel(state.model, state.provider, state.providers),
   })

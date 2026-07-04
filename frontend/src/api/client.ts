@@ -73,6 +73,7 @@ export interface SuggestionRequest {
   message: string
   language: Language
   scope?: 'span' | 'sentence'
+  rule_id?: string | null
   llm_provider?: string | null
   llm_model?: string | null
 }
@@ -81,6 +82,7 @@ export interface SuggestionResponse {
   suggestions: string[]
   span: { start: number; end: number }
   original: string
+  rejected: number
 }
 
 export const postSuggestions = (body: SuggestionRequest) =>
