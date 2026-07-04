@@ -1,5 +1,8 @@
 # Fabulous Writing
 
+[![Backend CI](https://github.com/saigyo/fabulous-writing/actions/workflows/backend.yml/badge.svg?branch=main)](https://github.com/saigyo/fabulous-writing/actions/workflows/backend.yml)
+[![Frontend CI](https://github.com/saigyo/fabulous-writing/actions/workflows/frontend.yml/badge.svg?branch=main)](https://github.com/saigyo/fabulous-writing/actions/workflows/frontend.yml)
+
 A writing-quality assistant for articles, documentation, and marketing copy. Text in the
 editor is continuously checked for spelling, grammar, style, clarity, vividness,
 correctness, and domain terminology. A sidebar shows findings per category; clicking a
