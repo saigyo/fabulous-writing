@@ -605,3 +605,19 @@ input {
   background: color-mix(in srgb, currentColor 10%, transparent);
   font-weight: 600;
 }
+
+/* ---- live check status ---- */
+
+.check-status .sparkle {
+  display: inline-block;
+  animation: sparkle-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes sparkle-pulse {
+  0%, 100% { opacity: 1; transform: scale(1) rotate(0deg); }
+  50% { opacity: 0.35; transform: scale(0.8) rotate(45deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .check-status .sparkle { animation: none; }
+}

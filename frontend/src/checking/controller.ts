@@ -39,6 +39,8 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
   useStore.setState({
     checkPhase: includeLlm ? 'llm' : 'fast',
     llmError: includeLlm ? null : state.llmError,
+    llmStartedAt: includeLlm ? Date.now() : null,
+    llmTokens: null,
   })
 
   let result
@@ -52,14 +54,19 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
       llm_model: effectiveModel(state.model, state.provider, state.providers),
     })
   } catch (error) {
-    useStore.setState({ checkPhase: 'idle', llmError: String(error) })
+    useStore.setState({
+      checkPhase: 'idle',
+      llmError: String(error),
+      llmStartedAt: null,
+      llmTokens: null,
+    })
     return
   }
 
   applyFindings(text, ['rule', 'terminology'], fastFindings(result.findings))
 
   if (!includeLlm || result.status === 'done') {
-    useStore.setState({ checkPhase: 'idle' })
+    useStore.setState({ checkPhase: 'idle', llmStartedAt: null, llmTokens: null })
     return
   }
 
@@ -74,9 +81,12 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
     onError(_checker, error) {
       if (currentCheckId === checkId) useStore.setState({ llmError: error })
     },
+    onProgress(tokens) {
+      if (currentCheckId === checkId) useStore.setState({ llmTokens: tokens })
+    },
     onDone() {
       if (currentCheckId === checkId) {
-        useStore.setState({ checkPhase: 'idle' })
+        useStore.setState({ checkPhase: 'idle', llmStartedAt: null, llmTokens: null })
         currentCheckId = null
       }
     },

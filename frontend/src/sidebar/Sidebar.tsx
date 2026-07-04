@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { llmStatusLabel } from '../checking/status'
 import { fetchRewrite, fetchSuggestions } from '../checking/suggest'
 import { applyRewrite, applySuggestion, selectFinding } from '../editor/editorRef'
 import type { TrackedFinding } from '../editor/findings'
@@ -41,11 +42,7 @@ export function Sidebar() {
           <h2>
             Findings <span className="count-badge">{total}</span>
           </h2>
-          {checkPhase !== 'idle' && (
-            <span className="check-status">
-              {checkPhase === 'llm' ? 'LLM checking…' : 'checking…'}
-            </span>
-          )}
+          {checkPhase !== 'idle' && <CheckStatus phase={checkPhase} />}
         </div>
         {total > 0 && (
           <div className="severity-filter">
@@ -97,6 +94,28 @@ export function Sidebar() {
         </section>
       ))}
     </aside>
+  )
+}
+
+function CheckStatus({ phase }: { phase: 'fast' | 'llm' }) {
+  const startedAt = useStore((s) => s.llmStartedAt)
+  const tokens = useStore((s) => s.llmTokens)
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    if (phase !== 'llm') return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [phase])
+
+  const label =
+    phase === 'llm' && startedAt !== null
+      ? llmStatusLabel(now - startedAt, tokens)
+      : 'checking…'
+  return (
+    <span className="check-status">
+      <span className="sparkle">✳</span> {label}
+    </span>
   )
 }
 

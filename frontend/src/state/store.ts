@@ -22,6 +22,9 @@ interface AppState {
   severityFilter: Severity | null
   checkPhase: CheckPhase
   llmError: string | null
+  // Live progress of the running LLM check (null outside the llm phase).
+  llmStartedAt: number | null
+  llmTokens: number | null
   providers: ProviderInfo[]
   domains: Domain[]
   languages: LanguageInfo[]
@@ -99,6 +102,8 @@ export const useStore = create<AppState>()(
       severityFilter: null,
       checkPhase: 'idle',
       llmError: null,
+      llmStartedAt: null,
+      llmTokens: null,
       providers: [],
       domains: [],
       languages: FALLBACK_LANGUAGES,

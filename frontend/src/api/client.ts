@@ -41,6 +41,7 @@ export interface CheckEventHandlers {
   onResult: (checker: string, findings: Finding[]) => void
   onError: (checker: string, error: string) => void
   onDone: () => void
+  onProgress?: (tokens: number) => void
 }
 
 export function subscribeCheck(
@@ -51,6 +52,10 @@ export function subscribeCheck(
   source.addEventListener('checker_result', (event) => {
     const data = JSON.parse((event as MessageEvent).data)
     handlers.onResult(data.checker, data.findings)
+  })
+  source.addEventListener('llm_progress', (event) => {
+    const data = JSON.parse((event as MessageEvent).data)
+    handlers.onProgress?.(data.tokens)
   })
   source.addEventListener('checker_error', (event) => {
     const data = JSON.parse((event as MessageEvent).data)
