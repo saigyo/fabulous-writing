@@ -29,6 +29,11 @@ class Source(str, Enum):
 class Language(str, Enum):
     EN = "en"
     DE = "de"
+    FR = "fr"
+    ES = "es"
+    IT = "it"
+    JA = "ja"
+    ZH = "zh"
 
 
 class Span(BaseModel):

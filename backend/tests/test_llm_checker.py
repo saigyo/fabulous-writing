@@ -95,3 +95,10 @@ class TestLLMChecker:
         checker = LLMChecker(FakeProvider(response))
         findings = await checker.check("Hello world.", Language.EN)
         assert findings[0].severity == Severity.WARNING
+
+
+def test_prompt_language_names_cover_all_languages():
+    from app.checkers.llm.prompts import _LANGUAGE_NAMES
+    from app.core.models import Language
+
+    assert set(_LANGUAGE_NAMES) == set(Language)
