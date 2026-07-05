@@ -1910,23 +1910,27 @@ export function ProfileSelector() {
 - Remove the `getDemoText` import; add `getProfiles` and the two new components.
 - In `Header`'s `useEffect`, fetch profiles whenever the language changes and select the remembered/Standard profile **without** applying on first load, **with** applying on language change:
 ```tsx
-  const language = useStore((s) => s.language)
-  const initialLoad = useRef(true)
+  const prevLanguage = useRef<Language | null>(null)
   useEffect(() => {
+    const language = store.language
+    // Apply profile values only on a real language switch. Comparing the
+    // previous language (instead of a consumed boolean) keeps this correct
+    // under StrictMode's double-invoked effects.
+    const isSwitch = prevLanguage.current !== null && prevLanguage.current !== language
+    prevLanguage.current = language
     getProfiles(language)
       .then((profiles) => {
-        const store = useStore.getState()
-        store.setProfiles(profiles)
+        const s = useStore.getState()
+        s.setProfiles(profiles)
         const remembered = profiles.find(
-          (p) => p.id === store.lastProfileByLanguage[language],
+          (p) => p.id === s.lastProfileByLanguage[language],
         )
         const chosen =
           remembered ?? profiles.find((p) => p.is_standard) ?? profiles[0]
-        if (chosen) store.selectProfile(chosen, !initialLoad.current)
-        initialLoad.current = false
+        if (chosen) s.selectProfile(chosen, isSwitch)
       })
       .catch(() => {})
-  }, [language])
+  }, [store.language])
 ```
   (import `useRef` from react; keep the existing providers/domains/languages effect as is).
 - Insert `<ProfileSelector />` as the first element inside `.header-controls`.
