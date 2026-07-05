@@ -565,3 +565,46 @@ created "Blog", it appeared and became selected; renamed to
 "Blog Posts" (survived blur); deleted it back to 3 cards; Standard
 confirmed to show ↺ not ✕. Screenshots in the scratchpad
 (`profiles-01-initial.png` … `profiles-04-after-delete.png`).
+
+## 2026-07-05 — Rules page becomes the profile rule-selection editor (Task 13)
+Commit: `a0bd0b3`
+
+`rules/RulesView.tsx` now doubles as the editor for the selected
+profile's rule selection instead of a read-only catalog dump. Added
+pure helper `isRuleActive(profile, category, ruleId)` in
+`profiles/profile.ts`, mirroring the backend's XOR: a rule is active
+iff `(category not in categories_off) XOR (ruleId in
+rule_exceptions)`. TDD'd first — appended the failing test to
+`profile.test.ts` (9th test), confirmed the `TypeError: isRuleActive
+is not a function` failure, then implemented.
+
+RulesView now reads `profiles`/`profileId` from the store, shows a
+`m.editingRulesFor(name, language)` banner under the header when a
+profile is selected, adds a checkbox to each category `<h3>` that
+toggles `categories_off` for the whole category *and clears that
+category's exceptions* (fresh start on re-toggle, per spec), and a
+per-rule switch on each `RuleCard` that flips `rule_exceptions`
+membership. Both write through immediately via `updateProfile` (full
+payload, all profile fields carried over unchanged except the one
+being patched) and update the store via `setProfiles`. Inactive rule
+cards get `.rule-inactive` (`opacity: 0.45`); no profile selected ⇒
+checkboxes disabled and all rules render as active (matches the
+"Standard fallback" UX elsewhere).
+
+108 vitest tests green (added 1), `tsc -b --noEmit` clean, `npm run
+build` clean. Live check via scratchpad Playwright script against the
+running dev servers: opened Rules with EN/Standard, saw the banner
+"Editing rules for: Standard (English)"; unchecked the `style`
+category → all 5 style cards dimmed and `GET /api/profiles?language=en`
+showed `categories_off: ["style"]`; re-checked one style rule's own
+switch → that card undimmed alone and `rule_exceptions:
+["style.exclamations"]` appeared (XOR: off + exception = active);
+re-checked the category → exceptions cleared and all style cards
+active again. Confirmed the Standard profile ended back at
+`categories_off: []`, `rule_exceptions: []` (its original clean
+state). One snag during verification: Playwright's `.check()`/
+`.uncheck()` assert the DOM `checked` attribute flips synchronously
+after the click, but here it only flips once the PUT round-trip
+resolves and the store re-renders — switched to plain `.click()` with
+an explicit wait. Screenshot of the dimmed state in the scratchpad
+(`task13-02-style-off-dimmed.png`).
