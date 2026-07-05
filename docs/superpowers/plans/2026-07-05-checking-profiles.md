@@ -1522,6 +1522,10 @@ describe('isProfileDirty', () => {
     expect(isProfileDirty(profile(), { ...header, model: 'x' })).toBe(true)
   })
 
+  it('is dirty when the header has extra domains', () => {
+    expect(isProfileDirty(profile(), { ...header, domainIds: [1, 2, 3] })).toBe(true)
+  })
+
   it('a null profile provider matches any header provider', () => {
     expect(isProfileDirty(profile({ llm_provider: null }), header)).toBe(false)
   })
@@ -1576,9 +1580,18 @@ export function isProfileDirty(profile: Profile, header: HeaderSettings): boolea
   const a = new Set(profile.domain_ids)
   const b = new Set(header.domainIds)
   if (a.size !== b.size || [...a].some((id) => !b.has(id))) return true
+  // A null profile provider means "no preference recorded" — never dirty.
   if (profile.llm_provider !== null && profile.llm_provider !== header.provider)
     return true
   return (profile.llm_model ?? null) !== (header.model ?? null)
+}
+
+/** The currently selected profile, if it exists in the loaded list. */
+export function activeProfile(state: {
+  profiles: Profile[]
+  profileId: number | null
+}): Profile | null {
+  return state.profiles.find((p) => p.id === state.profileId) ?? null
 }
 
 export function effectiveRuleConfig(profile: Profile | null): RuleConfig | null {
