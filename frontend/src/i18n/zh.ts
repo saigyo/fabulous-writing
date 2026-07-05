@@ -34,6 +34,12 @@ export const zh: Messages = {
   checking: '检查中…',
   basicChecksOnly: (name) => `${name}(仅基础检查)`,
   uiLocaleTitle: '界面语言',
+  profile: '配置',
+  profileModifiedTitle: '当前设置与配置不同',
+  saveToProfile: '将更改保存到配置',
+  resetToProfile: '恢复为配置的值',
+  domainsSelected: (n) => `${n} 个领域`,
+  viewProfiles: '配置',
 
   findings: '检查结果',
   fastChecking: '检查中…',
@@ -86,6 +92,17 @@ export const zh: Messages = {
   deleteTermTitle: '删除术语',
   caseSensitiveTitle: '区分大小写',
 
+  profilesTitle: '检查配置',
+  newProfilePlaceholder: '新配置…',
+  createProfileTitle: '从当前设置创建',
+  deleteProfileTitle: '删除配置',
+  resetStandardTitle: '重置为默认值',
+  standardNotDeletable: '无法删除 Standard 配置',
+  llmInstructionsLabel: '额外的 LLM 指令',
+  llmInstructionsHint: '附加到内置检查提示词(语气、受众、重点)',
+  exampleTextLabel: '示例文本',
+  profileSaved: '配置已保存',
+
   rulesTitle: '规则',
   rulesHint:
     '针对页眉中所选语言的确定性检查。规则位于 {path},在服务器重启后或通过 {endpoint} 重新加载。',
@@ -107,4 +124,7 @@ export const zh: Messages = {
       ? `每${where}超过 ${bound} 个${counted}`
       : `每${where}少于 ${bound} 个${counted}`
   },
+  editingRulesFor: (p, l) => `正在编辑规则:${p}(${l})`,
+  categoryToggleTitle: '为该配置切换整个类别',
+  ruleToggleTitle: '为该配置切换此规则',
 }

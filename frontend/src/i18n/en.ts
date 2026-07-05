@@ -29,6 +29,12 @@ export const en: Messages = {
   checking: 'Checking…',
   basicChecksOnly: (name) => `${name} (basic checks only)`,
   uiLocaleTitle: 'Display language',
+  profile: 'Profile',
+  profileModifiedTitle: 'Settings differ from this profile',
+  saveToProfile: 'Save changes to the profile',
+  resetToProfile: "Reset to the profile's values",
+  domainsSelected: (n) => `${n} domains`,
+  viewProfiles: 'Profiles',
 
   findings: 'Findings',
   fastChecking: 'checking…',
@@ -81,6 +87,17 @@ export const en: Messages = {
   deleteTermTitle: 'Delete term',
   caseSensitiveTitle: 'Case-sensitive matching',
 
+  profilesTitle: 'Checking profiles',
+  newProfilePlaceholder: 'New profile…',
+  createProfileTitle: 'Create from the current settings',
+  deleteProfileTitle: 'Delete profile',
+  resetStandardTitle: 'Reset to defaults',
+  standardNotDeletable: 'The Standard profile cannot be deleted',
+  llmInstructionsLabel: 'Extra LLM instructions',
+  llmInstructionsHint: 'Appended to the built-in check prompt (tone, audience, focus)',
+  exampleTextLabel: 'Example text',
+  profileSaved: 'Profile saved',
+
   rulesTitle: 'Rules',
   rulesHint:
     'Deterministic checks for the language selected in the header. Rules live in {path} and reload on server restart or {endpoint}.',
@@ -98,4 +115,7 @@ export const en: Messages = {
     const counted = what === 'tokens' ? 'tokens' : `matches of /${pattern}/`
     return `${quantity} ${counted} per ${scope}`
   },
+  editingRulesFor: (p, l) => `Editing rules for: ${p} (${l})`,
+  categoryToggleTitle: 'Toggle this whole category for the profile',
+  ruleToggleTitle: 'Toggle this rule for the profile',
 }

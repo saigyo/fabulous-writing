@@ -40,6 +40,12 @@ export const es: Messages = {
   checking: 'Comprobando…',
   basicChecksOnly: (name) => `${name} (solo comprobaciones básicas)`,
   uiLocaleTitle: 'Idioma de la interfaz',
+  profile: 'Perfil',
+  profileModifiedTitle: 'La configuración difiere del perfil',
+  saveToProfile: 'Guardar los cambios en el perfil',
+  resetToProfile: 'Restablecer los valores del perfil',
+  domainsSelected: (n) => `${n} dominios`,
+  viewProfiles: 'Perfiles',
 
   findings: 'Resultados',
   fastChecking: 'comprobando…',
@@ -97,6 +103,18 @@ export const es: Messages = {
   deleteTermTitle: 'Eliminar término',
   caseSensitiveTitle: 'Distinguir mayúsculas y minúsculas',
 
+  profilesTitle: 'Perfiles de comprobación',
+  newProfilePlaceholder: 'Nuevo perfil…',
+  createProfileTitle: 'Crear a partir de la configuración actual',
+  deleteProfileTitle: 'Eliminar perfil',
+  resetStandardTitle: 'Restablecer valores predeterminados',
+  standardNotDeletable: 'El perfil Standard no se puede eliminar',
+  llmInstructionsLabel: 'Instrucciones LLM adicionales',
+  llmInstructionsHint:
+    'Se añaden al prompt de comprobación integrado (tono, audiencia, enfoque)',
+  exampleTextLabel: 'Texto de ejemplo',
+  profileSaved: 'Perfil guardado',
+
   rulesTitle: 'Reglas',
   rulesHint:
     'Comprobaciones deterministas para el idioma seleccionado en la cabecera. Las reglas están en {path} y se recargan al reiniciar el servidor o mediante {endpoint}.',
@@ -116,4 +134,7 @@ export const es: Messages = {
     const counted = what === 'tokens' ? 'tokens' : `coincidencias de /${pattern}/`
     return `${quantity} ${counted} por ${scopes[scope] ?? scope}`
   },
+  editingRulesFor: (p, l) => `Editando reglas para: ${p} (${l})`,
+  categoryToggleTitle: 'Activar/desactivar toda la categoría para el perfil',
+  ruleToggleTitle: 'Activar/desactivar esta regla para el perfil',
 }

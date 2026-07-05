@@ -40,6 +40,12 @@ export const fr: Messages = {
   checking: 'Vérification…',
   basicChecksOnly: (name) => `${name} (vérifications de base uniquement)`,
   uiLocaleTitle: "Langue d'affichage",
+  profile: 'Profil',
+  profileModifiedTitle: 'Les réglages diffèrent de ce profil',
+  saveToProfile: 'Enregistrer les modifications dans le profil',
+  resetToProfile: 'Rétablir les valeurs du profil',
+  domainsSelected: (n) => `${n} domaines`,
+  viewProfiles: 'Profils',
 
   findings: 'Résultats',
   fastChecking: 'vérification…',
@@ -97,6 +103,18 @@ export const fr: Messages = {
   deleteTermTitle: 'Supprimer le terme',
   caseSensitiveTitle: 'Respecter la casse',
 
+  profilesTitle: 'Profils de vérification',
+  newProfilePlaceholder: 'Nouveau profil…',
+  createProfileTitle: 'Créer à partir des réglages actuels',
+  deleteProfileTitle: 'Supprimer le profil',
+  resetStandardTitle: 'Rétablir les valeurs par défaut',
+  standardNotDeletable: 'Le profil Standard ne peut pas être supprimé',
+  llmInstructionsLabel: 'Instructions LLM supplémentaires',
+  llmInstructionsHint:
+    'Ajoutées au prompt de vérification intégré (ton, audience, priorités)',
+  exampleTextLabel: "Texte d'exemple",
+  profileSaved: 'Profil enregistré',
+
   rulesTitle: 'Règles',
   rulesHint:
     "Vérifications déterministes pour la langue sélectionnée dans l'en-tête. Les règles se trouvent dans {path} et sont rechargées au redémarrage du serveur ou via {endpoint}.",
@@ -116,4 +134,7 @@ export const fr: Messages = {
     const counted = what === 'tokens' ? 'tokens' : `correspondances de /${pattern}/`
     return `${quantity} ${counted} par ${scopes[scope] ?? scope}`
   },
+  editingRulesFor: (p, l) => `Modification des règles pour : ${p} (${l})`,
+  categoryToggleTitle: 'Activer/désactiver toute la catégorie pour le profil',
+  ruleToggleTitle: 'Activer/désactiver cette règle pour le profil',
 }

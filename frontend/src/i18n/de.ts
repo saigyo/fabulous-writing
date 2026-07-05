@@ -36,6 +36,12 @@ export const de: Messages = {
   checking: 'Prüft…',
   basicChecksOnly: (name) => `${name} (nur Basisprüfungen)`,
   uiLocaleTitle: 'Anzeigesprache',
+  profile: 'Profil',
+  profileModifiedTitle: 'Einstellungen weichen vom Profil ab',
+  saveToProfile: 'Änderungen im Profil speichern',
+  resetToProfile: 'Auf Profilwerte zurücksetzen',
+  domainsSelected: (n) => `${n} Domänen`,
+  viewProfiles: 'Profile',
 
   findings: 'Ergebnisse',
   fastChecking: 'prüft…',
@@ -91,6 +97,18 @@ export const de: Messages = {
   deleteTermTitle: 'Begriff löschen',
   caseSensitiveTitle: 'Groß-/Kleinschreibung beachten',
 
+  profilesTitle: 'Prüfprofile',
+  newProfilePlaceholder: 'Neues Profil…',
+  createProfileTitle: 'Aus den aktuellen Einstellungen erstellen',
+  deleteProfileTitle: 'Profil löschen',
+  resetStandardTitle: 'Auf Standardwerte zurücksetzen',
+  standardNotDeletable: 'Das Standard-Profil kann nicht gelöscht werden',
+  llmInstructionsLabel: 'Zusätzliche LLM-Anweisungen',
+  llmInstructionsHint:
+    'Wird an den eingebauten Prüf-Prompt angehängt (Ton, Zielgruppe, Fokus)',
+  exampleTextLabel: 'Beispieltext',
+  profileSaved: 'Profil gespeichert',
+
   rulesTitle: 'Regeln',
   rulesHint:
     'Deterministische Prüfungen für die in der Kopfzeile gewählte Sprache. Regeln liegen in {path} und werden bei Server-Neustart oder über {endpoint} neu geladen.',
@@ -110,4 +128,7 @@ export const de: Messages = {
     const counted = what === 'tokens' ? 'Tokens' : `Treffer von /${pattern}/`
     return `${quantity} ${counted} pro ${scopes[scope] ?? scope}`
   },
+  editingRulesFor: (p, l) => `Regeln bearbeiten für: ${p} (${l})`,
+  categoryToggleTitle: 'Ganze Kategorie für das Profil umschalten',
+  ruleToggleTitle: 'Diese Regel für das Profil umschalten',
 }

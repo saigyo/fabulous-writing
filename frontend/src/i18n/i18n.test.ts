@@ -77,6 +77,12 @@ describe('catalogs', () => {
     expect(en.llmChecking('5s', null)).toBe('LLM checking… (5s)')
     expect(catalogs.de.llmChecking('12s', 1200)).toContain('1.200')
   })
+
+  test('profile messages exist', () => {
+    expect(en.profile).toBe('Profile')
+    expect(en.domainsSelected(2)).toBe('2 domains')
+    expect(catalogs.de.domainsSelected(2)).toBe('2 Domänen')
+  })
 })
 
 describe('interpolate', () => {

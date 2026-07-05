@@ -39,6 +39,12 @@ export interface Messages {
   checking: string
   basicChecksOnly: (languageName: string) => string
   uiLocaleTitle: string
+  profile: string
+  profileModifiedTitle: string
+  saveToProfile: string
+  resetToProfile: string
+  domainsSelected: (n: number) => string
+  viewProfiles: string
 
   // Findings sidebar
   findings: string
@@ -88,6 +94,18 @@ export interface Messages {
   deleteTermTitle: string
   caseSensitiveTitle: string
 
+  // Profiles view
+  profilesTitle: string
+  newProfilePlaceholder: string
+  createProfileTitle: string
+  deleteProfileTitle: string
+  resetStandardTitle: string
+  standardNotDeletable: string
+  llmInstructionsLabel: string
+  llmInstructionsHint: string
+  exampleTextLabel: string
+  profileSaved: string
+
   // Rules view
   rulesTitle: string
   /** May contain the placeholders {path} and {endpoint}. */
@@ -107,4 +125,7 @@ export interface Messages {
     pattern: string | null,
     scope: string,
   ) => string
+  editingRulesFor: (profileName: string, languageName: string) => string
+  categoryToggleTitle: string
+  ruleToggleTitle: string
 }

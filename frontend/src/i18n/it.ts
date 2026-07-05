@@ -36,6 +36,12 @@ export const it: Messages = {
   checking: 'Controllo…',
   basicChecksOnly: (name) => `${name} (solo controlli di base)`,
   uiLocaleTitle: "Lingua dell'interfaccia",
+  profile: 'Profilo',
+  profileModifiedTitle: 'Le impostazioni differiscono dal profilo',
+  saveToProfile: 'Salva le modifiche nel profilo',
+  resetToProfile: 'Ripristina i valori del profilo',
+  domainsSelected: (n) => `${n} domini`,
+  viewProfiles: 'Profili',
 
   findings: 'Risultati',
   fastChecking: 'controllo…',
@@ -93,6 +99,18 @@ export const it: Messages = {
   deleteTermTitle: 'Elimina termine',
   caseSensitiveTitle: 'Distingui maiuscole e minuscole',
 
+  profilesTitle: 'Profili di controllo',
+  newProfilePlaceholder: 'Nuovo profilo…',
+  createProfileTitle: 'Crea dalle impostazioni attuali',
+  deleteProfileTitle: 'Elimina profilo',
+  resetStandardTitle: 'Ripristina i valori predefiniti',
+  standardNotDeletable: 'Il profilo Standard non può essere eliminato',
+  llmInstructionsLabel: 'Istruzioni LLM aggiuntive',
+  llmInstructionsHint:
+    'Aggiunte al prompt di controllo integrato (tono, pubblico, priorità)',
+  exampleTextLabel: 'Testo di esempio',
+  profileSaved: 'Profilo salvato',
+
   rulesTitle: 'Regole',
   rulesHint:
     "Controlli deterministici per la lingua selezionata nell'intestazione. Le regole si trovano in {path} e vengono ricaricate al riavvio del server o tramite {endpoint}.",
@@ -112,4 +130,7 @@ export const it: Messages = {
     const counted = what === 'tokens' ? 'token' : `corrispondenze di /${pattern}/`
     return `${quantity} ${counted} per ${scopes[scope] ?? scope}`
   },
+  editingRulesFor: (p, l) => `Modifica delle regole per: ${p} (${l})`,
+  categoryToggleTitle: "Attiva/disattiva l'intera categoria per il profilo",
+  ruleToggleTitle: 'Attiva/disattiva questa regola per il profilo',
 }

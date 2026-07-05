@@ -34,6 +34,12 @@ export const ja: Messages = {
   checking: 'チェック中…',
   basicChecksOnly: (name) => `${name}(基本チェックのみ)`,
   uiLocaleTitle: '表示言語',
+  profile: 'プロファイル',
+  profileModifiedTitle: '設定がプロファイルと異なります',
+  saveToProfile: '変更をプロファイルに保存',
+  resetToProfile: 'プロファイルの値に戻す',
+  domainsSelected: (n) => `${n} 個のドメイン`,
+  viewProfiles: 'プロファイル',
 
   findings: '検出結果',
   fastChecking: 'チェック中…',
@@ -87,6 +93,17 @@ export const ja: Messages = {
   deleteTermTitle: '用語を削除',
   caseSensitiveTitle: '大文字と小文字を区別',
 
+  profilesTitle: 'チェックプロファイル',
+  newProfilePlaceholder: '新しいプロファイル…',
+  createProfileTitle: '現在の設定から作成',
+  deleteProfileTitle: 'プロファイルを削除',
+  resetStandardTitle: '既定値にリセット',
+  standardNotDeletable: 'Standardプロファイルは削除できません',
+  llmInstructionsLabel: 'LLM への追加指示',
+  llmInstructionsHint: '組み込みのチェックプロンプトに追加されます(トーン・読者・重点)',
+  exampleTextLabel: 'サンプルテキスト',
+  profileSaved: 'プロファイルを保存しました',
+
   rulesTitle: 'ルール',
   rulesHint:
     'ヘッダーで選択した言語の決定的チェック。ルールは {path} にあり、サーバー再起動または {endpoint} で再読み込みされます。',
@@ -106,4 +123,7 @@ export const ja: Messages = {
       ? `1${where}あたり${counted}が${bound}を超える`
       : `1${where}あたり${counted}が${bound}未満`
   },
+  editingRulesFor: (p, l) => `ルールを編集中:${p}(${l})`,
+  categoryToggleTitle: 'このカテゴリー全体を切り替え',
+  ruleToggleTitle: 'このルールを切り替え',
 }
