@@ -700,3 +700,14 @@ instructions the right — starting below the title row. Textareas grew
 to 0.95rem with more rows; below 900px the card collapses to one
 column. Playwright-verified geometry (stacking, half-width title,
 right column below the title line, columns side by side) + screenshot.
+
+## 2026-07-05 — Profile cards: bold labels, aligned text boxes
+Commit: `f489818`
+
+The two per-column stacks couldn't guarantee the example/instructions
+boxes start at the same height, so the card interior became one shared
+2x2 grid (domain | LLM+model, example | instructions) — grid rows make
+the alignment structural rather than tuned. Labels are bold with an
+explicit weight reset on selects/textareas (they inherit); the domain
+listbox stretches to fill row one. Playwright-measured: label and
+textarea-top y-deltas 0.0, weights 600/400.
