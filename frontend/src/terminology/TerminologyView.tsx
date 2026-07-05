@@ -193,7 +193,14 @@ function TermTable({ domainId, terms, onChanged }: TermTableProps) {
             <tr key={term.id}>
               <td>{term.language}</td>
               <td>{term.preferred}</td>
-              <td>{term.forbidden_variants.join(', ')}</td>
+              <td>
+                {term.forbidden_variants.join(', ')}
+                {term.case_sensitive && (
+                  <span className="case-badge" title={m.caseSensitiveTitle}>
+                    Aa
+                  </span>
+                )}
+              </td>
               <td>{term.definition}</td>
               <td>
                 <button
@@ -227,11 +234,22 @@ function TermTable({ domainId, terms, onChanged }: TermTableProps) {
               />
             </td>
             <td>
-              <input
-                value={variants}
-                placeholder={m.forbiddenPlaceholder}
-                onChange={(event) => setVariants(event.target.value)}
-              />
+              <div className="input-with-toggle">
+                <input
+                  value={variants}
+                  placeholder={m.forbiddenPlaceholder}
+                  onChange={(event) => setVariants(event.target.value)}
+                />
+                <button
+                  type="button"
+                  className="match-case-toggle"
+                  aria-pressed={caseSensitive}
+                  title={m.caseSensitiveTitle}
+                  onClick={() => setCaseSensitive((value) => !value)}
+                >
+                  Aa
+                </button>
+              </div>
             </td>
             <td>
               <input
@@ -241,14 +259,6 @@ function TermTable({ domainId, terms, onChanged }: TermTableProps) {
               />
             </td>
             <td>
-              <label className="case-label" title={m.caseSensitiveTitle}>
-                <input
-                  type="checkbox"
-                  checked={caseSensitive}
-                  onChange={(event) => setCaseSensitive(event.target.checked)}
-                />
-                Aa
-              </label>
               <button onClick={() => void addTerm()}>{m.add}</button>
             </td>
           </tr>

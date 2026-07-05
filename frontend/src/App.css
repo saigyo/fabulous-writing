@@ -591,9 +591,36 @@
   box-sizing: border-box;
 }
 
-.case-label {
+.input-with-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.match-case-toggle {
+  flex: none;
   font-size: 0.75rem;
-  margin-right: 0.4rem;
+  padding: 0.15rem 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.match-case-toggle[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.case-badge {
+  margin-left: 0.4rem;
+  font-size: 0.7rem;
+  padding: 0 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
 }
 
 .icon-button {
