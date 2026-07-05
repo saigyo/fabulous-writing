@@ -120,6 +120,39 @@ class TestChecker:
         assert len(checker.check("einloggen", Language.DE, domain.id)) == 1
 
 
+class TestCasingHelpers:
+    def test_exact_casing_is_ok(self) -> None:
+        from app.checkers.terminology import _casing_ok
+
+        assert _casing_ok("Use GitHub now", 4, "GitHub", "GitHub") is True
+
+    def test_wrong_casing_is_not_ok(self) -> None:
+        from app.checkers.terminology import _casing_ok
+
+        assert _casing_ok("Use Github now", 4, "Github", "GitHub") is False
+        assert _casing_ok("Use GITHUB now", 4, "GITHUB", "GitHub") is False
+
+    def test_capitalized_at_sentence_start_is_ok(self) -> None:
+        from app.checkers.terminology import _casing_ok
+
+        assert _casing_ok("Sign in here.", 0, "Sign in", "sign in") is True
+        text = "Great. Sign in here."
+        assert _casing_ok(text, 7, "Sign in", "sign in") is True
+        text = "Intro:\n- Sign in here."
+        assert _casing_ok(text, 9, "Sign in", "sign in") is True
+
+    def test_capitalized_mid_sentence_is_not_ok(self) -> None:
+        from app.checkers.terminology import _casing_ok
+
+        text = "Please Sign in here."
+        assert _casing_ok(text, 7, "Sign in", "sign in") is False
+
+    def test_title_case_at_sentence_start_is_not_ok(self) -> None:
+        from app.checkers.terminology import _casing_ok
+
+        assert _casing_ok("Sign In here.", 0, "Sign In", "sign in") is False
+
+
 class TestCjkChecker:
     def test_ja_terminology_matches_via_tokens(self, store: TerminologyStore) -> None:
         from app.core.config import NlpSettings

@@ -10,6 +10,22 @@ if TYPE_CHECKING:
 # No word boundaries in CJK scripts: match tokens (or substrings) instead of \b regexes.
 CJK_LANGUAGES = {Language.JA, Language.ZH}
 
+# Positions where an initial capital is conventional: text start, after
+# sentence-ending punctuation (+ optional closing quotes/brackets), or after
+# a newline (optionally followed by markdown structure characters).
+_SENTENCE_START = re.compile(r'(?:^|[.!?…]["\')\]]*\s+|\n[\s>#*+-]*)$')
+
+
+def _sentence_start(text: str, start: int) -> bool:
+    return _SENTENCE_START.search(text, 0, start) is not None
+
+
+def _casing_ok(text: str, start: int, matched: str, preferred: str) -> bool:
+    if matched == preferred:
+        return True
+    capitalized = preferred[0].upper() + preferred[1:]
+    return matched == capitalized and _sentence_start(text, start)
+
 
 class TerminologyChecker:
     def __init__(self, store: TerminologyStore, nlp: "NlpRegistry | None" = None) -> None:
