@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from app.checkers.llm.checker import LLMChecker
 from app.checkers.llm.provider import LLMProvider
 from app.checkers.pipeline import drop_overlapping
+from app.checkers.rules.engine import RuleConfig
 from app.checkers.terminology import TerminologyChecker
 from app.core.models import Finding, Language
 from app.services.jobs import CheckJob
@@ -24,12 +25,14 @@ PROGRESS_TOKEN_STEP = 25
 class CheckRequest(BaseModel):
     text: str
     language: Language
-    domain_id: int | None = None
+    domain_ids: list[int] = Field(default_factory=list)
     checkers: list[CheckerName] = Field(
         default_factory=lambda: ["rules", "terminology", "llm"]
     )
+    rule_config: RuleConfig | None = None
     llm_provider: str | None = None
     llm_model: str | None = None
+    llm_instructions: str = ""
 
 
 class CheckStatus(BaseModel):
@@ -48,13 +51,17 @@ async def create_check(request: Request, body: CheckRequest) -> CheckStatus:
         doc = app.state.nlp.analyze(body.text, body.language.value)
         if doc is None:
             job.skipped_rules = app.state.rule_engine.nlp_rule_ids(body.language)
-        findings = app.state.rule_engine.check(body.text, body.language, doc=doc)
-        job.add_findings("rules", findings)
-    if "terminology" in body.checkers and body.domain_id is not None:
-        checker = TerminologyChecker(app.state.terminology_store, nlp=app.state.nlp)
-        job.add_findings(
-            "terminology", checker.check(body.text, body.language, body.domain_id)
+        findings = app.state.rule_engine.check(
+            body.text, body.language, doc=doc, config=body.rule_config
         )
+        job.add_findings("rules", findings)
+    if "terminology" in body.checkers and body.domain_ids:
+        checker = TerminologyChecker(app.state.terminology_store, nlp=app.state.nlp)
+        findings: list[Finding] = []
+        for domain_id in body.domain_ids:
+            more = checker.check(body.text, body.language, domain_id)
+            findings.extend(drop_overlapping(more, findings))
+        job.add_findings("terminology", findings)
 
     if "llm" in body.checkers:
         provider: LLMProvider = app.state.provider_factory(
@@ -69,6 +76,7 @@ async def create_check(request: Request, body: CheckRequest) -> CheckStatus:
                     body.language,
                     vet=app.state.settings.vet_suggestions,
                     dictionaries_dir=app.state.settings.dictionaries_dir,
+                    instructions=body.llm_instructions,
                 )
             )
         )
@@ -90,6 +98,7 @@ async def _run_llm(
     language: Language,
     vet: bool = True,
     dictionaries_dir: Any = None,
+    instructions: str = "",
 ) -> None:
     emitted = -PROGRESS_TOKEN_STEP  # the first report always goes out
 
@@ -101,7 +110,9 @@ async def _run_llm(
 
     try:
         checker = LLMChecker(provider, vet=vet, dictionaries_dir=dictionaries_dir)
-        findings = await checker.check(text, language, on_progress=on_progress)
+        findings = await checker.check(
+            text, language, on_progress=on_progress, instructions=instructions
+        )
         job.add_findings("llm", drop_overlapping(findings, job.findings))
     except Exception as exc:
         error = str(exc) or type(exc).__name__

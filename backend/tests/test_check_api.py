@@ -84,13 +84,107 @@ def test_terminology_checker_requires_domain(client: TestClient) -> None:
         json={
             "text": "Please login now.",
             "language": "en",
-            "domain_id": domain["id"],
+            "domain_ids": [domain["id"]],
             "checkers": ["terminology"],
         },
     )
     findings = response.json()["findings"]
     assert len(findings) == 1
     assert findings[0]["suggestions"] == ["sign in"]
+
+
+@pytest.fixture()
+def client_with_two_domains(tmp_path: Path):
+    settings = Settings(db_path=tmp_path / "t.db", rules_dir=RULES_DIR, seed_terminology=False)
+    client = TestClient(create_app(settings))
+    ids = []
+    for name, preferred, forbidden in [
+        ("Docs", "sign in", ["login"]),
+        ("Style", "email", ["e-mail"]),
+    ]:
+        domain = client.post("/api/domains", json={"name": name}).json()
+        client.post(
+            f"/api/domains/{domain['id']}/terms",
+            json={"language": "en", "preferred": preferred,
+                  "forbidden_variants": forbidden},
+        )
+        ids.append(domain["id"])
+    return client, ids
+
+
+def test_check_with_multiple_domains(client_with_two_domains) -> None:
+    """Terminology findings come from the union of all selected domains."""
+    client, ids = client_with_two_domains  # two domains, one forbidden term each
+    body = {"text": "Use login and e-mail.", "language": "en",
+            "domain_ids": ids, "checkers": ["terminology"]}
+    findings = client.post("/api/checks", json=body).json()["findings"]
+    assert len(findings) == 2
+
+
+def test_check_overlapping_domains_deduped(tmp_path: Path) -> None:
+    """Two domains forbidding the same variant yield one finding, not two."""
+    settings = Settings(db_path=tmp_path / "t.db", rules_dir=RULES_DIR, seed_terminology=False)
+    client = TestClient(create_app(settings))
+    ids = []
+    for name, preferred in [("Docs", "sign in"), ("Style", "log in")]:
+        domain = client.post("/api/domains", json={"name": name}).json()
+        client.post(
+            f"/api/domains/{domain['id']}/terms",
+            json={"language": "en", "preferred": preferred,
+                  "forbidden_variants": ["login"]},
+        )
+        ids.append(domain["id"])
+    body = {"text": "Use login here.", "language": "en",
+            "domain_ids": ids, "checkers": ["terminology"]}
+    findings = client.post("/api/checks", json=body).json()["findings"]
+    assert len(findings) == 1
+
+
+def test_check_with_rule_config(client: TestClient) -> None:
+    body = {"text": "This is very good. The cat cat sat.", "language": "en",
+            "checkers": ["rules"],
+            "rule_config": {"categories_off": ["style"], "exceptions": []}}
+    findings = client.post("/api/checks", json=body).json()["findings"]
+    assert findings, "a non-style rule must still fire"
+    assert all(f["category"] != "style" for f in findings)
+
+
+class RecordingProvider:
+    """Fake LLM provider that records the system prompt it was given."""
+
+    name = "fake"
+
+    def __init__(self) -> None:
+        self.last_system: str | None = None
+
+    async def generate(self, system, user, on_progress=None) -> str:
+        self.last_system = system
+        return "[]"
+
+
+@pytest.fixture()
+def client_with_recording_provider(tmp_path: Path):
+    settings = Settings(db_path=tmp_path / "t.db", rules_dir=RULES_DIR, seed_terminology=False)
+    app = create_app(settings)
+    recorder = RecordingProvider()
+    app.state.provider_factory = lambda name=None, model=None: recorder
+    with TestClient(app) as client:
+        yield client, recorder
+
+
+def test_check_passes_llm_instructions_to_provider(client_with_recording_provider) -> None:
+    """The recording provider stores the system prompt; instructions must appear."""
+    client, recorder = client_with_recording_provider
+    body = {"text": "Hello.", "language": "en", "checkers": ["llm"],
+            "llm_instructions": "Audience: kids."}
+    post = client.post("/api/checks", json=body)
+    check_id = post.json()["check_id"]
+
+    with client.stream("GET", f"/api/checks/{check_id}/events") as stream:
+        _read_sse_events(stream)
+
+    assert recorder.last_system is not None
+    assert "Audience: kids." in recorder.last_system
 
 
 def test_llm_failure_still_finishes_job_with_fast_findings(tmp_path: Path) -> None:

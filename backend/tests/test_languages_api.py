@@ -31,12 +31,3 @@ def test_languages_endpoint_lists_all_seven(client: TestClient) -> None:
     # All seven models are dev dependencies, so everything is available here;
     # the not-installed case is covered by the registry unit tests.
     assert all(item["nlp_available"] for item in data)
-
-
-def test_demo_text_endpoint(client: TestClient) -> None:
-    response = client.get("/api/languages/en/demo")
-    assert response.status_code == 200
-    text = response.json()["text"]
-    assert "editor" in text.lower()
-
-    assert client.get("/api/languages/tlh/demo").status_code == 404

@@ -307,7 +307,7 @@ curl -X POST localhost:8000/api/suggestions -H 'Content-Type: application/json' 
   -d '{"text": "It is very good.", "span": {"start": 6, "end": 10}, "message": "Weasel word.", "language": "en", "scope": "sentence"}'
 
 curl localhost:8000/api/languages                     # languages + NLP model availability
-curl localhost:8000/api/languages/en/demo             # flawed demo text per language
+curl localhost:8000/api/profiles?language=en          # checking profiles (incl. example texts)
 curl localhost:8000/api/providers                     # LLM provider availability
 curl localhost:8000/api/rules?language=de             # rule catalog (+ load errors); language optional
 curl localhost:8000/api/domains                       # terminology CRUD under /api/domains, /api/terms
