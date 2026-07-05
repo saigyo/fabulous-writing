@@ -46,6 +46,9 @@ class Settings(BaseModel):
     demos_dir: Path = BACKEND_DIR / "demos"
     # Seed an empty terminology DB with an example domain on startup.
     seed_terminology: bool = True
+    # Seed Marketing / Technical Documentation example profiles (EN, DE, JA)
+    # the first time profiles are seeded for a language.
+    seed_example_profiles: bool = True
     # Deterministically vet LLM-generated suggestions (spell gate + rule re-check).
     vet_suggestions: bool = True
     # Hunspell dictionaries (<lang>.aff/.dic) for the morphology-aware spell
