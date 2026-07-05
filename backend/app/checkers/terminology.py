@@ -27,6 +27,20 @@ def _casing_ok(text: str, start: int, matched: str, preferred: str) -> bool:
     return matched == capitalized and _sentence_start(text, start)
 
 
+def _without_overlaps(
+    casing: list[Finding], variants: list[Finding]
+) -> list[Finding]:
+    # Variant findings win: drop casing findings on overlapping spans.
+    return [
+        c
+        for c in casing
+        if not any(
+            c.span.start < v.span.end and v.span.start < c.span.end
+            for v in variants
+        )
+    ]
+
+
 class TerminologyChecker:
     def __init__(self, store: TerminologyStore, nlp: "NlpRegistry | None" = None) -> None:
         self.store = store
@@ -35,9 +49,12 @@ class TerminologyChecker:
     def check(self, text: str, language: Language, domain_id: int) -> list[Finding]:
         terms = self.store.list_terms(domain_id, language=language)
         if language in CJK_LANGUAGES:
-            findings = self._check_cjk(text, language, terms)
+            variants = self._check_cjk(text, language, terms)
+            casing = self._casing_cjk(text, language, terms)
         else:
-            findings = self._check_regex(text, terms)
+            variants = self._check_regex(text, terms)
+            casing = self._casing_regex(text, terms)
+        findings = variants + _without_overlaps(casing, variants)
         findings.sort(key=lambda f: (f.span.start, f.span.end))
         return findings
 
@@ -52,6 +69,25 @@ class TerminologyChecker:
                         self._finding(term, match.group(), match.start(), match.end())
                     )
         return findings
+
+    def _casing_regex(self, text: str, terms: list[Term]) -> list[Finding]:
+        findings: list[Finding] = []
+        for term in terms:
+            if not term.case_sensitive:
+                continue
+            pattern = rf"\b{re.escape(term.preferred)}\b"
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                if _casing_ok(text, match.start(), match.group(), term.preferred):
+                    continue
+                findings.append(
+                    self._finding(term, match.group(), match.start(), match.end())
+                )
+        return findings
+
+    def _casing_cjk(
+        self, text: str, language: Language, terms: list[Term]
+    ) -> list[Finding]:
+        return []  # implemented with the CJK paths (next task)
 
     def _check_cjk(
         self, text: str, language: Language, terms: list[Term]

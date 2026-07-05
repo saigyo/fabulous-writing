@@ -153,6 +153,80 @@ class TestCasingHelpers:
         assert _casing_ok("Sign In here.", 0, "Sign In", "sign in") is False
 
 
+class TestPreferredCasing:
+    def _github_domain(self, store: TerminologyStore) -> int:
+        domain = store.create_domain("Dev")
+        store.create_term(
+            domain.id,
+            language=Language.EN,
+            preferred="GitHub",
+            forbidden_variants=["Git Hub"],
+            case_sensitive=True,
+        )
+        return domain.id
+
+    def test_flags_wrong_casing_of_preferred(self, store: TerminologyStore) -> None:
+        domain_id = self._github_domain(store)
+        checker = TerminologyChecker(store)
+        findings = checker.check("We are on github now.", Language.EN, domain_id)
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.span.text == "github"
+        assert f.suggestions == ["GitHub"]
+        assert "GitHub" in f.message
+
+    def test_correct_casing_is_not_flagged(self, store: TerminologyStore) -> None:
+        domain_id = self._github_domain(store)
+        checker = TerminologyChecker(store)
+        assert checker.check("We are on GitHub now.", Language.EN, domain_id) == []
+
+    def test_case_insensitive_term_is_not_casing_checked(
+        self, store: TerminologyStore
+    ) -> None:
+        domain = store.create_domain("Dev")
+        store.create_term(
+            domain.id,
+            language=Language.EN,
+            preferred="sign in",
+            forbidden_variants=["login"],
+        )
+        checker = TerminologyChecker(store)
+        assert checker.check("SIGN IN here.", Language.EN, domain.id) == []
+
+    def test_sentence_start_capitalization_is_allowed(
+        self, store: TerminologyStore
+    ) -> None:
+        domain = store.create_domain("Dev")
+        store.create_term(
+            domain.id,
+            language=Language.EN,
+            preferred="sign in",
+            forbidden_variants=["login"],
+            case_sensitive=True,
+        )
+        checker = TerminologyChecker(store)
+        assert checker.check("Sign in to your account.", Language.EN, domain.id) == []
+        findings = checker.check("Please Sign In now.", Language.EN, domain.id)
+        assert len(findings) == 1
+        assert findings[0].span.text == "Sign In"
+
+    def test_casing_finding_overlapping_variant_is_dropped(
+        self, store: TerminologyStore
+    ) -> None:
+        domain = store.create_domain("Dev")
+        store.create_term(
+            domain.id,
+            language=Language.EN,
+            preferred="GitHub",
+            forbidden_variants=["Github Enterprise"],
+            case_sensitive=True,
+        )
+        checker = TerminologyChecker(store)
+        findings = checker.check("Use Github Enterprise.", Language.EN, domain.id)
+        assert len(findings) == 1
+        assert findings[0].span.text == "Github Enterprise"
+
+
 class TestCjkChecker:
     def test_ja_terminology_matches_via_tokens(self, store: TerminologyStore) -> None:
         from app.core.config import NlpSettings
