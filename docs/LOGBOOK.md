@@ -677,3 +677,14 @@ min-width: calc(100% + offset) with align-self: stretch on its wrapper,
 so it is always at least as wide as its label regardless of locale.
 Playwright-verified in en-US and de-DE: label offsets identical to the
 language select (0.0px delta), toggle wider than the label in both.
+
+## 2026-07-05 — Header selector gaps equalized
+Commit: `4ca4e42`
+
+Follow-up to the domain-toggle alignment: its min-width of
+calc(100% + offset) double-counted the label-alignment offset, because
+cross-axis stretch already widens the wrapper by the negative margin —
+the toggle overflowed 8.8px into the gap before the LLM selector.
+min-width: 100% is exactly right. Playwright-measured: all four
+selector gaps equal at 8.8px (spread 0.0) with a wide domain selection
+in de-DE.
