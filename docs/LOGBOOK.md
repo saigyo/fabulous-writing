@@ -438,3 +438,19 @@ has `flex-shrink: 0; white-space: nowrap` (plus a small header gap),
 so only the status label wraps and the badge stays beside the heading.
 Verified with Playwright by injecting the long wrapped label and
 measuring that the badge stays on the heading's line.
+
+## 2026-07-05 — Sidebar header: wrapped status label vs. severity chips
+Commit: `9ca9c5c`
+
+Follow-up to `f0408ab`: with the badge fixed in place, a wrapping
+check-status label now overlapped the severity chips, because the gap
+before the chips came from the h2's own bottom margin — a two-line
+status label is taller than the h2 and spilled into that margin. The
+bottom spacing moved from the h2 to the `.sidebar-header` row (so it
+sits below the row's tallest child), the status label is right-aligned
+per Markus' suggestion, and `.severity-filter` lost its -0.3rem top
+margin for a little more vertical air. Playwright-verified: wrapped
+label right-aligned with a 12px gap above the chips; settled state
+unchanged. Note: Vite's file watcher missed the CSS edit and served a
+stale transform until the file was touched — worth remembering when a
+verified CSS change seems to have no effect.
