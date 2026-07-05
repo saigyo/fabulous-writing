@@ -297,3 +297,24 @@ refreshed — the hero now shows the stacked header plus live token
 counter. Follow-up `204faf5`: label left edges aligned with the text
 *inside* the selects (label padding = select text inset, negative margin
 keeps the select in place) — verified with pixel guide lines at 4× scale.
+
+## 2026-07-05 — Header rearranged: locale by wordmark, Example into editor
+Commit: `7e8be3f`
+
+Usability review by Markus: the 🌐 locale selector next to the Check
+button read as the *check*-language selector (the real one being far
+left), and auto belonged beside Check. Three alternatives were mocked up
+(locale by the wordmark / divider-isolated at far right / Example
+demoted to the editor pane); Markus picked the third, the cleanest cut:
+app-level chrome (wordmark, icon-only 🌐, view tabs) lives on the left,
+check settings and the ☑ auto + Check action pair on the right — and
+Example leaves the header entirely, becoming a localized ghost button
+floating over the editor's top-right corner, discoverable exactly where
+it acts. The icon-only switcher overlays a transparent select on the
+globe so a click opens the native dropdown (aria-label + title keep it
+accessible). Known trade-off, accepted in review: the example loader is
+no longer reachable from the Rules/Terminology views. Verified live:
+switcher works from its new spot, demo text loads via the ghost button
+(11 findings), header still 50px with zero overflow down to 1024px in
+Spanish. Message key `example` renamed to `loadExample` across all seven
+catalogs; README screenshots refreshed.
