@@ -36,38 +36,61 @@ export function ProfileSelector() {
   return (
     <label className="profile-select" title={dirty ? m.profileModifiedTitle : undefined}>
       {m.profile}
-      <select
-        value={profileId ?? ''}
-        onChange={(e) => {
-          const next = profiles.find((p) => p.id === Number(e.target.value))
-          if (next) selectProfile(next, true)
-        }}
-      >
-        {profiles.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name}
-            {p.id === profileId && dirty ? ' ✱' : ''}
-          </option>
-        ))}
-      </select>
-      {dirty && (
-        <span className="profile-dirty-actions">
-          <button
-            className="icon-button"
-            title={m.saveToProfile}
-            onClick={() => void saveOverrides()}
-          >
-            💾
-          </button>
-          <button
-            className="icon-button"
-            title={m.resetToProfile}
-            onClick={() => selected && selectProfile(selected, true)}
-          >
-            ↩
-          </button>
-        </span>
-      )}
+      <span className="profile-select-row">
+        {dirty && (
+          <span className="profile-dirty-actions">
+            <button
+              className="icon-button"
+              title={m.saveToProfile}
+              onClick={() => void saveOverrides()}
+            >
+              <SaveIcon />
+            </button>
+            <button
+              className="icon-button"
+              title={m.resetToProfile}
+              onClick={() => selected && selectProfile(selected, true)}
+            >
+              <ResetIcon />
+            </button>
+          </span>
+        )}
+        <select
+          value={profileId ?? ''}
+          onChange={(e) => {
+            const next = profiles.find((p) => p.id === Number(e.target.value))
+            if (next) selectProfile(next, true)
+          }}
+        >
+          {profiles.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+              {p.id === profileId && dirty ? ' ✱' : ''}
+            </option>
+          ))}
+        </select>
+      </span>
     </label>
+  )
+}
+
+function SaveIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+      <polyline points="17 21 17 13 7 13 7 21" />
+      <polyline points="7 3 7 8 15 8" />
+    </svg>
+  )
+}
+
+function ResetIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="1 4 1 10 7 10" />
+      <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+    </svg>
   )
 }

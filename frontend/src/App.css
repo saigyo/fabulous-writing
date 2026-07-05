@@ -284,9 +284,34 @@
 /* .profile-select carries no styles of its own (inherits the header label
    look); the class exists as a stable hook for selection and tests. */
 
+.profile-select-row {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Save/reset sit to the LEFT of the select, out of the layout flow, so the
+   selector never moves or loses alignment when the dirty state toggles. */
+.profile-dirty-actions {
+  position: absolute;
+  /* The select carries margin-left: calc(-0.3rem - 4px) (header label
+     alignment); mirror it so the icons clear the select's visual edge. */
+  right: calc(100% + 0.3rem + 4px);
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1rem;
+  padding-right: 0.3rem;
+  background: var(--panel);
+}
+
 .profile-dirty-actions .icon-button {
-  font-size: 0.8rem;
-  padding: 0 0.15rem;
+  display: inline-flex;
+  padding: 0.15rem;
+}
+
+.profile-dirty-actions .icon-button:hover {
+  color: var(--accent);
 }
 
 .domain-multiselect { position: relative; display: inline-block; }
