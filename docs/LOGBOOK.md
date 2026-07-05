@@ -406,3 +406,23 @@ the last finding's text scrolled its row into view, and both the
 collapsed-category and severity-filter variants recovered too (the
 first probe clicked mid-line and deselected — CodeMirror decorations
 split text nodes, so the click must hit the decorated span).
+
+## 2026-07-05 — Model recommendations integrated into docs
+Commit: `58a0d45`
+
+Markus researched per-language model recommendations (API and Ollama)
+in a separate session; the resulting document was checked against the
+implementation, polished, and added as `docs/model-recommendations.md`,
+linked from the README's LLM-providers section. Corrections from the
+implementation check: the app's providers are ollama/claude/openai/
+mistral/bedrock (Google/DeepSeek/Qwen/OpenRouter are not built in, but
+reachable by repointing the configurable `openai_base_url`/
+`mistral_base_url` slots — the slot determines the env key variable);
+API keys stay environment-only, so the sketch's `api_key: env:…` lines
+were dropped; `claude-sonnet-4-6` corrected to the real `claude-sonnet-5`
+(the app's default); Bedrock with `bedrock_region: eu-central-1` named
+as the existing EU-residency path for Claude. The language-routed
+routing YAML is explicitly framed as a design sketch (not read by the
+app), noting that `OpenAICompatProvider` already covers every
+`openai_compatible` entry. Cross-linked with the earlier Ollama latency
+research note (2026-07-04).
