@@ -102,12 +102,10 @@ export const de: Messages = {
   createProfileTitle: 'Aus den aktuellen Einstellungen erstellen',
   deleteProfileTitle: 'Profil löschen',
   resetStandardTitle: 'Auf Standardwerte zurücksetzen',
-  standardNotDeletable: 'Das Standard-Profil kann nicht gelöscht werden',
   llmInstructionsLabel: 'Zusätzliche LLM-Anweisungen',
   llmInstructionsHint:
     'Wird an den eingebauten Prüf-Prompt angehängt (Ton, Zielgruppe, Fokus)',
   exampleTextLabel: 'Beispieltext',
-  profileSaved: 'Profil gespeichert',
   profileChangeFailed: (error) => `Profiländerung fehlgeschlagen: ${error}`,
 
   rulesTitle: 'Regeln',

@@ -100,11 +100,9 @@ export interface Messages {
   createProfileTitle: string
   deleteProfileTitle: string
   resetStandardTitle: string
-  standardNotDeletable: string
   llmInstructionsLabel: string
   llmInstructionsHint: string
   exampleTextLabel: string
-  profileSaved: string
   profileChangeFailed: (error: string) => string
 
   // Rules view

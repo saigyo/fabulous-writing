@@ -92,11 +92,9 @@ export const en: Messages = {
   createProfileTitle: 'Create from the current settings',
   deleteProfileTitle: 'Delete profile',
   resetStandardTitle: 'Reset to defaults',
-  standardNotDeletable: 'The Standard profile cannot be deleted',
   llmInstructionsLabel: 'Extra LLM instructions',
   llmInstructionsHint: 'Appended to the built-in check prompt (tone, audience, focus)',
   exampleTextLabel: 'Example text',
-  profileSaved: 'Profile saved',
   profileChangeFailed: (error) => `Profile change failed: ${error}`,
 
   rulesTitle: 'Rules',

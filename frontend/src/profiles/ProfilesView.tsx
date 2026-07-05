@@ -67,7 +67,10 @@ export function ProfilesView() {
         example_text: merged.example_text,
       })
       setError(null)
-      refresh(profiles.map((p) => (p.id === saved.id ? saved : p)))
+      refresh(
+        profiles.map((p) => (p.id === saved.id ? saved : p)),
+        saved.id === profileId ? saved : undefined,
+      )
     } catch (e) {
       reportError(e)
     }
@@ -89,7 +92,10 @@ export function ProfilesView() {
     try {
       const restored = await resetProfile(profile.id)
       setError(null)
-      refresh(profiles.map((p) => (p.id === restored.id ? restored : p)))
+      refresh(
+        profiles.map((p) => (p.id === restored.id ? restored : p)),
+        restored.id === profileId ? restored : undefined,
+      )
     } catch (e) {
       reportError(e)
     }

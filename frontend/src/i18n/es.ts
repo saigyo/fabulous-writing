@@ -108,12 +108,10 @@ export const es: Messages = {
   createProfileTitle: 'Crear a partir de la configuración actual',
   deleteProfileTitle: 'Eliminar perfil',
   resetStandardTitle: 'Restablecer valores predeterminados',
-  standardNotDeletable: 'El perfil Standard no se puede eliminar',
   llmInstructionsLabel: 'Instrucciones LLM adicionales',
   llmInstructionsHint:
     'Se añaden al prompt de comprobación integrado (tono, audiencia, enfoque)',
   exampleTextLabel: 'Texto de ejemplo',
-  profileSaved: 'Perfil guardado',
   profileChangeFailed: (error) => `No se pudo aplicar el cambio de perfil: ${error}`,
 
   rulesTitle: 'Reglas',

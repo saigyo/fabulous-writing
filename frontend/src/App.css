@@ -329,6 +329,8 @@
   white-space: nowrap;
 }
 
+.domain-multiselect-menu .dim { color: var(--text-dim); }
+
 /* ---- sidebar ---- */
 
 .sidebar {

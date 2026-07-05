@@ -98,11 +98,9 @@ export const ja: Messages = {
   createProfileTitle: '現在の設定から作成',
   deleteProfileTitle: 'プロファイルを削除',
   resetStandardTitle: '既定値にリセット',
-  standardNotDeletable: 'Standardプロファイルは削除できません',
   llmInstructionsLabel: 'LLM への追加指示',
   llmInstructionsHint: '組み込みのチェックプロンプトに追加されます(トーン・読者・重点)',
   exampleTextLabel: 'サンプルテキスト',
-  profileSaved: 'プロファイルを保存しました',
   profileChangeFailed: (error) => `プロファイルの変更に失敗しました: ${error}`,
 
   rulesTitle: 'ルール',

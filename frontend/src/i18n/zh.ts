@@ -97,11 +97,9 @@ export const zh: Messages = {
   createProfileTitle: '从当前设置创建',
   deleteProfileTitle: '删除配置',
   resetStandardTitle: '重置为默认值',
-  standardNotDeletable: '无法删除 Standard 配置',
   llmInstructionsLabel: '额外的 LLM 指令',
   llmInstructionsHint: '附加到内置检查提示词(语气、受众、重点)',
   exampleTextLabel: '示例文本',
-  profileSaved: '配置已保存',
   profileChangeFailed: (error) => `配置更改失败:${error}`,
 
   rulesTitle: '规则',
