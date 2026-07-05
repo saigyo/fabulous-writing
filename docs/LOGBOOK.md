@@ -473,3 +473,27 @@ live: chip geometry/color, exclusive toggling within the row,
 combined severity+source filtering (20 findings → 2 rule-based
 errors), rule+LLM counts summing to the total, and the empty-state
 message for "0 LLM".
+
+## 2026-07-05 — Check API: domain_ids, rule_config, llm_instructions (Task 7)
+Commit: `d21fab3`
+
+The check API is now profile-agnostic-but-capable: `CheckRequest`
+replaces `domain_id` with `domain_ids` (terminology findings are the
+union across selected domains, deduped with `drop_overlapping` so two
+domains forbidding the same variant on the same span yield one finding
+— first selected domain wins), and gains `rule_config` (None = all
+rules) and `llm_instructions` passthroughs to the rule engine and
+LLMChecker respectively. `_run_llm` threads `instructions` into
+`checker.check(...)`. The per-language demo endpoint
+(`GET /api/languages/{code}/demo`) is gone — profiles carry example
+texts now — though the demo `.txt` files stay as the seed source and
+`test_demo_texts.py` keeps them honest. README's curl list now points
+at `GET /api/profiles?language=en` instead.
+
+TDD throughout: union, dedup, rule_config (strengthened after review —
+"The cat cat sat." ensures a non-style grammar finding survives, so the
+`all()` can't pass vacuously), and a `RecordingProvider` capturing the
+system prompt to prove instructions reach the LLM, synchronized via the
+existing SSE `_read_sse_events` pattern. Full backend suite: 235
+passed. Known follow-up: `frontend/src/api/client.ts` still calls the
+removed demo endpoint and needs to switch to profile example texts.
