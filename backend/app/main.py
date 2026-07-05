@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.checks import router as checks_router
 from app.api.languages import router as languages_router
+from app.api.profiles import router as profiles_router
 from app.api.providers import router as providers_router
 from app.api.rules import router as rules_router
 from app.api.suggestions import router as suggestions_router
@@ -19,7 +20,9 @@ from app.checkers.rules.engine import RuleEngine
 from app.core.config import Settings, load_settings
 from app.nlp.registry import NlpRegistry
 from app.services.jobs import JobManager
+from app.services.profiles import ProfileStore
 from app.services.seed import seed_terminology
+from app.services.seed_profiles import seed_profiles
 from app.services.terminology import TerminologyStore
 
 APP_NAME = "Fabulous Writing"
@@ -78,12 +81,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.jobs = JobManager()
     app.state.nlp = NlpRegistry(settings.nlp.models)
     app.state.provider_factory = make_provider_factory(settings)
+    app.state.profile_store = ProfileStore(settings.db_path)
+    seed_profiles(
+        app.state.profile_store,
+        settings.demos_dir,
+        default_provider=settings.providers.default_provider,
+        seed_examples=settings.seed_example_profiles,
+    )
     app.include_router(terminology_router)
     app.include_router(checks_router)
     app.include_router(languages_router)
     app.include_router(rules_router)
     app.include_router(providers_router)
     app.include_router(suggestions_router)
+    app.include_router(profiles_router)
 
     @app.get("/api/health")
     def health() -> dict[str, str]:

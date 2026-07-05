@@ -59,6 +59,7 @@ def update_domain(request: Request, domain_id: int, body: DomainUpdate) -> Domai
 def delete_domain(request: Request, domain_id: int) -> Response:
     if not _store(request).delete_domain(domain_id):
         raise HTTPException(404, "Domain not found")
+    request.app.state.profile_store.remove_domain_everywhere(domain_id)
     return Response(status_code=204)
 
 
