@@ -314,16 +314,26 @@
   color: var(--accent);
 }
 
-.domain-multiselect { position: relative; display: inline-block; }
+/* Align the toggle like the native selects: pulled left by the header
+   label-alignment offset, stretched so it is never narrower than the label
+   text (label widths vary per locale). */
+.domain-multiselect {
+  position: relative;
+  align-self: stretch;
+  margin-left: calc(-0.3rem - 4px);
+}
 
 .domain-multiselect-toggle {
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg);
   color: var(--text);
-  padding: 0.2rem 0.3rem;
+  /* Horizontal padding matches the select's padding plus the native text
+     inset, so the toggle text lines up with the label above it. */
+  padding: 0.2rem calc(0.3rem + 4px);
   cursor: pointer;
   font-size: 0.8rem;
+  min-width: calc(100% + 0.3rem + 4px);
   max-width: min(10.5rem, 12vw);
   white-space: nowrap;
   overflow: hidden;
