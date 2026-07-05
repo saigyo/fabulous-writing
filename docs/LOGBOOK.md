@@ -665,3 +665,15 @@ margin-left from the header label-alignment trick, so the icon anchor
 mirrors that offset (right: calc(100% + 0.3rem + 4px)). Playwright-
 verified: select position identical clean vs. dirty (dx=0), icons left
 of and centered on the select, reset restores the clean state.
+
+## 2026-07-05 — Domain toggle: header label alignment
+Commit: `1ddcdfa`
+
+The multi-select toggle (a button, not a select) missed the header's
+label-alignment trick — selects are pulled left by 0.3rem + 4px so the
+label text aligns with the control's inner text. The toggle now gets
+the same negative margin, padding matching the select inset, and
+min-width: calc(100% + offset) with align-self: stretch on its wrapper,
+so it is always at least as wide as its label regardless of locale.
+Playwright-verified in en-US and de-DE: label offsets identical to the
+language select (0.0px delta), toggle wider than the label in both.
