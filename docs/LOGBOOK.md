@@ -318,3 +318,31 @@ switcher works from its new spot, demo text loads via the ghost button
 (11 findings), header still 50px with zero overflow down to 1024px in
 Spanish. Message key `example` renamed to `loadExample` across all seven
 catalogs; README screenshots refreshed.
+
+## 2026-07-05 — OpenAI, Mistral, and AWS Bedrock providers
+Commit: `cfef3e4`
+
+Three new LLM providers behind the existing protocol; the frontend needed
+zero changes because it renders whatever `/api/providers` returns. OpenAI
+and Mistral are a single httpx-based `OpenAICompatProvider` (same
+chat-completions protocol) — no new SDKs; SSE streaming with
+chunk-counted progress, corrected by the final `usage` chunk where the
+server sends one (kept opt-in per provider since Mistral's tolerance for
+`stream_options` was unverified — chunk counting is the shared floor).
+Bedrock rides boto3's Converse API, one request shape across model
+families; boto3 is sync, so generation runs in a worker thread and
+progress crosses back via `call_soon_threadsafe`. Keys stay env-only
+(OPENAI_API_KEY / MISTRAL_API_KEY / AWS chain). `/api/providers` now
+gathers five entries concurrently (~190ms with live Ollama+network
+checks); model discovery per provider: `/models` for the compat pair
+(OpenAI's list filtered of embeddings/whisper/dall-e/…), foundation
+models + inference profiles for Bedrock, falling back to configured
+`bedrock_models` without list permissions. Verified against real AWS with
+the `bedrock` profile: credentials resolve, discovery correctly denied
+(IAM), and `us.anthropic.claude-haiku-4-5` streamed a live response
+through the thread bridge. Field notes from probing: profile ids are
+region-family-bound (`eu.` ids are invalid in us-east-1, so the config
+default is `us.` with a comment), and Bedrock's
+`claude-3-5-sonnet-20240620` now returns "reached end of life" — static
+model lists rot, which justifies the discovery-with-fallback design.
+193 backend tests.
