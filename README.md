@@ -53,7 +53,10 @@ with its category, severity, and message, plus any load errors.
 
 The **Terminology** tab manages domain-specific wording per domain and language: each
 term has a preferred form, forbidden variants, and an optional definition. Forbidden
-variants found in your text are flagged with the preferred term as a one-click fix. The
+variants found in your text are flagged with the preferred term as a one-click fix.
+Marking a term *case-sensitive* (the "Aa" toggle) makes variants match exact-case and
+additionally flags wrong casing of the preferred term itself (e.g. "Github" →
+"GitHub") — conventional capitalization at sentence starts is allowed. The
 table can be sorted by any column (click a header; multiple sort criteria stack),
 filtered by language, and searched as you type.
 

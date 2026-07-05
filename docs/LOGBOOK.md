@@ -362,3 +362,28 @@ accreted into the intro — the Hunspell install instructions, GiNZA
 version caveats, and the vetting benchmark now live in the setup and
 developer sections. Cross-references use GitHub heading anchors
 (quick-start, writing-rules, the spaCy-models section).
+
+## 2026-07-05 — Terminology case sensitivity
+Commits: `9b67051`, `138233d`, `2d82eea`, `45c391a` (spec/plan: `a7887c3`)
+
+The `case_sensitive` flag on terms now means "casing matters" in full:
+forbidden variants keep matching exact-case, and wrong casing of the
+*preferred* term is flagged too, with the correct form as the one-click
+fix ("github" → "GitHub"). Previously the preferred term was never
+checked, and it couldn't be emulated with variants — a case-insensitive
+"github" variant would flag the correct "GitHub" as well. A
+sentence-start heuristic (text start, sentence punctuation + whitespace,
+newline + markdown markers) permits conventional capitalization of
+lowercase terms ("Sign in to…" passes, mid-sentence "Sign In" doesn't);
+casing findings overlapping a variant finding are dropped (variants
+win). All three matching paths covered: regex, CJK PhraseMatcher (a
+LOWER-attr pass catches Latin terms embedded in ja/zh text; pure CJK is
+case-free so lowercasing is identity), and the substring fallback.
+UI: the cryptic wrap-prone checkbox in the add row became a match-case
+"Aa" toggle button (aria-pressed + accent styling) sitting next to the
+forbidden-variants input it governs, and existing rows show an "Aa"
+badge — the flag was write-only before. No new i18n keys (the localized
+tooltip serves both), no API/DB changes. Verified live: API check
+flagged github/GITHUB/mid-sentence Sign In and allowed sentence-start
+"Sign in"; headless browser confirmed toggle state, badge, and one-line
+layout at 900px. 205 backend tests, 91 frontend tests.
