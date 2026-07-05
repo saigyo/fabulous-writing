@@ -235,3 +235,20 @@ deliberately pin known-good majors and let Dependabot propose bumps); the
 setup-uv bump landed on main minutes later (`d3ca9d7`).
 README carries the two status badges for main. Verified live: both
 workflows green on the trigger push.
+
+## 2026-07-05 — Terminology table: sorting, language filter, live search
+Commit: `d7c7ffb`
+
+Table headers Lang/Preferred/Do-not-use are click-to-sort with a
+three-state cycle (ascending → descending → off); clicking additional
+headers appends secondary criteria, so click order defines priority —
+shown as numbered arrows (▲¹ ▲²). A language select narrows the table to
+one language and a search field filters across all text fields (language,
+preferred, forbidden variants, definition) immediately on each keystroke;
+both compose with sorting. The pure logic (toggleSort/sortTerms/
+filterTerms) lives in `termTable.ts` — 16 vitest cases, case-insensitive
+localeCompare, stable and non-mutating so "off" restores server order.
+The add-term row stays visible even when a filter matches nothing (with a
+"no terms match" hint). Verified live against the seeded 19-term domain:
+sort cycle, ▲¹/▲² multi-sort, de-filter → 3 rows, "app"+de → Anwendung,
+"login" → sign in, search+sort combined.
