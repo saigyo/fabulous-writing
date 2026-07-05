@@ -688,3 +688,15 @@ the toggle overflowed 8.8px into the gap before the LLM selector.
 min-width: 100% is exactly right. Playwright-measured: all four
 selector gaps equal at 8.8px (spread 0.0) with a wide domain selection
 in de-DE.
+
+## 2026-07-05 — Profiles view: stacked cards, two-column interior
+Commit: `e4bb327`
+
+Per Markus's design: the profile boxes leave the auto-fill grid for a
+strict one-per-row stack. Inside each card a two-column grid: the name
+field spans only the first column (delete/reset beside it); domains and
+the example text fill the left column, the LLM provider/model/
+instructions the right — starting below the title row. Textareas grew
+to 0.95rem with more rows; below 900px the card collapses to one
+column. Playwright-verified geometry (stacking, half-width title,
+right column below the title line, columns side by side) + screenshot.
