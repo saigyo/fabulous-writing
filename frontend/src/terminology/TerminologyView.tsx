@@ -9,6 +9,13 @@ import {
 } from '../api/client'
 import { useStore } from '../state/store'
 import type { Language, Term } from '../types'
+import {
+  filterTerms,
+  sortTerms,
+  toggleSort,
+  type SortCriterion,
+  type SortKey,
+} from './termTable'
 
 export function TerminologyView() {
   const domains = useStore((s) => s.domains)
@@ -108,6 +115,15 @@ function TermTable({ domainId, terms, onChanged }: TermTableProps) {
   const [variants, setVariants] = useState('')
   const [definition, setDefinition] = useState('')
   const [caseSensitive, setCaseSensitive] = useState(false)
+  const [sortCriteria, setSortCriteria] = useState<SortCriterion[]>([])
+  const [languageFilter, setLanguageFilter] = useState<Language | null>(null)
+  const [query, setQuery] = useState('')
+
+  const visibleTerms = sortTerms(filterTerms(terms, languageFilter, query), sortCriteria)
+
+  function onToggleSort(key: SortKey) {
+    setSortCriteria((old) => toggleSort(old, key))
+  }
 
   async function addTerm() {
     if (!preferred.trim()) return
@@ -130,18 +146,47 @@ function TermTable({ domainId, terms, onChanged }: TermTableProps) {
   return (
     <section className="term-table">
       <h2>Terms</h2>
+      <div className="term-toolbar">
+        <input
+          type="search"
+          className="term-search"
+          value={query}
+          placeholder="Search terms…"
+          onChange={(event) => setQuery(event.target.value)}
+        />
+        <select
+          className="term-language-filter"
+          value={languageFilter ?? ''}
+          title="Show only terms of one language"
+          onChange={(event) =>
+            setLanguageFilter(event.target.value === '' ? null : (event.target.value as Language))
+          }
+        >
+          <option value="">All languages</option>
+          {languages.map((info) => (
+            <option key={info.code} value={info.code}>
+              {info.code}
+            </option>
+          ))}
+        </select>
+      </div>
       <table>
         <thead>
           <tr>
-            <th>Lang</th>
-            <th>Preferred</th>
-            <th>Do not use</th>
+            <SortableHeader label="Lang" sortKey="language" criteria={sortCriteria} onToggle={onToggleSort} />
+            <SortableHeader label="Preferred" sortKey="preferred" criteria={sortCriteria} onToggle={onToggleSort} />
+            <SortableHeader label="Do not use" sortKey="forbidden" criteria={sortCriteria} onToggle={onToggleSort} />
             <th>Definition</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
-          {terms.map((term) => (
+          {visibleTerms.length === 0 && terms.length > 0 && (
+            <tr className="no-terms-row">
+              <td colSpan={5}>No terms match the current filter.</td>
+            </tr>
+          )}
+          {visibleTerms.map((term) => (
             <tr key={term.id}>
               <td>{term.language}</td>
               <td>{term.preferred}</td>
@@ -207,5 +252,32 @@ function TermTable({ domainId, terms, onChanged }: TermTableProps) {
         </tbody>
       </table>
     </section>
+  )
+}
+
+interface SortableHeaderProps {
+  label: string
+  sortKey: SortKey
+  criteria: SortCriterion[]
+  onToggle: (key: SortKey) => void
+}
+
+function SortableHeader({ label, sortKey, criteria, onToggle }: SortableHeaderProps) {
+  const index = criteria.findIndex((c) => c.key === sortKey)
+  const direction = index >= 0 ? criteria[index].direction : null
+  return (
+    <th
+      className={`sortable${direction ? ' sorted' : ''}`}
+      title="Click to sort: ascending → descending → off"
+      onClick={() => onToggle(sortKey)}
+    >
+      {label}
+      {direction && (
+        <span className="sort-indicator">
+          {direction === 'asc' ? '▲' : '▼'}
+          {criteria.length > 1 && <sup>{index + 1}</sup>}
+        </span>
+      )}
+    </th>
   )
 }

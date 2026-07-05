@@ -416,10 +416,50 @@
   overflow: auto;
 }
 
+.term-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.term-toolbar .term-search {
+  flex: 1;
+  max-width: 20rem;
+}
+
+.term-toolbar .term-language-filter {
+  width: auto;
+}
+
 .term-table table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.85rem;
+}
+
+.term-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.term-table th.sortable:hover {
+  color: var(--accent);
+}
+
+.sort-indicator {
+  margin-left: 0.3rem;
+  font-size: 0.7rem;
+  color: var(--accent);
+}
+
+.sort-indicator sup {
+  font-size: 0.6rem;
+  margin-left: 0.1rem;
+}
+
+.no-terms-row td {
+  color: var(--text-dim);
+  font-style: italic;
 }
 
 .term-table th,
