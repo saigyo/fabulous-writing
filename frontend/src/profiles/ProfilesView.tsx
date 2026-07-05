@@ -178,71 +178,77 @@ function ProfileCard({
           <button className="icon-button" title={m.deleteProfileTitle} onClick={onDelete}>✕</button>
         )}
       </div>
-      <label>
-        {m.domain}
-        <select
-          multiple
-          value={profile.domain_ids.map(String)}
-          onChange={(e) =>
-            onSave({
-              domain_ids: [...e.target.selectedOptions].map((o) => Number(o.value)),
-            })
-          }
-        >
-          {domains.map((d) => (
-            <option key={d.id} value={d.id}>{d.name}</option>
-          ))}
-        </select>
-      </label>
-      <label>
-        {m.llm}
-        <select
-          value={profile.llm_provider ?? ''}
-          onChange={(e) => onSave({ llm_provider: e.target.value, llm_model: null })}
-        >
-          {providers.map((p) => (
-            <option key={p.name} value={p.name}>{p.name}</option>
-          ))}
-        </select>
-      </label>
-      <label>
-        {m.model}
-        <select
-          value={profile.llm_model ?? activeProvider?.default_model ?? ''}
-          onChange={(e) => onSave({ llm_model: e.target.value })}
-        >
-          {(activeProvider?.models.length
-            ? activeProvider.models
-            : [activeProvider?.default_model ?? '']
-          ).map((model) => (
-            <option key={model} value={model}>{model}</option>
-          ))}
-        </select>
-      </label>
-      <label className="profile-textarea">
-        {m.llmInstructionsLabel}
-        <textarea
-          rows={3}
-          value={instructions}
-          onChange={(e) => setInstructions(e.target.value)}
-          onBlur={() =>
-            instructions !== profile.llm_instructions &&
-            onSave({ llm_instructions: instructions })
-          }
-        />
-        <span className="hint">{m.llmInstructionsHint}</span>
-      </label>
-      <label className="profile-textarea">
-        {m.exampleTextLabel}
-        <textarea
-          rows={4}
-          value={example}
-          onChange={(e) => setExample(e.target.value)}
-          onBlur={() =>
-            example !== profile.example_text && onSave({ example_text: example })
-          }
-        />
-      </label>
+      <div className="profile-card-columns">
+        <div className="profile-card-col">
+          <label>
+            {m.domain}
+            <select
+              multiple
+              value={profile.domain_ids.map(String)}
+              onChange={(e) =>
+                onSave({
+                  domain_ids: [...e.target.selectedOptions].map((o) => Number(o.value)),
+                })
+              }
+            >
+              {domains.map((d) => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          </label>
+          <label className="profile-textarea">
+            {m.exampleTextLabel}
+            <textarea
+              rows={8}
+              value={example}
+              onChange={(e) => setExample(e.target.value)}
+              onBlur={() =>
+                example !== profile.example_text && onSave({ example_text: example })
+              }
+            />
+          </label>
+        </div>
+        <div className="profile-card-col">
+          <label>
+            {m.llm}
+            <select
+              value={profile.llm_provider ?? ''}
+              onChange={(e) => onSave({ llm_provider: e.target.value, llm_model: null })}
+            >
+              {providers.map((p) => (
+                <option key={p.name} value={p.name}>{p.name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            {m.model}
+            <select
+              value={profile.llm_model ?? activeProvider?.default_model ?? ''}
+              onChange={(e) => onSave({ llm_model: e.target.value })}
+            >
+              {(activeProvider?.models.length
+                ? activeProvider.models
+                : [activeProvider?.default_model ?? '']
+              ).map((model) => (
+                <option key={model} value={model}>{model}</option>
+              ))}
+            </select>
+          </label>
+          <label className="profile-textarea">
+            {m.llmInstructionsLabel}
+            <textarea
+              rows={5}
+              value={instructions}
+              onChange={(e) => setInstructions(e.target.value)}
+              onBlur={() =>
+                instructions !== profile.llm_instructions &&
+                onSave({ llm_instructions: instructions })
+              }
+            />
+            <span className="hint">{m.llmInstructionsHint}</span>
+          </label>
+        </div>
+      </div>
     </section>
   )
 }
