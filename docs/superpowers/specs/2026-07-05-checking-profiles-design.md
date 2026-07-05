@@ -28,6 +28,7 @@ values; the user can always override them ad hoc.
 | Domains in header | The domain selector becomes a **multi-select**; the check API takes `domain_ids: list[int]`. |
 | Storage | **SQLite**, beside `domains`/`terms`. Profiles are UI-authored; file-based storage would force the server to write YAML and use fragile name references. |
 | Checker on/off set | Stays **out of profiles**: a profile with no domains simply yields no terminology findings; the LLM auto-toggle remains a global user preference. |
+| Example profiles | **Marketing** and **Technical Documentation** are seeded for EN, DE, and JA (config switch `seed_example_profiles`, default true). Ordinary deletable profiles; seeding is tracked per language so deletions stick across restarts. Purpose: demonstrating profile switching out of the box. |
 
 ## Data model
 
@@ -49,9 +50,31 @@ CREATE TABLE IF NOT EXISTS profiles (
 )
 ```
 
-- **Seeding:** at startup, every supported language without an
+- **Seeding (Standard):** at startup, every supported language without an
   `is_standard = 1` row gets one: name "Standard", everything on, no
   exceptions, no domains, NULL provider/model, empty instructions.
+- **Seeding (examples):** if the config switch `seed_example_profiles`
+  (config.yaml, default `true`) is on, EN, DE, and JA each get two ordinary,
+  deletable profiles — **Marketing** and **Technical Documentation** — the
+  first time seeding runs for that language. A marker table records which
+  languages have been example-seeded:
+
+  ```sql
+  CREATE TABLE IF NOT EXISTS profile_seed_markers (
+    language TEXT PRIMARY KEY
+  )
+  ```
+
+  Seeding checks the marker, not the profiles' existence, so a deleted
+  example profile stays deleted across restarts. Turning the switch on later
+  seeds any languages not yet marked. Preset content:
+
+  | Preset | categories_off | rule_exceptions | llm_instructions (gist, localized per language) |
+  |---|---|---|---|
+  | Marketing | `[]` | disable rules that fight marketing tone where they exist (e.g. EN intensifiers/weasel-word style rules) — exact ids picked from the loaded rule set at implementation time | Audience: prospective customers. Favor energetic, benefit-led, concrete phrasing; short sentences; active voice. Flag jargon, hedging, and vague claims. |
+  | Technical Documentation | `["vividness"]` | none | Audience: users following instructions. Prioritize precision, consistent terminology, and unambiguous phrasing; prefer imperative mood for steps; flag marketing language and vague quantifiers. |
+
+  Both presets: no domains, NULL provider/model.
 - **Rule activation semantics** (applied by the rule engine):
   `active(rule) = (rule.category not in categories_off) XOR (rule.rule_id in rule_exceptions)`.
   Exceptions referencing rules that no longer exist are ignored at check time
@@ -182,7 +205,9 @@ Becomes the **rule-selection editor** for the selected profile:
 ## Testing
 
 - **Backend (pytest):** seeding idempotency (run init twice, one Standard per
-  language); XOR activation semantics including unknown ids; CRUD guards
+  language, examples not duplicated); example-profile deletion sticks across
+  a re-init (marker table); `seed_example_profiles: false` seeds no examples;
+  XOR activation semantics including unknown ids; CRUD guards
   (Standard delete/rename → 409, duplicate name → 409, reset restores
   defaults); multi-domain terminology union; `llm_instructions` present in
   the generated system prompt while the JSON contract remains; domain
