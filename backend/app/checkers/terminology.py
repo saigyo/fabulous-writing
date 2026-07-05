@@ -87,7 +87,44 @@ class TerminologyChecker:
     def _casing_cjk(
         self, text: str, language: Language, terms: list[Term]
     ) -> list[Finding]:
-        return []  # implemented with the CJK paths (next task)
+        # Only meaningful for Latin terms embedded in CJK text: pure CJK
+        # strings have no case, so lowercasing never changes them.
+        cased = [t for t in terms if t.case_sensitive]
+        if not cased:
+            return []
+        pipeline = self.nlp.get(language.value) if self.nlp else None
+        if pipeline is None:
+            return self._casing_substring(text, cased)
+        from spacy.matcher import PhraseMatcher
+
+        doc = pipeline.make_doc(text)  # tokenization only
+        matcher = PhraseMatcher(pipeline.vocab, attr="LOWER")
+        for index, term in enumerate(cased):
+            matcher.add(str(index), [pipeline.make_doc(term.preferred)])
+        findings: list[Finding] = []
+        for match_id, start, end in matcher(doc):
+            term = cased[int(pipeline.vocab.strings[match_id])]
+            span = doc[start:end]
+            if _casing_ok(text, span.start_char, span.text, term.preferred):
+                continue
+            findings.append(
+                self._finding(term, span.text, span.start_char, span.end_char)
+            )
+        return findings
+
+    def _casing_substring(self, text: str, cased: list[Term]) -> list[Finding]:
+        haystack = text.lower()
+        findings: list[Finding] = []
+        for term in cased:
+            needle = term.preferred.lower()
+            pos = haystack.find(needle)
+            while pos != -1:
+                end = pos + len(needle)
+                matched = text[pos:end]
+                if not _casing_ok(text, pos, matched, term.preferred):
+                    findings.append(self._finding(term, matched, pos, end))
+                pos = haystack.find(needle, pos + 1)
+        return findings
 
     def _check_cjk(
         self, text: str, language: Language, terms: list[Term]

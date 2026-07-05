@@ -281,3 +281,43 @@ class TestCjkChecker:
         findings = checker.check("ユーザーは使います。", Language.JA, domain.id)
         assert len(findings) == 1
         assert findings[0].span.text == "ユーザー"
+
+    def test_ja_flags_wrong_casing_of_embedded_latin_preferred(
+        self, store: TerminologyStore
+    ) -> None:
+        from app.core.config import NlpSettings
+        from app.nlp.registry import NlpRegistry
+
+        domain = store.create_domain("dev")
+        store.create_term(
+            domain.id,
+            language=Language.JA,
+            preferred="GitHub",
+            forbidden_variants=["ギットハブ"],
+            case_sensitive=True,
+        )
+        checker = TerminologyChecker(store, nlp=NlpRegistry(NlpSettings().models))
+        text = "コードは Github にあります。"
+        findings = checker.check(text, Language.JA, domain.id)
+        assert len(findings) == 1
+        assert findings[0].span.text == "Github"
+        assert findings[0].suggestions == ["GitHub"]
+        assert checker.check("コードは GitHub にあります。", Language.JA, domain.id) == []
+
+    def test_cjk_substring_fallback_checks_preferred_casing(
+        self, store: TerminologyStore
+    ) -> None:
+        from app.nlp.registry import NlpRegistry
+
+        domain = store.create_domain("dev")
+        store.create_term(
+            domain.id,
+            language=Language.JA,
+            preferred="GitHub",
+            forbidden_variants=["ギットハブ"],
+            case_sensitive=True,
+        )
+        checker = TerminologyChecker(store, nlp=NlpRegistry({"ja": "xx_bogus_model"}))
+        findings = checker.check("コードは Github にあります。", Language.JA, domain.id)
+        assert len(findings) == 1
+        assert findings[0].span.text == "Github"
