@@ -29,6 +29,7 @@ values; the user can always override them ad hoc.
 | Storage | **SQLite**, beside `domains`/`terms`. Profiles are UI-authored; file-based storage would force the server to write YAML and use fragile name references. |
 | Checker on/off set | Stays **out of profiles**: a profile with no domains simply yields no terminology findings; the LLM auto-toggle remains a global user preference. |
 | Example profiles | **Marketing** and **Technical Documentation** are seeded for EN, DE, and JA (config switch `seed_example_profiles`, default true). Ordinary deletable profiles; seeding is tracked per language so deletions stick across restarts. Purpose: demonstrating profile switching out of the box. |
+| Example texts | Each profile carries its own **example text**, seeded with the profile and editable in the Profiles view. The header's "Load example" button loads the selected profile's text, so demos show rule/LLM behavior on fitting material (marketing copy vs. tech docs). The per-language demo endpoint is replaced. |
 
 ## Data model
 
@@ -46,13 +47,15 @@ CREATE TABLE IF NOT EXISTS profiles (
   llm_provider TEXT,                           -- NULL = config default
   llm_model TEXT,                              -- NULL = provider default
   llm_instructions TEXT NOT NULL DEFAULT '',
+  example_text TEXT NOT NULL DEFAULT '',
   UNIQUE(language, name)
 )
 ```
 
 - **Seeding (Standard):** at startup, every supported language without an
   `is_standard = 1` row gets one: name "Standard", everything on, no
-  exceptions, no domains, NULL provider/model, empty instructions.
+  exceptions, no domains, NULL provider/model, empty instructions, and
+  `example_text` read from the existing `backend/demos/<lang>.txt`.
 - **Seeding (examples):** if the config switch `seed_example_profiles`
   (config.yaml, default `true`) is on, EN, DE, and JA each get two ordinary,
   deletable profiles — **Marketing** and **Technical Documentation** — the
@@ -74,7 +77,14 @@ CREATE TABLE IF NOT EXISTS profiles (
   | Marketing | `[]` | disable rules that fight marketing tone where they exist (e.g. EN intensifiers/weasel-word style rules) — exact ids picked from the loaded rule set at implementation time | Audience: prospective customers. Favor energetic, benefit-led, concrete phrasing; short sentences; active voice. Flag jargon, hedging, and vague claims. |
   | Technical Documentation | `["vividness"]` | none | Audience: users following instructions. Prioritize precision, consistent terminology, and unambiguous phrasing; prefer imperative mood for steps; flag marketing language and vague quantifiers. |
 
-  Both presets: no domains, NULL provider/model.
+  Both presets: no domains, NULL provider/model. Their example texts come
+  from new seed files `backend/demos/<lang>-marketing.txt` and
+  `backend/demos/<lang>-technical-documentation.txt` (EN, DE, JA), authored
+  at implementation time: short flawed texts whose defects match the profile
+  (hype, vague claims, and hedging for Marketing; ambiguity, inconsistent
+  terminology, and passive steps for Technical Documentation). The demos
+  directory is the **seed source only** — after seeding, the profile row owns
+  the text.
 - **Rule activation semantics** (applied by the rule engine):
   `active(rule) = (rule.category not in categories_off) XOR (rule.rule_id in rule_exceptions)`.
   Exceptions referencing rules that no longer exist are ignored at check time
@@ -94,7 +104,8 @@ CRUD mirroring the terminology API (`backend/app/api/profiles.py`):
 - `PUT /api/profiles/{id}` → full update. Renaming Standard → 409. Prunes
   dead rule exceptions and dead domain ids on save.
 - `DELETE /api/profiles/{id}` → 409 if `is_standard`.
-- `POST /api/profiles/{id}/reset` → restore factory defaults; Standard only
+- `POST /api/profiles/{id}/reset` → restore factory defaults, including the
+  example text re-read from the demos seed file; Standard only
   (409 otherwise). UI exposes it only for Standard.
 
 Profile shape over the wire:
@@ -110,9 +121,13 @@ Profile shape over the wire:
   "domain_ids": [1, 4],
   "llm_provider": "claude",
   "llm_model": null,
-  "llm_instructions": "Audience: consumers. Prefer energetic, benefit-led phrasing..."
+  "llm_instructions": "Audience: consumers. Prefer energetic, benefit-led phrasing...",
+  "example_text": "Introducing the all-new SuperWidget, quite possibly the best..."
 }
 ```
+
+`GET /api/languages/{code}/demo` is removed; the frontend reads
+`example_text` from the already-fetched selected profile.
 
 ### Check API (profile-agnostic)
 
@@ -153,6 +168,10 @@ guidance carries into suggested fixes and rewrites.
   marker recomputes.
 - The **domain selector becomes a multi-select**: compact checkbox dropdown;
   closed label shows "none", the single domain's name, or "2 domains".
+- The **"Load example" button** inserts the selected profile's
+  `example_text` into the editor; it is disabled when that text is empty.
+  Its current side effect of defaulting the domain selector is dropped —
+  the profile governs domains now.
 - Any profile/selector change triggers the usual re-check debounce.
 
 ### Profiles view
@@ -166,9 +185,9 @@ New view (tab, like Terminology) managing the current language's profiles:
 - **Rename / delete**: blocked for Standard (delete button replaced by
   "reset to defaults").
 - **Edit non-rule fields**: domains (same multi-select component),
-  provider/model (same selectors as the header), and a textarea for
+  provider/model (same selectors as the header), a textarea for
   `llm_instructions` with a hint that these are appended to the built-in
-  check prompt.
+  check prompt, and a textarea for `example_text`.
 
 ### Rules page
 
@@ -211,7 +230,8 @@ Becomes the **rule-selection editor** for the selected profile:
   (Standard delete/rename → 409, duplicate name → 409, reset restores
   defaults); multi-domain terminology union; `llm_instructions` present in
   the generated system prompt while the JSON contract remains; domain
-  deletion prunes profiles.
+  deletion prunes profiles; seeded example texts match the demo seed files
+  (replacing the current demo-endpoint tests).
 - **Frontend (vitest):** `isDirty` comparison (set semantics for domains);
   profile→header copy; rules-page activation resolution; last-profile-per-
   language selection on language switch.
