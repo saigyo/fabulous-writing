@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from app.checkers.rules.engine import RuleEngine
+from app.checkers.rules.engine import RuleConfig, RuleEngine
 from app.core.models import Category, Language, Severity
 
 
@@ -236,3 +236,57 @@ tokens: [very]
         assert len(rules) == 1
         assert rules[0].rule_id == "style.good"
         assert rules[0].language == Language.EN
+
+
+def _rule_ids(findings):
+    return {f.rule_id for f in findings}
+
+
+def _engine_with_two_rules(tmp_path):
+    (tmp_path / "en" / "style").mkdir(parents=True)
+    (tmp_path / "en" / "grammar").mkdir(parents=True)
+    (tmp_path / "en" / "style" / "test-weasel.yml").write_text(
+        "extends: existence\nmessage: \"'%s' is weak.\"\ncategory: style\n"
+        "ignorecase: true\ntokens: [very]\n"
+    )
+    (tmp_path / "en" / "grammar" / "test-repeat.yml").write_text(
+        "extends: repetition\nmessage: \"'%s' is repeated.\"\ncategory: grammar\n"
+    )
+    return RuleEngine(tmp_path)
+
+
+def test_rule_config_none_means_all_active(tmp_path):
+    engine = _engine_with_two_rules(tmp_path)
+    text = "This is very good. The cat cat sat."
+    assert _rule_ids(engine.check(text, Language.EN)) == {
+        "style.test-weasel", "grammar.test-repeat",
+    }
+
+
+def test_rule_config_category_off(tmp_path):
+    engine = _engine_with_two_rules(tmp_path)
+    text = "This is very good. The cat cat sat."
+    config = RuleConfig(categories_off=["style"], exceptions=[])
+    assert _rule_ids(engine.check(text, Language.EN, config=config)) == {
+        "grammar.test-repeat",
+    }
+
+
+def test_rule_config_exception_inverts(tmp_path):
+    engine = _engine_with_two_rules(tmp_path)
+    text = "This is very good. The cat cat sat."
+    # Category on + exception -> rule off.
+    config = RuleConfig(categories_off=[], exceptions=["grammar.test-repeat"])
+    assert _rule_ids(engine.check(text, Language.EN, config=config)) == {
+        "style.test-weasel",
+    }
+    # Category off + exception -> rule back on.
+    config = RuleConfig(categories_off=["style"], exceptions=["style.test-weasel"])
+    assert "style.test-weasel" in _rule_ids(engine.check(text, Language.EN, config=config))
+
+
+def test_rule_config_unknown_ids_harmless(tmp_path):
+    engine = _engine_with_two_rules(tmp_path)
+    config = RuleConfig(categories_off=["nosuchcategory"], exceptions=["gone.rule"])
+    text = "This is very good."
+    assert "style.test-weasel" in _rule_ids(engine.check(text, Language.EN, config=config))
