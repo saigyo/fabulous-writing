@@ -252,3 +252,27 @@ The add-term row stays visible even when a filter matches nothing (with a
 "no terms match" hint). Verified live against the seeded 19-term domain:
 sort cycle, ▲¹/▲² multi-sort, de-filter → 3 rows, "app"+de → Anwendung,
 "login" → sign in, search+sort combined.
+
+## 2026-07-05 — UI localized into all seven languages
+Commit: `0da09fa`
+
+Homemade typed i18n instead of react-i18next: each locale is a TypeScript
+object implementing a shared `Messages` interface (~75 keys), and every
+parameterized message is a *function*, which handles what template DSLs
+fight with — German plural forms, French gendered "Aucune erreur / Aucun
+avertissement", Japanese counters (エラー 3件), per-locale number
+formatting (1,200 / 1.200 / １２００…), and CJK word order in rule
+summaries. TypeScript enforces catalog completeness at compile time; a
+runtime test double-checks key parity. Display language = persisted
+`uiLocale` ?? browser locale (primary-subtag match over
+navigator.languages, English fallback); a compact 🌐 selector sits at the
+right end of the header. Sentences with embedded `<code>` (the rules
+hint) go through an `interpolate()` placeholder-splitter so translations
+control the word order around the nodes. Non-React code (suggest
+handlers) uses `currentMessages()`. Deliberate boundaries: rule messages
+from rule files, language names, and the English welcome document are
+content, not chrome — untranslated. Verified live with Playwright
+contexts: de-DE browser → German UI (2 Fehler | 8 Warnungen |
+10 Vorschläge), switch to ja → instant 検出結果, reload keeps ja despite
+the de-DE browser, French rules hint interpolates correctly, da-DK falls
+back to English. 91 frontend tests green.
