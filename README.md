@@ -114,6 +114,12 @@ read from the environment only and never stored:
 | `mistral` | `export MISTRAL_API_KEY=…` — models discovered live |
 | `bedrock` | standard AWS credential chain (env/profile/role); model ids are region-specific — discovered live with `bedrock:List*` permissions, or pinned via `bedrock_models` in `config.yaml` |
 
+Which model to pick — per language, API vs. local Ollama, hardware and cost
+considerations — is covered in
+[docs/model-recommendations.md](docs/model-recommendations.md). It also shows
+how to reach further OpenAI-compatible vendors (DeepSeek, Qwen, Gemini,
+OpenRouter) through the `openai`/`mistral` slots.
+
 ### Configuration
 
 All configuration is optional. Copy `backend/config.example.yaml` to
