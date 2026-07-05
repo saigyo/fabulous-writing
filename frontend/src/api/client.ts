@@ -1,9 +1,11 @@
 import type {
+  Category,
   CheckStatus,
   Domain,
   Finding,
   Language,
   LanguageInfo,
+  Profile,
   ProviderInfo,
   RuleError,
   RuleInfo,
@@ -24,13 +26,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json()
 }
 
+export interface RuleConfig {
+  categories_off: Category[]
+  exceptions: string[]
+}
+
 export interface CheckRequest {
   text: string
   language: Language
-  domain_id?: number | null
+  domain_ids: number[]
   checkers: string[]
+  rule_config?: RuleConfig | null
   llm_provider?: string | null
   llm_model?: string | null
+  llm_instructions?: string
 }
 
 export function postCheck(body: CheckRequest): Promise<CheckStatus> {
@@ -81,6 +90,7 @@ export interface SuggestionRequest {
   rule_id?: string | null
   llm_provider?: string | null
   llm_model?: string | null
+  llm_instructions?: string
 }
 
 export interface SuggestionResponse {
@@ -108,9 +118,6 @@ export interface RulesResponse {
 export const getRules = (language: Language) =>
   request<RulesResponse>(`/api/rules?language=${language}`)
 
-export const getDemoText = (language: Language) =>
-  request<{ text: string }>(`/api/languages/${language}/demo`)
-
 export const getDomains = () => request<Domain[]>('/api/domains')
 export const createDomain = (name: string, description = '') =>
   request<Domain>('/api/domains', {
@@ -134,3 +141,16 @@ export const updateTerm = (termId: number, term: Partial<Omit<Term, 'id' | 'doma
   })
 export const deleteTerm = (termId: number) =>
   request<void>(`/api/terms/${termId}`, { method: 'DELETE' })
+
+export type ProfilePayload = Omit<Profile, 'id' | 'is_standard'>
+
+export const getProfiles = (language: Language) =>
+  request<Profile[]>(`/api/profiles?language=${language}`)
+export const createProfile = (payload: ProfilePayload) =>
+  request<Profile>('/api/profiles', { method: 'POST', body: JSON.stringify(payload) })
+export const updateProfile = (id: number, payload: Omit<ProfilePayload, 'language'>) =>
+  request<Profile>(`/api/profiles/${id}`, { method: 'PUT', body: JSON.stringify(payload) })
+export const deleteProfile = (id: number) =>
+  request<void>(`/api/profiles/${id}`, { method: 'DELETE' })
+export const resetProfile = (id: number) =>
+  request<Profile>(`/api/profiles/${id}/reset`, { method: 'POST' })

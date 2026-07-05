@@ -98,3 +98,17 @@ export interface CheckStatus {
   status: string
   findings: Finding[]
 }
+
+export interface Profile {
+  id: number
+  language: Language
+  name: string
+  is_standard: boolean
+  categories_off: Category[]
+  rule_exceptions: string[]
+  domain_ids: number[]
+  llm_provider: string | null
+  llm_model: string | null
+  llm_instructions: string
+  example_text: string
+}
