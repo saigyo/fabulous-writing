@@ -346,3 +346,19 @@ default is `us.` with a comment), and Bedrock's
 `claude-3-5-sonnet-20240620` now returns "reached end of life" — static
 model lists rot, which justifies the discovery-with-fallback design.
 193 backend tests.
+
+## 2026-07-05 — README restructure
+Commit: `cceebdd`
+
+Reordered the README along the reader's journey instead of its growth
+history: first a user-facing tour ("What it does" — editor, checking
+phases, rule catalog, terminology, languages) with each screenshot
+captioned in its own section, then "Setup and running" (quick start,
+provider table, configuration, optional spaCy models and Hunspell
+dictionaries), and only then "Development" (repo structure, tests/CI,
+rule authoring, terminology internals, API, contributing). Content
+survived nearly verbatim; what moved was implementation detail that had
+accreted into the intro — the Hunspell install instructions, GiNZA
+version caveats, and the vetting benchmark now live in the setup and
+developer sections. Cross-references use GitHub heading anchors
+(quick-start, writing-rules, the spaCy-models section).
