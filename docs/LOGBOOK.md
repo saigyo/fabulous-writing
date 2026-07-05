@@ -454,3 +454,22 @@ label right-aligned with a 12px gap above the chips; settled state
 unchanged. Note: Vite's file watcher missed the CSS edit and served a
 stale transform until the file was touched — worth remembering when a
 verified CSS change seems to have no effect.
+
+## 2026-07-05 — Source filter chips: rule-based vs. LLM findings
+Commit: `03e67ed`
+
+New second chips row in the sidebar below the severity chips, counting
+findings by source group: "rule-based" (rule engine + terminology —
+both deterministic) vs. "LLM". Each chip toggles a filter independent
+of the severity filter; the two combine, so "rule-based errors" or
+"LLM suggestions" are each one click. Chips render in neutral grey
+(`var(--text-dim)`) until Markus picks dedicated colors. New
+`findings/source.ts` mirrors `severity.ts` (TDD, 6 tests); the
+severity-specific empty-state message became a generic `noFilterMatch`
+across all seven locales (dropping the now-unused `sevNone` tables in
+fr/es/it); reveal-on-select clears whichever filters hide the clicked
+finding. 98 frontend tests green, build clean, Playwright-verified
+live: chip geometry/color, exclusive toggling within the row,
+combined severity+source filtering (20 findings → 2 rule-based
+errors), rule+LLM counts summing to the total, and the empty-state
+message for "0 LLM".
