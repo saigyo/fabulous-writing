@@ -387,3 +387,22 @@ tooltip serves both), no API/DB changes. Verified live: API check
 flagged github/GITHUB/mid-sentence Sign In and allowed sentence-start
 "Sign in"; headless browser confirmed toggle state, badge, and one-line
 layout at 900px. 205 backend tests, 91 frontend tests.
+
+## 2026-07-05 — Sidebar reveals the selected finding
+Commit: `8951161`
+
+Markus noticed that clicking flagged text in the editor expands the
+finding in the sidebar but doesn't scroll it into view when it sits
+below the fold. Fixing that surfaced two sibling holes with the same
+root cause (selection state and row visibility were independent): a
+collapsed category or an active severity filter could hide the selected
+row entirely. The Sidebar now reacts to a *new* selection (guarded by a
+ref against re-triggering on re-renders) by clearing a hiding severity
+filter and un-collapsing the finding's category, and the row itself
+scrolls into view via `scrollIntoView({block: 'nearest', behavior:
+'smooth'})` on selection — 'nearest' keeps sidebar-originated clicks
+from jumping. Verified headlessly by driving the real editor: clicking
+the last finding's text scrolled its row into view, and both the
+collapsed-category and severity-filter variants recovered too (the
+first probe clicked mid-line and deselected — CodeMirror decorations
+split text nodes, so the click must hit the decorated span).
