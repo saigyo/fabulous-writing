@@ -526,3 +526,42 @@ added and confirmed to kill exactly that mutant before restoring the
 guard. 106 frontend tests green; `tsc -b` shows only the two known
 App.tsx errors reserved for Task 11. Old persisted `domainId` localStorage
 key is silently dropped (accepted one-time loss).
+
+## 2026-07-05 — Profiles management view (Task 12)
+Commit: `eb0ee2f`
+
+New `profiles/ProfilesView.tsx` behind a fourth `Profiles` tab
+(`ActiveView` gains `'profiles'`): a create bar plus one card per
+profile (domain multi-select, LLM/model selects, instructions and
+example-text areas), all fields saving on blur/change via the existing
+client functions (`createProfile`/`updateProfile`/`deleteProfile`/
+`resetProfile`). The Standard card shows a reset (↺) button instead of
+delete (✕); deleting the active profile falls back to Standard (or the
+first remaining profile).
+
+Stale-props risk: each card keeps local draft state for the three text
+fields so typing doesn't round-trip the store on every keystroke, but
+that draft needs to reflect server-driven changes — chiefly Reset —
+that don't originate from the card's own onBlur. Fixed with a
+composite `key={profile.id}:${profile.name}:${profile.llm_instructions}
+:${profile.example_text}` on `ProfileCard` from the parent: unrelated
+prop changes (e.g. another card's edit, domain list refresh) don't
+touch this key, typing doesn't touch it either (the prop only updates
+after blur, by which point local state already matches), and a Reset
+does change it, forcing a remount with fresh drafts. Verified live via
+a scratchpad Playwright script: renamed a freshly created profile,
+blurred, and confirmed the input kept "Blog Posts" after the
+save-and-refresh round trip rather than reverting.
+
+`.profiles-view` follows the `.rules-view` scroll-container pattern
+(`flex: 1; overflow-y: auto`) so the view scrolls correctly inside the
+100vh flex app root — the plan's CSS block omitted `flex: 1`, which
+would have made a tall card grid extend past the viewport.
+
+107 vitest tests green, `tsc -b --noEmit` clean, `npm run build` clean.
+Live check: 3 EN cards render (Standard/Marketing/Technical
+Documentation) plus header PROFILE select showing the same set;
+created "Blog", it appeared and became selected; renamed to
+"Blog Posts" (survived blur); deleted it back to 3 cards; Standard
+confirmed to show ↺ not ✕. Screenshots in the scratchpad
+(`profiles-01-initial.png` … `profiles-04-after-delete.png`).
