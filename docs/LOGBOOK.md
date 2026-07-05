@@ -294,4 +294,6 @@ min(10.5rem, 12vw) so a long Ollama model name can't blow up the layout
 headless: every locale fits at 1024px with zero overflow and constant
 50px height; the practical floor is ~960px (Spanish). README screenshots
 refreshed — the hero now shows the stacked header plus live token
-counter.
+counter. Follow-up `204faf5`: label left edges aligned with the text
+*inside* the selects (label padding = select text inset, negative margin
+keeps the select in place) — verified with pixel guide lines at 4× scale.
