@@ -426,3 +426,15 @@ routing YAML is explicitly framed as a design sketch (not read by the
 app), noting that `OpenAICompatProvider` already covers every
 `openai_compatible` entry. Cross-linked with the earlier Ollama latency
 research note (2026-07-04).
+
+## 2026-07-05 — Sidebar header: count badge no longer wraps
+Commit: `f0408ab`
+
+When the check-status label in the sidebar header grows long (e.g.
+"LLM-Prüfung… (13s · ↓ 276 Tokens)"), it wraps to a second line —
+acceptable — but it also squeezed the heading, pushing the findings
+count badge onto its own line below "Ergebnisse". The header h2 now
+has `flex-shrink: 0; white-space: nowrap` (plus a small header gap),
+so only the status label wraps and the badge stays beside the heading.
+Verified with Playwright by injecting the long wrapped label and
+measuring that the badge stays on the heading's line.
