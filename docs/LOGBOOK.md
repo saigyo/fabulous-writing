@@ -711,3 +711,15 @@ the alignment structural rather than tuned. Labels are bold with an
 explicit weight reset on selects/textareas (they inherit); the domain
 listbox stretches to fill row one. Playwright-measured: label and
 textarea-top y-deltas 0.0, weights 600/400.
+
+## 2026-07-05 — README: profiles section + refreshed screenshots
+Commit: `97b3e4d`
+
+All four README screenshots regenerated via the extended capture script
+(now also persists the Product docs domain into the EN Standard profile
+before the editor shot — the Example button no longer auto-selects a
+domain — and captures the new Profiles tab). Added a "Checking
+profiles" section between the checking-phases and rule-catalog
+sections; updated the editor blurb (example text comes from the
+profile), the rules section (profile rule editing), the config
+highlights, and config.example.yaml (seed_example_profiles).
