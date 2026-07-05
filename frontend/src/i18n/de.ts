@@ -108,6 +108,7 @@ export const de: Messages = {
     'Wird an den eingebauten Prüf-Prompt angehängt (Ton, Zielgruppe, Fokus)',
   exampleTextLabel: 'Beispieltext',
   profileSaved: 'Profil gespeichert',
+  profileChangeFailed: (error) => `Profiländerung fehlgeschlagen: ${error}`,
 
   rulesTitle: 'Regeln',
   rulesHint:

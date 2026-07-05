@@ -110,6 +110,7 @@ export const it: Messages = {
     'Aggiunte al prompt di controllo integrato (tono, pubblico, priorità)',
   exampleTextLabel: 'Testo di esempio',
   profileSaved: 'Profilo salvato',
+  profileChangeFailed: (error) => `Modifica del profilo non riuscita: ${error}`,
 
   rulesTitle: 'Regole',
   rulesHint:

@@ -97,6 +97,7 @@ export const en: Messages = {
   llmInstructionsHint: 'Appended to the built-in check prompt (tone, audience, focus)',
   exampleTextLabel: 'Example text',
   profileSaved: 'Profile saved',
+  profileChangeFailed: (error) => `Profile change failed: ${error}`,
 
   rulesTitle: 'Rules',
   rulesHint:

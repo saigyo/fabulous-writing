@@ -114,6 +114,7 @@ export const fr: Messages = {
     'Ajoutées au prompt de vérification intégré (ton, audience, priorités)',
   exampleTextLabel: "Texte d'exemple",
   profileSaved: 'Profil enregistré',
+  profileChangeFailed: (error) => `Échec de la modification du profil : ${error}`,
 
   rulesTitle: 'Règles',
   rulesHint:

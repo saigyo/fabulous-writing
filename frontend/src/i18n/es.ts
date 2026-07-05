@@ -114,6 +114,7 @@ export const es: Messages = {
     'Se añaden al prompt de comprobación integrado (tono, audiencia, enfoque)',
   exampleTextLabel: 'Texto de ejemplo',
   profileSaved: 'Perfil guardado',
+  profileChangeFailed: (error) => `No se pudo aplicar el cambio de perfil: ${error}`,
 
   rulesTitle: 'Reglas',
   rulesHint:

@@ -82,6 +82,7 @@ describe('catalogs', () => {
     expect(en.profile).toBe('Profile')
     expect(en.domainsSelected(2)).toBe('2 domains')
     expect(catalogs.de.domainsSelected(2)).toBe('2 Domänen')
+    expect(en.profileChangeFailed('x')).toBe('Profile change failed: x')
   })
 })
 

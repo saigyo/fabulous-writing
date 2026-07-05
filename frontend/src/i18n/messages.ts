@@ -105,6 +105,7 @@ export interface Messages {
   llmInstructionsHint: string
   exampleTextLabel: string
   profileSaved: string
+  profileChangeFailed: (error: string) => string
 
   // Rules view
   rulesTitle: string

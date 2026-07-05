@@ -103,6 +103,7 @@ export const ja: Messages = {
   llmInstructionsHint: '組み込みのチェックプロンプトに追加されます(トーン・読者・重点)',
   exampleTextLabel: 'サンプルテキスト',
   profileSaved: 'プロファイルを保存しました',
+  profileChangeFailed: (error) => `プロファイルの変更に失敗しました: ${error}`,
 
   rulesTitle: 'ルール',
   rulesHint:

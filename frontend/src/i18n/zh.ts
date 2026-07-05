@@ -102,6 +102,7 @@ export const zh: Messages = {
   llmInstructionsHint: '附加到内置检查提示词(语气、受众、重点)',
   exampleTextLabel: '示例文本',
   profileSaved: '配置已保存',
+  profileChangeFailed: (error) => `配置更改失败：${error}`,
 
   rulesTitle: '规则',
   rulesHint:

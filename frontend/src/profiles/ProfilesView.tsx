@@ -25,6 +25,10 @@ export function ProfilesView() {
     if (select) store.selectProfile(select, true)
   }
 
+  function reportError(e: unknown) {
+    setError(m.profileChangeFailed(e instanceof Error ? e.message : String(e)))
+  }
+
   async function create() {
     if (!newName.trim()) return
     const state = useStore.getState()
@@ -45,7 +49,7 @@ export function ProfilesView() {
       setError(null)
       refresh([...profiles, created], created)
     } catch (e) {
-      setError(String(e))
+      reportError(e)
     }
   }
 
@@ -65,20 +69,30 @@ export function ProfilesView() {
       setError(null)
       refresh(profiles.map((p) => (p.id === saved.id ? saved : p)))
     } catch (e) {
-      setError(String(e))
+      reportError(e)
     }
   }
 
   async function remove(profile: Profile) {
-    await deleteProfile(profile.id)
-    const rest = profiles.filter((p) => p.id !== profile.id)
-    const fallback = rest.find((p) => p.is_standard) ?? rest[0]
-    refresh(rest, profile.id === profileId ? fallback : undefined)
+    try {
+      await deleteProfile(profile.id)
+      const rest = profiles.filter((p) => p.id !== profile.id)
+      const fallback = rest.find((p) => p.is_standard) ?? rest[0]
+      setError(null)
+      refresh(rest, profile.id === profileId ? fallback : undefined)
+    } catch (e) {
+      reportError(e)
+    }
   }
 
   async function reset(profile: Profile) {
-    const restored = await resetProfile(profile.id)
-    refresh(profiles.map((p) => (p.id === restored.id ? restored : p)))
+    try {
+      const restored = await resetProfile(profile.id)
+      setError(null)
+      refresh(profiles.map((p) => (p.id === restored.id ? restored : p)))
+    } catch (e) {
+      reportError(e)
+    }
   }
 
   return (
