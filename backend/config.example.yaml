@@ -1,5 +1,9 @@
 # Copy to config.yaml to override defaults. All keys are optional.
-# The Claude API key is read from the ANTHROPIC_API_KEY environment variable.
+# API keys are read from the environment only, never from this file:
+#   claude  -> ANTHROPIC_API_KEY
+#   openai  -> OPENAI_API_KEY
+#   mistral -> MISTRAL_API_KEY
+#   bedrock -> standard AWS credential chain (env vars, profile, role)
 
 # db_path: data/fabulous.db
 # rules_dir: rules
@@ -11,6 +15,17 @@ providers:
   ollama_base_url: http://localhost:11434
   ollama_model: llama3.1
   anthropic_model: claude-sonnet-5
+  openai_model: gpt-5-mini
+  mistral_model: mistral-small-latest
+  # bedrock_region: eu-central-1     # default: AWS region chain
+  # Bedrock model/profile ids are region-family-specific (us./eu./apac.).
+  # With list permissions (bedrock:ListFoundationModels,
+  # bedrock:ListInferenceProfiles) the model dropdown is discovered live;
+  # otherwise pin the invokable ids here:
+  bedrock_model: us.anthropic.claude-sonnet-4-5-20250929-v1:0
+  # bedrock_models:
+  #   - us.anthropic.claude-sonnet-4-5-20250929-v1:0
+  #   - us.anthropic.claude-haiku-4-5-20251001-v1:0
   default_provider: ollama
 
 # spaCy models per language for token_pattern/dependency rules.

@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -7,8 +9,11 @@ from app.api.providers import router as providers_router
 from app.api.rules import router as rules_router
 from app.api.suggestions import router as suggestions_router
 from app.api.terminology import router as terminology_router
+from app.api.providers import OPENAI_EXCLUDED_MODEL_FRAGMENTS
+from app.checkers.llm.bedrock import BedrockProvider
 from app.checkers.llm.claude import ClaudeProvider
 from app.checkers.llm.ollama import OllamaProvider
+from app.checkers.llm.openai_compat import OpenAICompatProvider
 from app.checkers.llm.provider import LLMProvider
 from app.checkers.rules.engine import RuleEngine
 from app.core.config import Settings, load_settings
@@ -30,6 +35,26 @@ def make_provider_factory(settings: Settings):
             return OllamaProvider(
                 base_url=providers.ollama_base_url,
                 model=model or providers.ollama_model,
+            )
+        if chosen == "openai":
+            return OpenAICompatProvider(
+                name="openai",
+                base_url=providers.openai_base_url,
+                api_key=os.environ.get("OPENAI_API_KEY"),
+                model=model or providers.openai_model,
+                exclude_models=OPENAI_EXCLUDED_MODEL_FRAGMENTS,
+            )
+        if chosen == "mistral":
+            return OpenAICompatProvider(
+                name="mistral",
+                base_url=providers.mistral_base_url,
+                api_key=os.environ.get("MISTRAL_API_KEY"),
+                model=model or providers.mistral_model,
+            )
+        if chosen == "bedrock":
+            return BedrockProvider(
+                model=model or providers.bedrock_model,
+                region=providers.bedrock_region,
             )
         raise ValueError(f"Unknown LLM provider: {chosen}")
 

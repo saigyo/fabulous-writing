@@ -17,7 +17,8 @@ finding highlights it in the text, explains the issue, and offers one-click sugg
 
 Checking happens in two phases:
 
-1. **LLM checking** with pluggable providers — local Ollama models or the Claude API.
+1. **LLM checking** with pluggable providers — local Ollama models, the Claude API,
+   OpenAI, Mistral, or AWS Bedrock.
    The LLM must quote each problem verbatim; quotes are re-anchored deterministically
    and findings that cannot be anchored are discarded. LLM-generated *fixes* pass a
    deterministic gate too: a spell check against frequency dictionaries (words already
@@ -79,11 +80,19 @@ The header's **Example** button fills the editor with a deliberately flawed demo
 text for the selected language (from `backend/demos/`) — a quick way to see the
 rules, terminology, and LLM checks in action.
 
-For LLM checking, either run [Ollama](https://ollama.com) locally (models are
-discovered automatically) or export `ANTHROPIC_API_KEY` and pick the `claude`
-provider in the header. Rules and terminology checks work without any LLM.
-Optional backend configuration: copy `backend/config.example.yaml` to
-`backend/config.yaml`.
+For LLM checking, pick a provider in the header. Availability is detected
+automatically; API keys are read from the environment only and never stored:
+
+| Provider  | Setup |
+|-----------|-------|
+| `ollama`  | run [Ollama](https://ollama.com) locally — models discovered live |
+| `claude`  | `export ANTHROPIC_API_KEY=…` |
+| `openai`  | `export OPENAI_API_KEY=…` — chat models discovered live |
+| `mistral` | `export MISTRAL_API_KEY=…` — models discovered live |
+| `bedrock` | standard AWS credential chain (env/profile/role); model ids are region-specific — discovered live with `bedrock:List*` permissions, or pinned via `bedrock_models` in `config.yaml` |
+
+Rules and terminology checks work without any LLM. Optional backend
+configuration: copy `backend/config.example.yaml` to `backend/config.yaml`.
 
 ## Tests
 

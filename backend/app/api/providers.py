@@ -1,40 +1,122 @@
+import asyncio
 import os
 from typing import Any
 
 from fastapi import APIRouter, Request
 
+from app.checkers.llm import bedrock
 from app.checkers.llm.ollama import OllamaProvider
+from app.checkers.llm.openai_compat import OpenAICompatProvider
+from app.core.config import ProviderSettings
 
 router = APIRouter(prefix="/api", tags=["providers"])
+
+# Model ids the OpenAI /models listing returns that are not chat models.
+OPENAI_EXCLUDED_MODEL_FRAGMENTS = (
+    "embedding",
+    "whisper",
+    "tts",
+    "dall-e",
+    "moderation",
+    "audio",
+    "realtime",
+    "image",
+    "transcribe",
+    "babbage",
+    "davinci",
+)
+
+_DISCOVERY_TIMEOUT = 5.0
+
+
+def _entry(
+    name: str, available: bool, models: list[str], default_model: str
+) -> dict[str, Any]:
+    # If the configured default is not in the live list, point clients at
+    # one that is.
+    if models and default_model not in models:
+        default_model = models[0]
+    return {
+        "name": name,
+        "available": available,
+        "models": models,
+        "default_model": default_model,
+    }
+
+
+async def _ollama_entry(settings: ProviderSettings) -> dict[str, Any]:
+    provider = OllamaProvider(
+        base_url=settings.ollama_base_url, model=settings.ollama_model
+    )
+    try:
+        async with asyncio.timeout(_DISCOVERY_TIMEOUT):
+            models = await provider.list_models()
+        return _entry("ollama", True, models, settings.ollama_model)
+    except Exception:
+        return _entry("ollama", False, [], settings.ollama_model)
+
+
+async def _openai_compat_entry(
+    name: str, env_key: str, base_url: str, default_model: str
+) -> dict[str, Any]:
+    api_key = os.environ.get(env_key)
+    if not api_key:
+        return _entry(name, False, [default_model], default_model)
+    provider = OpenAICompatProvider(
+        name=name,
+        base_url=base_url,
+        api_key=api_key,
+        model=default_model,
+        exclude_models=OPENAI_EXCLUDED_MODEL_FRAGMENTS if name == "openai" else (),
+    )
+    try:
+        async with asyncio.timeout(_DISCOVERY_TIMEOUT):
+            models = await provider.list_models()
+    except Exception:
+        # Key is set but discovery failed — still usable with the default.
+        models = [default_model]
+    return _entry(name, True, models, default_model)
+
+
+async def _claude_entry(settings: ProviderSettings) -> dict[str, Any]:
+    available = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    return _entry(
+        "claude", available, [settings.anthropic_model], settings.anthropic_model
+    )
+
+
+async def _bedrock_entry(settings: ProviderSettings) -> dict[str, Any]:
+    available = await asyncio.to_thread(bedrock.credentials_available)
+    if not available:
+        return _entry("bedrock", False, [settings.bedrock_model], settings.bedrock_model)
+    models = settings.bedrock_models
+    if not models:
+        try:
+            async with asyncio.timeout(_DISCOVERY_TIMEOUT):
+                models = await asyncio.to_thread(
+                    bedrock.discover_models, settings.bedrock_region
+                )
+        except Exception:
+            models = [settings.bedrock_model]
+    return _entry("bedrock", True, models, settings.bedrock_model)
 
 
 @router.get("/providers")
 async def list_providers(request: Request) -> list[dict[str, Any]]:
     settings = request.app.state.settings.providers
-    ollama = OllamaProvider(
-        base_url=settings.ollama_base_url, model=settings.ollama_model
+    return list(
+        await asyncio.gather(
+            _ollama_entry(settings),
+            _claude_entry(settings),
+            _openai_compat_entry(
+                "openai", "OPENAI_API_KEY", settings.openai_base_url, settings.openai_model
+            ),
+            _openai_compat_entry(
+                "mistral",
+                "MISTRAL_API_KEY",
+                settings.mistral_base_url,
+                settings.mistral_model,
+            ),
+            _bedrock_entry(settings),
+        )
     )
-    try:
-        models = await ollama.list_models()
-        ollama_available = True
-    except Exception:
-        models = []
-        ollama_available = False
-    # If the configured default is not installed, point clients at one that is.
-    default_model = settings.ollama_model
-    if models and default_model not in models:
-        default_model = models[0]
-    return [
-        {
-            "name": "ollama",
-            "available": ollama_available,
-            "models": models,
-            "default_model": default_model,
-        },
-        {
-            "name": "claude",
-            "available": bool(os.environ.get("ANTHROPIC_API_KEY")),
-            "models": [settings.anthropic_model],
-            "default_model": settings.anthropic_model,
-        },
-    ]

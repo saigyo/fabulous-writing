@@ -10,6 +10,17 @@ class ProviderSettings(BaseModel):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1"
     anthropic_model: str = "claude-sonnet-5"
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_model: str = "gpt-5-mini"
+    mistral_base_url: str = "https://api.mistral.ai/v1"
+    mistral_model: str = "mistral-small-latest"
+    # None: use the AWS default region chain (AWS_REGION / profile).
+    bedrock_region: str | None = None
+    # Inference-profile ids are region-family-specific (us./eu./apac. prefix).
+    bedrock_model: str = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    # When set, skips live Bedrock model discovery (which needs the
+    # bedrock:ListFoundationModels / ListInferenceProfiles permissions).
+    bedrock_models: list[str] = Field(default_factory=list)
     default_provider: str = "ollama"
 
 
