@@ -608,3 +608,35 @@ after the click, but here it only flips once the PUT round-trip
 resolves and the store re-renders — switched to plain `.click()` with
 an explicit wait. Screenshot of the dimmed state in the scratchpad
 (`task13-02-style-off-dimmed.png`).
+
+## 2026-07-05 — Checking profiles: feature complete
+Commits: `909d18c`..`bbcfe58` (26 commits, spec `6f97627`+amendments, plan `96c0a95`+syncs)
+
+Language-specific checking profiles landed end to end, executed via
+subagent-driven development (fresh implementer per plan task, two-stage
+spec + quality review each, fix loops on findings). A profile bundles
+rule selection (category toggles XOR per-rule exceptions), terminology
+domains (multi-select, union at check time with cross-domain overlap
+dedup), LLM provider/model, extra LLM instructions (injected after the
+JSON contract in check/suggest/rewrite prompts), and a per-profile
+example text. Standard profiles are seeded per language (editable, not
+deletable, resettable); Marketing and Technical Documentation examples
+are seeded for EN/DE/JA behind `seed_example_profiles` with a marker
+table so deletions stick. The check API stays profile-agnostic
+(`domain_ids`, `rule_config`, `llm_instructions`); the frontend resolves
+profile + ephemeral header overrides (computed dirty ✱ with save/reset).
+The rules page is the profile's rule editor (write-through); the new
+Profiles view manages the rest. The per-language demo endpoint is gone —
+the Load-example button reads the selected profile.
+
+Review loops caught and fixed: a seeding crash loop on name collisions,
+missing cross-domain finding dedup, a vacuous rule_config test, an
+isProfileDirty superset-mutation test gap, a React-StrictMode bug that
+silently overwrote persisted header settings on every dev reload, and
+error-handling gaps in both editing views. Backend 235 / frontend 108
+tests green; full Playwright e2e pass (8/8) with state restoration.
+
+Known follow-ups (non-blocking): profile/selector changes don't trigger
+an auto re-check (pre-existing behavior — click Check or type);
+DomainMultiSelect a11y polish (aria-expanded, Esc); possible future
+migration of the store into slices.
