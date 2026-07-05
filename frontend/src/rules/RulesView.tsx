@@ -21,7 +21,9 @@ export function RulesView() {
     setError(null)
     getRules(language)
       .then(setResponse)
-      .catch((e: Error) => setError(e.message))
+      // `error` holds an already-formatted message (this path and
+      // saveRuleSelection use different wordings), so format at set-time.
+      .catch((e: Error) => setError(m.couldNotLoadRules(e.message)))
   }, [language])
 
   const languageName =
@@ -32,19 +34,24 @@ export function RulesView() {
     rule_exceptions?: string[]
   }) {
     if (!profile) return
-    const saved = await updateProfile(profile.id, {
-      name: profile.name,
-      categories_off: patch.categories_off ?? profile.categories_off,
-      rule_exceptions: patch.rule_exceptions ?? profile.rule_exceptions,
-      domain_ids: profile.domain_ids,
-      llm_provider: profile.llm_provider,
-      llm_model: profile.llm_model,
-      llm_instructions: profile.llm_instructions,
-      example_text: profile.example_text,
-    })
-    useStore.getState().setProfiles(
-      useStore.getState().profiles.map((p) => (p.id === saved.id ? saved : p)),
-    )
+    try {
+      const saved = await updateProfile(profile.id, {
+        name: profile.name,
+        categories_off: patch.categories_off ?? profile.categories_off,
+        rule_exceptions: patch.rule_exceptions ?? profile.rule_exceptions,
+        domain_ids: profile.domain_ids,
+        llm_provider: profile.llm_provider,
+        llm_model: profile.llm_model,
+        llm_instructions: profile.llm_instructions,
+        example_text: profile.example_text,
+      })
+      useStore.getState().setProfiles(
+        useStore.getState().profiles.map((p) => (p.id === saved.id ? saved : p)),
+      )
+      setError(null)
+    } catch (e) {
+      setError(m.profileChangeFailed(e instanceof Error ? e.message : String(e)))
+    }
   }
 
   function toggleCategory(category: Category, rulesInCategory: RuleInfo[]) {
@@ -92,7 +99,7 @@ export function RulesView() {
           </p>
         )}
       </header>
-      {error && <p className="rules-error">{m.couldNotLoadRules(error)}</p>}
+      {error && <p className="rules-error">{error}</p>}
       {response && response.errors.length > 0 && (
         <section className="rules-load-errors">
           <h3>{m.filesWithErrors}</h3>
