@@ -9,7 +9,7 @@ import { applyProfileToHeader } from '../profiles/profile'
 import type { Domain, Language, LanguageInfo, Profile, ProviderInfo, Severity } from '../types'
 
 export type CheckPhase = 'idle' | 'fast' | 'llm'
-export type ActiveView = 'editor' | 'rules' | 'terminology'
+export type ActiveView = 'editor' | 'rules' | 'terminology' | 'profiles'
 
 interface AppState {
   language: Language

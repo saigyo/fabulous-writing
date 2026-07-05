@@ -6,6 +6,7 @@ import { Editor } from './editor/Editor'
 import { setEditorText } from './editor/editorRef'
 import { DomainMultiSelect } from './header/DomainMultiSelect'
 import { ProfileSelector } from './header/ProfileSelector'
+import { ProfilesView } from './profiles/ProfilesView'
 import { RulesView } from './rules/RulesView'
 import { Sidebar } from './sidebar/Sidebar'
 import { LOCALES, LOCALE_NAMES, useLocale, useMessages, type Locale } from './i18n'
@@ -31,6 +32,7 @@ export default function App() {
       )}
       {activeView === 'rules' && <RulesView />}
       {activeView === 'terminology' && <TerminologyView />}
+      {activeView === 'profiles' && <ProfilesView />}
     </div>
   )
 }
@@ -93,6 +95,12 @@ function Header() {
           onClick={() => store.setActiveView('terminology')}
         >
           {m.viewTerminology}
+        </button>
+        <button
+          className={store.activeView === 'profiles' ? 'active' : ''}
+          onClick={() => store.setActiveView('profiles')}
+        >
+          {m.viewProfiles}
         </button>
       </nav>
       <div className="header-controls">
