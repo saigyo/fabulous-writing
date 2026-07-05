@@ -276,3 +276,22 @@ contexts: de-DE browser → German UI (2 Fehler | 8 Warnungen |
 10 Vorschläge), switch to ja → instant 検出結果, reload keeps ja despite
 the de-DE browser, French rules hint interpolates correctly, da-DK falls
 back to English. 91 frontend tests green.
+
+## 2026-07-05 — Header redesign: stacked labels, fixed 50px height
+Commit: `b4fe7d9`
+
+Localization made the header overflow (Spanish didn't fit even at
+1280px). Markus's idea, implemented: selector labels sit *above* their
+selects in small uppercase type, so each control costs only its select's
+width — and the header height stays exactly 50px (min-height pin,
+slimmer padding). Probing per locale × width found a second bug the
+screenshots had hinted at: CJK button labels wrap between characters, so
+编辑器 became a 56px column and silently grew the header to 66px —
+white-space: nowrap on all header buttons. Selects cap at
+min(10.5rem, 12vw) so a long Ollama model name can't blow up the layout
+(the dropdown still shows full values). Two graceful tiers below that:
+<1200px tightens type/gaps, <1080px drops the wordmark. Result, measured
+headless: every locale fits at 1024px with zero overflow and constant
+50px height; the practical floor is ~960px (Spanish). README screenshots
+refreshed — the hero now shows the stacked header plus live token
+counter.
