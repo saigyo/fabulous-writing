@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   categories_off TEXT NOT NULL DEFAULT '[]',   -- JSON: ["vividness", ...]
   rule_exceptions TEXT NOT NULL DEFAULT '[]',  -- JSON: ["style.weasel-words", ...]
   domain_ids TEXT NOT NULL DEFAULT '[]',       -- JSON: [1, 3]
-  llm_provider TEXT,                           -- NULL = config default
+  llm_provider TEXT,                           -- concrete provider, captured at seed/creation time
   llm_model TEXT,                              -- NULL = provider default
   llm_instructions TEXT NOT NULL DEFAULT '',
   example_text TEXT NOT NULL DEFAULT '',
@@ -54,8 +54,11 @@ CREATE TABLE IF NOT EXISTS profiles (
 
 - **Seeding (Standard):** at startup, every supported language without an
   `is_standard = 1` row gets one: name "Standard", everything on, no
-  exceptions, no domains, NULL provider/model, empty instructions, and
-  `example_text` read from the existing `backend/demos/<lang>.txt`.
+  exceptions, no domains, the config's default provider (captured concretely
+  at seed time — the providers API exposes no default flag, and a concrete
+  value keeps the dirty computation simple), NULL model (= provider default),
+  empty instructions, and `example_text` read from the existing
+  `backend/demos/<lang>.txt`.
 - **Seeding (examples):** if the config switch `seed_example_profiles`
   (config.yaml, default `true`) is on, EN, DE, and JA each get two ordinary,
   deletable profiles — **Marketing** and **Technical Documentation** — the
@@ -77,7 +80,7 @@ CREATE TABLE IF NOT EXISTS profiles (
   | Marketing | `[]` | disable rules that fight marketing tone where they exist (e.g. EN intensifiers/weasel-word style rules) — exact ids picked from the loaded rule set at implementation time | Audience: prospective customers. Favor energetic, benefit-led, concrete phrasing; short sentences; active voice. Flag jargon, hedging, and vague claims. |
   | Technical Documentation | `["vividness"]` | none | Audience: users following instructions. Prioritize precision, consistent terminology, and unambiguous phrasing; prefer imperative mood for steps; flag marketing language and vague quantifiers. |
 
-  Both presets: no domains, NULL provider/model. Their example texts come
+  Both presets: no domains, the config's default provider, NULL model. Their example texts come
   from new seed files `backend/demos/<lang>-marketing.txt` and
   `backend/demos/<lang>-technical-documentation.txt` (EN, DE, JA), authored
   at implementation time: short flawed texts whose defects match the profile
