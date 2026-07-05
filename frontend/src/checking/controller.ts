@@ -1,6 +1,7 @@
 import { postCheck, subscribeCheck } from '../api/client'
 import { getEditorView } from '../editor/editorRef'
 import { mergeFindingsEffect } from '../editor/findings'
+import { activeProfile, effectiveRuleConfig } from '../profiles/profile'
 import { useStore } from '../state/store'
 import type { Finding } from '../types'
 import { effectiveModel } from './model'
@@ -43,15 +44,19 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
     llmTokens: null,
   })
 
+  const profile = activeProfile(state)
+
   let result
   try {
     result = await postCheck({
       text,
       language: state.language,
-      domain_id: state.domainId,
+      domain_ids: state.domainIds,
       checkers,
+      rule_config: effectiveRuleConfig(profile),
       llm_provider: state.provider,
       llm_model: effectiveModel(state.model, state.provider, state.providers),
+      llm_instructions: profile?.llm_instructions ?? '',
     })
   } catch (error) {
     useStore.setState({

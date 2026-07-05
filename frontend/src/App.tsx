@@ -88,9 +88,9 @@ function Header() {
         <label>
           {m.domain}
           <select
-            value={store.domainId ?? ''}
+            value={store.domainIds[0] ?? ''}
             onChange={(e) =>
-              store.setDomainId(e.target.value ? Number(e.target.value) : null)
+              store.setDomainIds(e.target.value ? [Number(e.target.value)] : [])
             }
           >
             <option value="">{m.domainNone}</option>
@@ -185,8 +185,8 @@ function LoadExampleButton() {
       onClick={() => {
         const store = useStore.getState()
         // Terminology only runs with a domain; default to the first one.
-        if (store.domainId === null && store.domains.length > 0) {
-          store.setDomainId(store.domains[0].id)
+        if (store.domainIds.length === 0 && store.domains.length > 0) {
+          store.setDomainIds([store.domains[0].id])
         }
         void getDemoText(store.language)
           .then(({ text }) => setEditorText(text))

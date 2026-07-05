@@ -2,6 +2,7 @@ import { postSuggestions } from '../api/client'
 import { getEditorView } from '../editor/editorRef'
 import { findingsField } from '../editor/findings'
 import { currentMessages } from '../i18n'
+import { activeProfile } from '../profiles/profile'
 import { useStore } from '../state/store'
 import { effectiveModel } from './model'
 import { noReliableSuggestionMessage } from './vetMessage'
@@ -88,5 +89,6 @@ async function requestForFinding(findingId: string, scope: 'span' | 'sentence') 
     rule_id: item.finding.rule_id,
     llm_provider: state.provider,
     llm_model: effectiveModel(state.model, state.provider, state.providers),
+    llm_instructions: activeProfile(state)?.llm_instructions ?? '',
   })
 }

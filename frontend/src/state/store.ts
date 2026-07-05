@@ -5,7 +5,8 @@ import { mapEquivalentIds } from '../findings/equivalence'
 import type { SourceGroup } from '../findings/source'
 import type { Locale } from '../i18n/messages'
 import { FALLBACK_LANGUAGES } from '../languages'
-import type { Domain, Language, LanguageInfo, ProviderInfo, Severity } from '../types'
+import { applyProfileToHeader } from '../profiles/profile'
+import type { Domain, Language, LanguageInfo, Profile, ProviderInfo, Severity } from '../types'
 
 export type CheckPhase = 'idle' | 'fast' | 'llm'
 export type ActiveView = 'editor' | 'rules' | 'terminology'
@@ -14,7 +15,7 @@ interface AppState {
   language: Language
   // UI display language; null = follow the browser locale.
   uiLocale: Locale | null
-  domainId: number | null
+  domainIds: number[]
   provider: string
   model: string | null
   llmAuto: boolean
@@ -34,6 +35,9 @@ interface AppState {
   providers: ProviderInfo[]
   domains: Domain[]
   languages: LanguageInfo[]
+  profiles: Profile[]
+  profileId: number | null
+  lastProfileByLanguage: Record<string, number>
   extraSuggestions: Record<string, string[]>
   suggestPendingId: string | null
   suggestErrors: Record<string, string>
@@ -43,7 +47,7 @@ interface AppState {
 
   setLanguage: (language: Language) => void
   setUiLocale: (uiLocale: Locale) => void
-  setDomainId: (domainId: number | null) => void
+  setDomainIds: (domainIds: number[]) => void
   setProvider: (provider: string) => void
   setModel: (model: string | null) => void
   setLlmAuto: (llmAuto: boolean) => void
@@ -56,6 +60,8 @@ interface AppState {
   setProviders: (providers: ProviderInfo[]) => void
   setDomains: (domains: Domain[]) => void
   setLanguages: (languages: LanguageInfo[]) => void
+  setProfiles: (profiles: Profile[]) => void
+  selectProfile: (profile: Profile, apply: boolean) => void
   setSuggestPending: (findingId: string | null) => void
   setExtraSuggestions: (findingId: string, suggestions: string[]) => void
   setSuggestError: (findingId: string, error: string | null) => void
@@ -101,7 +107,7 @@ export const useStore = create<AppState>()(
     (set) => ({
       language: 'en',
       uiLocale: null,
-      domainId: null,
+      domainIds: [],
       provider: 'ollama',
       model: null,
       llmAuto: true,
@@ -117,6 +123,9 @@ export const useStore = create<AppState>()(
       providers: [],
       domains: [],
       languages: FALLBACK_LANGUAGES,
+      profiles: [],
+      profileId: null,
+      lastProfileByLanguage: {},
       extraSuggestions: {},
       suggestPendingId: null,
       suggestErrors: {},
@@ -126,7 +135,7 @@ export const useStore = create<AppState>()(
 
       setLanguage: (language) => set({ language }),
       setUiLocale: (uiLocale) => set({ uiLocale }),
-      setDomainId: (domainId) => set({ domainId }),
+      setDomainIds: (domainIds) => set({ domainIds }),
       setProvider: (provider) => set({ provider, model: null }),
       setModel: (model) => set({ model }),
       setLlmAuto: (llmAuto) => set({ llmAuto }),
@@ -150,6 +159,17 @@ export const useStore = create<AppState>()(
       setProviders: (providers) => set({ providers }),
       setDomains: (domains) => set({ domains }),
       setLanguages: (languages) => set({ languages }),
+      setProfiles: (profiles) => set({ profiles }),
+      // apply=true copies the profile's values into the header selectors.
+      selectProfile: (profile, apply) =>
+        set((state) => ({
+          profileId: profile.id,
+          lastProfileByLanguage: {
+            ...state.lastProfileByLanguage,
+            [profile.language]: profile.id,
+          },
+          ...(apply ? applyProfileToHeader(profile, state.provider) : {}),
+        })),
       setSuggestPending: (suggestPendingId) => set({ suggestPendingId }),
       setExtraSuggestions: (findingId, suggestions) =>
         set((state) => ({
@@ -174,10 +194,11 @@ export const useStore = create<AppState>()(
       partialize: (state) => ({
         language: state.language,
         uiLocale: state.uiLocale,
-        domainId: state.domainId,
+        domainIds: state.domainIds,
         provider: state.provider,
         model: state.model,
         llmAuto: state.llmAuto,
+        lastProfileByLanguage: state.lastProfileByLanguage,
       }),
     },
   ),
