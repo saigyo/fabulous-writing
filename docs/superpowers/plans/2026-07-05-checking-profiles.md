@@ -70,7 +70,7 @@ Introducing SuperWidget — quite possibly the best productivity tool ever made!
 
 `backend/demos/en-technical-documentation.txt`:
 ```
-The configuration file is read by the application when it is started by the user. In order to make a modification of the settings, the utilization of the admin panel is recommended. It should be noted that the the server must be restarted. To quickly enable the feature, the flag can be set by the operator, which is very easy. Login credentials are stored somewhere in the config.
+The configuration file is read by the application when it is started by the user. In order to make a modification of the settings, the utilization of the admin panel is recommended. It should be noted that the the server must be restarted. To quickly enable the feature, the flag can be set by the operator, which is very easy. There are many settings which are extremely flexible, and due to the fact that the defaults are fairly sensible, tuning them is rarely needed. Login credentials are stored somewhere in the config.
 ```
 
 `backend/demos/de-marketing.txt`:
