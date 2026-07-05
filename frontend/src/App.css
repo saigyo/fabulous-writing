@@ -983,26 +983,41 @@ input {
 }
 .profile-card-title input { font-weight: 600; flex: 1; }
 
+/* Row 1: domain | LLM selectors. Row 2: example text | instructions.
+   The shared rows keep the two text boxes' labels and top edges aligned. */
 .profile-card-columns {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.6rem 1.5rem;
-  align-items: start;
+  align-items: stretch;
 }
-.profile-card-col {
+.profile-card-llm {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
   min-width: 0;
 }
+/* The domain listbox fills its row so both row-1 cells end together. */
+.profile-card-domain select { flex: 1; min-height: 5.5rem; }
 
-.profile-card label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.85rem; }
+.profile-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  min-width: 0;
+}
+.profile-card label select,
+.profile-card label textarea {
+  font-weight: normal;
+}
 .profile-textarea textarea {
   font-size: 0.95rem;
   line-height: 1.5;
   font-family: inherit;
 }
-.profile-textarea .hint { color: var(--text-dim); font-size: 0.75rem; }
+.profile-textarea .hint { color: var(--text-dim); font-size: 0.75rem; font-weight: normal; }
 
 /* Narrow windows: fall back to a single column inside the card. */
 @media (max-width: 900px) {

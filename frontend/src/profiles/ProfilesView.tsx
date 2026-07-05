@@ -178,37 +178,27 @@ function ProfileCard({
           <button className="icon-button" title={m.deleteProfileTitle} onClick={onDelete}>✕</button>
         )}
       </div>
+      {/* A shared grid: row 1 holds domain (left) and the LLM selectors
+          (right), row 2 the two text boxes — so their labels and upper
+          boundaries always align across the columns. */}
       <div className="profile-card-columns">
-        <div className="profile-card-col">
-          <label>
-            {m.domain}
-            <select
-              multiple
-              value={profile.domain_ids.map(String)}
-              onChange={(e) =>
-                onSave({
-                  domain_ids: [...e.target.selectedOptions].map((o) => Number(o.value)),
-                })
-              }
-            >
-              {domains.map((d) => (
-                <option key={d.id} value={d.id}>{d.name}</option>
-              ))}
-            </select>
-          </label>
-          <label className="profile-textarea">
-            {m.exampleTextLabel}
-            <textarea
-              rows={8}
-              value={example}
-              onChange={(e) => setExample(e.target.value)}
-              onBlur={() =>
-                example !== profile.example_text && onSave({ example_text: example })
-              }
-            />
-          </label>
-        </div>
-        <div className="profile-card-col">
+        <label className="profile-card-domain">
+          {m.domain}
+          <select
+            multiple
+            value={profile.domain_ids.map(String)}
+            onChange={(e) =>
+              onSave({
+                domain_ids: [...e.target.selectedOptions].map((o) => Number(o.value)),
+              })
+            }
+          >
+            {domains.map((d) => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+          </select>
+        </label>
+        <div className="profile-card-llm">
           <label>
             {m.llm}
             <select
@@ -234,20 +224,31 @@ function ProfileCard({
               ))}
             </select>
           </label>
-          <label className="profile-textarea">
-            {m.llmInstructionsLabel}
-            <textarea
-              rows={5}
-              value={instructions}
-              onChange={(e) => setInstructions(e.target.value)}
-              onBlur={() =>
-                instructions !== profile.llm_instructions &&
-                onSave({ llm_instructions: instructions })
-              }
-            />
-            <span className="hint">{m.llmInstructionsHint}</span>
-          </label>
         </div>
+        <label className="profile-textarea">
+          {m.exampleTextLabel}
+          <textarea
+            rows={8}
+            value={example}
+            onChange={(e) => setExample(e.target.value)}
+            onBlur={() =>
+              example !== profile.example_text && onSave({ example_text: example })
+            }
+          />
+        </label>
+        <label className="profile-textarea">
+          {m.llmInstructionsLabel}
+          <textarea
+            rows={8}
+            value={instructions}
+            onChange={(e) => setInstructions(e.target.value)}
+            onBlur={() =>
+              instructions !== profile.llm_instructions &&
+              onSave({ llm_instructions: instructions })
+            }
+          />
+          <span className="hint">{m.llmInstructionsHint}</span>
+        </label>
       </div>
     </section>
   )
