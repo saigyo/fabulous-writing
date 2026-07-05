@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { llmStatusLabel } from '../checking/status'
 import { fetchRewrite, fetchSuggestions } from '../checking/suggest'
 import { applyRewrite, applySuggestion, selectFinding } from '../editor/editorRef'
@@ -27,6 +27,27 @@ export function Sidebar() {
     [findings, severityFilter],
   )
   const total = tracked.length
+
+  // A newly selected finding (e.g. clicked in the editor) must be visible:
+  // clear a severity filter that hides it and un-collapse its category; the
+  // row itself then scrolls into view (FindingRow).
+  const handledSelection = useRef<string | null>(null)
+  useEffect(() => {
+    if (selectedId === handledSelection.current) return
+    handledSelection.current = selectedId
+    if (!selectedId) return
+    const finding = findings.find((f) => f.id === selectedId)
+    if (!finding) return
+    if (severityFilter && finding.severity !== severityFilter) {
+      setSeverityFilter(null)
+    }
+    setCollapsed((old) => {
+      if (!old.has(finding.category)) return old
+      const next = new Set(old)
+      next.delete(finding.category)
+      return next
+    })
+  }, [selectedId, findings, severityFilter, setSeverityFilter])
 
   function toggle(category: Category) {
     setCollapsed((old) => {
@@ -123,8 +144,13 @@ function CheckStatus({ phase }: { phase: 'fast' | 'llm' }) {
 
 function FindingRow({ finding, selected }: { finding: Finding; selected: boolean }) {
   const m = useMessages()
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (selected) ref.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [selected])
   return (
     <div
+      ref={ref}
       className={`finding-row${selected ? ' selected' : ''}`}
       onClick={() => selectFinding(selected ? null : finding.id)}
     >
