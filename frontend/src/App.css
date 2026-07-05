@@ -59,18 +59,25 @@
 }
 
 /* Selector labels sit above their select in small caps-style type, so a
-   control only needs the width of its select. */
+   control only needs the width of its select. The left padding aligns the
+   label with the text inside the select (border + padding + native inset);
+   the select's negative margin keeps the select itself in place. */
 .header-controls label {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
+  padding-left: calc(0.3rem + 4px);
   color: var(--text-dim);
   font-size: 0.6rem;
   line-height: 1;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   white-space: nowrap;
+}
+
+.header-controls label select {
+  margin-left: calc(-0.3rem - 4px);
 }
 
 .header-controls select {
@@ -92,9 +99,15 @@
   flex-direction: row;
   align-items: center;
   gap: 0.3rem;
+  padding-left: 0;
   font-size: 0.85rem;
   text-transform: none;
   letter-spacing: normal;
+}
+
+.header-controls .auto-toggle select,
+.header-controls .locale-switch select {
+  margin-left: 0;
 }
 
 /* Compact mode for narrow windows: same height, tighter type and gaps. */
