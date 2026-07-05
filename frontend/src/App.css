@@ -333,7 +333,9 @@
   padding: 0.2rem calc(0.3rem + 4px);
   cursor: pointer;
   font-size: 0.8rem;
-  min-width: calc(100% + 0.3rem + 4px);
+  /* The stretched wrapper already absorbs the negative label-alignment
+     margin, so plain 100% ends exactly at the label's right edge. */
+  min-width: 100%;
   max-width: min(10.5rem, 12vw);
   white-space: nowrap;
   overflow: hidden;
