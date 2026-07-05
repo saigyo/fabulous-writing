@@ -47,9 +47,12 @@ export const de: Messages = {
   severityCount: (s, n) => (n === 1 ? `1 ${sev[s]}` : `${n} ${sevPlural[s]}`),
   showOnlySeverity: (s) => `Nur ${sevPlural[s]} anzeigen`,
   showAllFindings: 'Klicken, um wieder alle Ergebnisse anzuzeigen',
+  sourceGroupCount: (g, n) => (g === 'llm' ? `${n} LLM` : `${n} regelbasiert`),
+  showOnlySource: (g) =>
+    g === 'llm' ? 'Nur LLM-Ergebnisse anzeigen' : 'Nur regelbasierte Ergebnisse anzeigen',
   llmCheckFailed: (error) => `LLM-Prüfung fehlgeschlagen: ${error}`,
   allClear: 'Keine Probleme gefunden. Fabelhaft!',
-  noSeverityMatch: (s) => `Keine ${sevPlural[s]} unter den aktuellen Ergebnissen.`,
+  noFilterMatch: 'Keine Ergebnisse entsprechen dem aktuellen Filter.',
   categoryName: (c) => categories[c],
   sourceName: (source) =>
     source === 'llm' ? 'LLM' : source === 'rule' ? 'Regel' : 'Terminologie',

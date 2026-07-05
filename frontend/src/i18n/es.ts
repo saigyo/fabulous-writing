@@ -6,11 +6,6 @@ const sevPlural = {
   warning: 'advertencias',
   suggestion: 'sugerencias',
 }
-const sevNone = {
-  error: 'No hay errores',
-  warning: 'No hay advertencias',
-  suggestion: 'No hay sugerencias',
-}
 const categories = {
   spelling: 'ortografía',
   grammar: 'gramática',
@@ -56,9 +51,14 @@ export const es: Messages = {
   severityCount: (s, n) => (n === 1 ? `1 ${sev[s]}` : `${n} ${sevPlural[s]}`),
   showOnlySeverity: (s) => `Mostrar solo ${sevPlural[s]}`,
   showAllFindings: 'Haz clic para mostrar de nuevo todos los resultados',
+  sourceGroupCount: (g, n) => (g === 'llm' ? `${n} LLM` : `${n} por reglas`),
+  showOnlySource: (g) =>
+    g === 'llm'
+      ? 'Mostrar solo resultados del LLM'
+      : 'Mostrar solo resultados basados en reglas',
   llmCheckFailed: (error) => `Falló la comprobación LLM: ${error}`,
   allClear: 'No se encontraron problemas. ¡Fabuloso!',
-  noSeverityMatch: (s) => `${sevNone[s]} entre los resultados actuales.`,
+  noFilterMatch: 'Ningún resultado coincide con el filtro actual.',
   categoryName: (c) => categories[c],
   sourceName: (source) =>
     source === 'llm' ? 'LLM' : source === 'rule' ? 'regla' : 'terminología',

@@ -40,9 +40,12 @@ export const en: Messages = {
   severityCount: (s, n) => (n === 1 ? `1 ${severities[s]}` : `${n} ${severities[s]}s`),
   showOnlySeverity: (s) => `Show only ${severities[s]}s`,
   showAllFindings: 'Click to show all findings again',
+  sourceGroupCount: (g, n) => (g === 'llm' ? `${n} LLM` : `${n} rule-based`),
+  showOnlySource: (g) =>
+    g === 'llm' ? 'Show only LLM findings' : 'Show only rule-based findings',
   llmCheckFailed: (error) => `LLM check failed: ${error}`,
   allClear: 'No issues found. Fabulous!',
-  noSeverityMatch: (s) => `No ${severities[s]}s among the current findings.`,
+  noFilterMatch: 'No findings match the current filter.',
   categoryName: (c) => categories[c],
   sourceName: (source) => (source === 'llm' ? 'LLM' : source),
   askingLlm: 'asking LLM…',

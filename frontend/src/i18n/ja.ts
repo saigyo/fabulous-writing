@@ -45,9 +45,12 @@ export const ja: Messages = {
   severityCount: (s, n) => `${sev[s]} ${n}件`,
   showOnlySeverity: (s) => `${sev[s]}のみ表示`,
   showAllFindings: 'クリックですべての検出結果を表示',
+  sourceGroupCount: (g, n) => (g === 'llm' ? `LLM ${n}件` : `ルール ${n}件`),
+  showOnlySource: (g) =>
+    g === 'llm' ? 'LLMの検出結果のみ表示' : 'ルールベースの検出結果のみ表示',
   llmCheckFailed: (error) => `LLM チェックに失敗しました: ${error}`,
   allClear: '問題は見つかりませんでした。お見事!',
-  noSeverityMatch: (s) => `現在の検出結果に${sev[s]}はありません。`,
+  noFilterMatch: '現在のフィルターに一致する検出結果はありません。',
   categoryName: (c) => categories[c],
   sourceName: (source) =>
     source === 'llm' ? 'LLM' : source === 'rule' ? 'ルール' : '用語',

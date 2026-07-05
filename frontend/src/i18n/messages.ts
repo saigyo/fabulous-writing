@@ -1,3 +1,4 @@
+import type { SourceGroup } from '../findings/source'
 import type { Category, Severity } from '../types'
 
 export const LOCALES = ['en', 'de', 'fr', 'es', 'it', 'ja', 'zh'] as const
@@ -47,9 +48,11 @@ export interface Messages {
   severityCount: (severity: Severity, n: number) => string
   showOnlySeverity: (severity: Severity) => string
   showAllFindings: string
+  sourceGroupCount: (group: SourceGroup, n: number) => string
+  showOnlySource: (group: SourceGroup) => string
   llmCheckFailed: (error: string) => string
   allClear: string
-  noSeverityMatch: (severity: Severity) => string
+  noFilterMatch: string
   categoryName: (category: Category) => string
   sourceName: (source: 'llm' | 'rule' | 'terminology') => string
   askingLlm: string

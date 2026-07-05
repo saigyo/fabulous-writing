@@ -2,11 +2,6 @@ import type { Messages } from './messages'
 
 const sev = { error: 'errore', warning: 'avviso', suggestion: 'suggerimento' }
 const sevPlural = { error: 'errori', warning: 'avvisi', suggestion: 'suggerimenti' }
-const sevNone = {
-  error: 'Nessun errore',
-  warning: 'Nessun avviso',
-  suggestion: 'Nessun suggerimento',
-}
 const categories = {
   spelling: 'ortografia',
   grammar: 'grammatica',
@@ -52,9 +47,14 @@ export const it: Messages = {
   severityCount: (s, n) => (n === 1 ? `1 ${sev[s]}` : `${n} ${sevPlural[s]}`),
   showOnlySeverity: (s) => `Mostra solo ${sevPlural[s]}`,
   showAllFindings: 'Fai clic per mostrare di nuovo tutti i risultati',
+  sourceGroupCount: (g, n) => (g === 'llm' ? `${n} LLM` : `${n} da regole`),
+  showOnlySource: (g) =>
+    g === 'llm'
+      ? 'Mostra solo risultati del LLM'
+      : 'Mostra solo risultati basati su regole',
   llmCheckFailed: (error) => `Controllo LLM non riuscito: ${error}`,
   allClear: 'Nessun problema trovato. Favoloso!',
-  noSeverityMatch: (s) => `${sevNone[s]} tra i risultati attuali.`,
+  noFilterMatch: 'Nessun risultato corrisponde al filtro attuale.',
   categoryName: (c) => categories[c],
   sourceName: (source) =>
     source === 'llm' ? 'LLM' : source === 'rule' ? 'regola' : 'terminologia',

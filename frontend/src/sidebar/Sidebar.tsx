@@ -5,6 +5,12 @@ import { applyRewrite, applySuggestion, selectFinding } from '../editor/editorRe
 import type { TrackedFinding } from '../editor/findings'
 import { groupByCategory } from '../findings/group'
 import { countBySeverity, filterBySeverity, SEVERITIES } from '../findings/severity'
+import {
+  countBySourceGroup,
+  filterBySourceGroup,
+  SOURCE_GROUPS,
+  sourceGroupOf,
+} from '../findings/source'
 import { effectiveSuggestions } from '../findings/suggestions'
 import { useMessages } from '../i18n'
 import { useStore } from '../state/store'
@@ -17,14 +23,20 @@ export function Sidebar() {
   const llmError = useStore((s) => s.llmError)
   const severityFilter = useStore((s) => s.severityFilter)
   const setSeverityFilter = useStore((s) => s.setSeverityFilter)
+  const sourceFilter = useStore((s) => s.sourceFilter)
+  const setSourceFilter = useStore((s) => s.setSourceFilter)
   const m = useMessages()
   const [collapsed, setCollapsed] = useState<Set<Category>>(new Set())
 
   const findings = useMemo(() => withCurrentSpans(tracked), [tracked])
   const counts = useMemo(() => countBySeverity(findings), [findings])
+  const sourceCounts = useMemo(() => countBySourceGroup(findings), [findings])
   const groups = useMemo(
-    () => groupByCategory(filterBySeverity(findings, severityFilter)),
-    [findings, severityFilter],
+    () =>
+      groupByCategory(
+        filterBySourceGroup(filterBySeverity(findings, severityFilter), sourceFilter),
+      ),
+    [findings, severityFilter, sourceFilter],
   )
   const total = tracked.length
 
@@ -41,13 +53,16 @@ export function Sidebar() {
     if (severityFilter && finding.severity !== severityFilter) {
       setSeverityFilter(null)
     }
+    if (sourceFilter && sourceGroupOf(finding.source) !== sourceFilter) {
+      setSourceFilter(null)
+    }
     setCollapsed((old) => {
       if (!old.has(finding.category)) return old
       const next = new Set(old)
       next.delete(finding.category)
       return next
     })
-  }, [selectedId, findings, severityFilter, setSeverityFilter])
+  }, [selectedId, findings, severityFilter, setSeverityFilter, sourceFilter, setSourceFilter])
 
   function toggle(category: Category) {
     setCollapsed((old) => {
@@ -89,13 +104,33 @@ export function Sidebar() {
             ))}
           </div>
         )}
+        {total > 0 && (
+          <div className="source-filter">
+            {SOURCE_GROUPS.map((group) => (
+              <button
+                key={group}
+                className={`source-filter-button${
+                  sourceFilter === group ? ' active' : ''
+                }`}
+                title={
+                  sourceFilter === group ? m.showAllFindings : m.showOnlySource(group)
+                }
+                onClick={() =>
+                  setSourceFilter(sourceFilter === group ? null : group)
+                }
+              >
+                {m.sourceGroupCount(group, sourceCounts[group])}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       {llmError && <div className="llm-error">{m.llmCheckFailed(llmError)}</div>}
       {total === 0 && checkPhase === 'idle' && (
         <p className="all-clear">{m.allClear}</p>
       )}
-      {total > 0 && groups.length === 0 && severityFilter && (
-        <p className="all-clear">{m.noSeverityMatch(severityFilter)}</p>
+      {total > 0 && groups.length === 0 && (severityFilter || sourceFilter) && (
+        <p className="all-clear">{m.noFilterMatch}</p>
       )}
       {groups.map((group) => (
         <section key={group.category} className="category-group">

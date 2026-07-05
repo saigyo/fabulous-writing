@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { TrackedFinding } from '../editor/findings'
 import { mapEquivalentIds } from '../findings/equivalence'
+import type { SourceGroup } from '../findings/source'
 import type { Locale } from '../i18n/messages'
 import { FALLBACK_LANGUAGES } from '../languages'
 import type { Domain, Language, LanguageInfo, ProviderInfo, Severity } from '../types'
@@ -23,6 +24,8 @@ interface AppState {
   // Persists across checks and resolved findings by design; only explicit
   // clicks change it.
   severityFilter: Severity | null
+  // Independent of severityFilter; both apply at once when set.
+  sourceFilter: SourceGroup | null
   checkPhase: CheckPhase
   llmError: string | null
   // Live progress of the running LLM check (null outside the llm phase).
@@ -47,6 +50,7 @@ interface AppState {
   setActiveView: (view: ActiveView) => void
   setTracked: (tracked: TrackedFinding[], selectedId: string | null) => void
   setSeverityFilter: (severityFilter: Severity | null) => void
+  setSourceFilter: (sourceFilter: SourceGroup | null) => void
   setCheckPhase: (phase: CheckPhase) => void
   setLlmError: (error: string | null) => void
   setProviders: (providers: ProviderInfo[]) => void
@@ -105,6 +109,7 @@ export const useStore = create<AppState>()(
       tracked: [],
       selectedId: null,
       severityFilter: null,
+      sourceFilter: null,
       checkPhase: 'idle',
       llmError: null,
       llmStartedAt: null,
@@ -139,6 +144,7 @@ export const useStore = create<AppState>()(
           }
         }),
       setSeverityFilter: (severityFilter) => set({ severityFilter }),
+      setSourceFilter: (sourceFilter) => set({ sourceFilter }),
       setCheckPhase: (checkPhase) => set({ checkPhase }),
       setLlmError: (llmError) => set({ llmError }),
       setProviders: (providers) => set({ providers }),

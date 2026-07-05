@@ -45,9 +45,11 @@ export const zh: Messages = {
   severityCount: (s, n) => `${n} 个${sev[s]}`,
   showOnlySeverity: (s) => `仅显示${sev[s]}`,
   showAllFindings: '点击以重新显示所有结果',
+  sourceGroupCount: (g, n) => (g === 'llm' ? `LLM ${n}` : `规则 ${n}`),
+  showOnlySource: (g) => (g === 'llm' ? '仅显示 LLM 检测结果' : '仅显示规则检测结果'),
   llmCheckFailed: (error) => `LLM 检查失败:${error}`,
   allClear: '未发现问题。妙极了!',
-  noSeverityMatch: (s) => `当前结果中没有${sev[s]}。`,
+  noFilterMatch: '当前结果中没有符合筛选条件的结果。',
   categoryName: (c) => categories[c],
   sourceName: (source) =>
     source === 'llm' ? 'LLM' : source === 'rule' ? '规则' : '术语',

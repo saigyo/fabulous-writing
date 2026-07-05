@@ -59,6 +59,13 @@ describe('catalogs', () => {
     expect(catalogs.ja.severityCount('error', 3)).toBe('エラー 3件')
   })
 
+  test('source group chips label rule-based vs LLM findings', () => {
+    expect(en.sourceGroupCount('rule', 12)).toBe('12 rule-based')
+    expect(en.sourceGroupCount('llm', 1)).toBe('1 LLM')
+    expect(catalogs.de.sourceGroupCount('rule', 2)).toBe('2 regelbasiert')
+    expect(catalogs.ja.sourceGroupCount('llm', 3)).toBe('LLM 3件')
+  })
+
   test('vetting message includes the candidate count', () => {
     expect(en.noReliableSuggestion(1)).toContain('1 candidate')
     expect(en.noReliableSuggestion(3)).toContain('3 candidates')
