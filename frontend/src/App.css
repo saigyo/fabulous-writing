@@ -295,16 +295,19 @@
   border-bottom: 1px solid var(--border);
 }
 
+/* Bottom spacing lives on the row (not the h2) so a wrapped status label
+   still ends above it instead of spilling into the severity chips. */
 .sidebar-header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 0.5rem;
+  margin-bottom: 0.75rem;
 }
 
 /* Only the status label may wrap; the heading and its count badge stay put. */
 .sidebar h2 {
-  margin: 0 0 0.75rem;
+  margin: 0;
   font-size: 1rem;
   flex-shrink: 0;
   white-space: nowrap;
@@ -313,6 +316,7 @@
 .check-status {
   font-size: 0.75rem;
   color: var(--accent);
+  text-align: right;
 }
 
 .llm-error {
@@ -770,7 +774,7 @@ input {
 .severity-filter {
   display: flex;
   gap: 0.4rem;
-  margin: -0.3rem 0 0.7rem;
+  margin: 0 0 0.7rem;
 }
 
 .severity-filter-button {
