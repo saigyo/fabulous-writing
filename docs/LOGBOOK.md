@@ -651,3 +651,17 @@ classic list-box: checkbox left, normal-case text, accent hover/checked
 highlight. Verified live (computed styles + screenshot). Search and
 select-all from the reference design were deliberately skipped — domain
 lists here have two or three entries.
+
+## 2026-07-05 — Profile dirty actions: SVG icons, stable alignment
+Commit: `cf02ca2`
+
+The 💾/↩ emoji buttons rendered as flex children of the header's column
+label, wrapping under the profile select and knocking it out of line
+with the other selectors. Replaced with stroke-outline SVG icons
+(feather-style floppy and rotate-ccw) absolutely positioned to the
+LEFT of the select — out of the flow, so the selector stays put when
+the dirty state appears. One subtlety: the select carries a negative
+margin-left from the header label-alignment trick, so the icon anchor
+mirrors that offset (right: calc(100% + 0.3rem + 4px)). Playwright-
+verified: select position identical clean vs. dirty (dx=0), icons left
+of and centered on the select, reset restores the clean state.
