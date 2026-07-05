@@ -640,3 +640,14 @@ Known follow-ups (non-blocking): profile/selector changes don't trigger
 an auto re-check (pre-existing behavior — click Check or type);
 DomainMultiSelect a11y polish (aria-expanded, Esc); possible future
 migration of the store into slices.
+
+## 2026-07-05 — Domain multi-select menu restyled
+Commit: `ed1212c`
+
+The dropdown's rows inherited the header label styling (uppercase,
+letter-spacing, stacked column) through the CSS cascade — the checkbox
+floated above ALL-CAPS text. The menu rows now explicitly reset to a
+classic list-box: checkbox left, normal-case text, accent hover/checked
+highlight. Verified live (computed styles + screenshot). Search and
+select-all from the reference design were deliberately skipped — domain
+lists here have two or three entries.
