@@ -1,5 +1,5 @@
 import type { RuleConfig } from '../api/client'
-import type { Profile } from '../types'
+import type { Category, Profile } from '../types'
 
 export interface HeaderSettings {
   domainIds: number[]
@@ -44,4 +44,16 @@ export function effectiveRuleConfig(profile: Profile | null): RuleConfig | null 
     categories_off: profile.categories_off,
     exceptions: profile.rule_exceptions,
   }
+}
+
+/** Mirrors the backend rule-activation semantics (XOR). */
+export function isRuleActive(
+  profile: Profile,
+  category: Category,
+  ruleId: string,
+): boolean {
+  return (
+    !profile.categories_off.includes(category) !==
+    profile.rule_exceptions.includes(ruleId)
+  )
 }

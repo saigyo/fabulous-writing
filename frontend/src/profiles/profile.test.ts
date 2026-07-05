@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { Profile } from '../types'
-import { applyProfileToHeader, effectiveRuleConfig, isProfileDirty } from './profile'
+import {
+  applyProfileToHeader,
+  effectiveRuleConfig,
+  isProfileDirty,
+  isRuleActive,
+} from './profile'
 
 function profile(overrides: Partial<Profile> = {}): Profile {
   return {
@@ -71,5 +76,15 @@ describe('effectiveRuleConfig', () => {
 
   it('is null without a profile', () => {
     expect(effectiveRuleConfig(null)).toBeNull()
+  })
+})
+
+describe('isRuleActive', () => {
+  it('mirrors the backend XOR semantics', () => {
+    const p = profile({ categories_off: ['style'], rule_exceptions: ['style.a', 'grammar.b'] })
+    expect(isRuleActive(p, 'style', 'style.a')).toBe(true) // off + exception -> on
+    expect(isRuleActive(p, 'style', 'style.x')).toBe(false) // off -> off
+    expect(isRuleActive(p, 'grammar', 'grammar.b')).toBe(false) // on + exception -> off
+    expect(isRuleActive(p, 'grammar', 'grammar.y')).toBe(true) // on -> on
   })
 })

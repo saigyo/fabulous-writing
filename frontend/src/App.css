@@ -756,6 +756,19 @@ input {
   margin: 1.4rem 0 0.5rem;
   font-size: 0.95rem;
   letter-spacing: 0.02em;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.rules-profile-banner {
+  color: var(--text-dim);
+  margin: 0.2rem 0 0;
+  font-size: 0.85rem;
+}
+
+.rule-inactive {
+  opacity: 0.45;
 }
 
 .rule-card {
