@@ -57,9 +57,25 @@ const languageSelect = page.locator(
   '.header-controls label:has-text("Language") select',
 )
 
-// Shot 1: editor with the EN demo text; terminology finding selected so the
-// one-click fix and rewrite button are visible.
+// Shot 1: editor with the EN Standard profile's example text; terminology
+// finding selected so the one-click fix and rewrite button are visible.
+// The example no longer auto-selects a domain, so pick "Product docs" and
+// save it into the EN Standard profile (idempotent; keeps the shot's
+// profile selector clean instead of showing the dirty marker).
 await languageSelect.selectOption('en')
+await page.locator('.domain-multiselect-toggle').click()
+await page
+  .locator('.domain-multiselect-menu label', { hasText: 'Product docs' })
+  .locator('input')
+  .check()
+await page.keyboard.press('Escape')
+await page.mouse.click(700, 400) // close the menu
+await page.waitForTimeout(400)
+const saveButton = page.locator('.profile-dirty-actions .icon-button').first()
+if (await saveButton.isVisible().catch(() => false)) {
+  await saveButton.click()
+  await page.waitForTimeout(600)
+}
 await page.locator('.load-example').click()
 await page.waitForTimeout(2500)
 const loginRow = page.locator('.finding-row', { hasText: 'login' }).first()
@@ -92,6 +108,14 @@ await page.locator('.view-switch button', { hasText: 'Terminology' }).click()
 await page.waitForTimeout(600)
 await page.screenshot({ path: `${outDir}/terminology.png` })
 console.log('terminology.png captured')
+
+// Shot 4: profiles view with the seeded EN profiles (Standard selected).
+await languageSelect.selectOption('en')
+await page.waitForTimeout(600)
+await page.locator('.view-switch button', { hasText: 'Profiles' }).click()
+await page.waitForTimeout(600)
+await page.screenshot({ path: `${outDir}/profiles.png` })
+console.log('profiles.png captured, cards:', await page.locator('.profile-card').count())
 
 await browser.close()
 console.log(`DONE — screenshots written to ${outDir}`)

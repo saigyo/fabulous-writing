@@ -8,6 +8,8 @@
 # db_path: data/fabulous.db
 # rules_dir: rules
 # seed_terminology: true   # seed an example domain into an empty terminology DB
+# seed_example_profiles: true  # seed Marketing / Technical Documentation example
+#                              # profiles (EN/DE/JA) on first start; deletions stick
 # vet_suggestions: true    # deterministic vetting of LLM-generated fixes
 # dictionaries_dir: dictionaries  # hunspell dicts (scripts/install-dictionaries.sh)
 

@@ -17,9 +17,9 @@ Write or paste your text into the editor, pick the text's language, and findings
 in the sidebar as you type: rule and terminology checks run about a second after you
 pause, the LLM check after a longer pause (the **auto** toggle) or on demand via
 **Check**. Click a finding to highlight it in the text and see the explanation; apply a
-suggested fix with one click. The **⤓ Example** button in the editor's corner loads a
-deliberately flawed demo text for the selected language — the quickest way to see
-everything in action.
+suggested fix with one click. The **⤓ Example** button in the editor's corner loads
+the selected checking profile's example text — deliberately flawed material that
+matches the profile — the quickest way to see everything in action.
 
 ![The editor with categorized findings in the sidebar; the selected terminology finding is highlighted in the text and offers a one-click fix](docs/images/editor.png)
 
@@ -40,14 +40,40 @@ highlighted in the text, with explanation and one-click fix.*
 
 Rules and terminology checks work entirely offline, without any LLM.
 
+### Checking profiles
+
+A **checking profile** bundles everything that defines *how* a text is checked, per
+language: which rules are active, which terminology domains apply, which LLM
+provider/model to use, extra LLM instructions (tone, audience, focus — appended to the
+built-in check prompt), and a fitting example text. Switch the profile in the header
+and the selectors follow; different kinds of writing get different checks — e.g.
+technical documentation with vividness rules off and precision-focused LLM guidance,
+marketing copy with benefit-led phrasing instructions.
+
+Every language has a non-deletable, editable **Standard** profile; English, German,
+and Japanese additionally seed deletable **Marketing** and **Technical Documentation**
+examples, so profile switching can be tried out of the box. Header selectors can
+always be overridden ad hoc: the profile then shows a ✱ marker with save (persist the
+override into the profile) and reset actions. The **Profiles** tab manages everything
+else; the **Rules** tab doubles as the selected profile's rule editor.
+
+![The Profiles tab with the seeded Standard and Marketing profiles: domains and example text on the left, LLM provider, model, and extra instructions on the right](docs/images/profiles.png)
+
+*The Profiles tab: one profile per row — domains and example text left, the LLM
+configuration right.*
+
 ### Rule catalog
 
 The **Rules** tab shows the live catalog for the selected language: every loaded rule
-with its category, severity, and message, plus any load errors.
+with its category, severity, and message, plus any load errors. Its checkboxes edit
+the selected checking profile: a category toggle switches a whole group, a per-rule
+switch overrides its category (a single rule can stay on inside a disabled category,
+or off inside an enabled one) — changes apply to the next check immediately.
 
-![The Rules tab listing the loaded rules for the selected language with category, severity, and message](docs/images/rules.png)
+![The Rules tab listing the loaded rules for the selected language with per-profile category and rule toggles](docs/images/rules.png)
 
-*The Rules tab: the live rule catalog for the selected language.*
+*The Rules tab: the live rule catalog, doubling as the selected profile's rule
+editor.*
 
 ### Terminology
 
@@ -128,6 +154,8 @@ All configuration is optional. Copy `backend/config.example.yaml` to
 - `providers.*` — default LLM provider, per-provider models/endpoints, Bedrock region
   and pinned model ids
 - `seed_terminology: false` — don't seed the example terminology domain
+- `seed_example_profiles: false` — don't seed the Marketing / Technical Documentation
+  example profiles (the per-language Standard profile is always created)
 - `vet_suggestions: false` — disable the deterministic vetting of LLM fixes
 - `nlp.models` — spaCy model per language (see below)
 
