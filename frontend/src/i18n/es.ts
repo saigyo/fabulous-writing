@@ -1,0 +1,119 @@
+import type { Messages } from './messages'
+
+const sev = { error: 'error', warning: 'advertencia', suggestion: 'sugerencia' }
+const sevPlural = {
+  error: 'errores',
+  warning: 'advertencias',
+  suggestion: 'sugerencias',
+}
+const sevNone = {
+  error: 'No hay errores',
+  warning: 'No hay advertencias',
+  suggestion: 'No hay sugerencias',
+}
+const categories = {
+  spelling: 'ortografía',
+  grammar: 'gramática',
+  style: 'estilo',
+  clarity: 'claridad',
+  vividness: 'viveza',
+  correctness: 'corrección',
+  terminology: 'terminología',
+}
+const scopes: Record<string, string> = {
+  sentence: 'oración',
+  paragraph: 'párrafo',
+  document: 'documento',
+}
+
+export const es: Messages = {
+  viewEditor: 'Editor',
+  viewRules: 'Reglas',
+  viewTerminology: 'Terminología',
+  language: 'Idioma',
+  domain: 'Dominio',
+  llm: 'LLM',
+  model: 'Modelo',
+  domainNone: 'ninguno',
+  offlineSuffix: ' (sin conexión)',
+  autoLabel: 'auto',
+  autoTitle: 'Ejecutar la comprobación LLM automáticamente tras una pausa',
+  example: 'Ejemplo',
+  exampleTitle:
+    'Reemplazar el contenido del editor por un texto de ejemplo con errores para el idioma seleccionado',
+  check: 'Comprobar',
+  checking: 'Comprobando…',
+  basicChecksOnly: (name) => `${name} (solo comprobaciones básicas)`,
+  uiLocaleTitle: 'Idioma de la interfaz',
+
+  findings: 'Resultados',
+  fastChecking: 'comprobando…',
+  llmChecking: (elapsed, tokens) =>
+    tokens === null
+      ? `Comprobación LLM… (${elapsed})`
+      : `Comprobación LLM… (${elapsed} · ↓ ${tokens.toLocaleString('es-ES')} tokens)`,
+  severityName: (s) => sev[s],
+  severityCount: (s, n) => (n === 1 ? `1 ${sev[s]}` : `${n} ${sevPlural[s]}`),
+  showOnlySeverity: (s) => `Mostrar solo ${sevPlural[s]}`,
+  showAllFindings: 'Haz clic para mostrar de nuevo todos los resultados',
+  llmCheckFailed: (error) => `Falló la comprobación LLM: ${error}`,
+  allClear: 'No se encontraron problemas. ¡Fabuloso!',
+  noSeverityMatch: (s) => `${sevNone[s]} entre los resultados actuales.`,
+  categoryName: (c) => categories[c],
+  sourceName: (source) =>
+    source === 'llm' ? 'LLM' : source === 'rule' ? 'regla' : 'terminología',
+  askingLlm: 'consultando al LLM…',
+  noReplacement: 'El LLM no encontró ningún reemplazo.',
+  suggestFix: 'Sugerir corrección',
+  retrySuggestion: 'Reintentar sugerencia',
+  rewriting: 'reescribiendo la oración…',
+  noRewrite: 'El LLM no ofreció ninguna reescritura.',
+  rewriteSentence: 'Reescribir oración',
+  retryRewrite: 'Reintentar reescritura',
+  applyRewriteTitle: 'Reemplazar la oración por esta reescritura',
+  sentenceChangedRewriteAgain: 'La oración cambió — reescribe de nuevo.',
+  noReliableSuggestion: (rejected) =>
+    `Ninguna sugerencia fiable — ${
+      rejected === 1 ? '1 candidato no superó' : `${rejected} candidatos no superaron`
+    } las comprobaciones locales.`,
+
+  domains: 'Dominios',
+  newDomainPlaceholder: 'Nuevo dominio…',
+  add: 'Añadir',
+  deleteDomainTitle: 'Eliminar dominio',
+  terms: 'Términos',
+  searchTermsPlaceholder: 'Buscar términos…',
+  allLanguages: 'Todos los idiomas',
+  langHeader: 'Idioma',
+  preferredHeader: 'Preferido',
+  doNotUseHeader: 'No usar',
+  definitionHeader: 'Definición',
+  sortHeaderTitle: 'Haz clic para ordenar: ascendente → descendente → desactivado',
+  languageFilterTitle: 'Mostrar solo los términos de un idioma',
+  noTermsMatch: 'Ningún término coincide con el filtro actual.',
+  preferredPlaceholder: 'término preferido',
+  forbiddenPlaceholder: 'prohibidos, separados por comas',
+  definitionPlaceholder: 'definición (opcional)',
+  deleteTermTitle: 'Eliminar término',
+  caseSensitiveTitle: 'Distinguir mayúsculas y minúsculas',
+
+  rulesTitle: 'Reglas',
+  rulesHint:
+    'Comprobaciones deterministas para el idioma seleccionado en la cabecera. Las reglas están en {path} y se recargan al reiniciar el servidor o mediante {endpoint}.',
+  couldNotLoadRules: (error) => `No se pudieron cargar las reglas: ${error}`,
+  filesWithErrors: 'Archivos con errores',
+  nlpBadgeTitle: 'Requiere el modelo spaCy del idioma',
+  pattern: 'Patrón',
+  detailFlags: (listed, omittedTotal) =>
+    omittedTotal === null
+      ? `Señala: ${listed}`
+      : `Señala: ${listed} … (${omittedTotal} en total)`,
+  detailAdjacentRepeated: 'Palabras repetidas consecutivas',
+  detailTokenPattern: (size) => `Patrón de tokens de spaCy (${size} tokens)`,
+  detailDependencyPattern: (size) => `Patrón de dependencias de spaCy (${size} nodos)`,
+  detailOccurrence: (kind, bound, what, pattern, scope) => {
+    const quantity = kind === 'more' ? `Más de ${bound}` : `Menos de ${bound}`
+    const counted = what === 'tokens' ? 'tokens' : `coincidencias de /${pattern}/`
+    return `${quantity} ${counted} por ${scopes[scope] ?? scope}`
+  },
+}

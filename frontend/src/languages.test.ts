@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { en } from './i18n/en'
 import { FALLBACK_LANGUAGES, languageLabel } from './languages'
 
 describe('languageLabel', () => {
@@ -9,7 +10,7 @@ describe('languageLabel', () => {
         name: 'English',
         nlp_available: true,
         model: 'en_core_web_sm',
-      }),
+      }, en),
     ).toBe('English')
   })
 
@@ -20,7 +21,7 @@ describe('languageLabel', () => {
         name: 'Français',
         nlp_available: false,
         model: 'fr_core_news_sm',
-      }),
+      }, en),
     ).toBe('Français (basic checks only)')
   })
 })

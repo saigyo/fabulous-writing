@@ -7,6 +7,7 @@ import {
   getDomains,
   getTerms,
 } from '../api/client'
+import { useMessages } from '../i18n'
 import { useStore } from '../state/store'
 import type { Language, Term } from '../types'
 import {
@@ -23,6 +24,7 @@ export function TerminologyView() {
   const [activeDomainId, setActiveDomainId] = useState<number | null>(null)
   const [terms, setTerms] = useState<Term[]>([])
   const [newDomain, setNewDomain] = useState('')
+  const m = useMessages()
 
   const refreshDomains = () => getDomains().then(setDomains)
 
@@ -61,7 +63,7 @@ export function TerminologyView() {
   return (
     <div className="terminology">
       <aside className="domain-list">
-        <h2>Domains</h2>
+        <h2>{m.domains}</h2>
         {domains.map((domain) => (
           <div
             key={domain.id}
@@ -71,7 +73,7 @@ export function TerminologyView() {
             <span>{domain.name}</span>
             <button
               className="icon-button"
-              title="Delete domain"
+              title={m.deleteDomainTitle}
               onClick={(event) => {
                 event.stopPropagation()
                 void removeDomain(domain.id)
@@ -84,11 +86,11 @@ export function TerminologyView() {
         <div className="add-domain">
           <input
             value={newDomain}
-            placeholder="New domain…"
+            placeholder={m.newDomainPlaceholder}
             onChange={(event) => setNewDomain(event.target.value)}
             onKeyDown={(event) => event.key === 'Enter' && void addDomain()}
           />
-          <button onClick={() => void addDomain()}>Add</button>
+          <button onClick={() => void addDomain()}>{m.add}</button>
         </div>
       </aside>
       {activeDomainId !== null && (
@@ -110,6 +112,7 @@ interface TermTableProps {
 
 function TermTable({ domainId, terms, onChanged }: TermTableProps) {
   const languages = useStore((s) => s.languages)
+  const m = useMessages()
   const [language, setLanguage] = useState<Language>('en')
   const [preferred, setPreferred] = useState('')
   const [variants, setVariants] = useState('')
@@ -145,24 +148,24 @@ function TermTable({ domainId, terms, onChanged }: TermTableProps) {
 
   return (
     <section className="term-table">
-      <h2>Terms</h2>
+      <h2>{m.terms}</h2>
       <div className="term-toolbar">
         <input
           type="search"
           className="term-search"
           value={query}
-          placeholder="Search terms…"
+          placeholder={m.searchTermsPlaceholder}
           onChange={(event) => setQuery(event.target.value)}
         />
         <select
           className="term-language-filter"
           value={languageFilter ?? ''}
-          title="Show only terms of one language"
+          title={m.languageFilterTitle}
           onChange={(event) =>
             setLanguageFilter(event.target.value === '' ? null : (event.target.value as Language))
           }
         >
-          <option value="">All languages</option>
+          <option value="">{m.allLanguages}</option>
           {languages.map((info) => (
             <option key={info.code} value={info.code}>
               {info.code}
@@ -173,17 +176,17 @@ function TermTable({ domainId, terms, onChanged }: TermTableProps) {
       <table>
         <thead>
           <tr>
-            <SortableHeader label="Lang" sortKey="language" criteria={sortCriteria} onToggle={onToggleSort} />
-            <SortableHeader label="Preferred" sortKey="preferred" criteria={sortCriteria} onToggle={onToggleSort} />
-            <SortableHeader label="Do not use" sortKey="forbidden" criteria={sortCriteria} onToggle={onToggleSort} />
-            <th>Definition</th>
+            <SortableHeader label={m.langHeader} sortKey="language" criteria={sortCriteria} onToggle={onToggleSort} />
+            <SortableHeader label={m.preferredHeader} sortKey="preferred" criteria={sortCriteria} onToggle={onToggleSort} />
+            <SortableHeader label={m.doNotUseHeader} sortKey="forbidden" criteria={sortCriteria} onToggle={onToggleSort} />
+            <th>{m.definitionHeader}</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
           {visibleTerms.length === 0 && terms.length > 0 && (
             <tr className="no-terms-row">
-              <td colSpan={5}>No terms match the current filter.</td>
+              <td colSpan={5}>{m.noTermsMatch}</td>
             </tr>
           )}
           {visibleTerms.map((term) => (
@@ -195,7 +198,7 @@ function TermTable({ domainId, terms, onChanged }: TermTableProps) {
               <td>
                 <button
                   className="icon-button"
-                  title="Delete term"
+                  title={m.deleteTermTitle}
                   onClick={() => deleteTerm(term.id).then(onChanged)}
                 >
                   ✕
@@ -219,26 +222,26 @@ function TermTable({ domainId, terms, onChanged }: TermTableProps) {
             <td>
               <input
                 value={preferred}
-                placeholder="preferred term"
+                placeholder={m.preferredPlaceholder}
                 onChange={(event) => setPreferred(event.target.value)}
               />
             </td>
             <td>
               <input
                 value={variants}
-                placeholder="forbidden, comma-separated"
+                placeholder={m.forbiddenPlaceholder}
                 onChange={(event) => setVariants(event.target.value)}
               />
             </td>
             <td>
               <input
                 value={definition}
-                placeholder="definition (optional)"
+                placeholder={m.definitionPlaceholder}
                 onChange={(event) => setDefinition(event.target.value)}
               />
             </td>
             <td>
-              <label className="case-label">
+              <label className="case-label" title={m.caseSensitiveTitle}>
                 <input
                   type="checkbox"
                   checked={caseSensitive}
@@ -246,7 +249,7 @@ function TermTable({ domainId, terms, onChanged }: TermTableProps) {
                 />
                 Aa
               </label>
-              <button onClick={() => void addTerm()}>Add</button>
+              <button onClick={() => void addTerm()}>{m.add}</button>
             </td>
           </tr>
         </tbody>
@@ -263,12 +266,13 @@ interface SortableHeaderProps {
 }
 
 function SortableHeader({ label, sortKey, criteria, onToggle }: SortableHeaderProps) {
+  const m = useMessages()
   const index = criteria.findIndex((c) => c.key === sortKey)
   const direction = index >= 0 ? criteria[index].direction : null
   return (
     <th
       className={`sortable${direction ? ' sorted' : ''}`}
-      title="Click to sort: ascending → descending → off"
+      title={m.sortHeaderTitle}
       onClick={() => onToggle(sortKey)}
     >
       {label}

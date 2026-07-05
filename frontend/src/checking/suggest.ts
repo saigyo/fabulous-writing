@@ -1,6 +1,7 @@
 import { postSuggestions } from '../api/client'
 import { getEditorView } from '../editor/editorRef'
 import { findingsField } from '../editor/findings'
+import { currentMessages } from '../i18n'
 import { useStore } from '../state/store'
 import { effectiveModel } from './model'
 import { noReliableSuggestionMessage } from './vetMessage'
@@ -17,7 +18,11 @@ export async function fetchSuggestions(findingId: string): Promise<void> {
   try {
     const result = await requestForFinding(findingId, 'span')
     if (result) {
-      const vetoed = noReliableSuggestionMessage(result.suggestions, result.rejected)
+      const vetoed = noReliableSuggestionMessage(
+        result.suggestions,
+        result.rejected,
+        currentMessages(),
+      )
       if (vetoed) useStore.getState().setSuggestError(findingId, vetoed)
       else useStore.getState().setExtraSuggestions(findingId, result.suggestions)
     }
@@ -40,7 +45,11 @@ export async function fetchRewrite(findingId: string): Promise<void> {
   try {
     const result = await requestForFinding(findingId, 'sentence')
     if (result) {
-      const vetoed = noReliableSuggestionMessage(result.suggestions, result.rejected)
+      const vetoed = noReliableSuggestionMessage(
+        result.suggestions,
+        result.rejected,
+        currentMessages(),
+      )
       if (vetoed) {
         useStore.getState().setRewriteError(findingId, vetoed)
       } else {

@@ -480,6 +480,27 @@
   margin-right: 0.4rem;
 }
 
+.locale-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: 0.4rem;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.locale-switch select {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  max-width: 6.5rem;
+}
+
+.locale-switch select:hover {
+  color: var(--accent);
+}
+
 .icon-button {
   background: none;
   border: none;

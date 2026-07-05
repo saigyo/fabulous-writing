@@ -6,6 +6,7 @@ import { Editor } from './editor/Editor'
 import { setEditorText } from './editor/editorRef'
 import { RulesView } from './rules/RulesView'
 import { Sidebar } from './sidebar/Sidebar'
+import { LOCALES, LOCALE_NAMES, useLocale, useMessages, type Locale } from './i18n'
 import { languageLabel } from './languages'
 import { useStore } from './state/store'
 import { TerminologyView } from './terminology/TerminologyView'
@@ -31,6 +32,7 @@ export default function App() {
 
 function Header() {
   const store = useStore()
+  const m = useMessages()
 
   useEffect(() => {
     getProviders().then(store.setProviders).catch(() => store.setProviders([]))
@@ -50,44 +52,44 @@ function Header() {
           className={store.activeView === 'editor' ? 'active' : ''}
           onClick={() => store.setActiveView('editor')}
         >
-          Editor
+          {m.viewEditor}
         </button>
         <button
           className={store.activeView === 'rules' ? 'active' : ''}
           onClick={() => store.setActiveView('rules')}
         >
-          Rules
+          {m.viewRules}
         </button>
         <button
           className={store.activeView === 'terminology' ? 'active' : ''}
           onClick={() => store.setActiveView('terminology')}
         >
-          Terminology
+          {m.viewTerminology}
         </button>
       </nav>
       <div className="header-controls">
         <label>
-          Language
+          {m.language}
           <select
             value={store.language}
             onChange={(e) => store.setLanguage(e.target.value as Language)}
           >
             {store.languages.map((info) => (
               <option key={info.code} value={info.code}>
-                {languageLabel(info)}
+                {languageLabel(info, m)}
               </option>
             ))}
           </select>
         </label>
         <label>
-          Domain
+          {m.domain}
           <select
             value={store.domainId ?? ''}
             onChange={(e) =>
               store.setDomainId(e.target.value ? Number(e.target.value) : null)
             }
           >
-            <option value="">none</option>
+            <option value="">{m.domainNone}</option>
             {store.domains.map((domain) => (
               <option key={domain.id} value={domain.id}>
                 {domain.name}
@@ -96,7 +98,7 @@ function Header() {
           </select>
         </label>
         <label>
-          LLM
+          {m.llm}
           <select
             value={store.provider}
             onChange={(e) => store.setProvider(e.target.value)}
@@ -104,13 +106,13 @@ function Header() {
             {store.providers.map((provider) => (
               <option key={provider.name} value={provider.name}>
                 {provider.name}
-                {provider.available ? '' : ' (offline)'}
+                {provider.available ? '' : m.offlineSuffix}
               </option>
             ))}
           </select>
         </label>
         <label>
-          Model
+          {m.model}
           <select
             value={store.model ?? activeProvider?.default_model ?? ''}
             onChange={(e) => store.setModel(e.target.value)}
@@ -125,17 +127,17 @@ function Header() {
             ))}
           </select>
         </label>
-        <label className="auto-toggle" title="Run the LLM check automatically after a pause">
+        <label className="auto-toggle" title={m.autoTitle}>
           <input
             type="checkbox"
             checked={store.llmAuto}
             onChange={(e) => store.setLlmAuto(e.target.checked)}
           />
-          auto
+          {m.autoLabel}
         </label>
         <button
           className="example-button"
-          title="Replace the editor content with a flawed example text for the selected language"
+          title={m.exampleTitle}
           onClick={() => {
             store.setActiveView('editor')
             // Terminology only runs with a domain; default to the first one.
@@ -147,16 +149,39 @@ function Header() {
               .catch(() => {})
           }}
         >
-          Example
+          {m.example}
         </button>
         <button
           className="check-button"
           disabled={store.checkPhase !== 'idle'}
           onClick={() => void runCheck(true)}
         >
-          {store.checkPhase === 'idle' ? 'Check' : 'Checking…'}
+          {store.checkPhase === 'idle' ? m.check : m.checking}
         </button>
+        <LocaleSwitcher />
       </div>
     </header>
+  )
+}
+
+function LocaleSwitcher() {
+  const locale = useLocale()
+  const setUiLocale = useStore((s) => s.setUiLocale)
+  const m = useMessages()
+  return (
+    <label className="locale-switch" title={m.uiLocaleTitle}>
+      <span aria-hidden="true">🌐</span>
+      <select
+        value={locale}
+        aria-label={m.uiLocaleTitle}
+        onChange={(e) => setUiLocale(e.target.value as Locale)}
+      >
+        {LOCALES.map((code) => (
+          <option key={code} value={code}>
+            {LOCALE_NAMES[code]}
+          </option>
+        ))}
+      </select>
+    </label>
   )
 }

@@ -46,6 +46,11 @@ Chinese. Domain-specific terminology is managed per domain and language.
 without it a language still gets regex rules, terminology, and LLM checks
 ("basic checks only" in the UI).
 
+The UI itself is localized into the same seven languages: it follows the
+browser locale by default and can be switched with the 🌐 selector in the
+header (the choice is remembered). Rule messages are authored per rule file
+and are not translated by the UI.
+
 ## Structure
 
 - `backend/` — Python/FastAPI checking service (rule engine, terminology, LLM providers, check API)

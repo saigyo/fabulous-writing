@@ -1,0 +1,98 @@
+import type { Messages } from './messages'
+
+const severities = { error: 'error', warning: 'warning', suggestion: 'suggestion' }
+const categories = {
+  spelling: 'spelling',
+  grammar: 'grammar',
+  style: 'style',
+  clarity: 'clarity',
+  vividness: 'vividness',
+  correctness: 'correctness',
+  terminology: 'terminology',
+}
+
+export const en: Messages = {
+  viewEditor: 'Editor',
+  viewRules: 'Rules',
+  viewTerminology: 'Terminology',
+  language: 'Language',
+  domain: 'Domain',
+  llm: 'LLM',
+  model: 'Model',
+  domainNone: 'none',
+  offlineSuffix: ' (offline)',
+  autoLabel: 'auto',
+  autoTitle: 'Run the LLM check automatically after a pause',
+  example: 'Example',
+  exampleTitle: 'Replace the editor content with a flawed example text for the selected language',
+  check: 'Check',
+  checking: 'Checking…',
+  basicChecksOnly: (name) => `${name} (basic checks only)`,
+  uiLocaleTitle: 'Display language',
+
+  findings: 'Findings',
+  fastChecking: 'checking…',
+  llmChecking: (elapsed, tokens) =>
+    tokens === null
+      ? `LLM checking… (${elapsed})`
+      : `LLM checking… (${elapsed} · ↓ ${tokens.toLocaleString('en-US')} tokens)`,
+  severityName: (s) => severities[s],
+  severityCount: (s, n) => (n === 1 ? `1 ${severities[s]}` : `${n} ${severities[s]}s`),
+  showOnlySeverity: (s) => `Show only ${severities[s]}s`,
+  showAllFindings: 'Click to show all findings again',
+  llmCheckFailed: (error) => `LLM check failed: ${error}`,
+  allClear: 'No issues found. Fabulous!',
+  noSeverityMatch: (s) => `No ${severities[s]}s among the current findings.`,
+  categoryName: (c) => categories[c],
+  sourceName: (source) => (source === 'llm' ? 'LLM' : source),
+  askingLlm: 'asking LLM…',
+  noReplacement: 'The LLM found no replacement.',
+  suggestFix: 'Suggest fix',
+  retrySuggestion: 'Retry suggestion',
+  rewriting: 'rewriting sentence…',
+  noRewrite: 'The LLM offered no rewrite.',
+  rewriteSentence: 'Rewrite sentence',
+  retryRewrite: 'Retry rewrite',
+  applyRewriteTitle: 'Replace the sentence with this rewrite',
+  sentenceChangedRewriteAgain: 'The sentence changed — rewrite again.',
+  noReliableSuggestion: (rejected) =>
+    `No reliable suggestion — ${rejected === 1 ? '1 candidate' : `${rejected} candidates`} failed local checks.`,
+
+  domains: 'Domains',
+  newDomainPlaceholder: 'New domain…',
+  add: 'Add',
+  deleteDomainTitle: 'Delete domain',
+  terms: 'Terms',
+  searchTermsPlaceholder: 'Search terms…',
+  allLanguages: 'All languages',
+  langHeader: 'Lang',
+  preferredHeader: 'Preferred',
+  doNotUseHeader: 'Do not use',
+  definitionHeader: 'Definition',
+  sortHeaderTitle: 'Click to sort: ascending → descending → off',
+  languageFilterTitle: 'Show only terms of one language',
+  noTermsMatch: 'No terms match the current filter.',
+  preferredPlaceholder: 'preferred term',
+  forbiddenPlaceholder: 'forbidden, comma-separated',
+  definitionPlaceholder: 'definition (optional)',
+  deleteTermTitle: 'Delete term',
+  caseSensitiveTitle: 'Case-sensitive matching',
+
+  rulesTitle: 'Rules',
+  rulesHint:
+    'Deterministic checks for the language selected in the header. Rules live in {path} and reload on server restart or {endpoint}.',
+  couldNotLoadRules: (error) => `Could not load rules: ${error}`,
+  filesWithErrors: 'Files with errors',
+  nlpBadgeTitle: "Needs the language's spaCy model",
+  pattern: 'Pattern',
+  detailFlags: (listed, omittedTotal) =>
+    omittedTotal === null ? `Flags: ${listed}` : `Flags: ${listed} … (${omittedTotal} total)`,
+  detailAdjacentRepeated: 'Adjacent repeated words',
+  detailTokenPattern: (size) => `spaCy token pattern (${size} tokens)`,
+  detailDependencyPattern: (size) => `spaCy dependency pattern (${size} nodes)`,
+  detailOccurrence: (kind, bound, what, pattern, scope) => {
+    const quantity = kind === 'more' ? `More than ${bound}` : `Fewer than ${bound}`
+    const counted = what === 'tokens' ? 'tokens' : `matches of /${pattern}/`
+    return `${quantity} ${counted} per ${scope}`
+  },
+}

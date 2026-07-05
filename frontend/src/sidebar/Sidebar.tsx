@@ -6,6 +6,7 @@ import type { TrackedFinding } from '../editor/findings'
 import { groupByCategory } from '../findings/group'
 import { countBySeverity, filterBySeverity, SEVERITIES } from '../findings/severity'
 import { effectiveSuggestions } from '../findings/suggestions'
+import { useMessages } from '../i18n'
 import { useStore } from '../state/store'
 import type { Category, Finding } from '../types'
 
@@ -16,6 +17,7 @@ export function Sidebar() {
   const llmError = useStore((s) => s.llmError)
   const severityFilter = useStore((s) => s.severityFilter)
   const setSeverityFilter = useStore((s) => s.setSeverityFilter)
+  const m = useMessages()
   const [collapsed, setCollapsed] = useState<Set<Category>>(new Set())
 
   const findings = useMemo(() => withCurrentSpans(tracked), [tracked])
@@ -40,7 +42,7 @@ export function Sidebar() {
       <div className="sidebar-top">
         <div className="sidebar-header">
           <h2>
-            Findings <span className="count-badge">{total}</span>
+            {m.findings} <span className="count-badge">{total}</span>
           </h2>
           {checkPhase !== 'idle' && <CheckStatus phase={checkPhase} />}
         </div>
@@ -54,32 +56,31 @@ export function Sidebar() {
                 }`}
                 title={
                   severityFilter === severity
-                    ? 'Click to show all findings again'
-                    : `Show only ${severity}s`
+                    ? m.showAllFindings
+                    : m.showOnlySeverity(severity)
                 }
                 onClick={() =>
                   setSeverityFilter(severityFilter === severity ? null : severity)
                 }
               >
-                {counts[severity]} {severity}
-                {counts[severity] === 1 ? '' : 's'}
+                {m.severityCount(severity, counts[severity])}
               </button>
             ))}
           </div>
         )}
       </div>
-      {llmError && <div className="llm-error">LLM check failed: {llmError}</div>}
+      {llmError && <div className="llm-error">{m.llmCheckFailed(llmError)}</div>}
       {total === 0 && checkPhase === 'idle' && (
-        <p className="all-clear">No issues found. Fabulous!</p>
+        <p className="all-clear">{m.allClear}</p>
       )}
-      {total > 0 && groups.length === 0 && (
-        <p className="all-clear">No {severityFilter}s among the current findings.</p>
+      {total > 0 && groups.length === 0 && severityFilter && (
+        <p className="all-clear">{m.noSeverityMatch(severityFilter)}</p>
       )}
       {groups.map((group) => (
         <section key={group.category} className="category-group">
           <button className="category-title" onClick={() => toggle(group.category)}>
             <span className={`category-dot fw-${group.category}`} />
-            {group.category}
+            {m.categoryName(group.category)}
             <span className="count-badge">{group.findings.length}</span>
             <span className="chevron">{collapsed.has(group.category) ? '▸' : '▾'}</span>
           </button>
@@ -100,6 +101,7 @@ export function Sidebar() {
 function CheckStatus({ phase }: { phase: 'fast' | 'llm' }) {
   const startedAt = useStore((s) => s.llmStartedAt)
   const tokens = useStore((s) => s.llmTokens)
+  const m = useMessages()
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
@@ -110,8 +112,8 @@ function CheckStatus({ phase }: { phase: 'fast' | 'llm' }) {
 
   const label =
     phase === 'llm' && startedAt !== null
-      ? llmStatusLabel(now - startedAt, tokens)
-      : 'checking…'
+      ? llmStatusLabel(now - startedAt, tokens, m)
+      : m.fastChecking
   return (
     <span className="check-status">
       <span className="sparkle">✳</span> {label}
@@ -120,6 +122,7 @@ function CheckStatus({ phase }: { phase: 'fast' | 'llm' }) {
 }
 
 function FindingRow({ finding, selected }: { finding: Finding; selected: boolean }) {
+  const m = useMessages()
   return (
     <div
       className={`finding-row${selected ? ' selected' : ''}`}
@@ -128,14 +131,14 @@ function FindingRow({ finding, selected }: { finding: Finding; selected: boolean
       <div className="finding-quote">
         “{truncate(finding.span.text, 60)}”
         <span className={`severity severity-${finding.severity}`}>
-          {finding.severity}
+          {m.severityName(finding.severity)}
         </span>
       </div>
       {selected && (
         <div className="finding-detail">
           <p className="finding-message">{finding.message}</p>
           <p className="finding-source">
-            {finding.source === 'llm' ? 'LLM' : finding.source}
+            {m.sourceName(finding.source)}
             {finding.rule_id ? ` · ${finding.rule_id}` : ''}
           </p>
           <SuggestionArea finding={finding} />
@@ -147,6 +150,7 @@ function FindingRow({ finding, selected }: { finding: Finding; selected: boolean
 }
 
 function SuggestionArea({ finding }: { finding: Finding }) {
+  const m = useMessages()
   const extras = useStore((s) => s.extraSuggestions)
   const pending = useStore((s) => s.suggestPendingId === finding.id)
   const anyPending = useStore(
@@ -175,10 +179,10 @@ function SuggestionArea({ finding }: { finding: Finding }) {
     )
   }
   if (pending) {
-    return <p className="suggest-status">✨ asking LLM…</p>
+    return <p className="suggest-status">✨ {m.askingLlm}</p>
   }
   if (fetched) {
-    return <p className="suggest-status">The LLM found no replacement.</p>
+    return <p className="suggest-status">{m.noReplacement}</p>
   }
   return (
     <div className="suggestions">
@@ -190,7 +194,7 @@ function SuggestionArea({ finding }: { finding: Finding }) {
           void fetchSuggestions(finding.id)
         }}
       >
-        ✨ {error ? 'Retry suggestion' : 'Suggest fix'}
+        ✨ {error ? m.retrySuggestion : m.suggestFix}
       </button>
       {error && <p className="suggest-error">{error}</p>}
     </div>
@@ -198,6 +202,7 @@ function SuggestionArea({ finding }: { finding: Finding }) {
 }
 
 function RewriteArea({ finding }: { finding: Finding }) {
+  const m = useMessages()
   const rewrite = useStore((s) => s.rewrites[finding.id])
   const pending = useStore((s) => s.rewritePendingId === finding.id)
   const anyPending = useStore(
@@ -210,12 +215,12 @@ function RewriteArea({ finding }: { finding: Finding }) {
     if (!applyRewrite(finding.id, rewrite.original, option)) {
       const store = useStore.getState()
       store.setRewrite(finding.id, null)
-      store.setRewriteError(finding.id, 'The sentence changed — rewrite again.')
+      store.setRewriteError(finding.id, m.sentenceChangedRewriteAgain)
     }
   }
 
   if (pending) {
-    return <p className="suggest-status">↻ rewriting sentence…</p>
+    return <p className="suggest-status">↻ {m.rewriting}</p>
   }
   if (rewrite && rewrite.options.length > 0) {
     return (
@@ -224,7 +229,7 @@ function RewriteArea({ finding }: { finding: Finding }) {
           <button
             key={option}
             className="rewrite-option"
-            title="Replace the sentence with this rewrite"
+            title={m.applyRewriteTitle}
             onClick={(event) => {
               event.stopPropagation()
               apply(option)
@@ -237,7 +242,7 @@ function RewriteArea({ finding }: { finding: Finding }) {
     )
   }
   if (rewrite) {
-    return <p className="suggest-status">The LLM offered no rewrite.</p>
+    return <p className="suggest-status">{m.noRewrite}</p>
   }
   return (
     <div className="rewrites">
@@ -249,7 +254,7 @@ function RewriteArea({ finding }: { finding: Finding }) {
           void fetchRewrite(finding.id)
         }}
       >
-        ↻ {error ? 'Retry rewrite' : 'Rewrite sentence'}
+        ↻ {error ? m.retryRewrite : m.rewriteSentence}
       </button>
       {error && <p className="suggest-error">{error}</p>}
     </div>

@@ -1,7 +1,8 @@
+import type { Messages } from './i18n/messages'
 import type { LanguageInfo } from './types'
 
-export function languageLabel(info: LanguageInfo): string {
-  return info.nlp_available ? info.name : `${info.name} (basic checks only)`
+export function languageLabel(info: LanguageInfo, messages: Messages): string {
+  return info.nlp_available ? info.name : messages.basicChecksOnly(info.name)
 }
 
 // Shown until GET /api/languages responds (or when the backend is unreachable).

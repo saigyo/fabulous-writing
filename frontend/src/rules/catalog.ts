@@ -1,10 +1,11 @@
+import type { Messages } from '../i18n/messages'
 import type { Category, RuleInfo } from '../types'
 import { CATEGORIES } from '../types'
 
 const MAX_LISTED = 6
 
 /** One human-readable line describing what a rule matches. */
-export function ruleDetailSummary(rule: RuleInfo): string {
+export function ruleDetailSummary(rule: RuleInfo, messages: Messages): string {
   const detail = rule.detail
   switch (rule.extends) {
     case 'existence': {
@@ -13,8 +14,8 @@ export function ruleDetailSummary(rule: RuleInfo): string {
         ...(((detail.raw as string[]) ?? []).map((r) => `/${r}/`)),
       ]
       return items.length > MAX_LISTED
-        ? `Flags: ${items.slice(0, MAX_LISTED).join(', ')} … (${items.length} total)`
-        : `Flags: ${items.join(', ')}`
+        ? messages.detailFlags(items.slice(0, MAX_LISTED).join(', '), items.length)
+        : messages.detailFlags(items.join(', '), null)
     }
     case 'substitution': {
       const swap = (detail.swap as Record<string, string>) ?? {}
@@ -22,22 +23,31 @@ export function ruleDetailSummary(rule: RuleInfo): string {
         .map(([from, to]) => `${from} → ${to}`)
         .join('; ')
     }
-    case 'occurrence': {
-      const bound =
-        detail.max != null ? `More than ${detail.max}` : `Fewer than ${detail.min}`
-      const what =
-        detail.count === 'tokens' ? 'tokens' : `matches of /${detail.token}/`
-      return `${bound} ${what} per ${detail.scope}`
-    }
+    case 'occurrence':
+      return detail.max != null
+        ? messages.detailOccurrence(
+            'more',
+            detail.max as number,
+            detail.count === 'tokens' ? 'tokens' : 'matches',
+            (detail.token as string) ?? null,
+            detail.scope as string,
+          )
+        : messages.detailOccurrence(
+            'fewer',
+            detail.min as number,
+            detail.count === 'tokens' ? 'tokens' : 'matches',
+            (detail.token as string) ?? null,
+            detail.scope as string,
+          )
     case 'repetition':
-      return 'Adjacent repeated words'
+      return messages.detailAdjacentRepeated
     case 'token_pattern': {
       const size = ((detail.pattern as unknown[]) ?? []).length
-      return `spaCy token pattern (${size} tokens)`
+      return messages.detailTokenPattern(size)
     }
     case 'dependency': {
       const size = ((detail.pattern as unknown[]) ?? []).length
-      return `spaCy dependency pattern (${size} nodes)`
+      return messages.detailDependencyPattern(size)
     }
     default:
       return ''

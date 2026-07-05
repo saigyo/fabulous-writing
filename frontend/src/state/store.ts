@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { TrackedFinding } from '../editor/findings'
 import { mapEquivalentIds } from '../findings/equivalence'
+import type { Locale } from '../i18n/messages'
 import { FALLBACK_LANGUAGES } from '../languages'
 import type { Domain, Language, LanguageInfo, ProviderInfo, Severity } from '../types'
 
@@ -10,6 +11,8 @@ export type ActiveView = 'editor' | 'rules' | 'terminology'
 
 interface AppState {
   language: Language
+  // UI display language; null = follow the browser locale.
+  uiLocale: Locale | null
   domainId: number | null
   provider: string
   model: string | null
@@ -36,6 +39,7 @@ interface AppState {
   rewriteErrors: Record<string, string>
 
   setLanguage: (language: Language) => void
+  setUiLocale: (uiLocale: Locale) => void
   setDomainId: (domainId: number | null) => void
   setProvider: (provider: string) => void
   setModel: (model: string | null) => void
@@ -92,6 +96,7 @@ export const useStore = create<AppState>()(
   persist(
     (set) => ({
       language: 'en',
+      uiLocale: null,
       domainId: null,
       provider: 'ollama',
       model: null,
@@ -115,6 +120,7 @@ export const useStore = create<AppState>()(
       rewriteErrors: {},
 
       setLanguage: (language) => set({ language }),
+      setUiLocale: (uiLocale) => set({ uiLocale }),
       setDomainId: (domainId) => set({ domainId }),
       setProvider: (provider) => set({ provider, model: null }),
       setModel: (model) => set({ model }),
@@ -161,6 +167,7 @@ export const useStore = create<AppState>()(
       name: 'fabulous-writing-settings',
       partialize: (state) => ({
         language: state.language,
+        uiLocale: state.uiLocale,
         domainId: state.domainId,
         provider: state.provider,
         model: state.model,
