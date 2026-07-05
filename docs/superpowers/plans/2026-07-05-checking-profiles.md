@@ -1237,11 +1237,17 @@ def test_check_with_multiple_domains(client_with_two_domains):
 
 
 def test_check_with_rule_config(client):
-    body = {"text": "This is very good.", "language": "en",
+    body = {"text": "This is very good. The cat cat sat.", "language": "en",
             "checkers": ["rules"],
             "rule_config": {"categories_off": ["style"], "exceptions": []}}
     findings = client.post("/api/checks", json=body).json()["findings"]
+    assert findings, "a non-style rule must still fire"
     assert all(f["category"] != "style" for f in findings)
+
+
+def test_check_overlapping_domains_deduped(...):
+    """Two domains forbidding the same variant yield one finding, not two
+    (first selected domain wins via drop_overlapping)."""
 
 
 def test_check_passes_llm_instructions_to_provider(client_with_recording_provider):
@@ -1342,9 +1348,12 @@ In `create_check`:
         job.add_findings("rules", findings)
     if "terminology" in body.checkers and body.domain_ids:
         checker = TerminologyChecker(app.state.terminology_store, nlp=app.state.nlp)
-        findings = []
+        findings: list[Finding] = []
         for domain_id in body.domain_ids:
-            findings.extend(checker.check(body.text, body.language, domain_id))
+            # Two domains may forbid the same variant; the first selected
+            # domain wins so the client never sees overlapping duplicates.
+            more = checker.check(body.text, body.language, domain_id)
+            findings.extend(drop_overlapping(more, findings))
         job.add_findings("terminology", findings)
 ```
 `_run_llm` gains `instructions: str = ""` and passes it:
