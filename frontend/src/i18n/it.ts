@@ -34,7 +34,7 @@ export const it: Messages = {
   offlineSuffix: ' (offline)',
   autoLabel: 'auto',
   autoTitle: 'Esegui automaticamente il controllo LLM dopo una pausa',
-  example: 'Esempio',
+  loadExample: 'Carica testo di esempio',
   exampleTitle:
     "Sostituisci il contenuto dell'editor con un testo di esempio difettoso per la lingua selezionata",
   check: 'Controlla',

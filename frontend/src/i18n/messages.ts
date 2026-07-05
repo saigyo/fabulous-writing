@@ -32,7 +32,7 @@ export interface Messages {
   offlineSuffix: string
   autoLabel: string
   autoTitle: string
-  example: string
+  loadExample: string
   exampleTitle: string
   check: string
   checking: string

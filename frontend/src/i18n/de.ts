@@ -29,7 +29,7 @@ export const de: Messages = {
   offlineSuffix: ' (offline)',
   autoLabel: 'auto',
   autoTitle: 'LLM-Prüfung nach einer Pause automatisch ausführen',
-  example: 'Beispiel',
+  loadExample: 'Beispieltext laden',
   exampleTitle:
     'Editor-Inhalt durch einen fehlerhaften Beispieltext für die gewählte Sprache ersetzen',
   check: 'Prüfen',

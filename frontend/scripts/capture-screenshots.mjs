@@ -60,7 +60,7 @@ const languageSelect = page.locator(
 // Shot 1: editor with the EN demo text; terminology finding selected so the
 // one-click fix and rewrite button are visible.
 await languageSelect.selectOption('en')
-await page.locator('.example-button').click()
+await page.locator('.load-example').click()
 await page.waitForTimeout(2500)
 const loginRow = page.locator('.finding-row', { hasText: 'login' }).first()
 await loginRow.click()

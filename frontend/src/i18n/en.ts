@@ -23,7 +23,7 @@ export const en: Messages = {
   offlineSuffix: ' (offline)',
   autoLabel: 'auto',
   autoTitle: 'Run the LLM check automatically after a pause',
-  example: 'Example',
+  loadExample: 'Load example text',
   exampleTitle: 'Replace the editor content with a flawed example text for the selected language',
   check: 'Check',
   checking: 'Checking…',

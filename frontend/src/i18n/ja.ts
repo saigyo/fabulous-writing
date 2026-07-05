@@ -28,7 +28,7 @@ export const ja: Messages = {
   offlineSuffix: '(オフライン)',
   autoLabel: '自動',
   autoTitle: '入力が止まったら LLM チェックを自動実行',
-  example: '例文',
+  loadExample: '例文を読み込む',
   exampleTitle: '選択中の言語の誤りを含む例文でエディターの内容を置き換える',
   check: 'チェック',
   checking: 'チェック中…',

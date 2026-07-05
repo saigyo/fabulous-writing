@@ -38,7 +38,7 @@ export const fr: Messages = {
   offlineSuffix: ' (hors ligne)',
   autoLabel: 'auto',
   autoTitle: 'Lancer la vérification LLM automatiquement après une pause',
-  example: 'Exemple',
+  loadExample: "Charger un texte d'exemple",
   exampleTitle:
     "Remplacer le contenu de l'éditeur par un texte d'exemple fautif pour la langue sélectionnée",
   check: 'Vérifier',

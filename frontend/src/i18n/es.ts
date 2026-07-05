@@ -38,7 +38,7 @@ export const es: Messages = {
   offlineSuffix: ' (sin conexión)',
   autoLabel: 'auto',
   autoTitle: 'Ejecutar la comprobación LLM automáticamente tras una pausa',
-  example: 'Ejemplo',
+  loadExample: 'Cargar texto de ejemplo',
   exampleTitle:
     'Reemplazar el contenido del editor por un texto de ejemplo con errores para el idioma seleccionado',
   check: 'Comprobar',

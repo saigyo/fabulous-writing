@@ -93,9 +93,8 @@
   max-width: min(10.5rem, 12vw);
 }
 
-/* Checkbox and locale switcher keep their compact inline form. */
-.header-controls .auto-toggle,
-.header-controls .locale-switch {
+/* The auto checkbox keeps its compact inline form. */
+.header-controls .auto-toggle {
   flex-direction: row;
   align-items: center;
   gap: 0.3rem;
@@ -103,11 +102,6 @@
   font-size: 0.85rem;
   text-transform: none;
   letter-spacing: normal;
-}
-
-.header-controls .auto-toggle select,
-.header-controls .locale-switch select {
-  margin-left: 0;
 }
 
 /* Compact mode for narrow windows: same height, tighter type and gaps. */
@@ -133,11 +127,6 @@
     max-width: min(9rem, 10vw);
   }
 
-  .header-controls .locale-switch select {
-    max-width: 4.5rem;
-  }
-
-  .example-button,
   .check-button {
     padding: 0.35rem 0.5rem;
     font-size: 0.85rem;
@@ -151,19 +140,32 @@
   }
 }
 
-.example-button {
-  padding: 0.35rem 0.6rem;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
+/* Icon-only UI-language switcher next to the wordmark; the transparent
+   select overlays the icon so a click opens the native dropdown. */
+.locale-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  color: var(--text-dim);
+  font-size: 0.95rem;
   cursor: pointer;
-  white-space: nowrap;
 }
 
-.example-button:hover {
-  border-color: var(--accent);
+.locale-switch:hover {
   color: var(--accent);
+}
+
+.locale-caret {
+  font-size: 0.6rem;
+}
+
+.locale-switch select {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  border: none;
+  cursor: pointer;
 }
 
 .check-button {
@@ -190,10 +192,39 @@
   min-height: 0;
 }
 
+.editor-area {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
 .editor {
   flex: 1;
   overflow: auto;
   min-width: 0;
+}
+
+/* Ghost action floating over the editor's top-right corner. */
+.load-example {
+  position: absolute;
+  top: 0.6rem;
+  right: 1.2rem;
+  z-index: 5;
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+  border: 1px dashed var(--border);
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.load-example:hover {
+  border-color: var(--accent);
+  border-style: solid;
+  color: var(--accent);
 }
 
 .editor .cm-editor {
@@ -563,27 +594,6 @@
 .case-label {
   font-size: 0.75rem;
   margin-right: 0.4rem;
-}
-
-.locale-switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  color: var(--text-dim);
-  font-size: 0.85rem;
-  white-space: nowrap;
-}
-
-.locale-switch select {
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-  max-width: 6.5rem;
-}
-
-.locale-switch select:hover {
-  color: var(--accent);
 }
 
 .icon-button {

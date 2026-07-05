@@ -20,7 +20,10 @@ export default function App() {
       <Header />
       {activeView === 'editor' && (
         <main className="workspace">
-          <Editor />
+          <div className="editor-area">
+            <Editor />
+            <LoadExampleButton />
+          </div>
           <Sidebar />
         </main>
       )}
@@ -47,6 +50,7 @@ function Header() {
       <h1>
         Fabulous <span className="accent">Writing</span>
       </h1>
+      <LocaleSwitcher />
       <nav className="view-switch">
         <button
           className={store.activeView === 'editor' ? 'active' : ''}
@@ -136,29 +140,12 @@ function Header() {
           {m.autoLabel}
         </label>
         <button
-          className="example-button"
-          title={m.exampleTitle}
-          onClick={() => {
-            store.setActiveView('editor')
-            // Terminology only runs with a domain; default to the first one.
-            if (store.domainId === null && store.domains.length > 0) {
-              store.setDomainId(store.domains[0].id)
-            }
-            void getDemoText(store.language)
-              .then(({ text }) => setEditorText(text))
-              .catch(() => {})
-          }}
-        >
-          {m.example}
-        </button>
-        <button
           className="check-button"
           disabled={store.checkPhase !== 'idle'}
           onClick={() => void runCheck(true)}
         >
           {store.checkPhase === 'idle' ? m.check : m.checking}
         </button>
-        <LocaleSwitcher />
       </div>
     </header>
   )
@@ -171,6 +158,9 @@ function LocaleSwitcher() {
   return (
     <label className="locale-switch" title={m.uiLocaleTitle}>
       <span aria-hidden="true">🌐</span>
+      <span className="locale-caret" aria-hidden="true">
+        ▾
+      </span>
       <select
         value={locale}
         aria-label={m.uiLocaleTitle}
@@ -183,5 +173,27 @@ function LocaleSwitcher() {
         ))}
       </select>
     </label>
+  )
+}
+
+function LoadExampleButton() {
+  const m = useMessages()
+  return (
+    <button
+      className="load-example"
+      title={m.exampleTitle}
+      onClick={() => {
+        const store = useStore.getState()
+        // Terminology only runs with a domain; default to the first one.
+        if (store.domainId === null && store.domains.length > 0) {
+          store.setDomainId(store.domains[0].id)
+        }
+        void getDemoText(store.language)
+          .then(({ text }) => setEditorText(text))
+          .catch(() => {})
+      }}
+    >
+      ⤓ {m.loadExample}
+    </button>
   )
 }

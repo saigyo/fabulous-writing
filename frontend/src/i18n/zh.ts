@@ -28,7 +28,7 @@ export const zh: Messages = {
   offlineSuffix: '(离线)',
   autoLabel: '自动',
   autoTitle: '停顿后自动运行 LLM 检查',
-  example: '示例',
+  loadExample: '载入示例文本',
   exampleTitle: '用所选语言的含错示例文本替换编辑器内容',
   check: '检查',
   checking: '检查中…',
