@@ -69,8 +69,9 @@ class LLMChecker:
         text: str,
         language: Language,
         on_progress: ProgressCallback | None = None,
+        instructions: str = "",
     ) -> list[Finding]:
-        system, user = build_prompt(text, language)
+        system, user = build_prompt(text, language, instructions=instructions)
         response = await self.provider.generate(system, user, on_progress)
         findings: list[Finding] = []
         for raw in parse_findings(response):

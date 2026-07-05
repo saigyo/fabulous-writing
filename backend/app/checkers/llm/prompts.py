@@ -71,11 +71,27 @@ they are technically correct.
 """
 
 
+def _with_instructions(system: str, instructions: str) -> str:
+    """Append profile instructions without touching the output contract."""
+    text = instructions.strip()
+    if not text:
+        return system
+    return (
+        system
+        + "\nAdditional review instructions from the writer's checking profile"
+        + " (style and focus guidance only — the output format rules above"
+        + " still apply unchanged):\n"
+        + text
+        + "\n"
+    )
+
+
 def build_rewrite_prompt(
-    passage: str, message: str, language: Language
+    passage: str, message: str, language: Language, instructions: str = ""
 ) -> tuple[str, str]:
     """Prompt for full rewrites of the sentence(s) containing a finding."""
     system = _REWRITE_SYSTEM_TEMPLATE.format(language=_LANGUAGE_NAMES[language])
+    system = _with_instructions(system, instructions)
     user = (
         f"Passage:\n{passage}\n\n"
         f"Flagged issue: {message}\n\n"
@@ -85,7 +101,12 @@ def build_rewrite_prompt(
 
 
 def build_suggestion_prompt(
-    text: str, start: int, end: int, message: str, language: Language
+    text: str,
+    start: int,
+    end: int,
+    message: str,
+    language: Language,
+    instructions: str = "",
 ) -> tuple[str, str]:
     """Prompt for drop-in replacements for one flagged span."""
     from app.checkers.rules.text import split_sentences
@@ -98,6 +119,7 @@ def build_suggestion_prompt(
     ]
     context = " ".join(context_parts) or flagged
     system = _SUGGESTION_SYSTEM_TEMPLATE.format(language=_LANGUAGE_NAMES[language])
+    system = _with_instructions(system, instructions)
     user = (
         f"Context:\n{context}\n\n"
         f"Flagged passage: \"{flagged}\"\n"
@@ -107,10 +129,13 @@ def build_suggestion_prompt(
     return system, user
 
 
-def build_prompt(text: str, language: Language) -> tuple[str, str]:
+def build_prompt(
+    text: str, language: Language, instructions: str = ""
+) -> tuple[str, str]:
     categories = ", ".join(c.value for c in Category if c != Category.TERMINOLOGY)
     system = _SYSTEM_TEMPLATE.format(
         language=_LANGUAGE_NAMES[language], categories=categories
     )
+    system = _with_instructions(system, instructions)
     user = f"Review the following text:\n\n{text}"
     return system, user

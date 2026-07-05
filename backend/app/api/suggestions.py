@@ -27,6 +27,7 @@ class SuggestionRequest(BaseModel):
     rule_id: str | None = None
     llm_provider: str | None = None
     llm_model: str | None = None
+    llm_instructions: str = ""
 
 
 class SuggestionResponse(BaseModel):
@@ -47,12 +48,19 @@ async def create_suggestions(
     if body.scope == "sentence":
         start, end = expand_to_sentences(body.text, span.start, span.end)
         original = body.text[start:end]
-        system, user = build_rewrite_prompt(original, body.message, body.language)
+        system, user = build_rewrite_prompt(
+            original, body.message, body.language, instructions=body.llm_instructions
+        )
     else:
         start, end = span.start, span.end
         original = body.text[start:end]
         system, user = build_suggestion_prompt(
-            body.text, start, end, body.message, body.language
+            body.text,
+            start,
+            end,
+            body.message,
+            body.language,
+            instructions=body.llm_instructions,
         )
 
     provider: LLMProvider = request.app.state.provider_factory(
