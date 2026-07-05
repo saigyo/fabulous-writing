@@ -497,3 +497,32 @@ system prompt to prove instructions reach the LLM, synchronized via the
 existing SSE `_read_sse_events` pattern. Full backend suite: 235
 passed. Known follow-up: `frontend/src/api/client.ts` still calls the
 removed demo endpoint and needs to switch to profile example texts.
+
+## 2026-07-05 — Profile state, dirty helpers, and check request fields (Task 9)
+Commit: `58a12e3`
+
+Frontend counterpart to Task 7's API change: new `profiles/profile.ts`
+with pure helpers — `applyProfileToHeader` (profile → header selector
+values, falling back to the current provider when the profile records
+none), `isProfileDirty` (set-based domain comparison so order never
+matters; a null profile provider means "no preference recorded" and is
+never dirty), `effectiveRuleConfig` (profile → RuleConfig payload), and
+`activeProfile` (shared profileId lookup, added on review to head off
+three upcoming duplications). The zustand store swaps
+`domainId: number | null` for `domainIds: number[]`, gains `profiles`,
+`profileId`, and persisted `lastProfileByLanguage`, plus `setProfiles`
+and `selectProfile(profile, apply)` where apply=true copies the
+profile's values into the header. `runCheck` now sends `domain_ids`,
+`rule_config`, and `llm_instructions`; suggestion/rewrite requests
+carry `llm_instructions` too (single shared request builder, one edit).
+App.tsx got only the mechanical rename (single-select domain dropdown
+mapped onto the array; example-button domain defaulting) — its
+getDemoText build error stays for Task 11.
+
+TDD for the helpers (8 tests). Review round added a mutation-verified
+test: deleting the `a.size !== b.size` guard in `isProfileDirty`
+passed all original tests, so a "header has extra domains" case was
+added and confirmed to kill exactly that mutant before restoring the
+guard. 106 frontend tests green; `tsc -b` shows only the two known
+App.tsx errors reserved for Task 11. Old persisted `domainId` localStorage
+key is silently dropped (accepted one-time loss).
