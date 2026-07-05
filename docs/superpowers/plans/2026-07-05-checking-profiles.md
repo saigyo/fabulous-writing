@@ -574,6 +574,16 @@ def standard_defaults(
     }
 
 
+def _create_ignoring_collision(
+    store: ProfileStore, language: Language, name: str, **fields: object
+) -> None:
+    """A pre-existing profile occupying a seeded name wins; seeding skips it."""
+    try:
+        store.create_profile(language, name, **fields)
+    except ValueError:
+        pass
+
+
 def seed_profiles(
     store: ProfileStore,
     demos_dir: Path,
@@ -583,7 +593,8 @@ def seed_profiles(
 ) -> None:
     for language in Language:
         if store.standard_profile(language) is None:
-            store.create_profile(
+            _create_ignoring_collision(
+                store,
                 language,
                 "Standard",
                 is_standard=True,
@@ -594,14 +605,16 @@ def seed_profiles(
             and language in EXAMPLE_LANGUAGES
             and not store.is_example_seeded(language)
         ):
-            store.create_profile(
+            _create_ignoring_collision(
+                store,
                 language,
                 "Marketing",
                 llm_provider=default_provider,
                 llm_instructions=_MARKETING_INSTRUCTIONS[language],
                 example_text=_demo(demos_dir, f"{language.value}-marketing.txt"),
             )
-            store.create_profile(
+            _create_ignoring_collision(
+                store,
                 language,
                 "Technical Documentation",
                 categories_off=["vividness"],
@@ -611,8 +624,15 @@ def seed_profiles(
                     demos_dir, f"{language.value}-technical-documentation.txt"
                 ),
             )
+            # Marker is set even when an insert was skipped: a collision must
+            # not cause an endless retry (and re-collision) on every startup.
             store.mark_example_seeded(language)
 ```
+
+Also add two collision tests (`test_seed_survives_name_collisions`,
+`test_seed_survives_user_profile_named_standard`): pre-create a profile named
+"Technical Documentation" (resp. "Standard") and assert seeding neither
+crashes nor duplicates, sets the marker, and stays quiet on the next run.
 
 - [ ] **Step 4: Add the config switch in `backend/app/core/config.py`**
 
