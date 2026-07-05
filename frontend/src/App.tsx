@@ -1,9 +1,11 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import './App.css'
-import { getDemoText, getDomains, getLanguages, getProviders } from './api/client'
+import { getDomains, getLanguages, getProfiles, getProviders } from './api/client'
 import { runCheck } from './checking/controller'
 import { Editor } from './editor/Editor'
 import { setEditorText } from './editor/editorRef'
+import { DomainMultiSelect } from './header/DomainMultiSelect'
+import { ProfileSelector } from './header/ProfileSelector'
 import { RulesView } from './rules/RulesView'
 import { Sidebar } from './sidebar/Sidebar'
 import { LOCALES, LOCALE_NAMES, useLocale, useMessages, type Locale } from './i18n'
@@ -43,6 +45,28 @@ function Header() {
     getLanguages().then(store.setLanguages).catch(() => {})
   }, [])
 
+  const prevLanguage = useRef<Language | null>(null)
+  useEffect(() => {
+    const language = store.language
+    // Apply profile values only on a real language switch. Comparing the
+    // previous language (instead of a consumed boolean) keeps this correct
+    // under StrictMode's double-invoked effects.
+    const isSwitch = prevLanguage.current !== null && prevLanguage.current !== language
+    prevLanguage.current = language
+    getProfiles(language)
+      .then((profiles) => {
+        const s = useStore.getState()
+        s.setProfiles(profiles)
+        const remembered = profiles.find(
+          (p) => p.id === s.lastProfileByLanguage[language],
+        )
+        const chosen =
+          remembered ?? profiles.find((p) => p.is_standard) ?? profiles[0]
+        if (chosen) s.selectProfile(chosen, isSwitch)
+      })
+      .catch(() => {})
+  }, [store.language])
+
   const activeProvider = store.providers.find((p) => p.name === store.provider)
 
   return (
@@ -72,6 +96,7 @@ function Header() {
         </button>
       </nav>
       <div className="header-controls">
+        <ProfileSelector />
         <label>
           {m.language}
           <select
@@ -87,19 +112,7 @@ function Header() {
         </label>
         <label>
           {m.domain}
-          <select
-            value={store.domainIds[0] ?? ''}
-            onChange={(e) =>
-              store.setDomainIds(e.target.value ? [Number(e.target.value)] : [])
-            }
-          >
-            <option value="">{m.domainNone}</option>
-            {store.domains.map((domain) => (
-              <option key={domain.id} value={domain.id}>
-                {domain.name}
-              </option>
-            ))}
-          </select>
+          <DomainMultiSelect />
         </label>
         <label>
           {m.llm}
@@ -178,20 +191,16 @@ function LocaleSwitcher() {
 
 function LoadExampleButton() {
   const m = useMessages()
+  const profiles = useStore((s) => s.profiles)
+  const profileId = useStore((s) => s.profileId)
+  const exampleText =
+    profiles.find((p) => p.id === profileId)?.example_text ?? ''
   return (
     <button
       className="load-example"
       title={m.exampleTitle}
-      onClick={() => {
-        const store = useStore.getState()
-        // Terminology only runs with a domain; default to the first one.
-        if (store.domainIds.length === 0 && store.domains.length > 0) {
-          store.setDomainIds([store.domains[0].id])
-        }
-        void getDemoText(store.language)
-          .then(({ text }) => setEditorText(text))
-          .catch(() => {})
-      }}
+      disabled={!exampleText.trim()}
+      onClick={() => setEditorText(exampleText)}
     >
       ⤓ {m.loadExample}
     </button>
