@@ -4,7 +4,7 @@ import { findingsField } from '../editor/findings'
 import { currentMessages } from '../i18n'
 import { activeProfile } from '../profiles/profile'
 import { useStore } from '../state/store'
-import { effectiveModel } from './model'
+import { resolveModel } from './routing'
 import { noReliableSuggestionMessage } from './vetMessage'
 
 /**
@@ -28,7 +28,7 @@ export async function fetchSuggestions(findingId: string): Promise<void> {
       else useStore.getState().setExtraSuggestions(findingId, result.suggestions)
     }
   } catch (error) {
-    useStore.getState().setSuggestError(findingId, String(error))
+    useStore.getState().setSuggestError(findingId, error instanceof Error ? error.message : String(error))
   } finally {
     useStore.getState().setSuggestPending(null)
   }
@@ -61,7 +61,7 @@ export async function fetchRewrite(findingId: string): Promise<void> {
       }
     }
   } catch (error) {
-    useStore.getState().setRewriteError(findingId, String(error))
+    useStore.getState().setRewriteError(findingId, error instanceof Error ? error.message : String(error))
   } finally {
     useStore.getState().setRewritePending(null)
   }
@@ -80,6 +80,10 @@ async function requestForFinding(findingId: string, scope: 'span' | 'sentence') 
     .items.find((it) => it.finding.id === findingId)
   if (!item) return null
   const state = useStore.getState()
+  const resolution = resolveModel(state)
+  if (!resolution.ok) {
+    throw new Error(currentMessages().llmSkipped(resolution.reason))
+  }
   return postSuggestions({
     text: view.state.doc.toString(),
     span: { start: item.from, end: item.to },
@@ -87,8 +91,8 @@ async function requestForFinding(findingId: string, scope: 'span' | 'sentence') 
     language: state.language,
     scope,
     rule_id: item.finding.rule_id,
-    llm_provider: state.provider,
-    llm_model: effectiveModel(state.model, state.provider, state.providers),
+    llm_provider: resolution.provider,
+    llm_model: resolution.model,
     llm_instructions: activeProfile(state)?.llm_instructions ?? '',
   })
 }

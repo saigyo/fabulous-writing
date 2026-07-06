@@ -125,7 +125,7 @@ export function Sidebar() {
           </div>
         )}
       </div>
-      {llmError && <div className="llm-error">{m.llmCheckFailed(llmError)}</div>}
+      {llmError && <div className="llm-error">{llmError}</div>}
       {total === 0 && checkPhase === 'idle' && (
         <p className="all-clear">{m.allClear}</p>
       )}

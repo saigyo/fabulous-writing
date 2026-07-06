@@ -1,10 +1,11 @@
 import { postCheck, subscribeCheck } from '../api/client'
 import { getEditorView } from '../editor/editorRef'
 import { mergeFindingsEffect } from '../editor/findings'
+import { currentMessages } from '../i18n'
 import { activeProfile, effectiveRuleConfig } from '../profiles/profile'
 import { useStore } from '../state/store'
 import type { Finding } from '../types'
-import { effectiveModel } from './model'
+import { resolveModel } from './routing'
 
 let currentCheckId: string | null = null
 let unsubscribe: (() => void) | null = null
@@ -34,13 +35,21 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
     return
   }
 
-  const checkers = includeLlm
+  const resolution = resolveModel(state)
+
+  const wantLlm = includeLlm && resolution.ok
+  const checkers = wantLlm
     ? ['rules', 'terminology', 'llm']
     : ['rules', 'terminology']
   useStore.setState({
-    checkPhase: includeLlm ? 'llm' : 'fast',
-    llmError: includeLlm ? null : state.llmError,
-    llmStartedAt: includeLlm ? Date.now() : null,
+    checkPhase: wantLlm ? 'llm' : 'fast',
+    llmError:
+      includeLlm && !resolution.ok
+        ? currentMessages().llmSkipped(resolution.reason)
+        : includeLlm
+          ? null
+          : state.llmError,
+    llmStartedAt: wantLlm ? Date.now() : null,
     llmTokens: null,
   })
 
@@ -54,14 +63,14 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
       domain_ids: state.domainIds,
       checkers,
       rule_config: effectiveRuleConfig(profile),
-      llm_provider: state.provider,
-      llm_model: effectiveModel(state.model, state.provider, state.providers),
+      llm_provider: resolution.ok ? resolution.provider : null,
+      llm_model: resolution.ok ? resolution.model : null,
       llm_instructions: profile?.llm_instructions ?? '',
     })
   } catch (error) {
     useStore.setState({
       checkPhase: 'idle',
-      llmError: String(error),
+      llmError: currentMessages().llmCheckFailed(String(error)),
       llmStartedAt: null,
       llmTokens: null,
     })
@@ -70,7 +79,7 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
 
   applyFindings(text, ['rule', 'terminology'], fastFindings(result.findings))
 
-  if (!includeLlm || result.status === 'done') {
+  if (!wantLlm || result.status === 'done') {
     useStore.setState({ checkPhase: 'idle', llmStartedAt: null, llmTokens: null })
     return
   }
@@ -84,7 +93,7 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
       }
     },
     onError(_checker, error) {
-      if (currentCheckId === checkId) useStore.setState({ llmError: error })
+      if (currentCheckId === checkId) useStore.setState({ llmError: currentMessages().llmCheckFailed(error) })
     },
     onProgress(tokens) {
       if (currentCheckId === checkId) useStore.setState({ llmTokens: tokens })
