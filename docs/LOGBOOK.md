@@ -801,3 +801,17 @@ Gemini discovery prefixes ids with `models/`, so a configured
 `default_model` must use that prefix or it is replaced by the first
 discovered model; `exclude_model_fragments` tames Gemini/Qwen non-chat
 listings.
+
+## 2026-07-06 — Claude live model discovery
+
+Commit: `c610cd4`
+
+The `claude` provider entry was the only one without live discovery (static
+`[anthropic_model]`). `ClaudeProvider.list_models()` now queries Anthropic
+`GET /v1/models` via the SDK (newest-first order preserved so the best
+default surfaces on top), and `_claude_entry` discovers with the shared 5 s
+timeout, falling back to the configured model on failure — same semantics as
+openai/mistral/extras. TDD (stub-client unit test + two API tests with
+patched discovery); E2E-verified against the live API: 10 models, configured
+default `claude-sonnet-5` preserved. Docs updated (backend-architecture
+discovery paragraph, README provider table, model-recommendations § 1).
