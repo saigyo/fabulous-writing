@@ -27,7 +27,7 @@ backend/
 │   │   ├── providers.py         # provider availability + live model discovery
 │   │   └── languages.py         # supported languages + NLP model status
 │   ├── checkers/
-│   │   ├── pipeline.py          # span-overlap dedup between checkers
+│   │   ├── pipeline.py          # duplicate-diagnosis dedup between checkers
 │   │   ├── terminology.py       # terminology checker (regex / CJK PhraseMatcher)
 │   │   ├── rules/               # deterministic YAML rule engine
 │   │   │   ├── engine.py        # RuleEngine + RuleConfig (profile filtering)
@@ -141,7 +141,7 @@ POST /api/checks {text, language, domain_ids, checkers, rule_config,
   │
   └─ llm          : asyncio.create_task(_run_llm(...))                        (background)
                       └─ provider.generate() → parse → anchor → vet
-                         → drop_overlapping(llm, fast findings) → job.add_findings()
+                         → drop_duplicates(llm, fast findings) → job.add_findings()
 
 202 {check_id, status, findings: [fast findings], skipped_rules}
   │
@@ -160,11 +160,14 @@ Details worth knowing:
   keeps the last 100 jobs in an `OrderedDict` — state is in-memory and per-process by
   design (a check is ephemeral; the client re-checks rather than resumes after a
   restart).
-- **Cross-checker dedup** (`app/checkers/pipeline.py`): `drop_overlapping(candidates,
-  existing)` discards candidates whose span overlaps an existing finding. It is applied
-  twice: across terminology domains (first domain wins) and to LLM findings against all
-  fast findings (deterministic findings win — they are more precise and carry better
-  fixes).
+- **Cross-checker dedup** (`app/checkers/pipeline.py`): `drop_duplicates(candidates,
+  existing)` discards candidates that repeat an existing diagnosis — an overlapping
+  finding of the *same category*, or one flagging substantially the same span (the
+  overlap covers the majority of the combined extent) in any category. Mere overlap is
+  not enough: a whole-sentence finding (e.g. a sentence-length warning) must not shadow
+  a different diagnosis on a few words inside it. Applied twice: across terminology
+  domains (first domain wins) and to LLM findings against all fast findings
+  (deterministic findings win — they are more precise and carry better fixes).
 - **NLP degradation**: if the language's spaCy model is not installed, `analyze()`
   returns `None`, NLP-backed rules are skipped, and their ids are reported as
   `skipped_rules` so the UI can say so instead of silently checking less.

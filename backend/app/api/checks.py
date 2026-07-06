@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from app.checkers.llm.checker import LLMChecker
 from app.checkers.llm.provider import LLMProvider
-from app.checkers.pipeline import drop_overlapping
+from app.checkers.pipeline import drop_duplicates
 from app.checkers.rules.engine import RuleConfig
 from app.checkers.terminology import TerminologyChecker
 from app.core.models import Finding, Language
@@ -60,7 +60,7 @@ async def create_check(request: Request, body: CheckRequest) -> CheckStatus:
         findings: list[Finding] = []
         for domain_id in body.domain_ids:
             more = checker.check(body.text, body.language, domain_id)
-            findings.extend(drop_overlapping(more, findings))
+            findings.extend(drop_duplicates(more, findings))
         job.add_findings("terminology", findings)
 
     if "llm" in body.checkers:
@@ -113,7 +113,7 @@ async def _run_llm(
         findings = await checker.check(
             text, language, on_progress=on_progress, instructions=instructions
         )
-        job.add_findings("llm", drop_overlapping(findings, job.findings))
+        job.add_findings("llm", drop_duplicates(findings, job.findings))
     except Exception as exc:
         error = str(exc) or type(exc).__name__
         job.emit("checker_error", {"checker": "llm", "error": error})
