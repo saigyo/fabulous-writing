@@ -945,3 +945,21 @@ the header now shows the tier selector with gear icon and resolved caption;
 the profiles shot captures both modes (Standard on the Balanced tier,
 Marketing pinned with the pinned-note); the editor shot shows LLM findings
 alongside rule findings post-dedup-fix.
+
+## 2026-07-07 — Header controls aligned on one center line
+
+Commit: `16da706`
+
+Close inspection of the screenshots showed the header controls drifting off
+a shared center line: the labeled selector columns were centered as blocks
+(dropping the selects ~6px below the unlabeled auto checkbox and Check
+button), and the domain toggle — a styled `<button>` — came out shorter
+than the native selects, more so in Chromium than WebKit. All header
+controls now share an explicit `--control-h: 26px` and the row is
+bottom-aligned, so equal bottoms give identical center lines regardless of
+engine; the gear/pin icon boxes and the Check button adopt the same height.
+The whole block is lifted 6px so the control row sits optically on the
+tab-button line and the resolved-model caption clears the header divider.
+Verified numerically via Playwright bounding boxes (all controls at
+center y=33.3 vs tabs 33.5) and visually against a production preview;
+README screenshots regenerated.
