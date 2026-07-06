@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS profiles (
     domain_ids TEXT NOT NULL DEFAULT '[]',
     llm_provider TEXT,
     llm_model TEXT,
+    llm_tier TEXT,
     llm_instructions TEXT NOT NULL DEFAULT '',
     example_text TEXT NOT NULL DEFAULT '',
     UNIQUE(language, name)
@@ -37,6 +38,7 @@ class Profile(BaseModel):
     domain_ids: list[int] = Field(default_factory=list)
     llm_provider: str | None = None
     llm_model: str | None = None
+    llm_tier: str | None = None
     llm_instructions: str = ""
     example_text: str = ""
 
@@ -52,6 +54,7 @@ def _row_to_profile(row: sqlite3.Row) -> Profile:
         domain_ids=json.loads(row["domain_ids"]),
         llm_provider=row["llm_provider"],
         llm_model=row["llm_model"],
+        llm_tier=row["llm_tier"],
         llm_instructions=row["llm_instructions"],
         example_text=row["example_text"],
     )
@@ -65,6 +68,13 @@ class ProfileStore:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+            self._migrate(conn)
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        # Pre-existing databases lack columns added later; guard by name.
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(profiles)")}
+        if "llm_tier" not in columns:
+            conn.execute("ALTER TABLE profiles ADD COLUMN llm_tier TEXT")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -99,6 +109,7 @@ class ProfileStore:
         domain_ids: list[int] | None = None,
         llm_provider: str | None = None,
         llm_model: str | None = None,
+        llm_tier: str | None = None,
         llm_instructions: str = "",
         example_text: str = "",
     ) -> Profile:
@@ -107,8 +118,9 @@ class ProfileStore:
                 cursor = conn.execute(
                     """INSERT INTO profiles
                        (language, name, is_standard, categories_off, rule_exceptions,
-                        domain_ids, llm_provider, llm_model, llm_instructions, example_text)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        domain_ids, llm_provider, llm_model, llm_tier, llm_instructions,
+                        example_text)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         language.value,
                         name,
@@ -118,6 +130,7 @@ class ProfileStore:
                         json.dumps(domain_ids or []),
                         llm_provider,
                         llm_model,
+                        llm_tier,
                         llm_instructions,
                         example_text,
                     ),
@@ -137,6 +150,7 @@ class ProfileStore:
         "domain_ids",
         "llm_provider",
         "llm_model",
+        "llm_tier",
         "llm_instructions",
         "example_text",
     )
@@ -153,7 +167,7 @@ class ProfileStore:
                 conn.execute(
                     """UPDATE profiles SET name = ?, categories_off = ?,
                        rule_exceptions = ?, domain_ids = ?, llm_provider = ?,
-                       llm_model = ?, llm_instructions = ?, example_text = ?
+                       llm_model = ?, llm_tier = ?, llm_instructions = ?, example_text = ?
                        WHERE id = ?""",
                     (
                         merged.name,
@@ -162,6 +176,7 @@ class ProfileStore:
                         json.dumps(merged.domain_ids),
                         merged.llm_provider,
                         merged.llm_model,
+                        merged.llm_tier,
                         merged.llm_instructions,
                         merged.example_text,
                         profile_id,

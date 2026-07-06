@@ -60,15 +60,14 @@ def _create_ignoring_collision(
         pass
 
 
-def standard_defaults(
-    language: Language, demos_dir: Path, default_provider: str
-) -> dict:
+def standard_defaults(language: Language, demos_dir: Path) -> dict:
     """Factory defaults for a language's Standard profile (also used by reset)."""
     return {
         "categories_off": [],
         "rule_exceptions": [],
         "domain_ids": [],
-        "llm_provider": default_provider,
+        "llm_tier": "balanced",
+        "llm_provider": None,
         "llm_model": None,
         "llm_instructions": "",
         "example_text": _demo(demos_dir, f"{language.value}.txt"),
@@ -79,7 +78,6 @@ def seed_profiles(
     store: ProfileStore,
     demos_dir: Path,
     *,
-    default_provider: str,
     seed_examples: bool,
 ) -> None:
     for language in Language:
@@ -89,7 +87,7 @@ def seed_profiles(
                 language,
                 "Standard",
                 is_standard=True,
-                **standard_defaults(language, demos_dir, default_provider),
+                **standard_defaults(language, demos_dir),
             )
         if (
             seed_examples
@@ -100,7 +98,7 @@ def seed_profiles(
                 store,
                 language,
                 "Marketing",
-                llm_provider=default_provider,
+                llm_tier="balanced",
                 llm_instructions=_MARKETING_INSTRUCTIONS[language],
                 example_text=_demo(demos_dir, f"{language.value}-marketing.txt"),
             )
@@ -109,7 +107,7 @@ def seed_profiles(
                 language,
                 "Technical Documentation",
                 categories_off=["vividness"],
-                llm_provider=default_provider,
+                llm_tier="balanced",
                 llm_instructions=_TECHDOC_INSTRUCTIONS[language],
                 example_text=_demo(
                     demos_dir, f"{language.value}-technical-documentation.txt"

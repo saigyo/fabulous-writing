@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
@@ -16,6 +18,7 @@ class ProfileCreate(BaseModel):
     domain_ids: list[int] = Field(default_factory=list)
     llm_provider: str | None = None
     llm_model: str | None = None
+    llm_tier: Literal["quality", "balanced", "cheap", "local"] | None = None
     llm_instructions: str = ""
     example_text: str = ""
 
@@ -27,6 +30,7 @@ class ProfileUpdate(BaseModel):
     domain_ids: list[int]
     llm_provider: str | None
     llm_model: str | None
+    llm_tier: Literal["quality", "balanced", "cheap", "local"] | None = None
     llm_instructions: str
     example_text: str
 
@@ -70,6 +74,7 @@ def create_profile(request: Request, body: ProfileCreate) -> Profile:
             domain_ids=domains,
             llm_provider=body.llm_provider,
             llm_model=body.llm_model,
+            llm_tier=body.llm_tier,
             llm_instructions=body.llm_instructions,
             example_text=body.example_text,
         )
@@ -99,6 +104,7 @@ def update_profile(request: Request, profile_id: int, body: ProfileUpdate) -> Pr
             domain_ids=domains,
             llm_provider=body.llm_provider,
             llm_model=body.llm_model,
+            llm_tier=body.llm_tier,
             llm_instructions=body.llm_instructions,
             example_text=body.example_text,
         )
@@ -129,9 +135,7 @@ def reset_profile(request: Request, profile_id: int) -> Profile:
     if not profile.is_standard:
         raise HTTPException(409, "Only the Standard profile can be reset")
     settings = request.app.state.settings
-    defaults = standard_defaults(
-        profile.language, settings.demos_dir, settings.providers.default_provider
-    )
+    defaults = standard_defaults(profile.language, settings.demos_dir)
     updated = store.update_profile(profile_id, **defaults)
     assert updated is not None
     return updated

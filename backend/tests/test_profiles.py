@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from app.core.models import Language
@@ -57,6 +59,21 @@ def test_remove_domain_everywhere(store):
     assert store.get_profile(b.id).domain_ids == [3]
 
 
+def test_llm_tier_roundtrip(tmp_path: Path) -> None:
+    store = ProfileStore(tmp_path / "p.db")
+    p = store.create_profile(Language.EN, "Blog", llm_tier="quality")
+    assert store.get_profile(p.id).llm_tier == "quality"
+    updated = store.update_profile(p.id, llm_tier=None)
+    assert updated.llm_tier is None
+
+
+def test_llm_tier_column_migration_is_idempotent(tmp_path: Path) -> None:
+    # Opening the store twice must not fail on the ALTER TABLE guard.
+    ProfileStore(tmp_path / "p.db")
+    store = ProfileStore(tmp_path / "p.db")
+    assert store.create_profile(Language.EN, "X", llm_tier="local").llm_tier == "local"
+
+
 from app.core.models import Language as L  # noqa: E402
 from app.services.seed_profiles import (  # noqa: E402
     EXAMPLE_LANGUAGES,
@@ -68,11 +85,12 @@ DEMOS = __import__("pathlib").Path(__file__).parent.parent / "demos"
 
 
 def test_seed_creates_standard_for_every_language(store):
-    seed_profiles(store, DEMOS, default_provider="ollama", seed_examples=False)
+    seed_profiles(store, DEMOS, seed_examples=False)
     for lang in Language:
         std = store.standard_profile(lang)
         assert std is not None and std.name == "Standard"
-        assert std.llm_provider == "ollama" and std.llm_model is None
+        assert std.llm_provider is None and std.llm_model is None
+        assert std.llm_tier == "balanced"
         assert std.categories_off == [] and std.rule_exceptions == []
         assert std.example_text == (DEMOS / f"{lang.value}.txt").read_text(
             encoding="utf-8"
@@ -80,8 +98,8 @@ def test_seed_creates_standard_for_every_language(store):
 
 
 def test_seed_is_idempotent(store):
-    seed_profiles(store, DEMOS, default_provider="ollama", seed_examples=True)
-    seed_profiles(store, DEMOS, default_provider="ollama", seed_examples=True)
+    seed_profiles(store, DEMOS, seed_examples=True)
+    seed_profiles(store, DEMOS, seed_examples=True)
     for lang in Language:
         names = [p.name for p in store.list_profiles(lang)]
         assert names.count("Standard") == 1
@@ -91,7 +109,7 @@ def test_seed_is_idempotent(store):
 
 
 def test_example_seeding_and_deletion_sticks(store):
-    seed_profiles(store, DEMOS, default_provider="ollama", seed_examples=True)
+    seed_profiles(store, DEMOS, seed_examples=True)
     marketing = [
         p for p in store.list_profiles(L.EN) if p.name == "Marketing"
     ][0]
@@ -99,21 +117,22 @@ def test_example_seeding_and_deletion_sticks(store):
     assert "customer" in marketing.llm_instructions.lower()
     assert marketing.example_text.startswith("Introducing SuperWidget")
     store.delete_profile(marketing.id)
-    seed_profiles(store, DEMOS, default_provider="ollama", seed_examples=True)
+    seed_profiles(store, DEMOS, seed_examples=True)
     assert "Marketing" not in [p.name for p in store.list_profiles(L.EN)]
 
 
 def test_seed_examples_off(store):
-    seed_profiles(store, DEMOS, default_provider="ollama", seed_examples=False)
+    seed_profiles(store, DEMOS, seed_examples=False)
     assert [p.name for p in store.list_profiles(L.EN)] == ["Standard"]
     # Turning the switch on later seeds the not-yet-marked languages.
-    seed_profiles(store, DEMOS, default_provider="ollama", seed_examples=True)
+    seed_profiles(store, DEMOS, seed_examples=True)
     assert "Marketing" in [p.name for p in store.list_profiles(L.EN)]
 
 
 def test_standard_defaults_reads_demo(store):
-    defaults = standard_defaults(L.EN, DEMOS, default_provider="claude")
-    assert defaults["llm_provider"] == "claude"
+    defaults = standard_defaults(L.EN, DEMOS)
+    assert defaults["llm_provider"] is None
+    assert defaults["llm_tier"] == "balanced"
     assert defaults["example_text"].startswith("At the end of the day")
 
 
@@ -121,19 +140,19 @@ def test_seed_survives_name_collisions(store):
     # A user-created profile occupying a seeded name must not crash seeding,
     # and must not cause a retry loop on the next run.
     store.create_profile(L.EN, "Technical Documentation", llm_provider="ollama")
-    seed_profiles(store, DEMOS, default_provider="ollama", seed_examples=True)
+    seed_profiles(store, DEMOS, seed_examples=True)
     names = [p.name for p in store.list_profiles(L.EN)]
     assert names.count("Marketing") == 1
     assert names.count("Technical Documentation") == 1
     assert store.is_example_seeded(L.EN)
-    seed_profiles(store, DEMOS, default_provider="ollama", seed_examples=True)
+    seed_profiles(store, DEMOS, seed_examples=True)
     names = [p.name for p in store.list_profiles(L.EN)]
     assert names.count("Marketing") == 1
 
 
 def test_seed_survives_user_profile_named_standard(store):
     store.create_profile(L.EN, "Standard", llm_provider="ollama")
-    seed_profiles(store, DEMOS, default_provider="ollama", seed_examples=False)
+    seed_profiles(store, DEMOS, seed_examples=False)
     # The colliding user profile blocks the seeded Standard for EN; seeding
     # must not crash and must still seed the other languages.
     assert store.standard_profile(L.DE) is not None

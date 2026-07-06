@@ -94,3 +94,34 @@ def test_domain_deletion_prunes_profiles(client):
     client.put(f"/api/profiles/{std['id']}", json=body)
     client.delete(f"/api/domains/{domain['id']}")
     assert _standard(client)["domain_ids"] == []
+
+
+def test_profile_accepts_llm_tier(client: TestClient) -> None:
+    created = client.post(
+        "/api/profiles",
+        json={"language": "en", "name": "Tiered", "llm_tier": "cheap"},
+    ).json()
+    assert created["llm_tier"] == "cheap"
+    updated = client.put(
+        f"/api/profiles/{created['id']}",
+        json={
+            "name": "Tiered",
+            "categories_off": [],
+            "rule_exceptions": [],
+            "domain_ids": [],
+            "llm_provider": None,
+            "llm_model": None,
+            "llm_tier": "quality",
+            "llm_instructions": "",
+            "example_text": "",
+        },
+    ).json()
+    assert updated["llm_tier"] == "quality"
+
+
+def test_profile_rejects_unknown_tier(client: TestClient) -> None:
+    response = client.post(
+        "/api/profiles",
+        json={"language": "en", "name": "Bad", "llm_tier": "premium"},
+    )
+    assert response.status_code == 422

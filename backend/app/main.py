@@ -95,7 +95,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     seed_profiles(
         app.state.profile_store,
         settings.demos_dir,
-        default_provider=settings.providers.default_provider,
         seed_examples=settings.seed_example_profiles,
     )
     app.include_router(terminology_router)
