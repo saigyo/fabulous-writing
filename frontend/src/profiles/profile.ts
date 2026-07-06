@@ -1,5 +1,6 @@
 import type { RuleConfig } from '../api/client'
-import type { Category, Profile, Tier } from '../types'
+import { resolveModel, type Resolution } from '../checking/routing'
+import type { Category, Profile, ProviderInfo, RoutingTable, Tier } from '../types'
 
 export interface HeaderSettings {
   domainIds: number[]
@@ -46,6 +47,27 @@ export function isProfileDirty(profile: Profile, header: HeaderSettings): boolea
   if (profile.llm_tier !== null) return header.tier !== profile.llm_tier
   // No LLM opinion recorded — the header's LLM settings are never dirty.
   return false
+}
+
+/**
+ * The concrete provider+model a profile's LLM opinion resolves to — the pin
+ * itself, or the tier looked up in the routing table for the profile's
+ * language. Null when the profile has no LLM opinion.
+ */
+export function resolveProfileModel(
+  profile: Profile,
+  providers: ProviderInfo[],
+  routing: RoutingTable | null,
+): Resolution | null {
+  if (profile.llm_provider === null && profile.llm_tier === null) return null
+  return resolveModel({
+    tier: profile.llm_provider !== null ? null : profile.llm_tier,
+    provider: profile.llm_provider ?? '',
+    model: profile.llm_model,
+    language: profile.language,
+    providers,
+    routing,
+  })
 }
 
 /** The currently selected profile, if it exists in the loaded list. */

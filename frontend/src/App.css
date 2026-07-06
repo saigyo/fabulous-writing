@@ -1120,6 +1120,11 @@ input {
   color: #fff;
 }
 
+.profile-card-llm .llm-resolved {
+  display: block;
+  margin-top: 4px;
+}
+
 .pinned-note {
   font-size: 0.75rem;
   color: #667;

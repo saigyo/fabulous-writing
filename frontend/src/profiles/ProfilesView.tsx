@@ -5,9 +5,11 @@ import {
   resetProfile,
   updateProfile,
 } from '../api/client'
+import { PinIcon } from '../header/LlmSelector'
 import { useMessages } from '../i18n'
 import { useStore } from '../state/store'
 import { TIERS, type Profile, type Tier } from '../types'
+import { resolveProfileModel } from './profile'
 
 export function ProfilesView() {
   const profiles = useStore((s) => s.profiles)
@@ -158,12 +160,32 @@ function ProfileCard({
 }) {
   const m = useMessages()
   const providers = useStore((s) => s.providers)
+  const routing = useStore((s) => s.routing)
   const domains = useStore((s) => s.domains)
   const [name, setName] = useState(profile.name)
   const [instructions, setInstructions] = useState(profile.llm_instructions)
   const [example, setExample] = useState(profile.example_text)
 
-  const activeProvider = providers.find((p) => p.name === profile.llm_provider)
+  // Mirror the header's Advanced panel: display what a check with this
+  // profile would actually use — the tier's resolved pair in tier mode,
+  // the pin itself in pinned mode.
+  const resolution = resolveProfileModel(profile, providers, routing)
+  const pinnedProfile = profile.llm_provider !== null
+  const routingLoaded = routing !== null
+  const shownProvider =
+    !pinnedProfile && resolution?.ok
+      ? resolution.provider
+      : (profile.llm_provider ?? '')
+  const shownProviderInfo = providers.find((p) => p.name === shownProvider)
+  const shownModel =
+    (!pinnedProfile && resolution?.ok ? resolution.model : profile.llm_model) ??
+    shownProviderInfo?.default_model ??
+    ''
+  const modelOptions = shownProviderInfo?.models.length
+    ? shownProviderInfo.models.includes(shownModel)
+      ? shownProviderInfo.models
+      : [shownModel, ...shownProviderInfo.models]
+    : [shownModel]
 
   return (
     <section className={`profile-card${active ? ' selected' : ''}`}>
@@ -219,6 +241,16 @@ function ProfileCard({
               </button>
             ))}
           </div>
+          {resolution && (pinnedProfile || routingLoaded) && (
+            <span
+              className={`llm-resolved${resolution.ok ? '' : ' llm-resolved-error'}`}
+              title={resolution.ok ? undefined : resolution.reason}
+            >
+              {resolution.ok
+                ? m.resolvedModel(resolution.model ?? '', resolution.provider)
+                : m.llmSkipped(resolution.reason)}
+            </span>
+          )}
           {profile.llm_provider !== null && (
             <p className="pinned-note">
               {m.pinnedNote}
@@ -237,12 +269,12 @@ function ProfileCard({
               <label>
                 {m.llm}
                 <select
-                  value={profile.llm_provider ?? ''}
+                  value={shownProvider}
                   onChange={(e) =>
                     onSave({ llm_provider: e.target.value, llm_model: null })
                   }
                 >
-                  {profile.llm_provider === null && <option value="" />}
+                  {shownProvider === '' && <option value="" />}
                   {providers.map((p) => (
                     <option key={p.name} value={p.name}>{p.name}</option>
                   ))}
@@ -251,17 +283,33 @@ function ProfileCard({
               <label>
                 {m.model}
                 <select
-                  value={profile.llm_model ?? activeProvider?.default_model ?? ''}
-                  onChange={(e) => onSave({ llm_model: e.target.value })}
+                  value={shownModel}
+                  onChange={(e) =>
+                    onSave({
+                      llm_provider: shownProvider || null,
+                      llm_model: e.target.value || null,
+                    })
+                  }
                 >
-                  {(activeProvider?.models.length
-                    ? activeProvider.models
-                    : [activeProvider?.default_model ?? '']
-                  ).map((model) => (
+                  {modelOptions.map((model) => (
                     <option key={model} value={model}>{model}</option>
                   ))}
                 </select>
               </label>
+              {!pinnedProfile && resolution?.ok && (
+                <button
+                  className="icon-button llm-pin-button"
+                  title={m.pinThisModel}
+                  onClick={() =>
+                    onSave({
+                      llm_provider: shownProvider,
+                      llm_model: shownModel || null,
+                    })
+                  }
+                >
+                  <PinIcon />
+                </button>
+              )}
             </div>
           </details>
         </div>

@@ -231,11 +231,15 @@ effects and wipe persisted header settings in dev).
 LLM instructions) with blur-to-save drafts; saving or resetting the selected profile
 re-applies it to the header. Each card's LLM setting is a row of tier buttons
 (`role="radiogroup"`) plus a collapsed Advanced panel (provider/model dropdowns,
-mirroring `LlmSelector`'s header control): picking a tier button saves `llm_tier` and
-clears the pin; opening Advanced and picking a provider/model saves the pin and
-implicitly leaves the tier button unselected (the profile is now pinned). A
-`pinned-note` line with a clear (✕) button appears whenever the profile is pinned, so
-returning to tier mode does not require the Advanced panel. `RulesView.tsx` shows the
+mirroring `LlmSelector`'s header control): a resolved caption under the buttons shows
+what a check with the profile would use (`resolveProfileModel`: the pin, or the tier
+looked up in the routing table for the profile's language), and the Advanced panel
+displays that resolved pair rather than blanks. Picking a tier button saves `llm_tier`
+and clears the pin; opening Advanced and picking a provider/model — or clicking the
+pin icon to adopt the displayed pair — saves the pin and implicitly leaves the tier
+button unselected (the profile is now pinned). A `pinned-note` line with a clear (✕)
+button appears whenever the profile is pinned, so returning to tier mode does not
+require the Advanced panel. `RulesView.tsx` shows the
 per-profile banner, category checkboxes, and per-rule switches that write through to
 `PUT /api/profiles/{id}`.
 

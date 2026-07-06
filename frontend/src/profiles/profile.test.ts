@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import type { Profile } from '../types'
+import type { Profile, Tier } from '../types'
 import {
   applyProfileToHeader,
   effectiveRuleConfig,
   isProfileDirty,
+  resolveProfileModel,
   isRuleActive,
 } from './profile'
 
@@ -138,5 +139,52 @@ describe('tier-aware profile semantics', () => {
     expect(isProfileDirty(noOpinion, {
       domainIds: [], tier: 'quality', provider: 'claude', model: 'x',
     })).toBe(false)
+  })
+})
+
+describe('resolveProfileModel', () => {
+  const providers = [
+    { name: 'claude', available: true, models: ['claude-sonnet-5'], default_model: 'claude-sonnet-5' },
+  ]
+  const routing = {
+    default_tier: 'balanced' as const,
+    tiers: ['quality', 'balanced', 'cheap', 'local'] as Tier[],
+    languages: {
+      en: {
+        balanced: {
+          provider: 'claude', model: 'claude-sonnet-5', available: true, reason: null,
+        },
+        quality: {
+          provider: 'deepseek', model: 'deepseek-v4-pro',
+          available: false, reason: 'missing DEEPSEEK_API_KEY',
+        },
+      },
+    },
+  }
+
+  it('pinned profile resolves to the pin, model falling back to the default', () => {
+    const p = profile({ llm_provider: 'claude', llm_model: null, llm_tier: 'cheap' })
+    expect(resolveProfileModel(p, providers, routing)).toEqual({
+      ok: true, provider: 'claude', model: 'claude-sonnet-5',
+    })
+  })
+
+  it('tier profile resolves through the routing table', () => {
+    const p = profile({ llm_provider: null, llm_tier: 'balanced' })
+    expect(resolveProfileModel(p, providers, routing)).toEqual({
+      ok: true, provider: 'claude', model: 'claude-sonnet-5',
+    })
+  })
+
+  it('unavailable tier reports the reason', () => {
+    const p = profile({ llm_provider: null, llm_tier: 'quality' })
+    expect(resolveProfileModel(p, providers, routing)).toEqual({
+      ok: false, reason: 'missing DEEPSEEK_API_KEY',
+    })
+  })
+
+  it('no-opinion profile resolves to null', () => {
+    const p = profile({ llm_provider: null, llm_tier: null })
+    expect(resolveProfileModel(p, providers, routing)).toBeNull()
   })
 })
