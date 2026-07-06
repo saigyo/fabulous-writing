@@ -898,4 +898,6 @@ atomic `setPinned` store action, tested); a localized "Pin this model"
 button adopts the displayed pair and closes the panel; a resolved model
 missing from the discovered model list is prepended to keep the controlled
 select honest. Frontend 128 tests, lint/build clean; architecture doc
-updated.
+updated. Follow-up `d0f95c9`: the pin action became a stylized
+icon-button (matching the save/reset icons) with "Pin this model" as hover
+text.
