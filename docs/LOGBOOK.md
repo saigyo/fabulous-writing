@@ -916,3 +916,19 @@ the displayed provider, and the pin icon-button adopts the displayed pair
 into the profile (card writes are immediate profile saves, unlike the
 header's ephemeral override — intentional). Frontend 132 tests, lint/build
 clean; architecture doc updated.
+
+## 2026-07-07 — Header layout: aligned LLM selector, gear-icon advanced toggle
+
+Commit: `8b30928`
+
+Markus flagged the untidy header: the LLM selector's caption and Advanced
+label made it taller than its siblings, and the pin icon floated
+misaligned. Now the LLM select sits on the same row as the other selectors
+with a gear icon-button to its right (hover "Advanced model selection",
+localized in seven locales) opening the advanced popover; the resolved
+caption is absolutely positioned below the select — the header reserves
+bottom padding for it, so the selector never moves when it appears; pin
+and selects are bottom-aligned in both advanced panels. Verified with
+Playwright screenshots against a production preview build (dev-server
+transforms were stale again — its file watcher is unreliable). Frontend
+132 tests, lint/build clean.
