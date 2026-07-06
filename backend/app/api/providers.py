@@ -57,7 +57,11 @@ async def _ollama_entry(settings: ProviderSettings) -> dict[str, Any]:
 
 
 async def _openai_compat_entry(
-    name: str, env_key: str, base_url: str, default_model: str
+    name: str,
+    env_key: str,
+    base_url: str,
+    default_model: str,
+    exclude_models: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     api_key = os.environ.get(env_key)
     if not api_key:
@@ -67,7 +71,7 @@ async def _openai_compat_entry(
         base_url=base_url,
         api_key=api_key,
         model=default_model,
-        exclude_models=OPENAI_EXCLUDED_MODEL_FRAGMENTS if name == "openai" else (),
+        exclude_models=exclude_models,
     )
     try:
         async with asyncio.timeout(_DISCOVERY_TIMEOUT):
@@ -104,19 +108,32 @@ async def _bedrock_entry(settings: ProviderSettings) -> dict[str, Any]:
 @router.get("/providers")
 async def list_providers(request: Request) -> list[dict[str, Any]]:
     settings = request.app.state.settings.providers
-    return list(
-        await asyncio.gather(
-            _ollama_entry(settings),
-            _claude_entry(settings),
-            _openai_compat_entry(
-                "openai", "OPENAI_API_KEY", settings.openai_base_url, settings.openai_model
-            ),
-            _openai_compat_entry(
-                "mistral",
-                "MISTRAL_API_KEY",
-                settings.mistral_base_url,
-                settings.mistral_model,
-            ),
-            _bedrock_entry(settings),
+    entries = [
+        _ollama_entry(settings),
+        _claude_entry(settings),
+        _openai_compat_entry(
+            "openai",
+            "OPENAI_API_KEY",
+            settings.openai_base_url,
+            settings.openai_model,
+            OPENAI_EXCLUDED_MODEL_FRAGMENTS,
+        ),
+        _openai_compat_entry(
+            "mistral",
+            "MISTRAL_API_KEY",
+            settings.mistral_base_url,
+            settings.mistral_model,
+        ),
+        _bedrock_entry(settings),
+    ]
+    entries += [
+        _openai_compat_entry(
+            name,
+            f"{name.upper()}_API_KEY",
+            extra.base_url,
+            extra.default_model,
+            tuple(extra.exclude_model_fragments),
         )
-    )
+        for name, extra in settings.extra_providers.items()
+    ]
+    return list(await asyncio.gather(*entries))
