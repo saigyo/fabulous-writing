@@ -901,3 +901,18 @@ select honest. Frontend 128 tests, lint/build clean; architecture doc
 updated. Follow-up `d0f95c9`: the pin action became a stylized
 icon-button (matching the save/reset icons) with "Pin this model" as hover
 text.
+
+## 2026-07-07 — Fix: profile cards mirror the header's resolved-model display
+
+Commit: `cafd9c4`
+
+Markus spotted that the header showed the tier's resolved model but the
+ProfilesView cards did not (and their Advanced panels showed blank selects
+for tier-mode profiles). New pure helper `resolveProfileModel` in
+`profiles/profile.ts` (pin > tier > no-opinion, resolved per the profile's
+language; 4 tests): the card now shows the same resolved caption as the
+header, its Advanced panel displays the resolved pair, model changes pin
+the displayed provider, and the pin icon-button adopts the displayed pair
+into the profile (card writes are immediate profile saves, unlike the
+header's ephemeral override — intentional). Frontend 132 tests, lint/build
+clean; architecture doc updated.
