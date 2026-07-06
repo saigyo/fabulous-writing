@@ -59,6 +59,15 @@ def make_provider_factory(settings: Settings):
                 model=model or providers.bedrock_model,
                 region=providers.bedrock_region,
             )
+        extra = providers.extra_providers.get(chosen)
+        if extra is not None:
+            return OpenAICompatProvider(
+                name=chosen,
+                base_url=extra.base_url,
+                api_key=os.environ.get(f"{chosen.upper()}_API_KEY"),
+                model=model or extra.default_model,
+                exclude_models=tuple(extra.exclude_model_fragments),
+            )
         raise ValueError(f"Unknown LLM provider: {chosen}")
 
     return factory
