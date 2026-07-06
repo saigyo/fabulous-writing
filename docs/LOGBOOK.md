@@ -846,3 +846,30 @@ tests): the smallest finding under the click wins, and when the currently
 selected finding is part of the stack the next-larger one is chosen — so
 repeated clicks cycle outward and the sentence finding remains reachable.
 Frontend suite 112 passed; lint/build clean. Architecture doc updated.
+
+## 2026-07-06 — Quality tiers with language routing (phase 2)
+
+Commits: `4388010` (routing config), `81d682e`+`b38d0cf` (routing API),
+`cdbb543` (profile llm_tier), `9ec568a` (store), `8ed8ac8` (i18n),
+`745f43c` (resolution), `d629979`+`f025219` (header), `0bb383e`
+(profile semantics/UI + PUT tightening), `19aa8f4`+`fef19d9` (docs)
+
+Implemented phase 2 of
+`docs/superpowers/specs/2026-07-06-language-routed-models-design.md` via
+subagent-driven development (per-task spec + quality reviews with four fix
+loops, final whole-feature review): a `routing` config section with
+code-shipped per-language defaults (per-language override, fail-fast
+validation), `GET /api/routing` with bounded per-tier availability checks
+and human-readable reasons, a nullable `llm_tier` profile column
+(pin > tier > no-opinion; idempotent migration; existing rows unchanged;
+fresh seeds tier=balanced), client-side `resolveModel` (the check API is
+untouched), the tier-first header `LlmSelector` and ProfilesView tier chips
+with collapsed Advanced pin panels, mode-aware apply/dirty/save semantics,
+seven-locale i18n, a persisted-store v0→v1 migration keeping pre-tier users
+pinned, and `ProfileUpdate.llm_tier` made required once all senders carried
+it. No silent degradation: unavailable tiers grey out with the reason and
+an unresolvable tier skips the LLM check explicitly while fast checkers
+still run. E2E-verified: fresh-DB seeding/validation, the live routing
+table fully available with real keys, and a DE check through the
+tier-resolved mistral pair (10 rule + 4 LLM findings). Suites: backend 265,
+frontend 127, build clean.
