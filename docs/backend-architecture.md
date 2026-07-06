@@ -25,6 +25,7 @@ backend/
 │   │   ├── terminology.py       # domain/term CRUD
 │   │   ├── profiles.py          # checking-profile CRUD + reset
 │   │   ├── providers.py         # provider availability + live model discovery
+│   │   ├── routing.py           # tier routing table + per-tier availability
 │   │   └── languages.py         # supported languages + NLP model status
 │   ├── checkers/
 │   │   ├── pipeline.py          # duplicate-diagnosis dedup between checkers
@@ -125,7 +126,9 @@ knobs: `db_path`, `rules_dir`, `seed_terminology`, `seed_example_profiles`,
 `vet_suggestions`, `dictionaries_dir`, per-provider base URLs and default models,
 `providers.extra_providers` (named OpenAI-compatible endpoints — validated at load:
 lowercase identifier names that don't shadow built-ins, since the name derives the
-`<NAME>_API_KEY` env variable), and the per-language spaCy model map (`nlp.models`).
+`<NAME>_API_KEY` env variable), and the per-language spaCy model map (`nlp.models`),
+and the routing section (`routing.default_tier`, per-language tier maps — validated
+tier/language names, per-language override of shipped defaults).
 
 ## The check flow
 
@@ -276,6 +279,18 @@ filtered out, Bedrock `ListFoundationModels`/`ListInferenceProfiles` unless mode
 pinned in config). Discovery calls run concurrently with a 5 s timeout each and degrade
 to the configured default model.
 
+`GET /api/routing` (`app/api/routing.py`) annotates the tier routing table (see
+[Configuration](#configuration)) with per-tier availability. It does **not** share
+`/api/providers`' discovery-based logic — a deliberate deviation from the original
+plan, which called for extracting one shared availability helper. Routing only needs a
+cheap yes/no per provider (API key present, an Ollama ping, or Bedrock credential
+availability), not a model list, so it runs its own standalone status check
+(`_provider_status`) scoped to the providers actually referenced by the routing table;
+`/api/providers` keeps deriving availability from its discovery calls unchanged.
+Forcing a shared helper would either duplicate work or restructure discovery for no
+gain. The Ollama ping and the Bedrock credential check are both bounded by the same
+3 s timeout, so one unreachable provider cannot stall the response.
+
 ### Prompts
 
 `prompts.py` builds three prompt pairs — full check, span suggestion, sentence rewrite —
@@ -315,13 +330,22 @@ to whole sentences (`expand_to_sentences`) and asks for full rewrites.
 
 A **profile** bundles language-specific checking presets: rule selection
 (`categories_off` + `rule_exceptions`), terminology `domain_ids`, an LLM
-provider/model, free-form `llm_instructions`, and an `example_text` for the editor's
-Load-example button.
+provider/model or quality tier, free-form `llm_instructions`, and an `example_text`
+for the editor's Load-example button.
 
 - **Storage** (`app/services/profiles.py`): a `profiles` table (JSON-encoded list
   columns, `UNIQUE(language, name)`) beside the terminology tables, plus
   `profile_seed_markers` so seeding runs once per language and deleted example profiles
   stay deleted across restarts.
+- **`llm_tier` column** (nullable): the profile's quality tier
+  (`quality|balanced|cheap|local`), an alternative to pinning `llm_provider`/
+  `llm_model`. Precedence when a profile is applied: pin wins over tier wins over "no
+  opinion" — a set `llm_provider` always wins regardless of `llm_tier`; with
+  `llm_provider` NULL, a set `llm_tier` selects tier mode; with both NULL, the header's
+  LLM settings are left as they are (today's null-provider semantics, so existing rows
+  keep behaving identically — no data migration). Fresh seeds (Standard, Marketing,
+  Technical Documentation) set `llm_tier="balanced"` with `llm_provider`/`llm_model`
+  NULL.
 - **Seeding** (`app/services/seed_profiles.py`): every language gets a **Standard**
   profile (all rules on, defaults from config, example text from `backend/demos/`);
   EN/DE/JA additionally get localized *Marketing* and *Technical Documentation* example
@@ -331,7 +355,10 @@ Load-example button.
   /api/profiles/{id}/reset`. The Standard profile is editable but cannot be renamed or
   deleted (409); only Standard can be reset to seed defaults (409 otherwise). Responses
   are **pruned**: rule ids that no longer exist for the language and deleted domain ids
-  are filtered out, so stale references never reach clients.
+  are filtered out, so stale references never reach clients. `llm_tier` is one of the
+  four tier ids or `null` on both `POST` and `PUT`; `ProfileCreate` defaults it to
+  `null` when omitted, while `ProfileUpdate` requires the field on every `PUT` (still
+  nullable) since a full replacement should not leave it implicit.
 
 ## API surface
 
@@ -343,6 +370,7 @@ Load-example button.
 | `GET/POST/PUT/DELETE /api/domains`, `/api/domains/{id}/terms`, `/api/terms/{id}` | terminology CRUD |
 | `GET/POST/PUT/DELETE /api/profiles`, `POST /api/profiles/{id}/reset` | profile CRUD |
 | `GET /api/providers` | provider availability + model discovery |
+| `GET /api/routing` | tier routing table with per-tier availability + reason |
 | `GET /api/languages` | languages + NLP model status |
 | `GET /api/health` | liveness |
 

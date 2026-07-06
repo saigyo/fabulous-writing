@@ -299,3 +299,21 @@ caption. The keys-equality CI test enforces completeness.
 - Whether `/api/routing` and `/api/providers` should later merge into one
   response to avoid double discovery cost — decide at implementation time;
   the shared availability helper keeps either option cheap.
+
+## Implementation notes
+
+Two points settled during planning ended up diverging from this design as
+written, in both cases deliberately:
+
+1. **"Extract a shared availability helper"** (see "Routing API" above) — realized
+   as a standalone status check (`_provider_status` in `app/api/routing.py`) inside
+   the new routing module rather than a helper shared with `/api/providers`.
+   `/api/providers` derives availability from its discovery calls and stays
+   untouched; forcing one helper would either duplicate work or restructure
+   discovery for no gain.
+2. **Localized unavailability reasons** — reasons are backend-supplied English
+   strings (`missing MISTRAL_API_KEY`, `Ollama not running`, `provider not
+   configured`); the frontend wraps them in localized templates
+   (`llmSkipped(reason)`) but does not translate the reason itself. Env-variable
+   names and provider states read naturally in English; full localization would
+   require reason *codes* across the API for marginal benefit.

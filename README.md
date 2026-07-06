@@ -141,6 +141,13 @@ read from the environment only and never stored:
 | `bedrock` | standard AWS credential chain (env/profile/role); model ids are region-specific — discovered live with `bedrock:List*` permissions, or pinned via `bedrock_models` in `config.yaml` |
 | config-defined extras | any OpenAI-compatible vendor (DeepSeek, Qwen, Gemini, OpenRouter, …) via `providers.extra_providers` in `config.yaml`; key from `<NAME>_API_KEY` |
 
+In the header you normally pick a **quality tier** (Best quality / Balanced /
+Fast & economical / Private (local)) — a per-language routing table
+(`routing` in `config.yaml`, sensible defaults built in) resolves it to a
+concrete provider and model, and unavailable tiers are shown greyed out with
+the reason. The Advanced panel still lets you pin an exact provider+model;
+checking profiles store either a tier or a pin.
+
 Which model to pick — per language, API vs. local Ollama, hardware and cost
 considerations — is covered in
 [docs/model-recommendations.md](docs/model-recommendations.md).

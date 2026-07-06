@@ -58,3 +58,17 @@ providers:
 #     it: it_core_news_sm
 #     ja: ja_ginza          # fallback: ja_core_news_sm (see README)
 #     zh: zh_core_web_sm
+
+# Quality-tier routing: per language, which provider+model each tier
+# (quality | balanced | cheap | local) resolves to. Defaults ship in code
+# (from docs/model-recommendations.md); a language listed here replaces
+# that language's whole tier map, unlisted languages keep the defaults.
+# Tiers whose provider is not configured show as unavailable in the UI.
+# routing:
+#   default_tier: balanced
+#   languages:
+#     de:
+#       quality:  { provider: claude,  model: claude-opus-4-8 }
+#       balanced: { provider: mistral, model: mistral-large-latest }
+#       cheap:    { provider: gemini,  model: models/gemini-flash-latest }
+#       local:    { provider: ollama,  model: mistral-nemo:12b-instruct-2407-q6_K }

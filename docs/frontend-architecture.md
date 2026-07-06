@@ -30,6 +30,7 @@ frontend/src/
 │   ├── scheduler.ts           # typing-pause debounce (fast vs. full check)
 │   ├── controller.ts          # runCheck(): POST, apply fast findings, subscribe SSE
 │   ├── model.ts               # effectiveModel(): chosen model vs. provider default
+│   ├── routing.ts             # resolveModel(): tier → provider/model, explicit failure
 │   ├── suggest.ts             # on-demand LLM suggestions / sentence rewrites
 │   ├── status.ts              # check-status line model (phase, timer, tokens)
 │   └── vetMessage.ts          # "no reliable suggestion" message logic
@@ -42,6 +43,7 @@ frontend/src/
 │   └── ProfilesView.tsx       # profile management view
 ├── header/
 │   ├── ProfileSelector.tsx    # profile dropdown + dirty marker + save/reset
+│   ├── LlmSelector.tsx        # tier dropdown + resolved caption + advanced pin panel
 │   └── DomainMultiSelect.tsx  # checkbox-dropdown for terminology domains
 ├── sidebar/Sidebar.tsx        # counters, filters, finding list, detail card
 ├── rules/                     # rule catalog view + per-profile toggles
@@ -53,18 +55,26 @@ frontend/src/
 
 `state/store.ts` defines one zustand store. Three kinds of state live there:
 
-- **Checking context** — `language`, `domainIds`, `provider`, `model`, `llmAuto`,
-  `profiles`, `profileId`. This is what a check request is built from.
+- **Checking context** — `language`, `domainIds`, `tier`, `provider`, `model`,
+  `llmAuto`, `profiles`, `profileId`. This is what a check request is built from.
 - **Check results & UI** — `tracked` findings (mirrored out of the editor),
   `selectedId`, severity/source filters, `checkPhase` (`idle | fast | llm`), LLM error
   and live progress (`llmStartedAt`, `llmTokens`), `activeView`.
 - **Per-finding caches** — fetched `extraSuggestions`, `rewrites`, and their
   pending/error states, keyed by finding id.
 
+`tier: Tier | null` records the header's LLM mode: non-null is tier mode (`quality |
+balanced | cheap | local`), `null` is pinned mode where `provider`/`model` are
+authoritative. `routing: RoutingTable | null` holds the `GET /api/routing` response
+(fetched at startup alongside providers) and is **ephemeral** — never persisted, since
+availability is only meaningful for the current process.
+
 The `persist` middleware saves only the settings slice (language, UI locale, domain
-ids, provider, model, llmAuto, `lastProfileByLanguage`) to localStorage; results and
-caches are ephemeral. The document text is persisted separately by the editor under
-its own key.
+ids, provider, model, `tier`, llmAuto, `lastProfileByLanguage`) to localStorage;
+results, caches, and `routing` are ephemeral. The document text is persisted
+separately by the editor under its own key. A `migrate` step handles the pre-tier
+persisted shape (version 0): those users had explicitly chosen a provider/model, so
+they land in pinned mode (`tier: null`) rather than silently switching to tier mode.
 
 Two store behaviors deserve a note:
 
@@ -72,6 +82,10 @@ Two store behaviors deserve a note:
   suggestions keyed by id would die on each re-check. `mapEquivalentIds` (see below)
   maps old ids to their equivalents in the new list and the caches are re-keyed;
   entries whose finding disappeared are dropped.
+- **`setProvider`/`setModel` pin.** Touching either of the advanced provider/model
+  selectors sets `tier: null` (pinned mode) alongside the new value — mirroring
+  `LlmSelector`'s Advanced panel, where picking a concrete provider or model always
+  overrides tier mode.
 - **`selectProfile(profile, apply)`** records the selection (per language, persisted)
   and, when `apply` is true, copies the profile's domain/provider/model values into
   the header selectors. `apply` is only true on user action and real language
@@ -129,9 +143,17 @@ wired in `Editor.tsx`.
 `checking/controller.ts` (`runCheck`) does one round-trip:
 
 1. Snapshot the editor text. Resolve the active profile and build the request:
-   `domain_ids` and provider/model from the header (which the profile populated,
-   possibly overridden), `rule_config` from the profile's category/exception lists,
-   `llm_instructions` from the profile.
+   `domain_ids` from the header (which the profile populated, possibly overridden),
+   `rule_config` from the profile's category/exception lists, `llm_instructions` from
+   the profile. The LLM provider/model come from `checking/routing.ts`'s
+   `resolveModel(state)`: pinned mode (`tier === null`) resolves to the header's
+   provider/model pair (falling back to the provider's default via
+   `effectiveModel`); tier mode looks the language up in the fetched routing table. An
+   unresolvable tier (routing entry missing, or reported unavailable) is an explicit
+   failure — `runCheck` drops `llm` from the requested checkers, surfaces
+   `llmSkipped(reason)` in the status line, and still runs the fast checkers
+   (`rules`/`terminology`) so a misconfigured LLM tier never blocks rule/terminology
+   feedback.
 2. `POST /api/checks`. The response already contains the fast findings — they are
    merged into the editor immediately (replacing sources `rule`/`terminology`).
 3. If the LLM is included, subscribe to the SSE stream (`subscribeCheck`). LLM findings
@@ -169,13 +191,28 @@ options.
 
 ## Profiles in the frontend
 
-`profiles/profile.ts` keeps profile semantics in one tested module:
+`profiles/profile.ts` keeps profile semantics in one tested module, mode-aware
+throughout (pin wins over tier wins over "no opinion", mirroring the backend's
+precedence rule):
 
-- `applyProfileToHeader(profile)` — the header values a profile selection implies.
+- `applyProfileToHeader(profile)` — the header values a profile selection implies. A
+  pinned profile (`llm_provider` set) yields `{ tier: null, provider, model }`; a tier
+  profile (`llm_provider` null, `llm_tier` set) yields `{ tier }` alone; a profile with
+  no LLM opinion (both null) returns just the domain ids, leaving the header's LLM
+  settings untouched.
 - `isProfileDirty(profile, header)` — **dirty state is computed, never stored**: the
-  header selectors are compared against the stored profile (domain sets, provider,
-  model). The dirty marker and save/reset buttons in `ProfileSelector.tsx` render from
-  this predicate alone, so they can never drift.
+  header selectors are compared against the stored profile (domain sets, and either
+  the tier or the provider/model pair, depending on the profile's mode). A pinned
+  profile is dirty if the header is in tier mode at all, or the pair differs; a tier
+  profile is dirty if the header is pinned, or the tier differs; a no-opinion profile
+  is never dirty on the LLM fields. The dirty marker and save/reset buttons in
+  `ProfileSelector.tsx` render from this predicate alone, so they can never drift.
+- **Saving** (`ProfileSelector.tsx`, `ProfilesView.tsx`): the `PUT` payload always
+  sends `llm_tier: tier`; `llm_provider`/`llm_model` are sent only when the header is
+  pinned (`tier === null`), `null` otherwise — so saving writes exactly the header's
+  current mode and clears the other one. `RulesView.tsx` echoes the profile's existing
+  `llm_tier` back on its own rule-toggle `PUT`s, since the endpoint requires the field
+  on every update (see [Checking profiles](backend-architecture.md#checking-profiles)).
 - `effectiveRuleConfig(profile)` — the `rule_config` payload for checks.
 - `isRuleActive(profile, category, ruleId)` — mirrors the backend's XOR semantics
   (category toggle inverted by per-rule exceptions) so `RulesView` shows activation
@@ -189,9 +226,15 @@ on a real language switch, detected by comparing a `prevLanguage` ref synchronou
 effects and wipe persisted header settings in dev).
 
 `ProfilesView.tsx` manages profiles as stacked cards (name, domains, example text,
-LLM provider/model/instructions) with blur-to-save drafts; saving or resetting the
-selected profile re-applies it to the header. `RulesView.tsx` shows the per-profile
-banner, category checkboxes, and per-rule switches that write through to
+LLM instructions) with blur-to-save drafts; saving or resetting the selected profile
+re-applies it to the header. Each card's LLM setting is a row of tier buttons
+(`role="radiogroup"`) plus a collapsed Advanced panel (provider/model dropdowns,
+mirroring `LlmSelector`'s header control): picking a tier button saves `llm_tier` and
+clears the pin; opening Advanced and picking a provider/model saves the pin and
+implicitly leaves the tier button unselected (the profile is now pinned). A
+`pinned-note` line with a clear (✕) button appears whenever the profile is pinned, so
+returning to tier mode does not require the Advanced panel. `RulesView.tsx` shows the
+per-profile banner, category checkboxes, and per-rule switches that write through to
 `PUT /api/profiles/{id}`.
 
 ## Internationalization

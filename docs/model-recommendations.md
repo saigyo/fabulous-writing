@@ -7,16 +7,21 @@ by the app (EN, DE, FR, IT, ES, ZH, JA).
 This document serves two purposes:
 
 1. **Documentation:** Prose recommendations that explain model choice per language.
-2. **Design sketch:** The YAML at the end sketches a possible *future*
-   language-routed configuration. It is **not** the app's current config format —
-   see the next section for what is actually implemented.
+2. **Source of truth for the shipped tier routing:** § 5 describes the language-routed
+   quality-tier configuration (`routing` in `config.yaml`) that ships in code, built
+   from the recommendations below — see § 5 for the actual config format and
+   `backend/config.example.yaml` for the annotated keys.
 
 ---
 
 ## 1. How this maps to Fabulous Writing today
 
-The app ships five built-in LLM providers, selected in the header (availability
-is detected automatically) or per request via the check API:
+In the header, writers normally pick a **quality tier** (Best quality / Balanced /
+Fast & economical / Private (local)); a per-language routing table resolves the tier
+to a concrete provider and model (§ 5). The header's Advanced panel and checking
+profiles can still pin an exact provider+model instead, bypassing routing entirely.
+Underneath both, the app ships five built-in LLM providers, selected directly when
+pinning, or per request via the check API:
 
 | Provider  | Reaches | Model selection |
 |-----------|---------|-----------------|
@@ -48,8 +53,8 @@ with the key in the environment variable derived from the entry name
 discovery, and profiles can pin it. The same works for Qwen/DashScope
 (`https://dashscope-intl.aliyuncs.com/compatible-mode/v1`), Google
 (`https://generativelanguage.googleapis.com/v1beta/openai`), and OpenRouter
-(`https://openrouter.ai/api/v1`). Tiered per-language routing on top of these
-entries is the design sketch in section 5.
+(`https://openrouter.ai/api/v1`). The tiered per-language routing table that can
+reference these entries is described in § 5.
 
 **EU residency for Claude:** the built-in `bedrock` provider with
 `bedrock_region: eu-central-1` (and an `eu.`-prefixed inference-profile id)
@@ -170,127 +175,31 @@ always better than a heavily quantized 12B.
 
 ---
 
-## 5. Design sketch: language-routed configuration (not implemented)
+## 5. Language-routed configuration (implemented 2026-07: provider registry + tier routing)
 
-Today, one provider+model pair is active at a time (chosen in the header or per
-request). This sketch explores a possible extension: per language, a tiered
-choice of API models plus a local Ollama fallback. The building blocks exist —
-the `LLMProvider` protocol and the generic `OpenAICompatProvider` mean each
-`type: openai_compatible` entry below needs no new code, only routing logic and
-config plumbing.
+This section used to sketch a possible future extension; it now describes the
+shipped mechanism. Per language, a **quality tier** (`quality | balanced | cheap |
+local`) resolves to a concrete `{provider, model}` pair via a routing table; writers
+pick a tier in the header (or a checking profile), and the concrete pair is resolved
+client-side. Pinning an exact provider+model remains available as an advanced escape
+hatch, bypassing routing entirely (§ 1). The building blocks needed no new provider
+code: the `LLMProvider` protocol and the generic `OpenAICompatProvider` already cover
+every extra vendor as a `providers.extra_providers` entry (§ 1); tier routing adds a
+lookup table on top plus a `GET /api/routing` endpoint that annotates each tier with
+availability.
 
-Consistent with the app's security rule, API keys would stay environment-only:
-each provider entry derives its env variable from its name
-(`DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY`, …) — never a key or key reference in
-the file.
+The shipped config format is documented in `backend/config.example.yaml`:
+`providers.extra_providers` (named OpenAI-compatible endpoints) and `routing`
+(`default_tier` plus a per-language tier → `{provider, model}` map, with code-shipped
+defaults built from § 2–4 below). See
+`docs/superpowers/specs/2026-07-06-language-routed-models-design.md` for the full
+design and decision log.
 
-```yaml
-# model_routing.yaml — SKETCH, not read by the app today.
-# Per-request selection: tier determines the quality/cost trade-off,
-# language determines the concrete model.
-
-version: 1
-
-defaults:
-  tier: balanced          # quality | balanced | cheap | local
-  timeout_seconds: 30
-  temperature: 0          # deterministic for checking/correction tasks
-
-# Provider definitions. Endpoints are OpenAI-compatible where possible, so the
-# existing OpenAICompatProvider covers them. Keys come from the environment,
-# derived from the provider name.
-providers:
-  anthropic:
-    type: anthropic       # key: ANTHROPIC_API_KEY; EU residency via the
-                          # existing bedrock provider instead (eu-central-1)
-  openai:
-    type: openai_compatible
-    base_url: https://api.openai.com/v1
-  google:
-    type: openai_compatible
-    base_url: https://generativelanguage.googleapis.com/v1beta/openai
-  mistral:
-    type: openai_compatible
-    base_url: https://api.mistral.ai/v1
-    eu_residency: true
-  deepseek:
-    type: openai_compatible
-    base_url: https://api.deepseek.com/v1
-  qwen:
-    type: openai_compatible
-    base_url: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
-  openrouter:             # optional single-key aggregator / failover
-    type: openai_compatible
-    base_url: https://openrouter.ai/api/v1
-  ollama:
-    type: openai_compatible
-    base_url: http://localhost:11434/v1
-
-# Local model presets (Ollama). Choose the tag by hardware class.
-local_models:
-  multilingual_small:     # smallest all-rounder, EU + rough CJK
-    provider: ollama
-    model: qwen3:4b
-    min_ram_gb: 8
-  eu_small:               # EU languages only, very small
-    provider: ollama
-    model: gemma3:4b
-    min_ram_gb: 8
-  cjk_capable:            # usable for ZH/JA
-    provider: ollama
-    model: qwen3:8b
-    min_ram_gb: 8
-  all_languages:          # covers all 7 languages in one
-    provider: ollama
-    # tag by hardware: q4_K_M (>=16GB), q6_K (>=32GB)
-    model: mistral-nemo:12b-instruct-2407-q6_K
-    min_ram_gb: 16
-
-# Language routing. Per language and tier, a {provider, model}.
-# If a request falls through to tier=local, the matching local_models preset applies.
-languages:
-  en:
-    quality:  { provider: openai,    model: gpt-5.5 }
-    balanced: { provider: anthropic, model: claude-sonnet-5 }
-    cheap:    { provider: google,    model: gemini-flash }
-    local:    all_languages          # or multilingual_small
-  de:
-    quality:  { provider: anthropic, model: claude-opus-4-8 }
-    balanced: { provider: mistral,   model: mistral-large-latest }
-    cheap:    { provider: google,    model: gemini-flash }
-    local:    all_languages
-  fr:
-    quality:  { provider: anthropic, model: claude-opus-4-8 }
-    balanced: { provider: mistral,   model: mistral-large-latest }
-    cheap:    { provider: google,    model: gemini-flash }
-    local:    all_languages
-  it:
-    quality:  { provider: openai,    model: gpt-5.5 }
-    balanced: { provider: mistral,   model: mistral-large-latest }
-    cheap:    { provider: google,    model: gemini-flash }
-    local:    all_languages
-  es:
-    quality:  { provider: anthropic, model: claude-sonnet-5 }
-    balanced: { provider: mistral,   model: mistral-large-latest }
-    cheap:    { provider: google,    model: gemini-flash }
-    local:    all_languages
-  zh:
-    quality:  { provider: deepseek,  model: deepseek-v4-pro }
-    balanced: { provider: qwen,      model: qwen3.7-max }
-    cheap:    { provider: deepseek,  model: deepseek-v4-flash }
-    local:    cjk_capable            # Qwen3 8B; all_languages as an alternative
-  ja:
-    quality:  { provider: qwen,      model: qwen3.7-max }
-    balanced: { provider: qwen,      model: qwen3.6-plus }
-    cheap:    { provider: deepseek,  model: deepseek-v4-flash }
-    local:    cjk_capable
-
-# Optional failover: on provider error, fall back to the same model slug
-# via OpenRouter. Model slugs there may need different names.
-failover:
-  enabled: true
-  via: openrouter
-```
+This sketch's `local_models` presets (hardware-tiered Ollama picks with
+`min_ram_gb` metadata) and OpenRouter failover were deliberately **not** built —
+hardware detection isn't the app's job (YAGNI), and automatic failover conflicts with
+the no-silent-degradation rule unless carefully surfaced; see the design spec's
+decision table for both calls.
 
 ---
 
