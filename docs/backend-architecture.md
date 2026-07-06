@@ -176,8 +176,10 @@ Details worth knowing:
   `skipped_rules` so the UI can say so instead of silently checking less.
 - **Profile inputs are resolved by the client.** The check API is deliberately
   profile-agnostic: the frontend translates the selected profile plus any header
-  overrides into `domain_ids`, `rule_config`, and `llm_instructions`. The backend never
-  needs to join a check against the profiles table.
+  overrides into `domain_ids`, `rule_config`, and `llm_instructions`, and likewise
+  resolves a selected quality tier into concrete `llm_provider`/`llm_model` via the
+  routing table before the request. The backend never needs to join a check against
+  the profiles table.
 
 ## The rule engine
 

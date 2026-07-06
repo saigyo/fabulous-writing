@@ -43,12 +43,12 @@ Rules and terminology checks work entirely offline, without any LLM.
 ### Checking profiles
 
 A **checking profile** bundles everything that defines *how* a text is checked, per
-language: which rules are active, which terminology domains apply, which LLM
-provider/model to use, extra LLM instructions (tone, audience, focus — appended to the
-built-in check prompt), and a fitting example text. Switch the profile in the header
-and the selectors follow; different kinds of writing get different checks — e.g.
-technical documentation with vividness rules off and precision-focused LLM guidance,
-marketing copy with benefit-led phrasing instructions.
+language: which rules are active, which terminology domains apply, which quality
+tier — or pinned LLM provider/model — to use, extra LLM instructions (tone, audience,
+focus — appended to the built-in check prompt), and a fitting example text. Switch
+the profile in the header and the selectors follow; different kinds of writing get
+different checks — e.g. technical documentation with vividness rules off and
+precision-focused LLM guidance, marketing copy with benefit-led phrasing instructions.
 
 Every language has a non-deletable, editable **Standard** profile; English, German,
 and Japanese additionally seed deletable **Marketing** and **Technical Documentation**
@@ -57,10 +57,10 @@ always be overridden ad hoc: the profile then shows a ✱ marker with save (pers
 override into the profile) and reset actions. The **Profiles** tab manages everything
 else; the **Rules** tab doubles as the selected profile's rule editor.
 
-![The Profiles tab with the seeded Standard and Marketing profiles: domains and example text on the left, LLM provider, model, and extra instructions on the right](docs/images/profiles.png)
+![The Profiles tab with the seeded Standard and Marketing profiles: domains and example text on the left, LLM tier or pinned model, and extra instructions on the right](docs/images/profiles.png)
 
 *The Profiles tab: one profile per row — domains and example text left, the LLM
-configuration right.*
+tier (or pinned model) and instructions right.*
 
 ### Rule catalog
 
@@ -142,11 +142,12 @@ read from the environment only and never stored:
 | config-defined extras | any OpenAI-compatible vendor (DeepSeek, Qwen, Gemini, OpenRouter, …) via `providers.extra_providers` in `config.yaml`; key from `<NAME>_API_KEY` |
 
 In the header you normally pick a **quality tier** (Best quality / Balanced /
-Fast & economical / Private (local)) — a per-language routing table
-(`routing` in `config.yaml`, sensible defaults built in) resolves it to a
-concrete provider and model, and unavailable tiers are shown greyed out with
-the reason. The Advanced panel still lets you pin an exact provider+model;
-checking profiles store either a tier or a pin.
+Fast & economical / Private (local) — config ids `quality` / `balanced` /
+`cheap` / `local`) — a per-language routing table (`routing` in `config.yaml`,
+sensible defaults built in) resolves it to a concrete provider and model, and
+unavailable tiers are shown greyed out with the reason. The Advanced panel
+still lets you pin an exact provider+model; checking profiles store either a
+tier or a pin.
 
 Which model to pick — per language, API vs. local Ollama, hardware and cost
 considerations — is covered in

@@ -195,7 +195,7 @@ defaults built from § 2–4 below). See
 `docs/superpowers/specs/2026-07-06-language-routed-models-design.md` for the full
 design and decision log.
 
-This sketch's `local_models` presets (hardware-tiered Ollama picks with
+The original sketch's `local_models` presets (hardware-tiered Ollama picks with
 `min_ram_gb` metadata) and OpenRouter failover were deliberately **not** built —
 hardware detection isn't the app's job (YAGNI), and automatic failover conflicts with
 the no-silent-degradation rule unless carefully surfaced; see the design spec's

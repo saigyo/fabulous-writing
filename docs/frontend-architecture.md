@@ -87,9 +87,10 @@ Two store behaviors deserve a note:
   `LlmSelector`'s Advanced panel, where picking a concrete provider or model always
   overrides tier mode.
 - **`selectProfile(profile, apply)`** records the selection (per language, persisted)
-  and, when `apply` is true, copies the profile's domain/provider/model values into
-  the header selectors. `apply` is only true on user action and real language
-  switches — not on data refreshes, which would silently wipe user overrides.
+  and, when `apply` is true, copies the profile's domain and LLM values (tier, or
+  pinned provider/model — see `applyProfileToHeader` below) into the header selectors.
+  `apply` is only true on user action and real language switches — not on data
+  refreshes, which would silently wipe user overrides.
 
 ## The editor and finding positions
 
