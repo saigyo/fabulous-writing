@@ -21,7 +21,7 @@ is detected automatically) or per request via the check API:
 | Provider  | Reaches | Model selection |
 |-----------|---------|-----------------|
 | `ollama`  | local [Ollama](https://ollama.com) | discovered live from the Ollama instance |
-| `claude`  | Claude API | `providers.anthropic_model` (default `claude-sonnet-5`) or header dropdown |
+| `claude`  | Claude API | discovered live from the Anthropic models API (default `providers.anthropic_model`, `claude-sonnet-5`) |
 | `openai`  | OpenAI — or any OpenAI-compatible endpoint via `providers.openai_base_url` | discovered live |
 | `mistral` | Mistral — or any OpenAI-compatible endpoint via `providers.mistral_base_url` | discovered live |
 | `bedrock` | AWS Bedrock (Claude et al.; EU regions available) | discovered live with `bedrock:List*` permissions, or pinned via `bedrock_models` |

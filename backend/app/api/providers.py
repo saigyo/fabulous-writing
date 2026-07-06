@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 
 from app.checkers.llm import bedrock
+from app.checkers.llm.claude import ClaudeProvider
 from app.checkers.llm.ollama import OllamaProvider
 from app.checkers.llm.openai_compat import OpenAICompatProvider
 from app.core.config import ProviderSettings
@@ -83,10 +84,18 @@ async def _openai_compat_entry(
 
 
 async def _claude_entry(settings: ProviderSettings) -> dict[str, Any]:
-    available = bool(os.environ.get("ANTHROPIC_API_KEY"))
-    return _entry(
-        "claude", available, [settings.anthropic_model], settings.anthropic_model
-    )
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        return _entry(
+            "claude", False, [settings.anthropic_model], settings.anthropic_model
+        )
+    provider = ClaudeProvider(model=settings.anthropic_model)
+    try:
+        async with asyncio.timeout(_DISCOVERY_TIMEOUT):
+            models = await provider.list_models()
+    except Exception:
+        # Key is set but discovery failed — still usable with the default.
+        models = [settings.anthropic_model]
+    return _entry("claude", True, models, settings.anthropic_model)
 
 
 async def _bedrock_entry(settings: ProviderSettings) -> dict[str, Any]:

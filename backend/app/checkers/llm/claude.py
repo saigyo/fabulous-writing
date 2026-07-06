@@ -39,6 +39,12 @@ class ClaudeProvider:
             block.text for block in response.content if block.type == "text"
         )
 
+    async def list_models(self) -> list[str]:
+        # Anthropic lists newest first; keep that order (unlike the sorted
+        # OpenAI-compat listings) so the best default surfaces on top.
+        page = await self._get_client().models.list(limit=100)
+        return [model.id for model in page.data]
+
     async def _generate_streaming(
         self, kwargs: dict[str, Any], on_progress: ProgressCallback
     ) -> str:

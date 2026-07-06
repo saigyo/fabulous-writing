@@ -71,7 +71,29 @@ class _StubAnthropicClient:
         self.messages = _StubMessages()
 
 
+class _StubModels:
+    async def list(self, **kwargs: Any) -> Any:
+        assert kwargs == {"limit": 100}
+
+        class Model:
+            def __init__(self, id: str) -> None:
+                self.id = id
+
+        class Page:
+            data = [Model("claude-sonnet-5"), Model("claude-opus-4-8")]
+
+        return Page()
+
+
 class TestClaudeProvider:
+    async def test_list_models_queries_models_api_in_order(self) -> None:
+        class Client:
+            models = _StubModels()
+
+        provider = ClaudeProvider(model="claude-sonnet-5", client=Client())
+        # API order is preserved (Anthropic lists newest first).
+        assert await provider.list_models() == ["claude-sonnet-5", "claude-opus-4-8"]
+
     async def test_generate_passes_prompts_and_returns_text(self) -> None:
         stub = _StubAnthropicClient()
         provider = ClaudeProvider(model="claude-sonnet-5", client=stub)

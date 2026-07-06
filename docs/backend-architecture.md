@@ -267,11 +267,11 @@ providers stream and report cumulative output tokens (that is what feeds the
 | `fake` | `provider.py` | tests only |
 
 `GET /api/providers` reports availability (key present / service reachable) and
-discovers installed models live where the API allows it (Ollama `/api/tags`, OpenAI,
-Mistral, and extras `/models` with non-chat models filtered out, Bedrock
-`ListFoundationModels`/`ListInferenceProfiles` unless models are pinned in config).
-Discovery calls run concurrently with a 5 s timeout each and degrade to the configured
-default model.
+discovers installed models live where the API allows it (Ollama `/api/tags`, Anthropic
+`/v1/models` — newest first, OpenAI, Mistral, and extras `/models` with non-chat models
+filtered out, Bedrock `ListFoundationModels`/`ListInferenceProfiles` unless models are
+pinned in config). Discovery calls run concurrently with a 5 s timeout each and degrade
+to the configured default model.
 
 ### Prompts
 

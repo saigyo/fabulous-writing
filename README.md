@@ -135,7 +135,7 @@ read from the environment only and never stored:
 | Provider  | Setup |
 |-----------|-------|
 | `ollama`  | run [Ollama](https://ollama.com) locally — models discovered live |
-| `claude`  | `export ANTHROPIC_API_KEY=…` |
+| `claude`  | `export ANTHROPIC_API_KEY=…` — models discovered live |
 | `openai`  | `export OPENAI_API_KEY=…` — chat models discovered live |
 | `mistral` | `export MISTRAL_API_KEY=…` — models discovered live |
 | `bedrock` | standard AWS credential chain (env/profile/role); model ids are region-specific — discovered live with `bedrock:List*` permissions, or pinned via `bedrock_models` in `config.yaml` |

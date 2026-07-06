@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.checkers.llm import bedrock
+from app.checkers.llm.claude import ClaudeProvider
 from app.core.config import ExtraProviderSettings, ProviderSettings, Settings
 from app.main import create_app
 
@@ -65,12 +66,38 @@ def test_lists_all_providers_with_availability(
     assert providers["bedrock"]["default_model"]
 
 
-def test_claude_available_with_api_key(
+def test_claude_available_with_api_key_discovers_models(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+
+    async def fake_list_models(self: ClaudeProvider) -> list[str]:
+        return ["claude-sonnet-5", "claude-opus-4-8", "claude-haiku-4-5"]
+
+    monkeypatch.setattr(ClaudeProvider, "list_models", fake_list_models)
     providers = {p["name"]: p for p in client.get("/api/providers").json()}
     assert providers["claude"]["available"] is True
+    assert providers["claude"]["models"] == [
+        "claude-sonnet-5",
+        "claude-opus-4-8",
+        "claude-haiku-4-5",
+    ]
+    assert providers["claude"]["default_model"] == "claude-sonnet-5"
+
+
+def test_claude_discovery_failure_falls_back_to_default(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+
+    async def failing_list_models(self: ClaudeProvider) -> list[str]:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(ClaudeProvider, "list_models", failing_list_models)
+    providers = {p["name"]: p for p in client.get("/api/providers").json()}
+    # Key is set but discovery failed — still usable with the default.
+    assert providers["claude"]["available"] is True
+    assert providers["claude"]["models"] == ["claude-sonnet-5"]
 
 
 def test_openai_and_mistral_available_with_keys(
