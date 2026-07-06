@@ -935,3 +935,13 @@ transforms were stale again — its file watcher is unreliable). Frontend
 on their neighboring selects with the popover's 8px gap (screenshot-verified). Follow-up `1701c87`: the caption padding had decentered
 branding/tabs/Check — back to symmetric padding with min-height 68px, so
 everything centers and the caption still fits (screenshot-verified).
+
+## 2026-07-07 — README screenshots refreshed for the tier-first UI
+
+Commit: `cfdf9ac`
+
+Regenerated all four README screenshots against the restarted dev servers:
+the header now shows the tier selector with gear icon and resolved caption;
+the profiles shot captures both modes (Standard on the Balanced tier,
+Marketing pinned with the pinned-note); the editor shot shows LLM findings
+alongside rule findings post-dedup-fix.
