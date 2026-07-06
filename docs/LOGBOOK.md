@@ -931,4 +931,5 @@ bottom padding for it, so the selector never moves when it appears; pin
 and selects are bottom-aligned in both advanced panels. Verified with
 Playwright screenshots against a production preview build (dev-server
 transforms were stale again — its file watcher is unreliable). Frontend
-132 tests, lint/build clean.
+132 tests, lint/build clean. Follow-up `29b17a6`: pin/gear icons flex-centered
+on their neighboring selects with the popover's 8px gap (screenshot-verified).
