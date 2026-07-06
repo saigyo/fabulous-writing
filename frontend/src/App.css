@@ -53,11 +53,21 @@
 
 .header-controls {
   display: flex;
-  align-items: center;
+  /* Bottom-align: every control shares --control-h, so equal bottoms mean
+     the horizontal center lines of selects, buttons and icons coincide.
+     (Centering the row would center each label+select column as a block,
+     dropping the selects below the unlabeled auto/Check controls.) */
+  align-items: flex-end;
+  --control-h: 26px;
   gap: 0.55rem;
   margin-left: auto;
   font-size: 0.85rem;
   min-width: 0;
+  /* Lift the block so the control row optically centers on the tab-button
+     line (the labels above push it down otherwise) and the resolved-model
+     caption below clears the header divider. */
+  position: relative;
+  top: -6px;
 }
 
 /* Selector labels sit above their select in small caps-style type, so a
@@ -90,15 +100,21 @@
   color: var(--text);
   font-size: 0.8rem;
   letter-spacing: normal;
+  /* Explicit height: native select heights vary per engine, which would
+     break the shared center line with the domain toggle and buttons. */
+  height: var(--control-h);
+  box-sizing: border-box;
   /* Shrink with the viewport so long model names can't blow up the header;
      the dropdown itself always shows full values. */
   max-width: min(10.5rem, 12vw);
 }
 
-/* The auto checkbox keeps its compact inline form. */
+/* The auto checkbox keeps its compact inline form; the control-height box
+   centers it on the shared line. */
 .header-controls .auto-toggle {
   flex-direction: row;
   align-items: center;
+  height: var(--control-h);
   gap: 0.3rem;
   padding-left: 0;
   font-size: 0.85rem;
@@ -135,7 +151,7 @@
   }
 
   .check-button {
-    padding: 0.35rem 0.5rem;
+    padding: 0 0.5rem;
     font-size: 0.85rem;
   }
 }
@@ -176,7 +192,10 @@
 }
 
 .check-button {
-  padding: 0.35rem 0.8rem;
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-h, 26px);
+  padding: 0 0.8rem;
   border-radius: 6px;
   border: none;
   background: var(--accent);
@@ -330,9 +349,13 @@
   border-radius: 6px;
   background: var(--bg);
   color: var(--text);
+  /* Same explicit height as the native selects so the toggle doesn't come
+     out shorter (button vs select intrinsic heights differ per engine). */
+  height: var(--control-h, 26px);
+  box-sizing: border-box;
   /* Horizontal padding matches the select's padding plus the native text
      inset, so the toggle text lines up with the label above it. */
-  padding: 0.2rem calc(0.3rem + 4px);
+  padding: 0 calc(0.3rem + 4px);
   cursor: pointer;
   font-size: 0.8rem;
   /* The stretched wrapper already absorbs the negative label-alignment
@@ -1096,6 +1119,15 @@ input {
   height: 16px;
   padding: 0;
   margin-bottom: 5px;
+}
+
+/* In the header the selects have an explicit --control-h, so a box of the
+   same height centers the icon on the shared control center line exactly
+   (the 16px + margin approximation above stays for the profile cards). */
+.header-controls .llm-advanced-toggle,
+.header-controls .llm-pin-button {
+  height: var(--control-h);
+  margin-bottom: 0;
 }
 
 .header-controls .llm-advanced-body {
