@@ -8,13 +8,14 @@ export function ProfileSelector() {
   const profileId = useStore((s) => s.profileId)
   const selectProfile = useStore((s) => s.selectProfile)
   const domainIds = useStore((s) => s.domainIds)
+  const tier = useStore((s) => s.tier)
   const provider = useStore((s) => s.provider)
   const model = useStore((s) => s.model)
   const m = useMessages()
 
   const selected = profiles.find((p) => p.id === profileId) ?? null
   const dirty =
-    selected !== null && isProfileDirty(selected, { domainIds, provider, model })
+    selected !== null && isProfileDirty(selected, { domainIds, tier, provider, model })
 
   async function saveOverrides() {
     if (!selected) return
@@ -23,8 +24,9 @@ export function ProfileSelector() {
       categories_off: selected.categories_off,
       rule_exceptions: selected.rule_exceptions,
       domain_ids: domainIds,
-      llm_provider: provider,
-      llm_model: model,
+      llm_tier: tier,
+      llm_provider: tier === null ? provider : null,
+      llm_model: tier === null ? model : null,
       llm_instructions: selected.llm_instructions,
       example_text: selected.example_text,
     })

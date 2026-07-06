@@ -42,6 +42,7 @@ export function RulesView() {
         domain_ids: profile.domain_ids,
         llm_provider: profile.llm_provider,
         llm_model: profile.llm_model,
+        llm_tier: profile.llm_tier,
         llm_instructions: profile.llm_instructions,
         example_text: profile.example_text,
       })

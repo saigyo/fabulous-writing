@@ -1070,7 +1070,7 @@ input {
   user-select: none;
 }
 
-.llm-advanced[open] .llm-advanced-body {
+.header-controls .llm-advanced[open] .llm-advanced-body {
   position: absolute;
   z-index: 10;
   top: 100%;
@@ -1082,4 +1082,42 @@ input {
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.15);
+}
+
+/* ---- profile card: tier chips + pinned-note + Advanced panel ---- */
+
+.tier-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tier-option {
+  font-size: 0.78rem;
+  padding: 3px 8px;
+  border: 1px solid #d8d8e0;
+  border-radius: 999px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.tier-option.selected {
+  background: #5b5bd6;
+  border-color: #5b5bd6;
+  color: #fff;
+}
+
+.pinned-note {
+  font-size: 0.75rem;
+  color: #667;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 0;
+}
+
+.profile-card-llm .llm-advanced[open] .llm-advanced-body {
+  display: flex;
+  gap: 8px;
+  padding-top: 6px;
 }

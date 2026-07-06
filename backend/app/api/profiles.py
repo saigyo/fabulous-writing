@@ -30,7 +30,7 @@ class ProfileUpdate(BaseModel):
     domain_ids: list[int]
     llm_provider: str | None
     llm_model: str | None
-    llm_tier: Literal["quality", "balanced", "cheap", "local"] | None = None
+    llm_tier: Literal["quality", "balanced", "cheap", "local"] | None
     llm_instructions: str
     example_text: str
 

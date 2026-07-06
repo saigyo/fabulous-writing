@@ -18,6 +18,7 @@ function profile(overrides: Partial<Profile> = {}): Profile {
     domain_ids: [2, 1],
     llm_provider: 'ollama',
     llm_model: null,
+    llm_tier: null,
     llm_instructions: '',
     example_text: 'Example.',
     ...overrides,
@@ -28,23 +29,22 @@ describe('applyProfileToHeader', () => {
   it('copies domains, provider, and model', () => {
     expect(applyProfileToHeader(profile({ llm_model: 'llama3.1' }))).toEqual({
       domainIds: [2, 1],
+      tier: null,
       provider: 'ollama',
       model: 'llama3.1',
     })
   })
 
-  it('keeps the current provider when the profile has none', () => {
+  it('leaves the header untouched when the profile has no LLM opinion', () => {
     const p = profile({ llm_provider: null })
-    expect(applyProfileToHeader(p, 'claude')).toEqual({
+    expect(applyProfileToHeader(p)).toEqual({
       domainIds: [2, 1],
-      provider: 'claude',
-      model: null,
     })
   })
 })
 
 describe('isProfileDirty', () => {
-  const header = { domainIds: [1, 2], provider: 'ollama', model: null }
+  const header = { domainIds: [1, 2], tier: null, provider: 'ollama', model: null }
 
   it('is clean when values match (domain order ignored)', () => {
     expect(isProfileDirty(profile(), header)).toBe(false)
@@ -86,5 +86,57 @@ describe('isRuleActive', () => {
     expect(isRuleActive(p, 'style', 'style.x')).toBe(false) // off -> off
     expect(isRuleActive(p, 'grammar', 'grammar.b')).toBe(false) // on + exception -> off
     expect(isRuleActive(p, 'grammar', 'grammar.y')).toBe(true) // on -> on
+  })
+})
+
+describe('tier-aware profile semantics', () => {
+  const base = {
+    id: 1, language: 'en' as const, name: 'P', is_standard: false,
+    categories_off: [], rule_exceptions: [], domain_ids: [],
+    llm_instructions: '', example_text: '',
+  }
+  const pinnedProfile = { ...base, llm_provider: 'claude', llm_model: 'claude-sonnet-5', llm_tier: null }
+  const tierProfile = { ...base, llm_provider: null, llm_model: null, llm_tier: 'quality' as const }
+  const noOpinion = { ...base, llm_provider: null, llm_model: null, llm_tier: null }
+
+  it('applyProfileToHeader: pin wins over tier', () => {
+    expect(applyProfileToHeader({ ...pinnedProfile, llm_tier: 'cheap' })).toEqual({
+      domainIds: [], tier: null, provider: 'claude', model: 'claude-sonnet-5',
+    })
+  })
+
+  it('applyProfileToHeader: tier profile applies the tier only', () => {
+    expect(applyProfileToHeader(tierProfile)).toEqual({ domainIds: [], tier: 'quality' })
+  })
+
+  it('applyProfileToHeader: no opinion leaves LLM fields untouched', () => {
+    expect(applyProfileToHeader(noOpinion)).toEqual({ domainIds: [] })
+  })
+
+  it('isProfileDirty: tier profile vs matching header is clean', () => {
+    expect(isProfileDirty(tierProfile, {
+      domainIds: [], tier: 'quality', provider: 'ollama', model: null,
+    })).toBe(false)
+  })
+
+  it('isProfileDirty: tier profile vs different tier or pinned header is dirty', () => {
+    expect(isProfileDirty(tierProfile, {
+      domainIds: [], tier: 'balanced', provider: 'ollama', model: null,
+    })).toBe(true)
+    expect(isProfileDirty(tierProfile, {
+      domainIds: [], tier: null, provider: 'ollama', model: null,
+    })).toBe(true)
+  })
+
+  it('isProfileDirty: pinned profile vs tier-mode header is dirty', () => {
+    expect(isProfileDirty(pinnedProfile, {
+      domainIds: [], tier: 'balanced', provider: 'claude', model: 'claude-sonnet-5',
+    })).toBe(true)
+  })
+
+  it('isProfileDirty: no-opinion profile never dirty on LLM fields', () => {
+    expect(isProfileDirty(noOpinion, {
+      domainIds: [], tier: 'quality', provider: 'claude', model: 'x',
+    })).toBe(false)
   })
 })

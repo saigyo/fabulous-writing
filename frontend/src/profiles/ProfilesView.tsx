@@ -7,7 +7,7 @@ import {
 } from '../api/client'
 import { useMessages } from '../i18n'
 import { useStore } from '../state/store'
-import type { Profile } from '../types'
+import { TIERS, type Profile, type Tier } from '../types'
 
 export function ProfilesView() {
   const profiles = useStore((s) => s.profiles)
@@ -40,8 +40,9 @@ export function ProfilesView() {
         categories_off: base?.categories_off ?? [],
         rule_exceptions: base?.rule_exceptions ?? [],
         domain_ids: state.domainIds,
-        llm_provider: state.provider,
-        llm_model: state.model,
+        llm_tier: state.tier,
+        llm_provider: state.tier === null ? state.provider : null,
+        llm_model: state.tier === null ? state.model : null,
         llm_instructions: base?.llm_instructions ?? '',
         example_text: base?.example_text ?? '',
       })
@@ -61,6 +62,7 @@ export function ProfilesView() {
         categories_off: merged.categories_off,
         rule_exceptions: merged.rule_exceptions,
         domain_ids: merged.domain_ids,
+        llm_tier: merged.llm_tier,
         llm_provider: merged.llm_provider,
         llm_model: merged.llm_model,
         llm_instructions: merged.llm_instructions,
@@ -199,31 +201,69 @@ function ProfileCard({
           </select>
         </label>
         <div className="profile-card-llm">
-          <label>
-            {m.llm}
-            <select
-              value={profile.llm_provider ?? ''}
-              onChange={(e) => onSave({ llm_provider: e.target.value, llm_model: null })}
-            >
-              {providers.map((p) => (
-                <option key={p.name} value={p.name}>{p.name}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            {m.model}
-            <select
-              value={profile.llm_model ?? activeProvider?.default_model ?? ''}
-              onChange={(e) => onSave({ llm_model: e.target.value })}
-            >
-              {(activeProvider?.models.length
-                ? activeProvider.models
-                : [activeProvider?.default_model ?? '']
-              ).map((model) => (
-                <option key={model} value={model}>{model}</option>
-              ))}
-            </select>
-          </label>
+          <span className="field-label">{m.llm}</span>
+          <div className="tier-options" role="radiogroup">
+            {TIERS.map((tier) => (
+              <button
+                key={tier}
+                className={`tier-option${
+                  profile.llm_provider === null && profile.llm_tier === tier
+                    ? ' selected'
+                    : ''
+                }`}
+                onClick={() =>
+                  onSave({ llm_tier: tier, llm_provider: null, llm_model: null })
+                }
+              >
+                {m.tierName(tier as Tier)}
+              </button>
+            ))}
+          </div>
+          {profile.llm_provider !== null && (
+            <p className="pinned-note">
+              {m.pinnedNote}
+              <button
+                className="icon-button"
+                title={m.clearPin}
+                onClick={() => onSave({ llm_provider: null, llm_model: null })}
+              >
+                ✕
+              </button>
+            </p>
+          )}
+          <details className="llm-advanced">
+            <summary>{m.advanced}</summary>
+            <div className="llm-advanced-body">
+              <label>
+                {m.llm}
+                <select
+                  value={profile.llm_provider ?? ''}
+                  onChange={(e) =>
+                    onSave({ llm_provider: e.target.value, llm_model: null })
+                  }
+                >
+                  {profile.llm_provider === null && <option value="" />}
+                  {providers.map((p) => (
+                    <option key={p.name} value={p.name}>{p.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                {m.model}
+                <select
+                  value={profile.llm_model ?? activeProvider?.default_model ?? ''}
+                  onChange={(e) => onSave({ llm_model: e.target.value })}
+                >
+                  {(activeProvider?.models.length
+                    ? activeProvider.models
+                    : [activeProvider?.default_model ?? '']
+                  ).map((model) => (
+                    <option key={model} value={model}>{model}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </details>
         </div>
         <label className="profile-textarea">
           {m.exampleTextLabel}

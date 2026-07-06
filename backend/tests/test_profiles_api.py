@@ -34,7 +34,7 @@ def test_create_update_delete_profile(client):
         f"/api/profiles/{pid}",
         json={"name": "Blog posts", "categories_off": ["vividness"],
               "rule_exceptions": [], "domain_ids": [], "llm_provider": "ollama",
-              "llm_model": None, "llm_instructions": "Casual tone.",
+              "llm_model": None, "llm_tier": None, "llm_instructions": "Casual tone.",
               "example_text": "Sample."},
     )
     assert updated.status_code == 200
@@ -124,4 +124,12 @@ def test_profile_rejects_unknown_tier(client: TestClient) -> None:
         "/api/profiles",
         json={"language": "en", "name": "Bad", "llm_tier": "premium"},
     )
+    assert response.status_code == 422
+
+
+def test_profile_update_requires_llm_tier(client: TestClient) -> None:
+    std = _standard(client)
+    body = {k: v for k, v in std.items()
+            if k not in ("id", "is_standard", "language", "llm_tier")}
+    response = client.put(f"/api/profiles/{std['id']}", json=body)
     assert response.status_code == 422

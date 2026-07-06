@@ -186,7 +186,7 @@ export const useStore = create<AppState>()(
             ...state.lastProfileByLanguage,
             [profile.language]: profile.id,
           },
-          ...(apply ? applyProfileToHeader(profile, state.provider) : {}),
+          ...(apply ? applyProfileToHeader(profile) : {}),
         })),
       setSuggestPending: (suggestPendingId) => set({ suggestPendingId }),
       setExtraSuggestions: (findingId, suggestions) =>
