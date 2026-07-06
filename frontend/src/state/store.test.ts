@@ -79,4 +79,13 @@ describe('tier / pin semantics', () => {
     expect(useStore.getState().tier).toBeNull()
     expect(useStore.getState().model).toBe('claude-opus-4-8')
   })
+
+  it('setPinned pins a provider+model pair atomically', () => {
+    useStore.getState().setTier('balanced')
+    useStore.getState().setPinned('mistral', 'mistral-large-latest')
+    const state = useStore.getState()
+    expect(state.tier).toBeNull()
+    expect(state.provider).toBe('mistral')
+    expect(state.model).toBe('mistral-large-latest')
+  })
 })

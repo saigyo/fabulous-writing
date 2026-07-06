@@ -50,6 +50,7 @@ export const it: Messages = {
   pinnedNote: 'Un modello fissato ha la precedenza sui livelli',
   clearPin: 'Rimuovi il blocco',
   llmSkipped: (reason) => `Controllo LLM saltato: ${reason}`,
+  pinThisModel: 'Fissa questo modello',
 
   findings: 'Risultati',
   fastChecking: 'controllo…',

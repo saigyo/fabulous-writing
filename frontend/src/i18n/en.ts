@@ -43,6 +43,7 @@ export const en: Messages = {
   pinnedNote: 'A pinned model overrides the tiers',
   clearPin: 'Clear pin',
   llmSkipped: (reason) => `LLM check skipped: ${reason}`,
+  pinThisModel: 'Pin this model',
 
   findings: 'Findings',
   fastChecking: 'checking…',

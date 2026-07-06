@@ -50,6 +50,7 @@ export const de: Messages = {
   pinnedNote: 'Ein festgelegtes Modell übersteuert die Stufen',
   clearPin: 'Festlegung aufheben',
   llmSkipped: (reason) => `LLM-Prüfung übersprungen: ${reason}`,
+  pinThisModel: 'Dieses Modell festlegen',
 
   findings: 'Ergebnisse',
   fastChecking: 'prüft…',

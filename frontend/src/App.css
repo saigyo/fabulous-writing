@@ -1078,6 +1078,17 @@ input {
   text-align: left;
 }
 
+.llm-pin-button {
+  align-self: flex-end;
+  font-size: 0.78rem;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
 .header-controls .llm-advanced .llm-advanced-body {
   position: absolute;
   z-index: 10;

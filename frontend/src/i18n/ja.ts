@@ -48,6 +48,7 @@ export const ja: Messages = {
   pinnedNote: '固定モデルがティアより優先されます',
   clearPin: '固定を解除',
   llmSkipped: (reason) => `LLM チェックをスキップ: ${reason}`,
+  pinThisModel: 'このモデルを固定',
 
   findings: '検出結果',
   fastChecking: 'チェック中…',

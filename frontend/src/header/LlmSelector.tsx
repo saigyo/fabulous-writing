@@ -30,9 +30,26 @@ export function LlmSelector() {
 
   const entryFor = (tier: Tier) => store.routing?.languages[store.language]?.[tier]
   const resolution = resolveModel(store)
-  const activeProvider = store.providers.find((p) => p.name === store.provider)
   const pinned = store.tier === null
   const routingLoaded = store.routing !== null
+
+  // The Advanced panel shows what a check would actually use: the tier's
+  // resolved pair in tier mode, the pin itself in pinned mode — not the
+  // stale last-pinned values. "Pin this model" adopts the displayed pair.
+  const shownProvider =
+    !pinned && resolution.ok ? resolution.provider : store.provider
+  const shownProviderInfo = store.providers.find((p) => p.name === shownProvider)
+  const shownModel =
+    (!pinned && resolution.ok ? resolution.model : store.model) ??
+    shownProviderInfo?.default_model ??
+    ''
+  // A tier's resolved model may be missing from the discovered list (e.g.
+  // discovery fell back to the provider default) — keep the select honest.
+  const modelOptions = shownProviderInfo?.models.length
+    ? shownProviderInfo.models.includes(shownModel)
+      ? shownProviderInfo.models
+      : [shownModel, ...shownProviderInfo.models]
+    : [shownModel]
 
   return (
     <div className="llm-selector" ref={ref}>
@@ -59,9 +76,7 @@ export function LlmSelector() {
           })}
           {pinned && (
             <option value="pinned">
-              {m.tierPinnedOption(
-                store.model ?? activeProvider?.default_model ?? store.provider,
-              )}
+              {m.tierPinnedOption(shownModel || store.provider)}
             </option>
           )}
         </select>
@@ -89,8 +104,8 @@ export function LlmSelector() {
           <label>
             {m.llm}
             <select
-              value={store.provider}
-              onChange={(e) => store.setProvider(e.target.value)}
+              value={shownProvider}
+              onChange={(e) => store.setPinned(e.target.value, null)}
             >
               {store.providers.map((provider) => (
                 <option key={provider.name} value={provider.name}>
@@ -103,19 +118,27 @@ export function LlmSelector() {
           <label>
             {m.model}
             <select
-              value={store.model ?? activeProvider?.default_model ?? ''}
-              onChange={(e) => store.setModel(e.target.value)}
+              value={shownModel}
+              onChange={(e) => store.setPinned(shownProvider, e.target.value)}
             >
-              {(activeProvider?.models.length
-                ? activeProvider.models
-                : [activeProvider?.default_model ?? '']
-              ).map((model) => (
+              {modelOptions.map((model) => (
                 <option key={model} value={model}>
                   {model}
                 </option>
               ))}
             </select>
           </label>
+          {!pinned && (
+            <button
+              className="llm-pin-button"
+              onClick={() => {
+                store.setPinned(shownProvider, shownModel || null)
+                setAdvancedOpen(false)
+              }}
+            >
+              {m.pinThisModel}
+            </button>
+          )}
         </div>
         )}
       </div>

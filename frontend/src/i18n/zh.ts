@@ -48,6 +48,7 @@ export const zh: Messages = {
   pinnedNote: '固定模型优先于级别',
   clearPin: '取消固定',
   llmSkipped: (reason) => `已跳过 LLM 检查:${reason}`,
+  pinThisModel: '固定此模型',
 
   findings: '检查结果',
   fastChecking: '检查中…',

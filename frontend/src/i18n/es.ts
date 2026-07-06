@@ -54,6 +54,7 @@ export const es: Messages = {
   pinnedNote: 'Un modelo fijado anula los niveles',
   clearPin: 'Quitar fijación',
   llmSkipped: (reason) => `Comprobación LLM omitida: ${reason}`,
+  pinThisModel: 'Fijar este modelo',
 
   findings: 'Resultados',
   fastChecking: 'comprobando…',

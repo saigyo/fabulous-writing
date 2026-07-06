@@ -82,10 +82,11 @@ Two store behaviors deserve a note:
   suggestions keyed by id would die on each re-check. `mapEquivalentIds` (see below)
   maps old ids to their equivalents in the new list and the caches are re-keyed;
   entries whose finding disappeared are dropped.
-- **`setProvider`/`setModel` pin.** Touching either of the advanced provider/model
+- **`setProvider`/`setModel`/`setPinned` pin.** Touching the advanced provider/model
   selectors sets `tier: null` (pinned mode) alongside the new value — mirroring
   `LlmSelector`'s Advanced panel, where picking a concrete provider or model always
-  overrides tier mode.
+  overrides tier mode. In tier mode the panel displays the tier's *resolved* pair
+  (not the last pin), and a "Pin this model" button adopts it via `setPinned`.
 - **`selectProfile(profile, apply)`** records the selection (per language, persisted)
   and, when `apply` is true, copies the profile's domain and LLM values (tier, or
   pinned provider/model — see `applyProfileToHeader` below) into the header selectors.

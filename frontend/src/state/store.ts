@@ -63,6 +63,8 @@ interface AppState {
   setProvider: (provider: string) => void
   setModel: (model: string | null) => void
   setTier: (tier: Tier) => void
+  // Pin an exact provider+model pair (e.g. adopting a tier's resolved pair).
+  setPinned: (provider: string, model: string | null) => void
   setRouting: (routing: RoutingTable | null) => void
   setLlmAuto: (llmAuto: boolean) => void
   setActiveView: (view: ActiveView) => void
@@ -155,6 +157,7 @@ export const useStore = create<AppState>()(
       setProvider: (provider) => set({ provider, model: null, tier: null }),
       setModel: (model) => set({ model, tier: null }),
       setTier: (tier) => set({ tier }),
+      setPinned: (provider, model) => set({ provider, model, tier: null }),
       setRouting: (routing) => set({ routing }),
       setLlmAuto: (llmAuto) => set({ llmAuto }),
       setActiveView: (activeView) => set({ activeView }),

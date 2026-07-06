@@ -54,6 +54,7 @@ export const fr: Messages = {
   pinnedNote: 'Un modèle épinglé remplace les niveaux',
   clearPin: "Retirer l'épingle",
   llmSkipped: (reason) => `Vérification LLM ignorée : ${reason}`,
+  pinThisModel: 'Épingler ce modèle',
 
   findings: 'Résultats',
   fastChecking: 'vérification…',
