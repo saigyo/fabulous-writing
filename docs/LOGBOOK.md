@@ -873,3 +873,14 @@ still run. E2E-verified: fresh-DB seeding/validation, the live routing
 table fully available with real keys, and a DE check through the
 tier-resolved mistral pair (10 rule + 4 LLM findings). Suites: backend 265,
 frontend 127, build clean.
+
+## 2026-07-06 — Fix: header Advanced panel closes on outside click
+
+Commit: `80eb747`
+
+Markus found the header's Advanced popover (LlmSelector) stayed open on
+outside clicks — native `<details>` behavior that reads as broken for an
+overlay. Converted to the controlled popover pattern DomainMultiSelect
+already uses (useState + outside-mousedown listener + toggle button with
+aria-expanded); the ProfilesView card keeps its inline `<details>` (static
+layout). Frontend suite 127 passed, lint/build clean.
