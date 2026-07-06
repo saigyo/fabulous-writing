@@ -1,10 +1,11 @@
 import { useEffect, useRef } from 'react'
 import './App.css'
-import { getDomains, getLanguages, getProfiles, getProviders } from './api/client'
+import { getDomains, getLanguages, getProfiles, getProviders, getRouting } from './api/client'
 import { runCheck } from './checking/controller'
 import { Editor } from './editor/Editor'
 import { setEditorText } from './editor/editorRef'
 import { DomainMultiSelect } from './header/DomainMultiSelect'
+import { LlmSelector } from './header/LlmSelector'
 import { ProfileSelector } from './header/ProfileSelector'
 import { ProfilesView } from './profiles/ProfilesView'
 import { RulesView } from './rules/RulesView'
@@ -45,6 +46,7 @@ function Header() {
     getProviders().then(store.setProviders).catch(() => store.setProviders([]))
     getDomains().then(store.setDomains).catch(() => store.setDomains([]))
     getLanguages().then(store.setLanguages).catch(() => {})
+    getRouting().then(store.setRouting).catch(() => store.setRouting(null))
   }, [])
 
   const prevLanguage = useRef<Language | null>(null)
@@ -68,8 +70,6 @@ function Header() {
       })
       .catch(() => {})
   }, [store.language])
-
-  const activeProvider = store.providers.find((p) => p.name === store.provider)
 
   return (
     <header className="header">
@@ -122,36 +122,7 @@ function Header() {
           {m.domain}
           <DomainMultiSelect />
         </label>
-        <label>
-          {m.llm}
-          <select
-            value={store.provider}
-            onChange={(e) => store.setProvider(e.target.value)}
-          >
-            {store.providers.map((provider) => (
-              <option key={provider.name} value={provider.name}>
-                {provider.name}
-                {provider.available ? '' : m.offlineSuffix}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          {m.model}
-          <select
-            value={store.model ?? activeProvider?.default_model ?? ''}
-            onChange={(e) => store.setModel(e.target.value)}
-          >
-            {(activeProvider?.models.length
-              ? activeProvider.models
-              : [activeProvider?.default_model ?? '']
-            ).map((model) => (
-              <option key={model} value={model}>
-                {model}
-              </option>
-            ))}
-          </select>
-        </label>
+        <LlmSelector />
         <label className="auto-toggle" title={m.autoTitle}>
           <input
             type="checkbox"

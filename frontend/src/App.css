@@ -1040,3 +1040,46 @@ input {
 @media (prefers-reduced-motion: reduce) {
   .check-status .sparkle { animation: none; }
 }
+
+/* ---- header: tier-first LLM selector ---- */
+
+.llm-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  position: relative;
+}
+
+.llm-resolved {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llm-resolved-error {
+  color: #e5484d;
+}
+
+.llm-advanced summary {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+
+.llm-advanced[open] .llm-advanced-body {
+  position: absolute;
+  z-index: 10;
+  top: 100%;
+  right: 0;
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.15);
+}
