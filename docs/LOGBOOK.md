@@ -764,3 +764,24 @@ settled with Markus:
 - Check API unchanged; the frontend resolves tier → concrete pair
   (new `checking/routing.ts`), consistent with client-side profile
   resolution.
+
+## 2026-07-06 — Provider registry (phase 1 of language-routed models)
+
+Commits: `62b3597` (config), `84d7055` (factory), `d4708bb` (providers API),
+`b9ac3f4` + `7528e1c` (docs)
+
+Implemented phase 1 of
+`docs/superpowers/specs/2026-07-06-language-routed-models-design.md` via
+subagent-driven development (per-task spec + quality reviews, final
+whole-feature review): `providers.extra_providers` in `config.yaml` defines
+additional OpenAI-compatible providers (DeepSeek, Qwen, OpenRouter, …) as
+first-class named entries — validated names (env key `<NAME>_API_KEY` derived
+from the entry name, no collisions with built-ins, fail-fast on load),
+constructed generically by the provider factory, listed by
+`GET /api/providers` with live model discovery. Zero frontend changes: extras
+render generically in the header dropdown. E2E-verified both availability
+paths (no key → unavailable with default model; key + live OpenAI-compat
+endpoint → available with discovered models). Docs updated:
+`config.example.yaml`, `backend-architecture.md`, README provider table,
+`model-recommendations.md` § 1/§ 3 (the "repoint a slot" workaround is
+replaced by the registry). Full suite: 245 passed.
