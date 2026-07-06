@@ -96,8 +96,11 @@ class OpenAICompatProvider:
             response = await client.get("/models")
             response.raise_for_status()
             ids = [entry["id"] for entry in response.json()["data"]]
+        # Some endpoints (e.g. Mistral) list the same id more than once.
         return sorted(
-            model
-            for model in ids
-            if not any(fragment in model for fragment in self.exclude_models)
+            {
+                model
+                for model in ids
+                if not any(fragment in model for fragment in self.exclude_models)
+            }
         )

@@ -110,3 +110,31 @@ class TestListModels:
             exclude_models=("embedding", "whisper"),
         )
         assert await provider.list_models() == ["gpt-4.1", "gpt-5-mini"]
+
+    async def test_deduplicates_repeated_ids(self) -> None:
+        # Mistral's /v1/models lists some ids twice; duplicates would break
+        # keyed rendering in the frontend model dropdown.
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"id": "mistral-large-latest"},
+                        {"id": "mistral-medium"},
+                        {"id": "mistral-large-latest"},
+                        {"id": "mistral-medium"},
+                    ]
+                },
+            )
+
+        provider = OpenAICompatProvider(
+            name="mistral",
+            base_url="https://api.test/v1",
+            api_key="sk-test",
+            model="mistral-medium",
+            transport=httpx.MockTransport(handler),
+        )
+        assert await provider.list_models() == [
+            "mistral-large-latest",
+            "mistral-medium",
+        ]
