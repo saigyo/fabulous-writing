@@ -723,3 +723,20 @@ profiles" section between the checking-phases and rule-catalog
 sections; updated the editor blurb (example text comes from the
 profile), the rules section (profile rule editing), the config
 highlights, and config.example.yaml (seed_example_profiles).
+
+## 2026-07-06 — Developer documentation: architecture docs
+Commit: `72bc000`
+
+Two comprehensive developer documents written from a fresh read of the
+code: docs/backend-architecture.md (module map, the Finding contract,
+app assembly via create_app/app.state, the check-job flow with SSE
+replay semantics, the YAML rule engine incl. RuleConfig XOR, the NLP
+registry, terminology matching incl. CJK paths, the LLM provider layer
+with the anchoring and vetting gates, checking profiles, API surface,
+testing conventions) and docs/frontend-architecture.md (store slices
+and cache migration, the CodeMirror findingsField as source of truth
+for spans, the debounce/staleness/supersede checking lifecycle, finding
+equivalence across checks, profile apply/dirty semantics, i18n, API
+client, testing). The README Development section gained an
+"Architecture" subsection introducing the shared Finding contract and
+linking both documents.
