@@ -815,3 +815,21 @@ openai/mistral/extras. TDD (stub-client unit test + two API tests with
 patched discovery); E2E-verified against the live API: 10 models, configured
 default `claude-sonnet-5` preserved. Docs updated (backend-architecture
 discovery paragraph, README provider table, model-recommendations § 1).
+
+## 2026-07-06 — Fix: LLM findings swallowed by overlap dedup
+
+Commit: `1dc3d99`
+
+Markus reported no LLM findings on the example texts for any
+language/model. Stage-by-stage instrumentation showed the pipeline healthy
+(FR/claude: 9 candidates parsed, 9/9 anchored, 9/9 vetted) — then
+`drop_overlapping` discarded all of them: any overlap with any fast finding
+counted as a duplicate, so whole-sentence rule spans (`clarity.phrase-longue`
+etc.) shadowed every LLM finding inside them, and the example texts are
+rule-saturated by design. Replaced with `drop_duplicates`: drop only on
+overlap with a same-category finding, or when both flag substantially the
+same span (overlap ≥ half the combined extent) in any category. Terminology
+cross-domain dedup (same category throughout) is unaffected. Before/after on
+the Standard example texts — FR/claude: 0 → 3, EN/claude: 2 → 5,
+EN/ollama(mistral-nemo): 2 → 3 LLM findings; genuine duplicates (e.g. LLM
+re-flagging `Malgré que`, clichés, weasel words) still dropped.
