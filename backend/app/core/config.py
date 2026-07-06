@@ -2,7 +2,7 @@ import re
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -60,6 +60,103 @@ class ProviderSettings(BaseModel):
         return value
 
 
+# The four quality tiers, in UI order. Fixed — not user-definable.
+TIERS = ("quality", "balanced", "cheap", "local")
+
+# Kept as a literal (not imported from app.core.models) to avoid a config →
+# models dependency for the sake of seven constant strings.
+_LANGUAGE_CODES = ("en", "de", "fr", "es", "it", "ja", "zh")
+
+
+class RoutingEntry(BaseModel):
+    provider: str
+    model: str
+
+
+def _default_routing_languages() -> dict[str, dict[str, RoutingEntry]]:
+    """Default tier table, from docs/model-recommendations.md §3-5.
+
+    Entries may reference extra providers (deepseek, gemini, qwen) that are
+    not configured — those tiers report as unavailable with a reason, which
+    doubles as configuration guidance.
+    """
+
+    def entry(provider: str, model: str) -> RoutingEntry:
+        return RoutingEntry(provider=provider, model=model)
+
+    def european(balanced: RoutingEntry) -> dict[str, RoutingEntry]:
+        return {
+            "quality": entry("claude", "claude-opus-4-8"),
+            "balanced": balanced,
+            "cheap": entry("gemini", "models/gemini-flash-latest"),
+            "local": entry("ollama", "mistral-nemo:12b-instruct-2407-q6_K"),
+        }
+
+    def cjk(quality: RoutingEntry, balanced: RoutingEntry) -> dict[str, RoutingEntry]:
+        return {
+            "quality": quality,
+            "balanced": balanced,
+            "cheap": entry("deepseek", "deepseek-v4-flash"),
+            "local": entry("ollama", "qwen3:8b"),
+        }
+
+    return {
+        "en": european(entry("claude", "claude-sonnet-5")),
+        "de": european(entry("mistral", "mistral-large-latest")),
+        "fr": european(entry("mistral", "mistral-large-latest")),
+        "es": european(entry("mistral", "mistral-large-latest")),
+        "it": european(entry("mistral", "mistral-large-latest")),
+        "zh": cjk(entry("deepseek", "deepseek-v4-pro"), entry("qwen", "qwen3.7-max")),
+        "ja": cjk(entry("qwen", "qwen3.7-max"), entry("qwen", "qwen3.6-plus")),
+    }
+
+
+class RoutingSettings(BaseModel):
+    default_tier: str = "balanced"
+    languages: dict[str, dict[str, RoutingEntry]] = Field(
+        default_factory=_default_routing_languages
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _overlay_defaults(cls, data: object) -> object:
+        # A user-supplied language replaces that language's whole tier map;
+        # languages the user does not mention keep their defaults.
+        if isinstance(data, dict):
+            user = data.get("languages") or {}
+            defaults = {
+                lang: tiers
+                for lang, tiers in _default_routing_languages().items()
+                if lang not in user
+            }
+            data = {**data, "languages": {**defaults, **user}}
+        return data
+
+    @field_validator("default_tier")
+    @classmethod
+    def _check_default_tier(cls, value: str) -> str:
+        if value not in TIERS:
+            raise ValueError(f"unknown tier '{value}': must be one of {TIERS}")
+        return value
+
+    @field_validator("languages")
+    @classmethod
+    def _check_languages(
+        cls, value: dict[str, dict[str, RoutingEntry]]
+    ) -> dict[str, dict[str, RoutingEntry]]:
+        for lang, tiers in value.items():
+            if lang not in _LANGUAGE_CODES:
+                raise ValueError(
+                    f"unknown language '{lang}': must be one of {_LANGUAGE_CODES}"
+                )
+            for tier in tiers:
+                if tier not in TIERS:
+                    raise ValueError(
+                        f"unknown tier '{tier}' for {lang}: must be one of {TIERS}"
+                    )
+        return value
+
+
 class NlpSettings(BaseModel):
     # Language code -> spaCy pipeline package. ja uses GiNZA (see design spec);
     # ja_core_news_sm is the documented fallback.
@@ -91,6 +188,7 @@ class Settings(BaseModel):
     # gate; install via scripts/install-dictionaries.sh. Missing files are fine.
     dictionaries_dir: Path = BACKEND_DIR / "dictionaries"
     providers: ProviderSettings = Field(default_factory=ProviderSettings)
+    routing: RoutingSettings = Field(default_factory=RoutingSettings)
     nlp: NlpSettings = Field(default_factory=NlpSettings)
 
 

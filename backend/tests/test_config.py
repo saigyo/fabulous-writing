@@ -90,3 +90,70 @@ providers:
     )
     with pytest.raises(ValidationError, match="name"):
         load_settings(config)
+
+
+def test_routing_defaults_cover_all_languages_and_tiers() -> None:
+    routing = Settings().routing
+    assert routing.default_tier == "balanced"
+    assert set(routing.languages) == {"en", "de", "fr", "es", "it", "ja", "zh"}
+    for tiers in routing.languages.values():
+        assert set(tiers) == {"quality", "balanced", "cheap", "local"}
+    assert routing.languages["de"]["balanced"].provider == "mistral"
+    assert routing.languages["zh"]["quality"].provider == "deepseek"
+    assert routing.languages["en"]["local"].provider == "ollama"
+
+
+def test_routing_user_override_replaces_only_that_language(tmp_path: Path) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        """
+routing:
+  languages:
+    de:
+      balanced: { provider: openai, model: gpt-5-mini }
+""",
+        encoding="utf-8",
+    )
+    routing = load_settings(config).routing
+    # de is replaced wholesale (only the tiers the user listed exist) ...
+    assert set(routing.languages["de"]) == {"balanced"}
+    assert routing.languages["de"]["balanced"].provider == "openai"
+    # ... while every other language keeps its defaults.
+    assert set(routing.languages["fr"]) == {"quality", "balanced", "cheap", "local"}
+
+
+def test_routing_rejects_unknown_tier(tmp_path: Path) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        """
+routing:
+  languages:
+    en:
+      premium: { provider: claude, model: claude-opus-4-8 }
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError, match="tier"):
+        load_settings(config)
+
+
+def test_routing_rejects_unknown_language(tmp_path: Path) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        """
+routing:
+  languages:
+    xx:
+      balanced: { provider: claude, model: claude-sonnet-5 }
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError, match="language"):
+        load_settings(config)
+
+
+def test_routing_rejects_unknown_default_tier(tmp_path: Path) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text("routing:\n  default_tier: premium\n", encoding="utf-8")
+    with pytest.raises(ValidationError, match="tier"):
+        load_settings(config)
