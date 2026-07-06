@@ -1055,7 +1055,8 @@ input {
 .llm-select-row {
   display: flex;
   align-items: flex-end;
-  gap: 2px;
+  /* Same breathing room as between the selects in the advanced popover. */
+  gap: 8px;
 }
 
 .llm-resolved {
@@ -1085,13 +1086,16 @@ input {
   user-select: none;
 }
 
-.llm-advanced-toggle {
-  padding: 0;
-  margin-bottom: 4px;
-}
-
+/* Icon buttons sitting beside a select: a flex box (no baseline descender
+   space) whose center is lifted to the select's vertical center. */
+.llm-advanced-toggle,
 .llm-pin-button {
-  margin-bottom: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 16px;
+  padding: 0;
+  margin-bottom: 5px;
 }
 
 .header-controls .llm-advanced-body {
