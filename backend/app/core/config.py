@@ -1,9 +1,26 @@
+import re
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+
+# The five providers with dedicated construction/auth logic. Extra provider
+# names must not shadow them.
+BUILTIN_PROVIDERS = ("ollama", "claude", "openai", "mistral", "bedrock")
+
+# Extra provider names derive their env variable (<NAME>_API_KEY), so they
+# must be safe identifiers.
+_EXTRA_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+class ExtraProviderSettings(BaseModel):
+    """An OpenAI-compatible provider defined in config (key: <NAME>_API_KEY)."""
+
+    base_url: str
+    default_model: str
+    exclude_model_fragments: list[str] = Field(default_factory=list)
 
 
 class ProviderSettings(BaseModel):
@@ -22,6 +39,25 @@ class ProviderSettings(BaseModel):
     # bedrock:ListFoundationModels / ListInferenceProfiles permissions).
     bedrock_models: list[str] = Field(default_factory=list)
     default_provider: str = "ollama"
+    extra_providers: dict[str, ExtraProviderSettings] = Field(default_factory=dict)
+
+    @field_validator("extra_providers")
+    @classmethod
+    def _check_extra_names(
+        cls, value: dict[str, ExtraProviderSettings]
+    ) -> dict[str, ExtraProviderSettings]:
+        for name in value:
+            if not _EXTRA_NAME_RE.match(name):
+                raise ValueError(
+                    f"invalid extra provider name '{name}': must match"
+                    " ^[a-z][a-z0-9_]*$ (the name derives the"
+                    f" {name.upper()}_API_KEY environment variable)"
+                )
+            if name in BUILTIN_PROVIDERS:
+                raise ValueError(
+                    f"extra provider name '{name}' collides with a built-in provider"
+                )
+        return value
 
 
 class NlpSettings(BaseModel):
