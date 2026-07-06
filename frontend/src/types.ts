@@ -109,6 +109,24 @@ export interface Profile {
   domain_ids: number[]
   llm_provider: string | null
   llm_model: string | null
+  llm_tier: Tier | null
   llm_instructions: string
   example_text: string
+}
+
+export type Tier = 'quality' | 'balanced' | 'cheap' | 'local'
+
+export const TIERS: Tier[] = ['quality', 'balanced', 'cheap', 'local']
+
+export interface RoutingEntry {
+  provider: string
+  model: string
+  available: boolean
+  reason: string | null
+}
+
+export interface RoutingTable {
+  default_tier: Tier
+  tiers: Tier[]
+  languages: Partial<Record<Language, Partial<Record<Tier, RoutingEntry>>>>
 }

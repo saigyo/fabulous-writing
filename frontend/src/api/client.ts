@@ -7,6 +7,7 @@ import type {
   LanguageInfo,
   Profile,
   ProviderInfo,
+  RoutingTable,
   RuleError,
   RuleInfo,
   Term,
@@ -107,6 +108,8 @@ export const postSuggestions = (body: SuggestionRequest) =>
   })
 
 export const getProviders = () => request<ProviderInfo[]>('/api/providers')
+
+export const getRouting = () => request<RoutingTable>('/api/routing')
 
 export const getLanguages = () => request<LanguageInfo[]>('/api/languages')
 

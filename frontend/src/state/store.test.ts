@@ -58,3 +58,25 @@ describe('setTracked cache migration', () => {
     expect(useStore.getState().extraSuggestions).toEqual({ keep: ['extremely'] })
   })
 })
+
+describe('tier / pin semantics', () => {
+  it('setTier enters tier mode', () => {
+    useStore.getState().setTier('quality')
+    expect(useStore.getState().tier).toBe('quality')
+  })
+
+  it('choosing a provider pins (clears the tier)', () => {
+    useStore.getState().setTier('balanced')
+    useStore.getState().setProvider('claude')
+    expect(useStore.getState().tier).toBeNull()
+    expect(useStore.getState().provider).toBe('claude')
+    expect(useStore.getState().model).toBeNull()
+  })
+
+  it('choosing a model pins (clears the tier)', () => {
+    useStore.getState().setTier('balanced')
+    useStore.getState().setModel('claude-opus-4-8')
+    expect(useStore.getState().tier).toBeNull()
+    expect(useStore.getState().model).toBe('claude-opus-4-8')
+  })
+})

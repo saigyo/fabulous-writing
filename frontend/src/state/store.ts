@@ -6,7 +6,16 @@ import type { SourceGroup } from '../findings/source'
 import type { Locale } from '../i18n/messages'
 import { FALLBACK_LANGUAGES } from '../languages'
 import { applyProfileToHeader } from '../profiles/profile'
-import type { Domain, Language, LanguageInfo, Profile, ProviderInfo, Severity } from '../types'
+import type {
+  Domain,
+  Language,
+  LanguageInfo,
+  Profile,
+  ProviderInfo,
+  RoutingTable,
+  Severity,
+  Tier,
+} from '../types'
 
 export type CheckPhase = 'idle' | 'fast' | 'llm'
 export type ActiveView = 'editor' | 'rules' | 'terminology' | 'profiles'
@@ -18,6 +27,8 @@ interface AppState {
   domainIds: number[]
   provider: string
   model: string | null
+  // null = pinned to provider/model; non-null = tier mode.
+  tier: Tier | null
   llmAuto: boolean
   activeView: ActiveView
   tracked: TrackedFinding[]
@@ -33,6 +44,7 @@ interface AppState {
   llmStartedAt: number | null
   llmTokens: number | null
   providers: ProviderInfo[]
+  routing: RoutingTable | null
   domains: Domain[]
   languages: LanguageInfo[]
   profiles: Profile[]
@@ -50,6 +62,8 @@ interface AppState {
   setDomainIds: (domainIds: number[]) => void
   setProvider: (provider: string) => void
   setModel: (model: string | null) => void
+  setTier: (tier: Tier) => void
+  setRouting: (routing: RoutingTable | null) => void
   setLlmAuto: (llmAuto: boolean) => void
   setActiveView: (view: ActiveView) => void
   setTracked: (tracked: TrackedFinding[], selectedId: string | null) => void
@@ -110,6 +124,7 @@ export const useStore = create<AppState>()(
       domainIds: [],
       provider: 'ollama',
       model: null,
+      tier: 'balanced',
       llmAuto: true,
       activeView: 'editor',
       tracked: [],
@@ -121,6 +136,7 @@ export const useStore = create<AppState>()(
       llmStartedAt: null,
       llmTokens: null,
       providers: [],
+      routing: null,
       domains: [],
       languages: FALLBACK_LANGUAGES,
       profiles: [],
@@ -136,8 +152,10 @@ export const useStore = create<AppState>()(
       setLanguage: (language) => set({ language }),
       setUiLocale: (uiLocale) => set({ uiLocale }),
       setDomainIds: (domainIds) => set({ domainIds }),
-      setProvider: (provider) => set({ provider, model: null }),
-      setModel: (model) => set({ model }),
+      setProvider: (provider) => set({ provider, model: null, tier: null }),
+      setModel: (model) => set({ model, tier: null }),
+      setTier: (tier) => set({ tier }),
+      setRouting: (routing) => set({ routing }),
       setLlmAuto: (llmAuto) => set({ llmAuto }),
       setActiveView: (activeView) => set({ activeView }),
       setTracked: (tracked, selectedId) =>
@@ -191,12 +209,20 @@ export const useStore = create<AppState>()(
     }),
     {
       name: 'fabulous-writing-settings',
+      version: 1,
+      // v0 predates tiers: those users had explicitly chosen provider/model,
+      // so they stay pinned rather than silently switching models.
+      migrate: (persisted, version) =>
+        version === 0
+          ? { ...(persisted as object), tier: null }
+          : (persisted as object),
       partialize: (state) => ({
         language: state.language,
         uiLocale: state.uiLocale,
         domainIds: state.domainIds,
         provider: state.provider,
         model: state.model,
+        tier: state.tier,
         llmAuto: state.llmAuto,
         lastProfileByLanguage: state.lastProfileByLanguage,
       }),
