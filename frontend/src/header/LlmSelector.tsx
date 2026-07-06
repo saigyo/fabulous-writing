@@ -17,6 +17,7 @@ export function LlmSelector() {
   const resolution = resolveModel(store)
   const activeProvider = store.providers.find((p) => p.name === store.provider)
   const pinned = store.tier === null
+  const routingLoaded = store.routing !== null
 
   return (
     <div className="llm-selector">
@@ -30,7 +31,10 @@ export function LlmSelector() {
         >
           {TIERS.map((tier) => {
             const entry = entryFor(tier)
-            const unavailable = !entry || !entry.available
+            // Unknown availability (routing not loaded / fetch failed) must
+            // not dead-lock the control — resolution still fails explicitly
+            // at check time.
+            const unavailable = routingLoaded && (!entry || !entry.available)
             return (
               <option key={tier} value={tier} disabled={unavailable}>
                 {m.tierName(tier)}
@@ -47,14 +51,16 @@ export function LlmSelector() {
           )}
         </select>
       </label>
-      <span
-        className={`llm-resolved${resolution.ok ? '' : ' llm-resolved-error'}`}
-        title={resolution.ok ? undefined : resolution.reason}
-      >
-        {resolution.ok
-          ? m.resolvedModel(resolution.model ?? '', resolution.provider)
-          : m.llmSkipped(resolution.reason)}
-      </span>
+      {(store.tier === null || routingLoaded) && (
+        <span
+          className={`llm-resolved${resolution.ok ? '' : ' llm-resolved-error'}`}
+          title={resolution.ok ? undefined : resolution.reason}
+        >
+          {resolution.ok
+            ? m.resolvedModel(resolution.model ?? '', resolution.provider)
+            : m.llmSkipped(resolution.reason)}
+        </span>
+      )}
       <details className="llm-advanced">
         <summary>{m.advanced}</summary>
         <div className="llm-advanced-body">
