@@ -35,7 +35,11 @@ async def _provider_status(
         except Exception:
             return False, "Ollama not running"
     if name == "bedrock":
-        available = await asyncio.to_thread(bedrock.credentials_available)
+        try:
+            async with asyncio.timeout(_PING_TIMEOUT):
+                available = await asyncio.to_thread(bedrock.credentials_available)
+        except TimeoutError:
+            available = False
         return (True, None) if available else (False, "AWS credentials not available")
     env_key = _BUILTIN_ENV_KEYS.get(name)
     if env_key is None and name in settings.extra_providers:

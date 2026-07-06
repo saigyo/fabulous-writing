@@ -73,3 +73,26 @@ def test_routing_reports_available_with_key(
     entry = client.get("/api/routing").json()["languages"]["de"]["balanced"]
     assert entry["available"] is True
     assert entry["reason"] is None
+
+
+def test_routing_bedrock_availability(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bedrock, "credentials_available", lambda: True)
+    settings = Settings(
+        db_path=tmp_path / "test.db",
+        rules_dir=tmp_path / "rules",
+        routing={
+            "languages": {
+                "en": {"quality": {"provider": "bedrock", "model": "eu.model-a"}}
+            }
+        },
+    )
+    client = TestClient(create_app(settings))
+    entry = client.get("/api/routing").json()["languages"]["en"]["quality"]
+    assert entry["available"] is True and entry["reason"] is None
+
+    monkeypatch.setattr(bedrock, "credentials_available", lambda: False)
+    entry = client.get("/api/routing").json()["languages"]["en"]["quality"]
+    assert entry["available"] is False
+    assert entry["reason"] == "AWS credentials not available"
