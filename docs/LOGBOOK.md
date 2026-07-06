@@ -884,3 +884,18 @@ overlay. Converted to the controlled popover pattern DomainMultiSelect
 already uses (useState + outside-mousedown listener + toggle button with
 aria-expanded); the ProfilesView card keeps its inline `<details>` (static
 layout). Frontend suite 127 passed, lint/build clean.
+
+## 2026-07-07 — Fix: Advanced panel shows the resolved pair, one-click pin
+
+Commit: `bce40da`
+
+Markus found that in tier mode the header's Advanced panel displayed the
+stale last-pinned provider/model instead of the tier's resolved pair, with
+no way to pin the displayed values (native selects fire no change event
+for re-choosing the shown option). The panel now displays what a check
+would actually use; changing the model pins the displayed provider (new
+atomic `setPinned` store action, tested); a localized "Pin this model"
+button adopts the displayed pair and closes the panel; a resolved model
+missing from the discovered model list is prepended to keep the controlled
+select honest. Frontend 128 tests, lint/build clean; architecture doc
+updated.
