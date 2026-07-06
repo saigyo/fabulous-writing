@@ -32,22 +32,24 @@ are never stored in configuration. Defaults live in `backend/config.yaml`
 (see `backend/config.example.yaml`).
 
 **Using providers not built in (DeepSeek, Qwen, Gemini, OpenRouter):** all of
-them speak the OpenAI chat-completions protocol, so repoint one of the two
-OpenAI-compatible slots at them, e.g.:
+them speak the OpenAI chat-completions protocol and can be added as named
+entries under `providers.extra_providers` in `backend/config.yaml`, e.g.:
 
 ```yaml
-# backend/config.yaml — use the "openai" slot for DeepSeek
 providers:
-  openai_base_url: https://api.deepseek.com/v1
-  openai_model: deepseek-v4-pro
+  extra_providers:
+    deepseek:
+      base_url: https://api.deepseek.com/v1
+      default_model: deepseek-v4-pro
 ```
 
-and set `OPENAI_API_KEY` to the DeepSeek key (the slot determines the env
-variable, not the vendor). The same works for Qwen/DashScope
+with the key in the environment variable derived from the entry name
+(`DEEPSEEK_API_KEY`). The entry appears in the header dropdown with live model
+discovery, and profiles can pin it. The same works for Qwen/DashScope
 (`https://dashscope-intl.aliyuncs.com/compatible-mode/v1`), Google
 (`https://generativelanguage.googleapis.com/v1beta/openai`), and OpenRouter
-(`https://openrouter.ai/api/v1`). Only two such slots exist today; true
-multi-vendor routing is the design sketch in section 5.
+(`https://openrouter.ai/api/v1`). Tiered per-language routing on top of these
+entries is the design sketch in section 5.
 
 **EU residency for Claude:** the built-in `bedrock` provider with
 `bedrock_region: eu-central-1` (and an `eu.`-prefixed inference-profile id)

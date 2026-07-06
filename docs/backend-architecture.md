@@ -106,10 +106,12 @@ Singletons on `app.state`:
 | `provider_factory` | `(name?, model?) -> LLMProvider` |
 
 The **provider factory** is the only place that knows how to construct concrete LLM
-providers; everything else works against the `LLMProvider` protocol. API keys are read
-from the environment at construction time (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
-`MISTRAL_API_KEY`; Bedrock uses the standard AWS credential chain) — they are never
-stored in config or the database.
+providers; everything else works against the `LLMProvider` protocol. Besides the five
+built-ins, `extra_providers` entries from config (OpenAI-compatible endpoints such as
+DeepSeek, Qwen, or OpenRouter) are constructed generically. API keys are read from the
+environment at construction time (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+`MISTRAL_API_KEY`, `<NAME>_API_KEY` for extras; Bedrock uses the standard AWS
+credential chain) — they are never stored in config or the database.
 
 Startup also seeds the database idempotently: an example terminology domain
 (`seed_terminology`) and per-language checking profiles (`seed_profiles`, see
@@ -120,8 +122,10 @@ Startup also seeds the database idempotently: an example terminology domain
 `Settings` (`app/core/config.py`) is a pydantic model with sensible defaults, optionally
 overridden by `backend/config.yaml` (`config.example.yaml` documents every key). Notable
 knobs: `db_path`, `rules_dir`, `seed_terminology`, `seed_example_profiles`,
-`vet_suggestions`, `dictionaries_dir`, per-provider base URLs and default models, and the
-per-language spaCy model map (`nlp.models`).
+`vet_suggestions`, `dictionaries_dir`, per-provider base URLs and default models,
+`providers.extra_providers` (named OpenAI-compatible endpoints — validated at load:
+lowercase identifier names that don't shadow built-ins, since the name derives the
+`<NAME>_API_KEY` env variable), and the per-language spaCy model map (`nlp.models`).
 
 ## The check flow
 
@@ -259,11 +263,12 @@ providers stream and report cumulative output tokens (that is what feeds the
 | `claude` | `claude.py` (Anthropic SDK) | `ANTHROPIC_API_KEY` |
 | `openai`, `mistral` | `openai_compat.py` (shared OpenAI-dialect client) | `OPENAI_API_KEY` / `MISTRAL_API_KEY` |
 | `bedrock` | `bedrock.py` (boto3) | AWS credential chain |
+| config-defined extras (e.g. `deepseek`) | `openai_compat.py` via `extra_providers` config | `<NAME>_API_KEY` |
 | `fake` | `provider.py` | tests only |
 
 `GET /api/providers` reports availability (key present / service reachable) and
-discovers installed models live where the API allows it (Ollama `/api/tags`, OpenAI
-and Mistral `/models` with non-chat models filtered out, Bedrock
+discovers installed models live where the API allows it (Ollama `/api/tags`, OpenAI,
+Mistral, and extras `/models` with non-chat models filtered out, Bedrock
 `ListFoundationModels`/`ListInferenceProfiles` unless models are pinned in config).
 Discovery calls run concurrently with a 5 s timeout each and degrade to the configured
 default model.

@@ -139,20 +139,19 @@ read from the environment only and never stored:
 | `openai`  | `export OPENAI_API_KEY=…` — chat models discovered live |
 | `mistral` | `export MISTRAL_API_KEY=…` — models discovered live |
 | `bedrock` | standard AWS credential chain (env/profile/role); model ids are region-specific — discovered live with `bedrock:List*` permissions, or pinned via `bedrock_models` in `config.yaml` |
+| config-defined extras | any OpenAI-compatible vendor (DeepSeek, Qwen, Gemini, OpenRouter, …) via `providers.extra_providers` in `config.yaml`; key from `<NAME>_API_KEY` |
 
 Which model to pick — per language, API vs. local Ollama, hardware and cost
 considerations — is covered in
-[docs/model-recommendations.md](docs/model-recommendations.md). It also shows
-how to reach further OpenAI-compatible vendors (DeepSeek, Qwen, Gemini,
-OpenRouter) through the `openai`/`mistral` slots.
+[docs/model-recommendations.md](docs/model-recommendations.md).
 
 ### Configuration
 
 All configuration is optional. Copy `backend/config.example.yaml` to
 `backend/config.yaml` and adjust; the example file documents every key. Highlights:
 
-- `providers.*` — default LLM provider, per-provider models/endpoints, Bedrock region
-  and pinned model ids
+- `providers.*` — default LLM provider, per-provider models/endpoints, extra
+  OpenAI-compatible providers (`extra_providers`), Bedrock region and pinned model ids
 - `seed_terminology: false` — don't seed the example terminology domain
 - `seed_example_profiles: false` — don't seed the Marketing / Technical Documentation
   example profiles (the per-language Standard profile is always created)

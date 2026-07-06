@@ -4,6 +4,7 @@
 #   openai  -> OPENAI_API_KEY
 #   mistral -> MISTRAL_API_KEY
 #   bedrock -> standard AWS credential chain (env vars, profile, role)
+#   extra_providers entries -> <NAME>_API_KEY (deepseek -> DEEPSEEK_API_KEY)
 
 # db_path: data/fabulous.db
 # rules_dir: rules
@@ -29,6 +30,21 @@ providers:
   #   - us.anthropic.claude-sonnet-4-5-20250929-v1:0
   #   - us.anthropic.claude-haiku-4-5-20251001-v1:0
   default_provider: ollama
+  # Additional OpenAI-compatible providers become first-class entries in the
+  # header and profiles. The entry name derives the API-key env variable
+  # (deepseek -> DEEPSEEK_API_KEY); keys are never stored in this file.
+  # Names: lowercase [a-z0-9_], must not shadow the built-in five.
+  # extra_providers:
+  #   deepseek:
+  #     base_url: https://api.deepseek.com/v1
+  #     default_model: deepseek-v4-pro
+  #   qwen:
+  #     base_url: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+  #     default_model: qwen3.7-max
+  #   openrouter:
+  #     base_url: https://openrouter.ai/api/v1
+  #     default_model: anthropic/claude-sonnet-5
+  #     exclude_model_fragments: [embedding]   # optional /models filter
 
 # spaCy models per language for token_pattern/dependency rules.
 # Install via ./scripts/install-models.sh <lang>...
