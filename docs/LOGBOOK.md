@@ -740,3 +740,27 @@ equivalence across checks, profile apply/dirty semantics, i18n, API
 client, testing). The README Development section gained an
 "Architecture" subsection introducing the shared Finding contract and
 linking both documents.
+
+## 2026-07-06 — Design: language-routed model configuration
+
+Commit: `9c90b4d`
+
+Turned the design sketch in `docs/model-recommendations.md` § 5 into an
+approved spec (`docs/superpowers/specs/2026-07-06-language-routed-models-design.md`),
+settled with Markus:
+
+- **Phase 1 — provider registry:** `extra_providers` map in `config.yaml`
+  for OpenAI-compatible vendors (DeepSeek, Qwen, OpenRouter, …); env key
+  derived from the entry name; factory + discovery generalized; no UI change.
+- **Phase 2 — quality tiers:** routing table (language × tier → provider,
+  model) with code-shipped defaults from the recommendations doc; new
+  `GET /api/routing` with per-tier availability; profiles and the header
+  become tier-first, with a pinned provider+model escape hatch in a
+  collapsed "Advanced" panel (pin wins over tier; both-null keeps today's
+  "no opinion" semantics, so existing rows behave identically).
+- Explicitly no silent degradation (unavailable tiers greyed out with
+  reason; LLM check skipped with an explanatory status), no OpenRouter
+  failover (out of scope), fixed four-tier set.
+- Check API unchanged; the frontend resolves tier → concrete pair
+  (new `checking/routing.ts`), consistent with client-side profile
+  resolution.
