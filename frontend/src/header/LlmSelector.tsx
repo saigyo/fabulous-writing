@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react'
 import { resolveModel } from '../checking/routing'
 import { useMessages } from '../i18n'
 import { useStore } from '../state/store'
@@ -13,6 +14,20 @@ import { TIERS, type Tier } from '../types'
 export function LlmSelector() {
   const store = useStore()
   const m = useMessages()
+  // Popover state à la DomainMultiSelect: native <details> would stay open
+  // on outside clicks, which reads as broken for an overlay.
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!advancedOpen) return
+    function onClickOutside(event: MouseEvent) {
+      if (!ref.current?.contains(event.target as Node)) setAdvancedOpen(false)
+    }
+    document.addEventListener('mousedown', onClickOutside)
+    return () => document.removeEventListener('mousedown', onClickOutside)
+  }, [advancedOpen])
+
   const entryFor = (tier: Tier) => store.routing?.languages[store.language]?.[tier]
   const resolution = resolveModel(store)
   const activeProvider = store.providers.find((p) => p.name === store.provider)
@@ -20,7 +35,7 @@ export function LlmSelector() {
   const routingLoaded = store.routing !== null
 
   return (
-    <div className="llm-selector">
+    <div className="llm-selector" ref={ref}>
       <label>
         {m.llm}
         <select
@@ -61,8 +76,15 @@ export function LlmSelector() {
             : m.llmSkipped(resolution.reason)}
         </span>
       )}
-      <details className="llm-advanced">
-        <summary>{m.advanced}</summary>
+      <div className="llm-advanced">
+        <button
+          className="llm-advanced-toggle"
+          aria-expanded={advancedOpen}
+          onClick={() => setAdvancedOpen(!advancedOpen)}
+        >
+          {advancedOpen ? '▾' : '▸'} {m.advanced}
+        </button>
+        {advancedOpen && (
         <div className="llm-advanced-body">
           <label>
             {m.llm}
@@ -95,7 +117,8 @@ export function LlmSelector() {
             </select>
           </label>
         </div>
-      </details>
+        )}
+      </div>
     </div>
   )
 }

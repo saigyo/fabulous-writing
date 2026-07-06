@@ -1063,14 +1063,22 @@ input {
   color: #e5484d;
 }
 
-.llm-advanced summary {
+.llm-advanced summary,
+.llm-advanced-toggle {
   font-size: 0.72rem;
   color: var(--text-dim);
   cursor: pointer;
   user-select: none;
 }
 
-.header-controls .llm-advanced[open] .llm-advanced-body {
+.llm-advanced-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+}
+
+.header-controls .llm-advanced .llm-advanced-body {
   position: absolute;
   z-index: 10;
   top: 100%;
