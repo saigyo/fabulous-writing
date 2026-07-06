@@ -212,6 +212,24 @@ licenses.
 Both dev servers (see [Quick start](#quick-start)) hot-reload: `uvicorn --reload` for
 the backend, Vite for the frontend.
 
+### Architecture
+
+The two halves meet at one shared contract — the **Finding**: a categorized issue with
+an exact character span and drop-in suggestions. The backend produces findings through
+a job-based check API (fast deterministic checkers inline, LLM findings streamed via
+SSE and gated by deterministic anchoring/vetting); the frontend keeps them positioned
+correctly while the user types by tracking spans inside the CodeMirror document.
+Detailed developer documentation:
+
+- **[Backend architecture](docs/backend-architecture.md)** — application assembly,
+  the check flow and job/SSE model, the YAML rule engine, the NLP registry,
+  terminology matching, the LLM provider layer with its deterministic gates,
+  checking profiles, and testing conventions.
+- **[Frontend architecture](docs/frontend-architecture.md)** — state management,
+  the CodeMirror `StateField` that owns finding positions, the checking lifecycle
+  (debounce, staleness/supersede guards), finding identity across checks, profile
+  semantics, i18n, and testing.
+
 ### Tests and CI
 
 ```sh
