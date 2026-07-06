@@ -833,3 +833,16 @@ cross-domain dedup (same category throughout) is unaffected. Before/after on
 the Standard example texts — FR/claude: 0 → 3, EN/claude: 2 → 5,
 EN/ollama(mistral-nemo): 2 → 3 LLM findings; genuine duplicates (e.g. LLM
 re-flagging `Malgré que`, clichés, weasel words) still dropped.
+
+## 2026-07-06 — Fix: click-to-select shadowed by whole-sentence findings
+
+Commit: `7259158`
+
+Clicking any short finding inside a sentence flagged by
+`clarity.phrase-longue` always jumped the sidebar to the sentence-length
+card: the editor click handler took the *first* array hit containing the
+position. New pure helper `findingIdAt` in `editor/findings.ts` (TDD, 4
+tests): the smallest finding under the click wins, and when the currently
+selected finding is part of the stack the next-larger one is chosen — so
+repeated clicks cycle outward and the sentence finding remains reachable.
+Frontend suite 112 passed; lint/build clean. Architecture doc updated.
