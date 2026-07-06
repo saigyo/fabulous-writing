@@ -1283,6 +1283,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Modify: `frontend/src/state/store.ts` (the `applyProfileToHeader` call site)
 - Modify: `frontend/src/header/ProfileSelector.tsx`
 - Modify: `frontend/src/profiles/ProfilesView.tsx`
+- Modify: `frontend/src/rules/RulesView.tsx` (PUT payload must carry `llm_tier` — see Step 5b)
 - Modify: `frontend/src/App.css`
 
 - [ ] **Step 1: Write the failing tests**
@@ -1498,6 +1499,14 @@ Add `const tier = useStore((s) => s.tier)` beside the other hooks; extend the di
 ```
 
 (The `activeProvider` line already exists in the card.) Note the empty `<option value="" />` shown while unpinned so the select is not lying about a selection.
+
+3b. **`RulesView.tsx`** (Step 5b): its write-through `updateProfile` call omits `llm_tier`, which would null a stored tier on every rule toggle (the API passes the field through unconditionally). Add one line to the payload:
+
+```typescript
+        llm_tier: profile.llm_tier,
+```
+
+(after `llm_model: profile.llm_model,`; TypeScript enforces this once `Profile` carries the field — the build fails without it.)
 
 4. Styles — append to `frontend/src/App.css`:
 
