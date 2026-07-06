@@ -53,34 +53,44 @@ export function LlmSelector() {
 
   return (
     <div className="llm-selector" ref={ref}>
-      <label>
-        {m.llm}
-        <select
-          value={store.tier ?? 'pinned'}
-          onChange={(e) => {
-            if (e.target.value !== 'pinned') store.setTier(e.target.value as Tier)
-          }}
-        >
-          {TIERS.map((tier) => {
-            const entry = entryFor(tier)
-            // Unknown availability (routing not loaded / fetch failed) must
-            // not dead-lock the control — resolution still fails explicitly
-            // at check time.
-            const unavailable = routingLoaded && (!entry || !entry.available)
-            return (
-              <option key={tier} value={tier} disabled={unavailable}>
-                {m.tierName(tier)}
-                {unavailable ? m.offlineSuffix : ''}
+      <div className="llm-select-row">
+        <label>
+          {m.llm}
+          <select
+            value={store.tier ?? 'pinned'}
+            onChange={(e) => {
+              if (e.target.value !== 'pinned') store.setTier(e.target.value as Tier)
+            }}
+          >
+            {TIERS.map((tier) => {
+              const entry = entryFor(tier)
+              // Unknown availability (routing not loaded / fetch failed) must
+              // not dead-lock the control — resolution still fails explicitly
+              // at check time.
+              const unavailable = routingLoaded && (!entry || !entry.available)
+              return (
+                <option key={tier} value={tier} disabled={unavailable}>
+                  {m.tierName(tier)}
+                  {unavailable ? m.offlineSuffix : ''}
+                </option>
+              )
+            })}
+            {pinned && (
+              <option value="pinned">
+                {m.tierPinnedOption(shownModel || store.provider)}
               </option>
-            )
-          })}
-          {pinned && (
-            <option value="pinned">
-              {m.tierPinnedOption(shownModel || store.provider)}
-            </option>
-          )}
-        </select>
-      </label>
+            )}
+          </select>
+        </label>
+        <button
+          className="icon-button llm-advanced-toggle"
+          title={m.advancedTitle}
+          aria-expanded={advancedOpen}
+          onClick={() => setAdvancedOpen(!advancedOpen)}
+        >
+          <GearIcon />
+        </button>
+      </div>
       {(store.tier === null || routingLoaded) && (
         <span
           className={`llm-resolved${resolution.ok ? '' : ' llm-resolved-error'}`}
@@ -91,15 +101,7 @@ export function LlmSelector() {
             : m.llmSkipped(resolution.reason)}
         </span>
       )}
-      <div className="llm-advanced">
-        <button
-          className="llm-advanced-toggle"
-          aria-expanded={advancedOpen}
-          onClick={() => setAdvancedOpen(!advancedOpen)}
-        >
-          {advancedOpen ? '▾' : '▸'} {m.advanced}
-        </button>
-        {advancedOpen && (
+      {advancedOpen && (
         <div className="llm-advanced-body">
           <label>
             {m.llm}
@@ -141,9 +143,18 @@ export function LlmSelector() {
             </button>
           )}
         </div>
-        )}
-      </div>
+      )}
     </div>
+  )
+}
+
+function GearIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
   )
 }
 

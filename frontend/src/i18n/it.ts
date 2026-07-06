@@ -51,6 +51,7 @@ export const it: Messages = {
   clearPin: 'Rimuovi il blocco',
   llmSkipped: (reason) => `Controllo LLM saltato: ${reason}`,
   pinThisModel: 'Fissa questo modello',
+  advancedTitle: 'Selezione avanzata del modello',
 
   findings: 'Risultati',
   fastChecking: 'controllo…',

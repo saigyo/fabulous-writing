@@ -55,6 +55,7 @@ export const fr: Messages = {
   clearPin: "Retirer l'épingle",
   llmSkipped: (reason) => `Vérification LLM ignorée : ${reason}`,
   pinThisModel: 'Épingler ce modèle',
+  advancedTitle: 'Sélection avancée du modèle',
 
   findings: 'Résultats',
   fastChecking: 'vérification…',

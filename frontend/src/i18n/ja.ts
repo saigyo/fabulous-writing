@@ -49,6 +49,7 @@ export const ja: Messages = {
   clearPin: '固定を解除',
   llmSkipped: (reason) => `LLM チェックをスキップ: ${reason}`,
   pinThisModel: 'このモデルを固定',
+  advancedTitle: '詳細なモデル選択',
 
   findings: '検出結果',
   fastChecking: 'チェック中…',

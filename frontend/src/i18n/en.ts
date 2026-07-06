@@ -44,6 +44,7 @@ export const en: Messages = {
   clearPin: 'Clear pin',
   llmSkipped: (reason) => `LLM check skipped: ${reason}`,
   pinThisModel: 'Pin this model',
+  advancedTitle: 'Advanced model selection',
 
   findings: 'Findings',
   fastChecking: 'checking…',

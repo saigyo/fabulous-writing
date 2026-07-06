@@ -10,7 +10,9 @@
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  padding: 0.3rem 1.2rem;
+  /* The extra bottom padding reserves room for the LLM selector's resolved
+     caption (absolutely positioned below its select) without clipping. */
+  padding: 0.3rem 1.2rem 1.1rem;
   /* Fixed height: the stacked selector labels must not make the header taller. */
   min-height: 50px;
   box-sizing: border-box;
@@ -1044,10 +1046,16 @@ input {
 /* ---- header: tier-first LLM selector ---- */
 
 .llm-selector {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
   position: relative;
+}
+
+/* The select row is the only in-flow content, so the LLM selector stays
+   exactly as tall as its sibling header labels; the resolved caption and
+   the advanced popover are absolutely positioned and never shift it. */
+.llm-select-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
 }
 
 .llm-resolved {
@@ -1059,12 +1067,18 @@ input {
   white-space: nowrap;
 }
 
+.header-controls .llm-resolved {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 3px;
+}
+
 .llm-resolved-error {
   color: #e5484d;
 }
 
-.llm-advanced summary,
-.llm-advanced-toggle {
+.llm-advanced summary {
   font-size: 0.72rem;
   color: var(--text-dim);
   cursor: pointer;
@@ -1072,23 +1086,21 @@ input {
 }
 
 .llm-advanced-toggle {
-  background: none;
-  border: none;
   padding: 0;
-  text-align: left;
-}
-
-.llm-pin-button {
-  align-self: flex-end;
   margin-bottom: 4px;
 }
 
-.header-controls .llm-advanced .llm-advanced-body {
+.llm-pin-button {
+  margin-bottom: 3px;
+}
+
+.header-controls .llm-advanced-body {
   position: absolute;
   z-index: 10;
   top: 100%;
   right: 0;
   display: flex;
+  align-items: flex-end;
   gap: 8px;
   padding: 10px;
   background: var(--bg);
@@ -1136,6 +1148,7 @@ input {
 
 .profile-card-llm .llm-advanced[open] .llm-advanced-body {
   display: flex;
+  align-items: flex-end;
   gap: 8px;
   padding-top: 6px;
 }

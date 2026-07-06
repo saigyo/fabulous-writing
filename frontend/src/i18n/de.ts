@@ -51,6 +51,7 @@ export const de: Messages = {
   clearPin: 'Festlegung aufheben',
   llmSkipped: (reason) => `LLM-Prüfung übersprungen: ${reason}`,
   pinThisModel: 'Dieses Modell festlegen',
+  advancedTitle: 'Erweiterte Modellauswahl',
 
   findings: 'Ergebnisse',
   fastChecking: 'prüft…',

@@ -53,6 +53,7 @@ export interface Messages {
   clearPin: string
   llmSkipped: (reason: string) => string
   pinThisModel: string
+  advancedTitle: string
 
   // Findings sidebar
   findings: string

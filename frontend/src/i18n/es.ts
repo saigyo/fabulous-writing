@@ -55,6 +55,7 @@ export const es: Messages = {
   clearPin: 'Quitar fijación',
   llmSkipped: (reason) => `Comprobación LLM omitida: ${reason}`,
   pinThisModel: 'Fijar este modelo',
+  advancedTitle: 'Selección avanzada de modelo',
 
   findings: 'Resultados',
   fastChecking: 'comprobando…',
