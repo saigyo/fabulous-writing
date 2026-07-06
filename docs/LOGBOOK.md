@@ -785,3 +785,19 @@ endpoint → available with discovered models). Docs updated:
 `config.example.yaml`, `backend-architecture.md`, README provider table,
 `model-recommendations.md` § 1/§ 3 (the "repoint a slot" workaround is
 replaced by the registry). Full suite: 245 passed.
+
+## 2026-07-06 — Fix: duplicate model ids from OpenAI-compat discovery
+
+Commit: `6af041b`
+
+Mistral's `/v1/models` returns some ids twice (72 entries, 61 unique);
+`OpenAICompatProvider.list_models` passed them through, and the duplicate
+React keys broke the model dropdown's reconciliation — stale `<option>`s
+accumulated across provider switches, so selecting `claude` showed piles of
+mistral models. Fixed at the source: `list_models` now dedupes (set before
+sort) for openai/mistral/extras alike, with a regression test. E2E-verified
+against the live Mistral API (61 unique). Also relevant for operators:
+Gemini discovery prefixes ids with `models/`, so a configured
+`default_model` must use that prefix or it is replaced by the first
+discovered model; `exclude_model_fragments` tames Gemini/Qwen non-chat
+listings.
