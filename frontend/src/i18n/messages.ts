@@ -1,5 +1,5 @@
 import type { SourceGroup } from '../findings/source'
-import type { Category, Severity } from '../types'
+import type { Category, Severity, Tier } from '../types'
 
 export const LOCALES = ['en', 'de', 'fr', 'es', 'it', 'ja', 'zh'] as const
 export type Locale = (typeof LOCALES)[number]
@@ -45,6 +45,13 @@ export interface Messages {
   resetToProfile: string
   domainsSelected: (n: number) => string
   viewProfiles: string
+  tierName: (tier: Tier) => string
+  tierPinnedOption: (model: string) => string
+  resolvedModel: (model: string, provider: string) => string
+  advanced: string
+  pinnedNote: string
+  clearPin: string
+  llmSkipped: (reason: string) => string
 
   // Findings sidebar
   findings: string

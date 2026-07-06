@@ -42,6 +42,14 @@ export const de: Messages = {
   resetToProfile: 'Auf Profilwerte zurücksetzen',
   domainsSelected: (n) => `${n} Domänen`,
   viewProfiles: 'Profile',
+  tierName: (t) =>
+    ({ quality: 'Beste Qualität', balanced: 'Ausgewogen', cheap: 'Schnell & günstig', local: 'Privat (lokal)' })[t],
+  tierPinnedOption: (model) => `Festgelegt: ${model}`,
+  resolvedModel: (model, provider) => `→ ${model} (${provider})`,
+  advanced: 'Erweitert',
+  pinnedNote: 'Ein festgelegtes Modell übersteuert die Stufen',
+  clearPin: 'Festlegung aufheben',
+  llmSkipped: (reason) => `LLM-Prüfung übersprungen: ${reason}`,
 
   findings: 'Ergebnisse',
   fastChecking: 'prüft…',

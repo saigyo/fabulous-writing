@@ -40,6 +40,14 @@ export const zh: Messages = {
   resetToProfile: '恢复为配置的值',
   domainsSelected: (n) => `${n} 个领域`,
   viewProfiles: '配置',
+  tierName: (t) =>
+    ({ quality: '最佳质量', balanced: '均衡', cheap: '快速经济', local: '私密(本地)' })[t],
+  tierPinnedOption: (model) => `固定:${model}`,
+  resolvedModel: (model, provider) => `→ ${model} (${provider})`,
+  advanced: '高级设置',
+  pinnedNote: '固定模型优先于级别',
+  clearPin: '取消固定',
+  llmSkipped: (reason) => `已跳过 LLM 检查:${reason}`,
 
   findings: '检查结果',
   fastChecking: '检查中…',
