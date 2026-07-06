@@ -1544,6 +1544,10 @@ Add `const tier = useStore((s) => s.tier)` beside the other hooks; extend the di
 
 (In the ProfilesView cards the `.llm-advanced[open] .llm-advanced-body` popover style from Task 7 also applies; if the absolute positioning clashes inside cards, scope the popover rule to `.header-controls .llm-advanced[open] .llm-advanced-body` and give the card variant a static layout: `display: flex; gap: 8px; padding-top: 6px;`.)
 
+- [ ] **Step 5c: Tighten the backend PUT contract**
+
+Now that every frontend sender (ProfileSelector, ProfilesView, RulesView) carries `llm_tier`, remove the transitional default so full-replace PUT semantics are symmetric with the other fields: in `backend/app/api/profiles.py`, change `ProfileUpdate.llm_tier` from `... | None = None` to `... | None` (required, still nullable). `ProfileCreate` keeps its default (creation may omit it). Update any pre-existing PUT test bodies in `backend/tests/test_profiles_api.py` that omit `llm_tier` by adding `"llm_tier": None`, and add one assertion that a PUT body without the field is rejected (422). Run `cd backend && uv run pytest tests/test_profiles_api.py -v`; include these two files in this task's commit.
+
 - [ ] **Step 6: Verify**
 
 Run: `cd frontend && npm test -- --run && npm run lint && npm run build` — all clean.
