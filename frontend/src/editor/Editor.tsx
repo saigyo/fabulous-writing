@@ -5,7 +5,7 @@ import { basicSetup } from 'codemirror'
 import { runCheck } from '../checking/controller'
 import { createCheckScheduler } from '../checking/scheduler'
 import { useStore } from '../state/store'
-import { findingsField, selectFindingEffect } from './findings'
+import { findingIdAt, findingsField, selectFindingEffect } from './findings'
 import { setEditorView } from './editorRef'
 
 const TEXT_STORAGE_KEY = 'fabulous-writing-text'
@@ -53,12 +53,8 @@ export function Editor() {
           click(event, view) {
             const pos = view.posAtCoords({ x: event.clientX, y: event.clientY })
             if (pos === null) return false
-            const hit = view.state
-              .field(findingsField)
-              .items.find((item) => item.from <= pos && pos <= item.to)
-            view.dispatch({
-              effects: selectFindingEffect.of(hit ? hit.finding.id : null),
-            })
+            const id = findingIdAt(view.state.field(findingsField), pos)
+            view.dispatch({ effects: selectFindingEffect.of(id) })
             return false
           },
         }),

@@ -84,6 +84,22 @@ function equivalentId(
   return findEquivalent(items, previous)?.finding.id ?? null
 }
 
+/**
+ * The finding a click at `pos` should select. The smallest finding under
+ * the position wins — a whole-sentence finding (e.g. a sentence-length
+ * warning) must not shadow the point findings inside it. When the
+ * currently selected finding is part of the stack, the next-larger one is
+ * chosen instead, so repeated clicks cycle outward through all of them.
+ */
+export function findingIdAt(state: FindingsState, pos: number): string | null {
+  const hits = state.items
+    .filter((item) => item.from <= pos && pos <= item.to)
+    .sort((a, b) => a.to - a.from - (b.to - b.from))
+  if (hits.length === 0) return null
+  const current = hits.findIndex((item) => item.finding.id === state.selectedId)
+  return hits[(current + 1) % hits.length].finding.id
+}
+
 function buildDecorations(state: FindingsState): DecorationSet {
   const ranges = [...state.items]
     .sort((a, b) => a.from - b.from || a.to - b.to)

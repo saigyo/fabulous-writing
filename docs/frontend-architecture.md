@@ -96,8 +96,10 @@ re-anchoring, the spans live *inside* the editor as a CodeMirror `StateField`
   marks, selected-state) derive directly from the same data — there is no separate
   decoration bookkeeping.
 - Selection is part of the field state (`selectFindingEffect`); clicking in the editor
-  selects the finding under the cursor, clicking a sidebar row dispatches the same
-  effect, so editor and sidebar can never disagree.
+  selects the finding under the cursor (`findingIdAt`: the *smallest* finding wins, so
+  a whole-sentence finding never shadows the point findings inside it, and repeated
+  clicks cycle outward through stacked findings), clicking a sidebar row dispatches the
+  same effect, so editor and sidebar can never disagree.
 
 The React side (`Editor.tsx`) is a single `useEffect` that creates the view with
 `basicSetup + markdown() + findingsField`, persists the document to localStorage on

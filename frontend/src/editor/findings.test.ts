@@ -2,6 +2,7 @@ import { EditorState } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 import type { Finding } from '../types'
 import {
+  findingIdAt,
   findingsField,
   mergeFindingsEffect,
   rewriteChange,
@@ -67,6 +68,38 @@ describe('findingsField', () => {
     ])
     const next = state.update({ effects: selectFindingEffect.of('f1') }).state
     expect(next.field(findingsField).selectedId).toBe('f1')
+  })
+})
+
+describe('findingIdAt', () => {
+  const doc = 'Malgré que l’outil soit encore jeune, il est assez complet.'
+  const sentence = makeFinding('sentence', 0, doc.length, doc)
+  const inner = makeFinding('inner', 0, 10, 'Malgré que')
+  const other = makeFinding('other', 45, 50, 'assez')
+
+  it('returns null when no finding covers the position', () => {
+    const state = stateWithFindings(doc, [inner])
+    expect(findingIdAt(state.field(findingsField), 30)).toBeNull()
+  })
+
+  it('picks the smallest finding under the position, not the sentence', () => {
+    const state = stateWithFindings(doc, [sentence, inner, other])
+    expect(findingIdAt(state.field(findingsField), 5)).toBe('inner')
+  })
+
+  it('cycles outward through stacked findings on repeated clicks', () => {
+    let state = stateWithFindings(doc, [sentence, inner])
+    expect(findingIdAt(state.field(findingsField), 5)).toBe('inner')
+    state = state.update({ effects: selectFindingEffect.of('inner') }).state
+    expect(findingIdAt(state.field(findingsField), 5)).toBe('sentence')
+    state = state.update({ effects: selectFindingEffect.of('sentence') }).state
+    expect(findingIdAt(state.field(findingsField), 5)).toBe('inner')
+  })
+
+  it('ignores a selected finding elsewhere and picks the smallest hit', () => {
+    const state = stateWithFindings(doc, [sentence, inner, other])
+    const selected = state.update({ effects: selectFindingEffect.of('other') }).state
+    expect(findingIdAt(selected.field(findingsField), 5)).toBe('inner')
   })
 })
 
