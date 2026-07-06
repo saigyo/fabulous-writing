@@ -15,8 +15,8 @@ This document serves two purposes:
 
 ## 1. How this maps to Fabulous Writing today
 
-The app ships five LLM providers, selected in the header (availability is
-detected automatically) or per request via the check API:
+The app ships five built-in LLM providers, selected in the header (availability
+is detected automatically) or per request via the check API:
 
 | Provider  | Reaches | Model selection |
 |-----------|---------|-----------------|
@@ -104,7 +104,7 @@ API cost estimates for ZH/JA.
 
 For users who want a *single* provider with access to all models: OpenRouter
 offers OpenAI-compatible single-key access to many models (small markup, ideal for
-evaluation and failover) — usable today through an OpenAI-compatible slot
+evaluation and failover) — usable today as a `providers.extra_providers` entry
 (section 1).
 
 ---

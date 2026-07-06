@@ -33,7 +33,8 @@ providers:
   # Additional OpenAI-compatible providers become first-class entries in the
   # header and profiles. The entry name derives the API-key env variable
   # (deepseek -> DEEPSEEK_API_KEY); keys are never stored in this file.
-  # Names: lowercase [a-z0-9_], must not shadow the built-in five.
+  # Names: lowercase, starting with a letter ([a-z][a-z0-9_]*); must not
+  # shadow the built-in five.
   # extra_providers:
   #   deepseek:
   #     base_url: https://api.deepseek.com/v1
