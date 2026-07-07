@@ -6,16 +6,20 @@ import {
   deleteTerm,
   getDomains,
   getTerms,
+  updateTerm,
 } from '../api/client'
 import { useMessages } from '../i18n'
 import { useStore } from '../state/store'
 import type { Language, Term } from '../types'
 import {
+  draftToTermPayload,
   filterTerms,
   sortTerms,
+  termToDraft,
   toggleSort,
   type SortCriterion,
   type SortKey,
+  type TermDraft,
 } from './termTable'
 
 export function TerminologyView() {
@@ -113,11 +117,15 @@ interface TermTableProps {
 function TermTable({ domainId, terms, onChanged }: TermTableProps) {
   const languages = useStore((s) => s.languages)
   const m = useMessages()
-  const [language, setLanguage] = useState<Language>('en')
-  const [preferred, setPreferred] = useState('')
-  const [variants, setVariants] = useState('')
-  const [definition, setDefinition] = useState('')
-  const [caseSensitive, setCaseSensitive] = useState(false)
+  const [addDraft, setAddDraft] = useState<TermDraft>({
+    language: 'en',
+    preferred: '',
+    variants: '',
+    definition: '',
+    caseSensitive: false,
+  })
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editDraft, setEditDraft] = useState<TermDraft | null>(null)
   const [sortCriteria, setSortCriteria] = useState<SortCriterion[]>([])
   const [languageFilter, setLanguageFilter] = useState<Language | null>(null)
   const [query, setQuery] = useState('')
@@ -129,20 +137,29 @@ function TermTable({ domainId, terms, onChanged }: TermTableProps) {
   }
 
   async function addTerm() {
-    if (!preferred.trim()) return
-    await createTerm(domainId, {
-      language,
-      preferred: preferred.trim(),
-      forbidden_variants: variants
-        .split(',')
-        .map((v) => v.trim())
-        .filter(Boolean),
-      definition: definition.trim(),
-      case_sensitive: caseSensitive,
-    })
-    setPreferred('')
-    setVariants('')
-    setDefinition('')
+    const payload = draftToTermPayload(addDraft)
+    if (!payload) return
+    await createTerm(domainId, payload)
+    setAddDraft((d) => ({ ...d, preferred: '', variants: '', definition: '' }))
+    onChanged()
+  }
+
+  function startEdit(term: Term) {
+    setEditingId(term.id)
+    setEditDraft(termToDraft(term))
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+    setEditDraft(null)
+  }
+
+  async function saveEdit() {
+    if (editingId === null || editDraft === null) return
+    const payload = draftToTermPayload(editDraft)
+    if (!payload) return
+    await updateTerm(editingId, payload)
+    cancelEdit()
     onChanged()
   }
 
@@ -189,75 +206,62 @@ function TermTable({ domainId, terms, onChanged }: TermTableProps) {
               <td colSpan={5}>{m.noTermsMatch}</td>
             </tr>
           )}
-          {visibleTerms.map((term) => (
-            <tr key={term.id}>
-              <td>{term.language}</td>
-              <td>{term.preferred}</td>
-              <td>
-                {term.forbidden_variants.join(', ')}
-                {term.case_sensitive && (
-                  <span className="case-badge" title={m.caseSensitiveTitle}>
-                    Aa
-                  </span>
-                )}
-              </td>
-              <td>{term.definition}</td>
-              <td>
-                <button
-                  className="icon-button"
-                  title={m.deleteTermTitle}
-                  onClick={() => deleteTerm(term.id).then(onChanged)}
-                >
-                  ✕
-                </button>
-              </td>
-            </tr>
-          ))}
-          <tr className="add-term">
-            <td>
-              <select
-                value={language}
-                onChange={(event) => setLanguage(event.target.value as Language)}
-              >
-                {languages.map((info) => (
-                  <option key={info.code} value={info.code}>
-                    {info.code}
-                  </option>
-                ))}
-              </select>
-            </td>
-            <td>
-              <input
-                value={preferred}
-                placeholder={m.preferredPlaceholder}
-                onChange={(event) => setPreferred(event.target.value)}
-              />
-            </td>
-            <td>
-              <div className="input-with-toggle">
-                <input
-                  value={variants}
-                  placeholder={m.forbiddenPlaceholder}
-                  onChange={(event) => setVariants(event.target.value)}
+          {visibleTerms.map((term) =>
+            term.id === editingId && editDraft ? (
+              <tr key={term.id} className="term-edit-row">
+                <TermFieldCells
+                  draft={editDraft}
+                  onChange={setEditDraft}
+                  onSubmit={() => void saveEdit()}
+                  onCancel={cancelEdit}
                 />
-                <button
-                  type="button"
-                  className="match-case-toggle"
-                  aria-pressed={caseSensitive}
-                  title={m.caseSensitiveTitle}
-                  onClick={() => setCaseSensitive((value) => !value)}
-                >
-                  Aa
-                </button>
-              </div>
-            </td>
-            <td>
-              <input
-                value={definition}
-                placeholder={m.definitionPlaceholder}
-                onChange={(event) => setDefinition(event.target.value)}
-              />
-            </td>
+                <td>
+                  <button
+                    className="icon-button"
+                    title={m.saveEditTitle}
+                    onClick={() => void saveEdit()}
+                  >
+                    ✓
+                  </button>
+                  <button className="icon-button" title={m.cancelEditTitle} onClick={cancelEdit}>
+                    ✕
+                  </button>
+                </td>
+              </tr>
+            ) : (
+              <tr key={term.id}>
+                <td>{term.language}</td>
+                <td>{term.preferred}</td>
+                <td>
+                  {term.forbidden_variants.join(', ')}
+                  {term.case_sensitive && (
+                    <span className="case-badge" title={m.caseSensitiveTitle}>
+                      Aa
+                    </span>
+                  )}
+                </td>
+                <td>{term.definition}</td>
+                <td>
+                  <button
+                    className="icon-button"
+                    title={m.editTermTitle}
+                    onClick={() => startEdit(term)}
+                  >
+                    ✎
+                  </button>
+                  <button
+                    className="icon-button"
+                    title={m.deleteTermTitle}
+                    onClick={() => deleteTerm(term.id).then(onChanged)}
+                  >
+                    ✕
+                  </button>
+                </td>
+              </tr>
+            ),
+          )}
+          <tr className="add-term">
+            <TermFieldCells draft={addDraft} onChange={setAddDraft} onSubmit={() => void addTerm()} />
             <td>
               <button onClick={() => void addTerm()}>{m.add}</button>
             </td>
@@ -265,6 +269,77 @@ function TermTable({ domainId, terms, onChanged }: TermTableProps) {
         </tbody>
       </table>
     </section>
+  )
+}
+
+interface TermFieldCellsProps {
+  draft: TermDraft
+  onChange: (draft: TermDraft) => void
+  onSubmit: () => void
+  /** Absent on the add row: Escape only applies to row edit mode. */
+  onCancel?: () => void
+}
+
+// The four input cells shared by the add-term row and a row in edit mode.
+function TermFieldCells({ draft, onChange, onSubmit, onCancel }: TermFieldCellsProps) {
+  const languages = useStore((s) => s.languages)
+  const m = useMessages()
+
+  function onKeyDown(event: React.KeyboardEvent) {
+    if (event.key === 'Enter') onSubmit()
+    if (event.key === 'Escape') onCancel?.()
+  }
+
+  return (
+    <>
+      <td>
+        <select
+          value={draft.language}
+          onChange={(event) => onChange({ ...draft, language: event.target.value as Language })}
+        >
+          {languages.map((info) => (
+            <option key={info.code} value={info.code}>
+              {info.code}
+            </option>
+          ))}
+        </select>
+      </td>
+      <td>
+        <input
+          value={draft.preferred}
+          placeholder={m.preferredPlaceholder}
+          onKeyDown={onKeyDown}
+          onChange={(event) => onChange({ ...draft, preferred: event.target.value })}
+        />
+      </td>
+      <td>
+        <div className="input-with-toggle">
+          <input
+            value={draft.variants}
+            placeholder={m.forbiddenPlaceholder}
+            onKeyDown={onKeyDown}
+            onChange={(event) => onChange({ ...draft, variants: event.target.value })}
+          />
+          <button
+            type="button"
+            className="match-case-toggle"
+            aria-pressed={draft.caseSensitive}
+            title={m.caseSensitiveTitle}
+            onClick={() => onChange({ ...draft, caseSensitive: !draft.caseSensitive })}
+          >
+            Aa
+          </button>
+        </div>
+      </td>
+      <td>
+        <input
+          value={draft.definition}
+          placeholder={m.definitionPlaceholder}
+          onKeyDown={onKeyDown}
+          onChange={(event) => onChange({ ...draft, definition: event.target.value })}
+        />
+      </td>
+    </>
   )
 }
 
