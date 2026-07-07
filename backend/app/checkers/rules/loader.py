@@ -63,10 +63,16 @@ class RuleSpec(BaseModel):
 
     @model_validator(mode="after")
     def check_required_fields(self) -> "RuleSpec":
-        if self.extends == "existence" and not (self.tokens or self.raw):
-            raise ValueError("existence rules need 'tokens' or 'raw'")
-        if self.extends == "substitution" and not self.swap:
-            raise ValueError("substitution rules need 'swap'")
+        if self.extends == "existence":
+            if not (self.tokens or self.raw):
+                raise ValueError("existence rules need 'tokens' or 'raw'")
+            if any(not t for t in self.tokens) or any(not r for r in self.raw):
+                raise ValueError("existence tokens/raw entries must be non-empty")
+        if self.extends == "substitution":
+            if not self.swap:
+                raise ValueError("substitution rules need 'swap'")
+            if any(not bad for bad in self.swap):
+                raise ValueError("substitution keys must be non-empty")
         if self.extends == "occurrence":
             if self.count == "matches" and not self.token:
                 raise ValueError("occurrence rules with count: matches need 'token'")

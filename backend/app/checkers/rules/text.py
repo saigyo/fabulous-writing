@@ -62,7 +62,13 @@ _CJK_CHAR = re.compile(
 
 
 def bounded_pattern(fragment: str) -> str:
-    """Wrap a regex fragment in word boundaries, edge-aware for CJK."""
+    """Wrap a regex fragment in word boundaries, edge-aware for CJK.
+
+    Only the literal edge characters are inspected: a fragment whose edge
+    is a regex metachar (e.g. ``(行か|読ま)せる``) keeps ``\\b`` and will
+    not match adjacent to kana/kanji — put such patterns in ``raw:``,
+    which is never wrapped.
+    """
     left = "" if _CJK_CHAR.match(fragment[0]) else r"\b"
     right = "" if _CJK_CHAR.match(fragment[-1]) else r"\b"
     return rf"{left}(?:{fragment}){right}"

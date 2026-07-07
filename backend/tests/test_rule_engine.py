@@ -433,3 +433,21 @@ class TestCjkBoundaries:
         engine = RuleEngine(rules_dir)
         assert engine.check("The catalog is big.", Language.EN) == []
         assert len(engine.check("The cat sleeps.", Language.EN)) == 1
+
+    def test_empty_existence_token_is_load_error(self, rules_dir: Path) -> None:
+        write_rule(
+            rules_dir, "ja", "style/empty.yml",
+            "extends: existence\nmessage: m\ncategory: style\ntokens: ['']\n",
+        )
+        engine = RuleEngine(rules_dir)
+        assert len(engine.errors) == 1
+        assert engine.check("何でも", Language.JA) == []  # must not raise
+
+    def test_empty_substitution_key_is_load_error(self, rules_dir: Path) -> None:
+        write_rule(
+            rules_dir, "ja", "style/empty-swap.yml",
+            "extends: substitution\nmessage: \"%s %s\"\ncategory: style\nswap:\n  '': x\n",
+        )
+        engine = RuleEngine(rules_dir)
+        assert len(engine.errors) == 1
+        assert engine.check("何でも", Language.JA) == []
