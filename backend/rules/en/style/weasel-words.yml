@@ -15,3 +15,8 @@ tokens:
   - various
   - a number of
   - in some cases
+examples:
+  bad:
+    - "This is very interesting and somewhat useful."
+  good:
+    - "This is a precise and useful result."

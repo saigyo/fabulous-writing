@@ -19,6 +19,14 @@ CheckType = Literal[
 NLP_CHECK_TYPES = {"token_pattern", "dependency"}
 
 
+class RuleExamples(BaseModel):
+    """Self-documenting example sentences: bad ones must trigger the rule,
+    good ones must not. Rendered in the rules view and run as tests."""
+
+    bad: list[str] = Field(min_length=1)
+    good: list[str] = Field(min_length=1)
+
+
 class RuleSpec(BaseModel):
     extends: CheckType
     message: str
@@ -51,6 +59,8 @@ class RuleSpec(BaseModel):
                 f"pack '{value}' must be a lowercase slug ([a-z][a-z0-9-]*)"
             )
         return value
+
+    examples: RuleExamples | None = None
 
     @model_validator(mode="after")
     def check_required_fields(self) -> "RuleSpec":
