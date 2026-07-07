@@ -1,0 +1,16 @@
+# ちゃう/とく contractions of てしまう/ておく (probed: しちゃった →
+# ちゃっ/AUX/LEMMA=ちゃう, やっとく → とく/AUX/LEMMA=とく). じゃう/どく
+# are the rendaku twins after ん/び/み stems.
+extends: token_pattern
+message: "「%s」は話し言葉の縮約形です — 技術文書では「〜てしまう」「〜ておく」と書いてください。"
+level: warning
+category: style
+pack: techdocs
+pattern:
+  - {LEMMA: {IN: [ちゃう, じゃう, とく, どく]}, POS: AUX}
+examples:
+  bad:
+    - "設定を保存しとくと便利です。"
+    - "ファイルを消しちゃった場合の復元手順です。"
+  good:
+    - "設定を保存しておくと便利です。"

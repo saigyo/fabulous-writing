@@ -1,0 +1,11 @@
+extends: existence
+message: "「%s」は誇張表現です — 具体的な利点や数字で示してください。"
+level: suggestion
+category: style
+pack: marketing
+tokens: [究極, 最強, 絶対, 圧倒的, 爆速, 革命的, 神レベル, 異次元]
+examples:
+  bad:
+    - "究極の使いやすさを実現した最強のアプリです。"
+  good:
+    - "起動時間を50%短縮した使いやすいアプリです。"

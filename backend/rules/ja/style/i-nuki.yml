@@ -1,0 +1,16 @@
+# Demonstrates: い抜き contractions surface as AUX tokens with their own
+# lemma (してる → し+てる/AUX, 読んでる → 読ん+でる/AUX). The verb 出る is
+# POS=VERB, never AUX, so it cannot false-positive here.
+extends: token_pattern
+message: "「%s」はい抜き言葉です — 技術文書では「〜ている」と書いてください。"
+level: warning
+category: style
+pack: techdocs
+pattern:
+  - {LEMMA: {IN: [てる, でる]}, POS: AUX}
+examples:
+  bad:
+    - "サーバーが動いてるか確認します。"
+  good:
+    - "サーバーが動いているか確認します。"
+    - "会議室から出るところです。"

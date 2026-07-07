@@ -1,0 +1,12 @@
+extends: existence
+message: "感嘆符の連続は逆効果です — 1つで十分です。"
+level: suggestion
+category: style
+pack: marketing
+raw:
+  - '[！!]{2,}'
+examples:
+  bad:
+    - "今すぐダウンロード！！"
+  good:
+    - "今すぐダウンロード！"

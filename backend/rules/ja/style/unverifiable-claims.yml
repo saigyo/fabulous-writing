@@ -1,0 +1,18 @@
+# Mixed-width claims (業界No.1) as raw: a Latin-digit edge would demand a
+# \b before following kana, which never matches — raw patterns skip the
+# boundary wrapping entirely.
+extends: existence
+message: "「%s」— 根拠を示せない優位性の主張は景品表示法上のリスクがあります。出典や条件を添えてください。"
+level: warning
+category: style
+pack: marketing
+tokens: [日本一, 世界一, 世界初, 国内初, 業界初]
+raw:
+  - '業界No\.?1'
+  - '満足度No\.?1'
+  - '売上No\.?1'
+examples:
+  bad:
+    - "業界No.1の性能を誇る、日本一のサービスです。"
+  good:
+    - "2025年のABC調査で最高評価を獲得したサービスです。"

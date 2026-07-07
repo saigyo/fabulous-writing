@@ -1,0 +1,13 @@
+extends: token_pattern
+message: "「%s」— 技術文書では推測ではなく事実を書いてください。確信が持てない場合は条件を明記します。"
+level: warning
+category: style
+pack: techdocs
+pattern:
+  - {TEXT: と}
+  - {LEMMA: 思う}
+examples:
+  bad:
+    - "この設定で動作すると思います。"
+  good:
+    - "この設定で動作します。"

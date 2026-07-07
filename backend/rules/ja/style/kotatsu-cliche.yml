@@ -1,0 +1,11 @@
+extends: existence
+message: "「%s」は定型フレーズです — 記事の内容に基づいた具体的な導入・締めくくりを書きましょう。"
+level: suggestion
+category: style
+pack: blog
+tokens: [いかがでしたか, いかがだったでしょうか, 個人的な意見ですが, あくまで個人の感想です]
+examples:
+  bad:
+    - "新しいカメラの使い心地、いかがでしたか。"
+  good:
+    - "新しいカメラは暗所撮影で真価を発揮しました。"
