@@ -1114,3 +1114,26 @@ Added Stimmt/Klappt/Passt and the conjunctions Wenn/Ob/Sobald/Solang/Weil to
 the `grammar/deppenapostroph.yml` contraction stoplist; „Stimmt's?",
 „Klappt's morgen?" and „Wenn's regnet …" verified clean through the engine
 while „Anna's Laden" still fires. Catalog 50 passed, full suite 445 passed.
+
+## 2026-07-07 — Task 9: frontend carries packs_on (types, activation, save payloads)
+
+Commit: `ac6768a`
+
+TDD per the implementation plan. `types.ts`: `RuleInfo` gained `pack: string
+| null` and `examples: { bad, good }`; `Profile` gained `packs_on: string[]`.
+`api/client.ts`: `RuleConfig` gained `packs_on`, `RulesResponse` gained
+`packs: string[]`. `profiles/profile.ts`: `effectiveRuleConfig` now forwards
+`packs_on`; `isRuleActive` takes a mandatory 4th `pack: string | null` arg and
+gates the XOR on `packs_on.includes(pack)` when the rule belongs to a pack
+(mirrors the backend's `(pack in packs_on AND category on) XOR exception`).
+Every PUT/POST sender updated to carry `packs_on`: `ProfilesView.tsx`
+(`create()` and `save()`), `header/ProfileSelector.tsx` (`saveOverrides()`),
+`rules/RulesView.tsx` (`saveRuleSelection()`, plus its `isRuleActive` call
+site now passes `rule.pack`). `rules/catalog.test.ts`'s `RuleInfo` test
+fixture (not named in the plan, but caught by `tsc`) got `pack: null` and
+`examples: { bad: [], good: [] }` defaults. Added the plan's
+`pack-aware rule activation` describe block to `profile.test.ts` plus
+`packs_on` fixture defaults in the existing `profile()`/`base` helpers.
+`npx vitest run`: 17 files / 137 tests green. `npm run build` (the real type
+gate) clean; `npm run lint` only pre-existing `react-hooks/exhaustive-deps`
+warnings, unrelated to this change.
