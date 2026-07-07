@@ -1,4 +1,8 @@
 # Claims that competitors or regulators can challenge — legal risk.
+# « numéro 1 » / « n° 1 » are only flagged in their qualified market-claim
+# forms: the bare phrase is everyday French (addresses, magazine issues,
+# bus lines, « priorité numéro 1 ») and must not fire at warning level —
+# same reasoning as EN's `number one`/`#1` and JA's qualified 業界No.1.
 extends: existence
 message: "«%s» est une affirmation invérifiable — étayez-la ou supprimez-la (risque juridique)."
 level: warning
@@ -6,8 +10,10 @@ category: style
 pack: marketing
 ignorecase: true
 tokens:
-  - numéro 1
-  - "n° 1"
+  - numéro 1 du marché
+  - numéro 1 mondial
+  - "n° 1 du marché"
+  - "n° 1 mondial"
   - leader mondial
   - le meilleur du marché
   - la meilleure du marché
@@ -17,3 +23,4 @@ examples:
     - "SuperWidget est le numéro 1 du marché."
   good:
     - "SuperWidget est utilisé par 12 000 équipes."
+    - "Notre priorité numéro 1 est la sécurité."

@@ -3,6 +3,8 @@
 # infinitive « pallier » ADJ in « il faut pallier à … » but keeps the
 # lemma, so LEMMA alone is the reliable signal. The noun « palier »
 # (single l) has its own lemma and cannot collide.
+# Known recall gap: passé simple « pallia » escapes — fr_core_news_sm
+# does not lemmatize it to « pallier ». Accepted.
 extends: token_pattern
 message: "«%s» — « pallier » est transitif direct : « pallier ce problème », sans « à »."
 level: warning

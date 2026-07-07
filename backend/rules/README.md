@@ -229,6 +229,12 @@ staying simple and fast. Known gaps, from review:
   infinitive « pallier » as `ADJ` in « il faut pallier à … » but keeps its
   lemma, so bare `LEMMA` is the only reliable signal. The homograph « palier »
   (landing/threshold, single l) has a distinct lemma and cannot collide.
+  Known recall gap: passé simple « pallia » escapes (the model does not
+  lemmatize it to « pallier ») — accepted.
+- **style.affirmations-inverifiables** only flags « numéro 1 »/« n° 1 » in
+  their qualified market-claim forms (« … du marché », « … mondial »): the
+  bare phrase is everyday French (addresses, magazine issues, bus lines,
+  « priorité numéro 1 ») and would over-fire at warning level.
 - **grammar.apres-que-subjonctif** only checks subjunctive morphology within
   3 tokens of « après que/qu' », to bridge short subject NPs without reaching
   into an unrelated clause; both straight and typographic apostrophes are
