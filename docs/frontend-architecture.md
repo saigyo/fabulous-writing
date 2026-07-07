@@ -221,10 +221,20 @@ precedence rule):
   semantics: `(pack in packs_on AND category on) XOR exception` for pack rules (`pack`
   non-null), the plain `(category on) XOR exception` for general rules (`pack === null`)
   — so `RulesView` shows activation states without asking the server. `RuleInfo.pack`
-  and `RuleInfo.examples` (bad/good) came from the backend's rule-pack feature; every
-  `PUT`/POST profile sender (`ProfilesView.tsx`, `ProfileSelector.tsx`,
-  `RulesView.tsx`'s `saveRuleSelection`) carries `packs_on` the same way it carries
-  `categories_off`/`rule_exceptions`.
+  and `RuleInfo.examples` (bad/good, typed as `RuleExamples`) came from the backend's
+  rule-pack feature; every `PUT`/POST profile sender (`ProfilesView.tsx`,
+  `ProfileSelector.tsx`, `RulesView.tsx`'s `saveRuleSelection`) carries `packs_on` the
+  same way it carries `categories_off`/`rule_exceptions`.
+- `rules/catalog.ts`'s `splitByPack(rules)` partitions the catalog into `general`
+  (non-packed rules, grouped by category exactly like `groupRulesByCategory`) and
+  `packs` (one section per pack, packs sorted alphabetically, rules within a pack
+  sorted by id). `RulesView.tsx` renders the general groups first, then a
+  `.rules-pack` section per pack with its own heading checkbox: toggling it writes
+  `packs_on` via `togglePack`, which — mirroring `toggleCategory`'s fresh-start
+  semantics — also clears that pack's rules from `rule_exceptions`. Every `RuleCard`
+  (general or packed) renders `rule.examples.bad`/`good` as "✗ Flags …" / "✓ Doesn't
+  flag …" lines under the detail summary, so the rules view doubles as the
+  user-facing rule documentation.
 
 Profile loading lives in `App.tsx`: on startup and on language change, profiles are
 fetched and the remembered profile for that language (`lastProfileByLanguage`,
