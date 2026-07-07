@@ -65,6 +65,7 @@ def standard_defaults(language: Language, demos_dir: Path) -> dict:
     return {
         "categories_off": [],
         "rule_exceptions": [],
+        "packs_on": [],
         "domain_ids": [],
         "llm_tier": "balanced",
         "llm_provider": None,

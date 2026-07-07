@@ -15,6 +15,7 @@ class ProfileCreate(BaseModel):
     name: str
     categories_off: list[str] = Field(default_factory=list)
     rule_exceptions: list[str] = Field(default_factory=list)
+    packs_on: list[str] = Field(default_factory=list)
     domain_ids: list[int] = Field(default_factory=list)
     llm_provider: str | None = None
     llm_model: str | None = None
@@ -27,6 +28,7 @@ class ProfileUpdate(BaseModel):
     name: str
     categories_off: list[str]
     rule_exceptions: list[str]
+    packs_on: list[str]
     domain_ids: list[int]
     llm_provider: str | None
     llm_model: str | None
@@ -71,6 +73,7 @@ def create_profile(request: Request, body: ProfileCreate) -> Profile:
             body.name.strip(),
             categories_off=body.categories_off,
             rule_exceptions=exceptions,
+            packs_on=body.packs_on,
             domain_ids=domains,
             llm_provider=body.llm_provider,
             llm_model=body.llm_model,
@@ -101,6 +104,7 @@ def update_profile(request: Request, profile_id: int, body: ProfileUpdate) -> Pr
             name=body.name.strip(),
             categories_off=body.categories_off,
             rule_exceptions=exceptions,
+            packs_on=body.packs_on,
             domain_ids=domains,
             llm_provider=body.llm_provider,
             llm_model=body.llm_model,

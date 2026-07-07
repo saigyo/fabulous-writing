@@ -156,3 +156,42 @@ def test_seed_survives_user_profile_named_standard(store):
     # The colliding user profile blocks the seeded Standard for EN; seeding
     # must not crash and must still seed the other languages.
     assert store.standard_profile(L.DE) is not None
+
+
+def test_packs_on_roundtrip(tmp_path) -> None:
+    store = ProfileStore(tmp_path / "p.sqlite")
+    profile = store.create_profile(
+        Language.EN, "Docs", packs_on=["techdocs", "blog"]
+    )
+    assert profile.packs_on == ["techdocs", "blog"]
+    updated = store.update_profile(profile.id, packs_on=["techdocs"])
+    assert updated is not None and updated.packs_on == ["techdocs"]
+    assert store.get_profile(profile.id).packs_on == ["techdocs"]
+
+
+def test_packs_on_migration_defaults_empty(tmp_path) -> None:
+    # A database created before the column existed gets it via _migrate.
+    import sqlite3
+
+    db = tmp_path / "old.sqlite"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """CREATE TABLE profiles (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               language TEXT NOT NULL, name TEXT NOT NULL,
+               is_standard INTEGER NOT NULL DEFAULT 0,
+               categories_off TEXT NOT NULL DEFAULT '[]',
+               rule_exceptions TEXT NOT NULL DEFAULT '[]',
+               domain_ids TEXT NOT NULL DEFAULT '[]',
+               llm_provider TEXT, llm_model TEXT, llm_tier TEXT,
+               llm_instructions TEXT NOT NULL DEFAULT '',
+               example_text TEXT NOT NULL DEFAULT '',
+               UNIQUE(language, name));
+           CREATE TABLE profile_seed_markers (language TEXT PRIMARY KEY);
+           INSERT INTO profiles (language, name) VALUES ('en', 'Old');"""
+    )
+    conn.commit()
+    conn.close()
+    store = ProfileStore(db)
+    old = store.list_profiles(Language.EN)[0]
+    assert old.packs_on == []

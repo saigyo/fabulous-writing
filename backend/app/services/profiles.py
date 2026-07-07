@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS profiles (
     is_standard INTEGER NOT NULL DEFAULT 0,
     categories_off TEXT NOT NULL DEFAULT '[]',
     rule_exceptions TEXT NOT NULL DEFAULT '[]',
+    packs_on TEXT NOT NULL DEFAULT '[]',
     domain_ids TEXT NOT NULL DEFAULT '[]',
     llm_provider TEXT,
     llm_model TEXT,
@@ -35,6 +36,7 @@ class Profile(BaseModel):
     is_standard: bool = False
     categories_off: list[str] = Field(default_factory=list)
     rule_exceptions: list[str] = Field(default_factory=list)
+    packs_on: list[str] = Field(default_factory=list)
     domain_ids: list[int] = Field(default_factory=list)
     llm_provider: str | None = None
     llm_model: str | None = None
@@ -51,6 +53,7 @@ def _row_to_profile(row: sqlite3.Row) -> Profile:
         is_standard=bool(row["is_standard"]),
         categories_off=json.loads(row["categories_off"]),
         rule_exceptions=json.loads(row["rule_exceptions"]),
+        packs_on=json.loads(row["packs_on"]),
         domain_ids=json.loads(row["domain_ids"]),
         llm_provider=row["llm_provider"],
         llm_model=row["llm_model"],
@@ -75,6 +78,10 @@ class ProfileStore:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(profiles)")}
         if "llm_tier" not in columns:
             conn.execute("ALTER TABLE profiles ADD COLUMN llm_tier TEXT")
+        if "packs_on" not in columns:
+            conn.execute(
+                "ALTER TABLE profiles ADD COLUMN packs_on TEXT NOT NULL DEFAULT '[]'"
+            )
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
@@ -106,6 +113,7 @@ class ProfileStore:
         is_standard: bool = False,
         categories_off: list[str] | None = None,
         rule_exceptions: list[str] | None = None,
+        packs_on: list[str] | None = None,
         domain_ids: list[int] | None = None,
         llm_provider: str | None = None,
         llm_model: str | None = None,
@@ -118,15 +126,16 @@ class ProfileStore:
                 cursor = conn.execute(
                     """INSERT INTO profiles
                        (language, name, is_standard, categories_off, rule_exceptions,
-                        domain_ids, llm_provider, llm_model, llm_tier, llm_instructions,
-                        example_text)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        packs_on, domain_ids, llm_provider, llm_model, llm_tier,
+                        llm_instructions, example_text)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         language.value,
                         name,
                         int(is_standard),
                         json.dumps(categories_off or []),
                         json.dumps(rule_exceptions or []),
+                        json.dumps(packs_on or []),
                         json.dumps(domain_ids or []),
                         llm_provider,
                         llm_model,
@@ -147,6 +156,7 @@ class ProfileStore:
         "name",
         "categories_off",
         "rule_exceptions",
+        "packs_on",
         "domain_ids",
         "llm_provider",
         "llm_model",
@@ -166,13 +176,15 @@ class ProfileStore:
             with self._connect() as conn:
                 conn.execute(
                     """UPDATE profiles SET name = ?, categories_off = ?,
-                       rule_exceptions = ?, domain_ids = ?, llm_provider = ?,
-                       llm_model = ?, llm_tier = ?, llm_instructions = ?, example_text = ?
+                       rule_exceptions = ?, packs_on = ?, domain_ids = ?,
+                       llm_provider = ?, llm_model = ?, llm_tier = ?,
+                       llm_instructions = ?, example_text = ?
                        WHERE id = ?""",
                     (
                         merged.name,
                         json.dumps(merged.categories_off),
                         json.dumps(merged.rule_exceptions),
+                        json.dumps(merged.packs_on),
                         json.dumps(merged.domain_ids),
                         merged.llm_provider,
                         merged.llm_model,

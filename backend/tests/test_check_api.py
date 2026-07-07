@@ -296,3 +296,20 @@ def test_llm_progress_events_stream(tmp_path: Path) -> None:
     # 5 (first) and 40 (+35) pass the >=25-token throttle; 41 (+1) does not.
     assert progress == [5, 40]
     assert events[-1][0] == "done"
+
+
+def test_check_accepts_packs_on(client) -> None:
+    response = client.post(
+        "/api/checks",
+        json={
+            "text": "This is very interesting.",
+            "language": "en",
+            "checkers": ["rules"],
+            "rule_config": {
+                "categories_off": [],
+                "exceptions": [],
+                "packs_on": ["marketing"],
+            },
+        },
+    )
+    assert response.status_code == 202

@@ -33,9 +33,9 @@ def test_create_update_delete_profile(client):
     updated = client.put(
         f"/api/profiles/{pid}",
         json={"name": "Blog posts", "categories_off": ["vividness"],
-              "rule_exceptions": [], "domain_ids": [], "llm_provider": "ollama",
-              "llm_model": None, "llm_tier": None, "llm_instructions": "Casual tone.",
-              "example_text": "Sample."},
+              "rule_exceptions": [], "packs_on": [], "domain_ids": [],
+              "llm_provider": "ollama", "llm_model": None, "llm_tier": None,
+              "llm_instructions": "Casual tone.", "example_text": "Sample."},
     )
     assert updated.status_code == 200
     assert updated.json()["name"] == "Blog posts"
@@ -108,6 +108,7 @@ def test_profile_accepts_llm_tier(client: TestClient) -> None:
             "name": "Tiered",
             "categories_off": [],
             "rule_exceptions": [],
+            "packs_on": [],
             "domain_ids": [],
             "llm_provider": None,
             "llm_model": None,
@@ -133,3 +134,27 @@ def test_profile_update_requires_llm_tier(client: TestClient) -> None:
             if k not in ("id", "is_standard", "language", "llm_tier")}
     response = client.put(f"/api/profiles/{std['id']}", json=body)
     assert response.status_code == 422
+
+
+def test_profile_api_carries_packs_on(client) -> None:
+    created = client.post(
+        "/api/profiles",
+        json={"language": "en", "name": "Packy", "packs_on": ["marketing"]},
+    ).json()
+    assert created["packs_on"] == ["marketing"]
+    updated = client.put(
+        f"/api/profiles/{created['id']}",
+        json={
+            "name": "Packy",
+            "categories_off": [],
+            "rule_exceptions": [],
+            "packs_on": ["marketing", "blog"],
+            "domain_ids": [],
+            "llm_provider": None,
+            "llm_model": None,
+            "llm_tier": "balanced",
+            "llm_instructions": "",
+            "example_text": "",
+        },
+    ).json()
+    assert updated["packs_on"] == ["marketing", "blog"]
