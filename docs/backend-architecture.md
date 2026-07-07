@@ -344,9 +344,12 @@ to whole sentences (`expand_to_sentences`) and asks for full rewrites.
 ## Checking profiles
 
 A **profile** bundles language-specific checking presets: rule selection
-(`categories_off` + `rule_exceptions`), terminology `domain_ids`, an LLM
+(`categories_off` + `rule_exceptions`), the use-case packs it enables
+(`packs_on`, JSON-encoded list of pack slugs), terminology `domain_ids`, an LLM
 provider/model or quality tier, free-form `llm_instructions`, and an `example_text`
-for the editor's Load-example button.
+for the editor's Load-example button. `packs_on` flows unmodified from
+`ProfileCreate`/`ProfileUpdate` through the store into `RuleConfig.packs_on`
+when a check runs (see Rule engine below); fresh seeds default it to `[]`.
 
 - **Storage** (`app/services/profiles.py`): a `profiles` table (JSON-encoded list
   columns, `UNIQUE(language, name)`) beside the terminology tables, plus

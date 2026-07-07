@@ -1004,3 +1004,15 @@ have `pack=None`, so `packs` is `[]` today — EN pack rules land in a later tas
 Added `test_rules_carry_pack_examples_and_packs_index` to
 `backend/tests/test_rules_api.py` (TDD: confirmed it failed with `KeyError: 'pack'`
 before the implementation). Full suite: 369 passed.
+
+## 2026-07-07 — Profiles carry packs_on
+
+Commit: `df0729b`
+
+Task 5 of the use-case-packs plan. Added a `packs_on TEXT NOT NULL DEFAULT '[]'`
+column to `backend/app/services/profiles.py` (`_SCHEMA`, `_migrate` guard mirroring
+`llm_tier`, `Profile.packs_on`, `create_profile`/`update_profile` plumbing), exposed
+it on `ProfileCreate`/`ProfileUpdate` in `backend/app/api/profiles.py`, and added it
+to `standard_defaults` in `backend/app/services/seed_profiles.py`. The check API
+already passed `RuleConfig.packs_on` through untouched, so
+`test_check_accepts_packs_on` only pins that contract. Full suite: 373 passed.
