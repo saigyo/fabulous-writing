@@ -1931,3 +1931,15 @@ Follow-up: rules-view collapse state moved into the persisted zustand store
 (`rulesCollapsed`, survives tab switches and reloads), plus expand-all /
 collapse-all icon buttons (VS-Code-style fold/unfold chevron SVGs) in the
 title row next to the rule counter, with localized hover titles.
+
+## 2026-07-07 — README screenshots refreshed
+All four README screenshots recaptured after today's UI work (sparkle auto
+toggle, terminology alignment/endonyms/semibold-preferred + edit buttons,
+rules-view dots/collapse/fold buttons). capture-screenshots.mjs reworked:
+the editor shot moves last and switches the EN Standard profile to the
+local tier (slow mistral-nemo keeps the "LLM checking…" status and the
+"Checking…" button on screen; tier restored via API afterwards), catches
+the token counter live, and keeps a finding card expanded; the earlier
+shots therefore show a pristine idle header. Terminology shot now selects
+the fuller "Product docs" domain; rules shot is framed on a section
+heading so the new category dot/count/chevron and toggles are visible.
