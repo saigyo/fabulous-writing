@@ -1910,3 +1910,7 @@ a first thead row (`term-controls-row`), so the selector sits exactly above
 and as wide as the language column and the search field matches the
 Preferred column — alignment holds in all locales automatically because the
 table does the sizing. Verified geometrically and by screenshot (de, en).
+Follow-up: the terminology table now shows language endonyms ("Deutsch",
+"日本語") instead of raw ISO codes — rows, filter, and add/edit selects —
+via a new `languageName(code, languages)` helper (test-first), matching
+the header's language selector. Codes remain the stored/API value.

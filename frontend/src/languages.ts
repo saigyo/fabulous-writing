@@ -5,6 +5,11 @@ export function languageLabel(info: LanguageInfo, messages: Messages): string {
   return info.nlp_available ? info.name : messages.basicChecksOnly(info.name)
 }
 
+/** Endonym for a language code ("de" → "Deutsch"), the code itself if unknown. */
+export function languageName(code: string, languages: LanguageInfo[]): string {
+  return languages.find((info) => info.code === code)?.name ?? code
+}
+
 // Shown until GET /api/languages responds (or when the backend is unreachable).
 export const FALLBACK_LANGUAGES: LanguageInfo[] = [
   { code: 'en', name: 'English', nlp_available: true, model: null },

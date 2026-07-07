@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import { en } from './i18n/en'
-import { FALLBACK_LANGUAGES, languageLabel } from './languages'
+import { FALLBACK_LANGUAGES, languageLabel, languageName } from './languages'
+
+describe('languageName', () => {
+  it('resolves a code to its endonym', () => {
+    expect(languageName('ja', FALLBACK_LANGUAGES)).toBe('日本語')
+    expect(languageName('de', FALLBACK_LANGUAGES)).toBe('Deutsch')
+  })
+
+  it('falls back to the code when unknown', () => {
+    expect(languageName('xx', FALLBACK_LANGUAGES)).toBe('xx')
+    expect(languageName('en', [])).toBe('en')
+  })
+})
 
 describe('languageLabel', () => {
   it('shows the plain name when NLP is available', () => {

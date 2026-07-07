@@ -10,6 +10,7 @@ import {
   updateTerm,
 } from '../api/client'
 import { useMessages } from '../i18n'
+import { languageName } from '../languages'
 import { useStore } from '../state/store'
 import type { Language, Term } from '../types'
 import {
@@ -224,7 +225,7 @@ function TermTable({ domainId, terms, onChanged }: TermTableProps) {
                 <option value="">{m.allLanguages}</option>
                 {languages.map((info) => (
                   <option key={info.code} value={info.code}>
-                    {info.code}
+                    {info.name}
                   </option>
                 ))}
               </select>
@@ -278,7 +279,7 @@ function TermTable({ domainId, terms, onChanged }: TermTableProps) {
               </tr>
             ) : (
               <tr key={term.id}>
-                <td>{term.language}</td>
+                <td>{languageName(term.language, languages)}</td>
                 <td>{term.preferred}</td>
                 <td>
                   {term.forbidden_variants.join(', ')}
@@ -347,7 +348,7 @@ function TermFieldCells({ draft, onChange, onSubmit, onCancel }: TermFieldCellsP
         >
           {languages.map((info) => (
             <option key={info.code} value={info.code}>
-              {info.code}
+              {info.name}
             </option>
           ))}
         </select>
