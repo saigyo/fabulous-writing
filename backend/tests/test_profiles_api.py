@@ -62,10 +62,12 @@ def test_reset_standard(client):
     body = {k: v for k, v in std.items()
             if k not in ("id", "is_standard", "language")}
     body["llm_instructions"] = "changed"
+    body["packs_on"] = ["marketing"]
     client.put(f"/api/profiles/{std['id']}", json=body)
     reset = client.post(f"/api/profiles/{std['id']}/reset")
     assert reset.status_code == 200
     assert reset.json()["llm_instructions"] == ""
+    assert reset.json()["packs_on"] == []
     assert reset.json()["example_text"].startswith("At the end of the day")
 
     other = client.post(
