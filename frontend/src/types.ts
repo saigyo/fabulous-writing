@@ -79,6 +79,8 @@ export interface RuleInfo {
   requires_nlp: boolean
   file: string
   detail: Record<string, unknown>
+  pack: string | null
+  examples: { bad: string[]; good: string[] }
 }
 
 export interface RuleError {
@@ -106,6 +108,7 @@ export interface Profile {
   is_standard: boolean
   categories_off: Category[]
   rule_exceptions: string[]
+  packs_on: string[]
   domain_ids: number[]
   llm_provider: string | null
   llm_model: string | null

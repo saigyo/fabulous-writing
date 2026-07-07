@@ -23,6 +23,7 @@ export function ProfileSelector() {
       name: selected.name,
       categories_off: selected.categories_off,
       rule_exceptions: selected.rule_exceptions,
+      packs_on: selected.packs_on,
       domain_ids: domainIds,
       llm_tier: tier,
       llm_provider: tier === null ? provider : null,

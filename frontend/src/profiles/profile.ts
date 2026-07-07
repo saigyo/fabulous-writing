@@ -83,17 +83,18 @@ export function effectiveRuleConfig(profile: Profile | null): RuleConfig | null 
   return {
     categories_off: profile.categories_off,
     exceptions: profile.rule_exceptions,
+    packs_on: profile.packs_on,
   }
 }
 
-/** Mirrors the backend rule-activation semantics (XOR). */
+/** Mirrors the backend rule-activation semantics (pack gate, then XOR). */
 export function isRuleActive(
   profile: Profile,
   category: Category,
   ruleId: string,
+  pack: string | null,
 ): boolean {
-  return (
-    !profile.categories_off.includes(category) !==
-    profile.rule_exceptions.includes(ruleId)
-  )
+  let base = !profile.categories_off.includes(category)
+  if (pack !== null) base = base && profile.packs_on.includes(pack)
+  return base !== profile.rule_exceptions.includes(ruleId)
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Profile, Tier } from '../types'
+import type { Category, Profile, Tier } from '../types'
 import {
   applyProfileToHeader,
   effectiveRuleConfig,
@@ -16,6 +16,7 @@ function profile(overrides: Partial<Profile> = {}): Profile {
     is_standard: true,
     categories_off: [],
     rule_exceptions: [],
+    packs_on: [],
     domain_ids: [2, 1],
     llm_provider: 'ollama',
     llm_model: null,
@@ -68,10 +69,15 @@ describe('isProfileDirty', () => {
 
 describe('effectiveRuleConfig', () => {
   it('maps the profile fields', () => {
-    const p = profile({ categories_off: ['style'], rule_exceptions: ['a.b'] })
+    const p = profile({
+      categories_off: ['style'],
+      rule_exceptions: ['a.b'],
+      packs_on: ['techdocs'],
+    })
     expect(effectiveRuleConfig(p)).toEqual({
       categories_off: ['style'],
       exceptions: ['a.b'],
+      packs_on: ['techdocs'],
     })
   })
 
@@ -83,17 +89,46 @@ describe('effectiveRuleConfig', () => {
 describe('isRuleActive', () => {
   it('mirrors the backend XOR semantics', () => {
     const p = profile({ categories_off: ['style'], rule_exceptions: ['style.a', 'grammar.b'] })
-    expect(isRuleActive(p, 'style', 'style.a')).toBe(true) // off + exception -> on
-    expect(isRuleActive(p, 'style', 'style.x')).toBe(false) // off -> off
-    expect(isRuleActive(p, 'grammar', 'grammar.b')).toBe(false) // on + exception -> off
-    expect(isRuleActive(p, 'grammar', 'grammar.y')).toBe(true) // on -> on
+    expect(isRuleActive(p, 'style', 'style.a', null)).toBe(true) // off + exception -> on
+    expect(isRuleActive(p, 'style', 'style.x', null)).toBe(false) // off -> off
+    expect(isRuleActive(p, 'grammar', 'grammar.b', null)).toBe(false) // on + exception -> off
+    expect(isRuleActive(p, 'grammar', 'grammar.y', null)).toBe(true) // on -> on
+  })
+})
+
+describe('pack-aware rule activation', () => {
+  const base = {
+    id: 1, language: 'en', name: 'P', is_standard: false,
+    categories_off: [], rule_exceptions: [], packs_on: ['techdocs'],
+    domain_ids: [], llm_provider: null, llm_model: null, llm_tier: null,
+    llm_instructions: '', example_text: '',
+  } as Profile
+
+  it('keeps general rules on the XOR semantics', () => {
+    expect(isRuleActive(base, 'style', 'style.plain', null)).toBe(true)
+  })
+  it('activates pack rules only when the pack is on', () => {
+    expect(isRuleActive(base, 'style', 'style.docs', 'techdocs')).toBe(true)
+    expect(isRuleActive(base, 'style', 'style.hype', 'marketing')).toBe(false)
+  })
+  it('lets exceptions invert pack membership', () => {
+    const p = { ...base, rule_exceptions: ['style.docs', 'style.cherry'] }
+    expect(isRuleActive(p, 'style', 'style.docs', 'techdocs')).toBe(false)
+    expect(isRuleActive(p, 'style', 'style.cherry', 'marketing')).toBe(true)
+  })
+  it('lets the category toggle win over the pack', () => {
+    const p = { ...base, categories_off: ['style' as Category] }
+    expect(isRuleActive(p, 'style', 'style.docs', 'techdocs')).toBe(false)
+  })
+  it('carries packs_on into the effective rule config', () => {
+    expect(effectiveRuleConfig(base)?.packs_on).toEqual(['techdocs'])
   })
 })
 
 describe('tier-aware profile semantics', () => {
   const base = {
     id: 1, language: 'en' as const, name: 'P', is_standard: false,
-    categories_off: [], rule_exceptions: [], domain_ids: [],
+    categories_off: [], rule_exceptions: [], packs_on: [], domain_ids: [],
     llm_instructions: '', example_text: '',
   }
   const pinnedProfile = { ...base, llm_provider: 'claude', llm_model: 'claude-sonnet-5', llm_tier: null }

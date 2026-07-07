@@ -32,6 +32,7 @@ export function RulesView() {
   async function saveRuleSelection(patch: {
     categories_off?: Category[]
     rule_exceptions?: string[]
+    packs_on?: string[]
   }) {
     if (!profile) return
     try {
@@ -39,6 +40,7 @@ export function RulesView() {
         name: profile.name,
         categories_off: patch.categories_off ?? profile.categories_off,
         rule_exceptions: patch.rule_exceptions ?? profile.rule_exceptions,
+        packs_on: patch.packs_on ?? profile.packs_on,
         domain_ids: profile.domain_ids,
         llm_provider: profile.llm_provider,
         llm_model: profile.llm_model,
@@ -128,7 +130,11 @@ export function RulesView() {
               <RuleCard
                 key={rule.rule_id}
                 rule={rule}
-                active={profile ? isRuleActive(profile, group.category, rule.rule_id) : true}
+                active={
+                  profile
+                    ? isRuleActive(profile, group.category, rule.rule_id, rule.pack)
+                    : true
+                }
                 onToggle={() => toggleRule(rule.rule_id)}
                 canToggle={profile !== null}
               />

@@ -14,6 +14,8 @@ function rule(overrides: Partial<RuleInfo>): RuleInfo {
     requires_nlp: false,
     file: 'en/style/example.yml',
     detail: {},
+    pack: null,
+    examples: { bad: [], good: [] },
     ...overrides,
   }
 }

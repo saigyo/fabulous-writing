@@ -30,6 +30,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export interface RuleConfig {
   categories_off: Category[]
   exceptions: string[]
+  packs_on: string[]
 }
 
 export interface CheckRequest {
@@ -116,6 +117,7 @@ export const getLanguages = () => request<LanguageInfo[]>('/api/languages')
 export interface RulesResponse {
   rules: RuleInfo[]
   errors: RuleError[]
+  packs: string[]
 }
 
 export const getRules = (language: Language) =>
