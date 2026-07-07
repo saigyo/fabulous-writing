@@ -1,0 +1,18 @@
+extends: existence
+message: "'%s' is throat-clearing — start with the substance."
+level: suggestion
+category: style
+pack: blog
+ignorecase: true
+tokens:
+  - in this post
+  - in this article
+  - in this blog post
+  - without further ado
+  - let's dive in
+  - welcome to my blog
+examples:
+  bad:
+    - "In this post, we will look at caching. Let's dive in!"
+  good:
+    - "Caching cuts load times; here is how it works."

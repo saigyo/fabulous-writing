@@ -1,0 +1,21 @@
+extends: existence
+message: "'%s' is marketing hype — show the benefit instead of asserting it."
+level: warning
+category: style
+pack: marketing
+ignorecase: true
+tokens:
+  - world-class
+  - revolutionary
+  - seamless
+  - best-in-class
+  - game-changing
+  - cutting-edge
+  - next-generation
+  - state-of-the-art
+  - groundbreaking
+examples:
+  bad:
+    - "Our revolutionary, best-in-class platform delivers seamless integration."
+  good:
+    - "Our platform integrates with your existing tools in one step."

@@ -1,0 +1,12 @@
+extends: substitution
+message: "Use '%s' instead of '%s'."
+level: warning
+category: grammar
+ignorecase: true
+swap:
+  based off( of)?: based on
+examples:
+  bad:
+    - "The design is based off of an older mockup."
+  good:
+    - "The design is based on an older mockup."

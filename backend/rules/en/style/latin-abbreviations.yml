@@ -1,0 +1,16 @@
+# Not a substitution rule: the engine wraps swap keys in \b…\b, and a
+# trailing \b after a period never matches before whitespace.
+extends: existence
+message: "Prefer plain English: 'for example' (e.g.), 'that is' (i.e.), 'and so on' (etc.)."
+level: suggestion
+category: style
+pack: techdocs
+raw:
+  - '\be\.g\.'
+  - '\bi\.e\.'
+  - '\betc\.'
+examples:
+  bad:
+    - "Configure the timeouts, e.g. 30 seconds."
+  good:
+    - "Configure the timeouts, for example 30 seconds."

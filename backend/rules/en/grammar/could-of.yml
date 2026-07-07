@@ -1,0 +1,16 @@
+extends: substitution
+message: "Use '%s' instead of '%s' — 'of' here is a mishearing of 'have'."
+level: error
+category: grammar
+ignorecase: true
+swap:
+  could of: could have
+  should of: should have
+  would of: would have
+  might of: might have
+  must of: must have
+examples:
+  bad:
+    - "You should of seen the demo."
+  good:
+    - "You should have seen the demo."

@@ -1,0 +1,12 @@
+# Demonstrates: a {4,} quantifier (with greedy LONGEST matching).
+extends: token_pattern
+message: "'%s' — a long noun string; break it up with prepositions or verbs."
+level: warning
+category: clarity
+pattern:
+  - {POS: NOUN, OP: "{4,}"}
+examples:
+  bad:
+    - "The server configuration management system update failed."
+  good:
+    - "The server configuration was updated."

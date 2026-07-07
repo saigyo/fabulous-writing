@@ -1,0 +1,18 @@
+extends: existence
+message: "'%s' hedges — commit to the claim or drop it."
+level: suggestion
+category: style
+ignorecase: true
+tokens:
+  - arguably
+  - it seems that
+  - it appears that
+  - may or may not
+  - to some extent
+  - for the most part
+  - more or less
+examples:
+  bad:
+    - "Arguably, it seems that the fix works."
+  good:
+    - "The fix works."

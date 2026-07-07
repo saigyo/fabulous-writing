@@ -1,0 +1,13 @@
+extends: substitution
+message: "Use '%s' instead of '%s' — 'unique' has no degrees."
+level: warning
+category: style
+pack: marketing
+ignorecase: true
+swap:
+  (?:very|completely|totally|most) unique: unique
+examples:
+  bad:
+    - "This is a very unique feature."
+  good:
+    - "This is a unique feature."

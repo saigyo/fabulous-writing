@@ -1,0 +1,14 @@
+# Demonstrates: MORPH number agreement in a token pattern.
+extends: token_pattern
+message: "'%s' — use 'fewer' with countable plurals."
+level: warning
+category: grammar
+pattern:
+  - {LOWER: less}
+  - {POS: NOUN, MORPH: {IS_SUPERSET: ["Number=Plur"]}}
+examples:
+  bad:
+    - "We shipped less bugs in this release."
+  good:
+    - "We shipped fewer bugs in this release."
+    - "There is less noise now."

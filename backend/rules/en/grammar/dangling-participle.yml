@@ -1,0 +1,16 @@
+# Demonstrates: IS_SENT_START plus a bounded non-punctuation gap.
+extends: token_pattern
+message: "'%s' — the opening participle has nothing to modify (dangling modifier)."
+level: warning
+category: grammar
+pattern:
+  - {TAG: VBG, IS_SENT_START: true}
+  - {IS_PUNCT: false, OP: "{,8}"}
+  - {TEXT: ","}
+  - {LOWER: {IN: [it, there]}}
+examples:
+  bad:
+    - "Walking home, it started to rain."
+  good:
+    - "Walking home, I saw a fox."
+    - "Running is fun."

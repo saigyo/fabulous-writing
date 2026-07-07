@@ -1,0 +1,13 @@
+extends: token_pattern
+message: "'%s' — describe UI behavior in the present tense ('the dialog opens')."
+level: suggestion
+category: style
+pack: techdocs
+pattern:
+  - {LOWER: will}
+  - {POS: VERB}
+examples:
+  bad:
+    - "The dialog will open."
+  good:
+    - "The dialog opens automatically."

@@ -77,6 +77,28 @@ pattern:
         engine = make_engine(rules_dir)
         assert len(engine.errors) == 1
 
+    def test_quantified_pattern_yields_longest_match_only(
+        self, rules_dir: Path, registry: NlpRegistry
+    ) -> None:
+        write_rule(
+            rules_dir,
+            "en",
+            "clarity/noun-string.yml",
+            """
+extends: token_pattern
+message: "'%s' stacks nouns."
+category: clarity
+pattern:
+  - {POS: NOUN, OP: "{4,}"}
+""",
+        )
+        engine = make_engine(rules_dir)
+        text = "The server configuration management system update failed."
+        doc = registry.analyze(text, "en")
+        findings = engine.check(text, Language.EN, doc=doc)
+        assert len(findings) == 1
+        assert findings[0].span.text == "server configuration management system update"
+
 
 DEP_RULE = """
 extends: dependency

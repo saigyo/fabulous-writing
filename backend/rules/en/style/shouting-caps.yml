@@ -1,0 +1,12 @@
+extends: existence
+message: "All-caps shouting — use emphasis sparingly, if at all."
+level: warning
+category: style
+pack: marketing
+raw:
+  - '\b[A-Z]{4,}(?:\s+[A-Z]{4,})+\b'
+examples:
+  bad:
+    - "Get it now with HUGE SAVINGS on every plan."
+  good:
+    - "Use the HTTP API to fetch results."

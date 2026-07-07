@@ -1,0 +1,20 @@
+extends: existence
+message: "'%s' is an unverifiable claim — back it with a number, source, or cut it."
+level: warning
+category: style
+pack: marketing
+ignorecase: true
+tokens:
+  - guaranteed
+  - market-leading
+  - industry-leading
+  - award-winning
+  - the best
+  - number one
+raw:
+  - '#1\b'
+examples:
+  bad:
+    - "Our award-winning support is guaranteed to be the best."
+  good:
+    - "Our support team answers within one hour."

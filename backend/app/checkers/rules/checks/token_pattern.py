@@ -11,7 +11,7 @@ def check_token_pattern(rule: LoadedRule, ctx: CheckContext) -> list[Finding]:
     from spacy.matcher import Matcher
 
     matcher = Matcher(ctx.doc.vocab)
-    matcher.add(rule.rule_id, [rule.spec.pattern])
+    matcher.add(rule.rule_id, [rule.spec.pattern], greedy="LONGEST")
     findings: list[Finding] = []
     for _, start, end in matcher(ctx.doc):
         span = ctx.doc[start:end]

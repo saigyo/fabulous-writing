@@ -1,0 +1,18 @@
+# Demonstrates: combining REGEX and NOT_IN predicates on one attribute.
+extends: token_pattern
+message: "'%s' — a double negative; consider the direct positive."
+level: suggestion
+category: style
+pattern:
+  - {LOWER: {IN: [not, never]}}
+  - {POS: ADJ, LOWER: {REGEX: "^(un|in|im|non|il|ir)", NOT_IN: [
+      important, impressive, improved, immediate, immense, interesting,
+      intense, internal, international, initial, innovative, intelligent,
+      intuitive, unique, united, universal, irresistible]}}
+examples:
+  bad:
+    - "Such failures are not uncommon."
+    - "The migration is not impossible."
+  good:
+    - "This detail is not important."
+    - "The new API is not intuitive."

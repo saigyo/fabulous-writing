@@ -1,0 +1,15 @@
+extends: substitution
+message: "Use '%s' instead of '%s' — positive phrasing is easier to parse."
+level: suggestion
+category: clarity
+ignorecase: true
+swap:
+  not able to: unable to
+  not possible: impossible
+  does not have: lacks
+  not sure: unsure
+examples:
+  bad:
+    - "We were not able to reproduce the bug."
+  good:
+    - "We were unable to reproduce the bug."

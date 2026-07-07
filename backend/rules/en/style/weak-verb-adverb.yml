@@ -1,0 +1,14 @@
+# Demonstrates: DependencyMatcher — an advmod hanging off a weak verb.
+extends: dependency
+message: "'%s' — a weak verb propped by an adverb; one stronger verb often beats the pair (sprinted, dashed, whispered)."
+level: suggestion
+category: style
+pattern:
+  - {RIGHT_ID: verb, RIGHT_ATTRS: {LEMMA: {IN: [walk, run, say, look, move, go]}}}
+  - {LEFT_ID: verb, REL_OP: ">", RIGHT_ID: adverb, RIGHT_ATTRS: {DEP: advmod, TEXT: {REGEX: "(?i)ly$"}}}
+examples:
+  bad:
+    - "He ran quickly to the station."
+  good:
+    - "He sprinted to the station."
+    - "He ran to the station."

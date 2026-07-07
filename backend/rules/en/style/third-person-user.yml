@@ -1,0 +1,15 @@
+extends: token_pattern
+message: "'%s' — address the reader directly: 'you should…' or the imperative."
+level: warning
+category: style
+pack: techdocs
+pattern:
+  - {LOWER: the}
+  - {LEMMA: {IN: [user, customer, administrator]}}
+  - {LEMMA: {IN: [should, must, can, may]}}
+examples:
+  bad:
+    - "The user should click the Save button."
+  good:
+    - "You can configure the timeout."
+    - "The user profile stores preferences."

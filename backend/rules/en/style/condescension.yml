@@ -1,0 +1,17 @@
+extends: existence
+message: "'%s' can read as condescending when a step is not simple for the reader."
+level: suggestion
+category: style
+pack: techdocs
+ignorecase: true
+tokens:
+  - simply
+  - obviously
+  - clearly
+  - needless to say
+  - of course
+examples:
+  bad:
+    - "Simply run the installer; obviously the defaults work."
+  good:
+    - "Run the installer; the defaults work."
