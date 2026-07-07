@@ -1105,3 +1105,12 @@ POS=PRON let leak. Comment-only notes added to `clarity/genitivkette.yml`
 „treffen" FP); `style/e-mail-schreibung.yml` message switched from Duzen to
 Siezen. All 12 review probes matched expectations; catalog 50 passed, full
 suite 445 passed.
+
+## 2026-07-07 — Deppenapostroph stoplist extended (reviewer follow-up)
+
+Commit: `443e9f2`
+
+Added Stimmt/Klappt/Passt and the conjunctions Wenn/Ob/Sobald/Solang/Weil to
+the `grammar/deppenapostroph.yml` contraction stoplist; „Stimmt's?",
+„Klappt's morgen?" and „Wenn's regnet …" verified clean through the engine
+while „Anna's Laden" still fires. Catalog 50 passed, full suite 445 passed.
