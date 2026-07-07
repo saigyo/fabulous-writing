@@ -1,11 +1,11 @@
 # Rule catalog
 
 One YAML file per rule, under `<language>/<category>/<name>.yml`; the rule id is
-`<category>.<name>`. Six check types exist (see the [main README](../../README.md)
+`<category>.<name>`. Seven check types exist (see the [main README](../../README.md)
 for the formalism): `existence`, `substitution`, `occurrence`, and `repetition`
-run on regexes; `token_pattern` and `dependency` run on the language's spaCy
-pipeline and are skipped (and reported) when its model is not installed.
-`occurrence` rules with `count: tokens` also need the model.
+run on regexes; `token_pattern`, `dependency`, and `consistency` run on the
+language's spaCy pipeline and are skipped (and reported) when its model is not
+installed. `occurrence` rules with `count: tokens` also need the model.
 
 Every rule **requires** an `examples:` block (`bad`: sentences the rule must flag;
 `good`: sentences it must not) — a file without one fails to load. These examples
@@ -19,10 +19,90 @@ default, and only active for a profile that has enabled that pack. Pack slugs ar
 free-form — they are discovered from whatever `pack:` values already appear in the
 rule files (`GET /api/rules?language=…` returns the sorted set as `packs`), so adding
 a new use-case pack is just dropping YAML files with a new slug; no code changes.
-EN and DE currently ship three: `marketing`, `techdocs`, `blog`.
+EN, DE, and JA currently ship three: `marketing`, `techdocs`, `blog`.
 
 Rules marked **NLP** need the spaCy model. The *Demonstrates* column makes this
 catalog double as a cookbook for writing your own rules.
+
+`existence` `tokens:` and `substitution` keys are wrapped in CJK-edge-aware word
+boundaries (`bounded_pattern` in `app/checkers/rules/text.py`): a side whose
+literal edge character is CJK (Han, kana, CJK punctuation, full-width forms)
+drops its `\b` — kana/kanji count as `\w`, so a boundary there would never fire
+mid-sentence — while Latin-edged sides keep `\b`. Only literal edge characters
+are inspected: a key whose edge is a regex metachar (e.g. an alternation group
+like `ja/grammar/sa-ire.yml`'s `(?:行か|読ま|…)させ`) keeps its `\b` and would
+never match after a kana character; such patterns belong in `raw:`, which is
+never wrapped. Empty `tokens`/`raw` entries and empty `swap` keys are rejected
+as rule errors at load time.
+
+## Check type: consistency
+
+Unlike the other check types, `consistency` classifies whole sentences rather
+than matching a pattern per finding, and it's document-scoped: it looks at
+every sentence in the document together and flags whichever style is in the
+minority.
+
+Each rule declares two or more named `variants:`. A variant is either:
+
+- a **pattern variant** — `pattern:` is a spaCy `Matcher` pattern (same syntax
+  as `token_pattern`), tested against every sentence. Variants are tried in
+  YAML declaration order, and that order is both the priority (the first
+  variant whose pattern matches a sentence claims it) and the tie-break (if
+  the document ends up split evenly between two variants, the first-declared
+  one is treated as the majority);
+- the single, optional **default variant** (`default: true`) — claims any
+  sentence that no pattern variant matched but that still ends in a
+  predicate (`VERB`/`ADJ`/`AUX`); sentences with no predicate ending
+  (headings, labels, 体言止め) stay unclassified and don't vote. A default
+  variant must not set `pattern` or `anchor` — loading fails otherwise.
+
+`anchor: end` (the alternative to the default `anchor: anywhere`) requires the
+match to end within the last 3 tokens of the sentence, after stripping
+trailing punctuation/symbols/final particles (`PUNCT`/`SYM`/`PART`/whitespace).
+This window exists because GiNZA splits some polite endings into two tokens
+— 〜ました → まし+た, 〜でしょう → でしょ+う — so the match itself doesn't reach
+the literal last token.
+
+Once every sentence is classified, the variant with the most sentences is the
+majority; every sentence belonging to any other populated variant is flagged
+individually. A document where only one variant (or none) is populated
+produces no findings. Because at least two differently-classified sentences
+are needed to demonstrate a mismatch, a `consistency` rule's `bad:` examples
+must be multi-sentence strings — a single sentence can't mix styles.
+
+Loading fails if: fewer than two variants are declared; more than one variant
+sets `default: true`; a default variant sets `pattern` or `anchor`; or a
+non-default variant has no `pattern`.
+
+Known limitation: a quoted sentence that GiNZA segments into its own sentence
+span is classified by its own internal register, not the surrounding
+narration's — dialogue-heavy documents may see an intentionally
+different-register quote flagged against the narration's dominant style.
+
+The cookbook example, from `ja/style/desu-masu.yml` (敬体/常体 — polite vs.
+plain register consistency):
+
+```yaml
+extends: consistency
+message: "文体が混在しています — 敬体（です・ます）と常体（だ・である）のどちらかに統一してください。"
+level: warning
+category: style
+variants:
+  polite:
+    pattern:
+      - {TEXT: {IN: [です, でし, でしょ, でしょう, ます, まし, ませ, ましょ, ましょう, ください]}, POS: {IN: [AUX, VERB]}}
+    anchor: end
+  plain:
+    default: true
+examples:
+  bad:
+    - "本製品は高速です。設定も簡単だ。導入も容易です。"
+  good:
+    - "本製品は高速です。設定も簡単です。"
+    - "本製品は高速だ。設定も簡単である。"
+    - "資料をご確認ください。ご質問があればお知らせください。よろしくお願いします。"
+    - "明日は晴れるでしょう。遠足は決行します。"
+```
 
 ## English (`en`)
 
@@ -155,13 +235,54 @@ staying simple and fast. Known gaps, from review:
 
 ## Japanese (`ja`)
 
-| Rule | Type | Flags | Demonstrates |
-|---|---|---|---|
-| [style.redundant-potential](ja/style/redundant-potential.yml) | token_pattern, **NLP** | 「〜することができる」→「〜できる」 | GiNZA lemmas in patterns |
-| [style.double-negative](ja/style/double-negative.yml) | token_pattern, **NLP** | 「〜ないことはない」 | `LEMMA`+`TEXT` mix for fixed expressions |
-| [style.mazu-saisho](ja/style/mazu-saisho.yml) | token_pattern, **NLP** | 「まず最初に」 | static `suggestions` on token rules |
-| [clarity.long-sentence](ja/clarity/long-sentence.yml) | occurrence (`count: tokens`), **NLP** | 50トークン超の文 | token counting where `\b\w+\b` fails |
-| [clarity.touten-kajou](ja/clarity/touten-kajou.yml) | occurrence | 読点（、）が4個超の文 | regex counting works for CJK punctuation |
+| Rule | Type | Flags | Pack | Demonstrates |
+|---|---|---|---|---|
+| [style.redundant-potential](ja/style/redundant-potential.yml) | token_pattern, **NLP** | 「〜することができる」→「〜できる」 | — | GiNZA lemmas in patterns |
+| [style.double-negative](ja/style/double-negative.yml) | token_pattern, **NLP** | 「〜ないことはない」 | — | `LEMMA`+`TEXT` mix for fixed expressions |
+| [style.mazu-saisho](ja/style/mazu-saisho.yml) | token_pattern, **NLP** | 「まず最初に」 | — | static `suggestions` on token rules |
+| [clarity.long-sentence](ja/clarity/long-sentence.yml) | occurrence (`count: tokens`), **NLP** | 50トークン超の文 | — | token counting where `\b\w+\b` fails |
+| [clarity.touten-kajou](ja/clarity/touten-kajou.yml) | occurrence | 読点（、）が4個超の文 | — | regex counting works for CJK punctuation |
+| [grammar.ranuki](ja/grammar/ranuki.yml) | token_pattern, **NLP** | 「見れる」「食べれる」など、融合トークンのら抜き言葉 | — | curated `LEMMA` list, no `POS` constraint |
+| [grammar.ranuki-split](ja/grammar/ranuki-split.yml) | token_pattern, **NLP** | 一段動詞語幹+れる（AUX）に分割されたら抜き言葉 | — | sibling rule covering the split-token analysis |
+| [grammar.sa-ire](ja/grammar/sa-ire.yml) | existence | 「休まさせて」などのさ入れ言葉 | — | curated `raw` godan-stem list |
+| [grammar.nijuu-keigo](ja/grammar/nijuu-keigo.yml) | existence | 「ご覧になられ」などお/ご〜になられる二重敬語 | — | curated `raw` list dodges a legitimate single-敬語 collision |
+| [grammar.nijuu-keigo-honorific](ja/grammar/nijuu-keigo-honorific.yml) | token_pattern, **NLP** | 「おっしゃられました」など尊敬語+れるの二重敬語 | — | honorific `LEMMA` list + AUX れる |
+| [clarity.no-renzoku](ja/clarity/no-renzoku.yml) | token_pattern, **NLP** | 「の」が3回以上連続する名詞句 | — | `NOUN`+の chain repeated three times |
+| [style.wo-okonau](ja/style/wo-okonau.yml) | token_pattern, **NLP** | 「検討を行う」→「検討する」 | — | `TAG` match on サ変可能名詞 |
+| [style.juufuku-hyougen](ja/style/juufuku-hyougen.yml) | substitution | 「一番最初」「まだ未定で」など重複表現 | — | CJK-edged swap keys narrowed to dodge substring collisions (未定義 etc.) |
+| [style.redundant-phrases](ja/style/redundant-phrases.yml) | substitution | 「することが可能です」→「できます」 | — | fixed-string swap map beyond token-level rules |
+| [style.desu-masu](ja/style/desu-masu.yml) | consistency, **NLP** | 敬体・常体の混在 | — | variant classification with `anchor: end` and a `default` variant |
+| [style.hype-words](ja/style/hype-words.yml) | existence | 「究極」「最強」などの誇張表現 | marketing | pack-scoped word list |
+| [style.unverifiable-claims](ja/style/unverifiable-claims.yml) | existence | 「日本一」「業界No.1」など根拠のない優位性主張 | marketing | `raw` regex with negative lookaheads guarding compound collisions |
+| [style.exclamation-inflation](ja/style/exclamation-inflation.yml) | existence | 感嘆符の連続（！！） | marketing | `raw` regex over full/half-width exclamation marks |
+| [style.i-nuki](ja/style/i-nuki.yml) | token_pattern, **NLP** | 「〜してる」などのい抜き言葉 | techdocs | AUX-only `LEMMA` set avoids the homograph verb 出る |
+| [style.hedging](ja/style/hedging.yml) | token_pattern, **NLP** | 「〜と思います」などの断定回避 | techdocs | fixed `TEXT`+`LEMMA` pair spanning voice/polarity variants |
+| [style.casual-contractions](ja/style/casual-contractions.yml) | token_pattern, **NLP** | 「〜しとく」「〜しちゃう」などの縮約形 | techdocs | rendaku-paired `LEMMA` set |
+| [style.kotatsu-cliche](ja/style/kotatsu-cliche.yml) | existence | 「いかがでしたか」などの定型導入・締めくくり | blog | pack-scoped phrase list |
+
+### Known heuristic limitations
+
+- **grammar.ranuki** / **grammar.ranuki-split** / **grammar.sa-ire** /
+  **grammar.nijuu-keigo** / **grammar.nijuu-keigo-honorific** all rely on
+  curated verb/lemma lists rather than a general morphological rule, so recall
+  is limited to the forms listed. GiNZA's tokenization of ら抜き verbs is
+  itself context-dependent — some inputs fuse the whole verb+れる into a
+  single token carrying a ら抜き lemma, others split it into stem + れる
+  (AUX) — which is why ら抜き needs two sibling rules (`ranuki` for the
+  fused analysis, `ranuki-split` for the split one) instead of one pattern.
+- **style.desu-masu** classifies a standalone quoted sentence (one GiNZA
+  segments into its own sentence span) by its own internal register, not the
+  surrounding narration's — a document that otherwise commits to one style
+  consistently may still see an intentionally different-register quote
+  flagged as the minority.
+- **style.hype-words**, **style.unverifiable-claims**, and
+  **style.exclamation-inflation**'s word/phrase lists are precision-first
+  curated sets, not exhaustive — extend them as new marketing clichés or
+  unverifiable-claim patterns turn up in practice.
+- **style.juufuku-hyougen**'s まだ未定 key is narrowed to まだ未定で/まだ未定だ
+  (i.e. it requires a で/だ continuation) specifically so it can never fire
+  inside 未定義 ("undefined"), a common techdocs term that contains 未定 as a
+  substring.
 
 ## Chinese (`zh`)
 

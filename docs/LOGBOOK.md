@@ -1312,3 +1312,70 @@ helper (empty findings / ImportError), 2 empty-key tests failed before
 the loader fix; all pass after. Full suite `cd backend && uv run pytest
 tests/ -q` → 451 passed. `grep -rn '\\b(?:' app/` confirms no hardcoded
 boundary wrapping remains outside the helper.
+
+
+## 2026-07-07 — Task 8: Japanese rules + consistency check type, feature capstone
+
+**Commits:** `eb3c8cd..62d06df` (12 commits on `main`)
+
+**Spec/plan.** `docs/superpowers/specs/2026-07-07-ja-rules-consistency-design.md`,
+`docs/superpowers/plans/2026-07-07-ja-rules-consistency.md`.
+
+**What shipped, end to end.**
+
+- **CJK edge-aware boundaries** (`bounded_pattern`, `backend/app/checkers/rules/text.py`):
+  its own entry already exists above (Task 1: CJK edge-aware boundary helper,
+  commits `eb3c8cd`/`f32b4e6`) — this task built the 17 new JA rules and the
+  `consistency` check type on top of it rather than duplicating the writeup.
+- **New `consistency` check type** (7th type, `backend/app/checkers/rules/checks/consistency.py`,
+  schema in `loader.py`'s `VariantSpec`): document-scoped sentence classification
+  into named `variants:` (pattern variants via spaCy `Matcher`, tried in
+  declaration order as priority/tie-break, plus one optional `default: true`
+  variant claiming predicate-ending sentences no pattern matched); `anchor: end`
+  requires a match to end within 3 tokens of the sentence end after stripping
+  trailing punctuation/symbols/particles; every sentence in a non-majority
+  variant is flagged. Tests in `backend/tests/test_consistency.py`.
+- **17 new JA rules** under `backend/rules/ja/`: grammar (`ranuki`, `ranuki-split`,
+  `sa-ire`, `nijuu-keigo`, `nijuu-keigo-honorific`), clarity (`no-renzoku`),
+  style (`wo-okonau`, `juufuku-hyougen`, `redundant-phrases`, `desu-masu` —
+  the `consistency` reference example), and three use-case packs: `marketing`
+  (`hype-words`, `unverifiable-claims`, `exclamation-inflation`), `techdocs`
+  (`i-nuki`, `hedging`, `casual-contractions`), `blog` (`kotatsu-cliche`).
+  JA now has 22 rules total (5 pre-existing + 17 new) across all three packs.
+- **JA Blog profile** seeded (`BLOG_LANGUAGES` extended, JA seed instructions,
+  `backend/demos/ja-blog.txt`); pack-triggering fodder appended to the
+  `ja-marketing`/`ja-technical-documentation` demo texts.
+
+**Review-driven precision fixes** (one line each, all already committed during
+the feature, this task only documents them):
+- `nijuu-keigo` is a curated `raw` list, not a token pattern, because the bare
+  なる+られる shape also matches 「社長になられました」, a legitimate single 尊敬語.
+- `juufuku-hyougen`'s まだ未定 key is narrowed to require a で/だ continuation so
+  it can never fire inside 未定義 ("undefined").
+- `unverifiable-claims` uses `raw` with negative lookaheads (`世界一(?![周流律時])`
+  etc.) to dodge 世界一周/初期費用-style compound collisions.
+- `desu-masu` matches surface forms, not lemmas, so plain-register 「くださった」
+  (honorific past) doesn't get misread as the request-form ください polite marker.
+
+**Documentation this task.** `backend/rules/README.md`: added a "Check type:
+consistency" cookbook section (variant semantics, `anchor: end` window, default
+variant, minority flagging, multi-sentence `bad:` requirement, standalone-quote
+limitation) using `ja/style/desu-masu.yml` as the worked example; extended the
+intro with the CJK-edge-awareness/metachar-limitation note (pointing at
+`sa-ire.yml`'s alternation as the case that needs `raw:`); grew the JA catalog
+table from 5 to 22 rows with a new Pack column; added a JA "Known heuristic
+limitations" section (curated-list recall for ら抜き/さ入れ/二重敬語 and why ら抜き
+needs two sibling rules, `desu-masu`'s standalone-quote register limitation,
+hype/claim lists being precision-first and extendable, the まだ未定 で/だ
+narrowing). `docs/backend-architecture.md`: added a `consistency` row and
+paragraph to the check-type table (now seven types); verified the existing
+CJK-boundary paragraph from the Task-1 review round (commits `dbe6586`,
+`a0610fc`) is still accurate as written — no changes needed there. Fixed a
+pre-existing typo a Task-7 reviewer flagged: `backend/demos/ja-technical-documentation.txt`
+had どこかにに (double に) instead of どこかに; re-verified the demo still fires
+its three techdocs rules (`style.i-nuki`, `style.hedging`,
+`style.casual-contractions`) via the engine harness after the fix.
+
+**Verification.** `cd backend && uv run pytest tests/ -q` → 503 passed.
+Engine sanity: `RuleEngine(Path('rules')).errors` → `[]`; JA rule count → 22;
+JA packs → `['blog', 'marketing', 'techdocs']`.

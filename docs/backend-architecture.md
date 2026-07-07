@@ -213,7 +213,7 @@ flat sorted list of the distinct pack slugs discovered across the (optionally
 language-filtered) catalog, not a per-language dict — so the frontend can build a
 pack picker without hardcoding pack names.
 
-Six check types (`extends:`), each implemented as one function in
+Seven check types (`extends:`), each implemented as one function in
 `checkers/rules/checks/` and dispatched via the `CHECKS` table:
 
 | Type | Flags | Needs spaCy |
@@ -224,6 +224,22 @@ Six check types (`extends:`), each implemented as one function in
 | `repetition` | adjacent duplicated words | no |
 | `token_pattern` | spaCy `Matcher` patterns over token attributes | yes |
 | `dependency` | spaCy `DependencyMatcher` patterns over syntax trees | yes |
+| `consistency` | document-scoped style-variant classification | yes |
+
+`consistency` (`checkers/rules/checks/consistency.py`) is the odd one out: it
+doesn't scan for pattern matches to report as individual findings, it classifies
+every sentence in the document into one of the rule's named `variants:` (each
+either a spaCy `Matcher` pattern, tried in YAML declaration order — which
+doubles as priority and tie-break — or the single optional `default: true`
+variant, which claims any sentence with no pattern match that still ends in a
+`VERB`/`ADJ`/`AUX`) and flags every sentence in a non-majority variant once the
+whole document has been classified; a document where only one variant ends up
+populated produces no findings. `anchor: end` narrows a pattern variant to
+matches ending within 3 tokens of the sentence end (after stripping trailing
+punctuation/symbols/particles), to absorb polite endings GiNZA splits into two
+tokens (でしょう → でしょ+う). `VariantSpec` (`loader.py`) enforces at load time:
+≥2 variants, ≤1 default, and a default variant must not set `pattern`/`anchor`.
+`ja/style/desu-masu.yml` (敬体/常体 consistency) is the reference example.
 
 `existence` tokens and `substitution` keys are wrapped via
 `bounded_pattern` (`checkers/rules/text.py`), which is CJK-edge-aware: a side
