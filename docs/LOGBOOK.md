@@ -1543,3 +1543,77 @@ sanity via a live harness dump: `es-marketing.txt` trips `style.palabras-hype`,
 `grammar.tuteo-ustedeo` exactly once, on the usted sentence.
 `grammar.tuteo-ustedeo` confirmed silent on `demos/es.txt` and on the
 marketing/techdocs demos.
+
+## 2026-07-07 — Task 3 (phase 3): Italian rules to parity with EN/DE/FR/ES/JA
+Commit: `757a2f9`
+
+Task 3 of the 6-task phase-3 plan (Tasks 1–2, French and Spanish, already
+merged). This task covers Italian only: 10 new rules, three pack demo texts,
+fodder in the general IT demo, and IT cases appended to the shared
+consistency test file. `rules/it/` already held 7 pre-existing rules from an
+earlier phase; this task added 10 more on top, bringing it to parity.
+
+**What shipped.**
+
+- **10 new `rules/it/` rules.** Grammar: `a-me-mi` (token_pattern, NLP —
+  fixed 3-token `LOWER` match for pleonastic clitic doubling « a me mi
+  piace »); `apostrofo-errato` (substitution — « qual'è »/« qual'era » never
+  take an apostrophe, troncamento not elisione; « un pò » → « un po' »,
+  elisione of « poco »; both straight `'` and typographic `’` apostrophes
+  keyed since substitution matches raw text); `pleonasmi` (substitution swap
+  map over fixed infinitive/3rd-person forms « entrare dentro », « uscire
+  fuori », etc. — conjugated variants escape, an accepted recall limitation
+  same as the FR/ES pleonasm rules); `tu-lei` (consistency, NLP: tu/ti/tuo…
+  vs Lei/Le/La register mixing, informal variant POS-gated `PRON`/`DET`,
+  formal variant gated on literal `TEXT: {IN: [Lei, Le, La]}` with
+  `POS: {IN: [PRON, PROPN]}` — verified live against `it_core_news_sm`
+  that « La ringrazio » tags La/PRON while « La casa » tags La/DET,
+  correctly excluding the article; PROPN admitted per the ES precedent
+  since small models occasionally mistag courtesy pronouns in mixed-register
+  contexts, loss-free because of the literal TEXT gate). Packs: `marketing`
+  (`parole-hype`, `affermazioni-inverificabili` with market-claim-qualified
+  digit forms so addresses/issue-numbers/« priorità numero 1 » stay clean —
+  same precision decision as the FR/ES sibling rules — and
+  `inflazione-esclamativi` via `raw: ["!{2,}"]`), `techdocs` (`hedging`,
+  `colloquialismi`), `blog` (`cliches-apertura`, with both apostrophe
+  variants keyed in the « al giorno d['’]oggi » / « nell['’]era digitale »
+  tokens).
+- **Three IT demo texts** (`demos/it-marketing.txt`,
+  `it-technical-documentation.txt`, `it-blog.txt`), each engineered to trip
+  its pack's rules plus at least one general grammar rule
+  (`apostrofo-errato` and `pleonasmi` in both marketing and techdocs). The
+  blog demo mixes register 2-vs-1 (two tu/ti sentences, one Lei sentence) so
+  `tu-lei` fires exactly once, on the minority Lei sentence — verified live
+  via the engine, not just by the catalog tests. Marketing and techdocs stay
+  all-informal/no-Lei so the consistency rule never gets two variants to vote
+  and stays silent, confirmed the same way.
+- **Fodder** appended to `demos/it.txt`: one sentence exercising `a-me-mi`,
+  `apostrofo-errato`, and `pleonasmi` at once; `tests/test_demo_texts.py`
+  `EXPECTED[Language.IT]` grew by those three rule ids (the consistency rule
+  is deliberately not added there, since a single fodder sentence can't
+  produce two voting sentences).
+- **`tests/test_register_consistency.py`** (existing file from Task 1):
+  appended `TestTuLei` (minority-formal and minority-informal each flagged
+  exactly once, an article-only sentence pair not voting at all, and a
+  single vote staying silent) — no restructuring of the FR/ES classes
+  already there. All four passed against the live model on the first
+  attempt; no test-text rework was needed.
+- **`rules/README.md`**: added a Pack column to the pre-existing Italian
+  table (the 7 legacy rows had none) and 10 new rows, plus a "Known
+  heuristic limitations" section mirroring the French/Spanish ones
+  (apostrofo-errato's dual-glyph keys, pleonasmi's fixed-form recall
+  limitation, tu-lei's documented false-formal and enclitic blind spots,
+  affermazioni-inverificabili's qualified digit forms).
+
+No engine code touched — this was pure YAML + demos + tests, per the task's
+binding constraint.
+
+**Verification.** `cd backend && uv run pytest -q` → 578 passed. Engine
+sanity via a live harness dump: `it-marketing.txt` trips `style.parole-hype`,
+`style.inflazione-esclamativi`, `style.affermazioni-inverificabili`,
+`grammar.apostrofo-errato`, `grammar.pleonasmi`;
+`it-technical-documentation.txt` trips `style.hedging`,
+`style.colloquialismi`, `grammar.apostrofo-errato`, `grammar.pleonasmi`;
+`it-blog.txt` trips `style.cliches-apertura` (×3), `grammar.a-me-mi`, and
+`grammar.tu-lei` exactly once, on the Lei sentence. `grammar.tu-lei`
+confirmed silent on `demos/it.txt` and on the marketing/techdocs demos.

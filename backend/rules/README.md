@@ -297,15 +297,49 @@ staying simple and fast. Known gaps, from review:
 
 ## Italian (`it`)
 
-| Rule | Type | Flags | Demonstrates |
-|---|---|---|---|
-| [style.parole-vaghe](it/style/parole-vaghe.yml) | existence | parole vaghe («molto», «praticamente») | word lists |
-| [style.forma-passiva](it/style/forma-passiva.yml) | dependency, **NLP** | «è stato scritto», «viene scritto» | `aux:pass` covering *essere* and *venire* |
-| [grammar.parole-ripetute](it/grammar/parole-ripetute.yml) | repetition | parole doppie | adjacent duplicates |
-| [grammar.ma-pero](it/grammar/ma-pero.yml) | substitution | «ma però» → «ma» | redundancy fix |
-| [clarity.frase-lunga](it/clarity/frase-lunga.yml) | occurrence | frasi di oltre 30 parole | per-sentence word counting |
-| [clarity.burocratese](it/clarity/burocratese.yml) | substitution | «al fine di» → «per» | swap map |
-| [vividness.cliches](it/vividness/cliches.yml) | existence | «alla fine dei conti» | multi-word phrases |
+| Rule | Type | Flags | Pack | Demonstrates |
+|---|---|---|---|---|
+| [style.parole-vaghe](it/style/parole-vaghe.yml) | existence | parole vaghe («molto», «praticamente») | — | word lists |
+| [style.forma-passiva](it/style/forma-passiva.yml) | dependency, **NLP** | «è stato scritto», «viene scritto» | — | `aux:pass` covering *essere* and *venire* |
+| [grammar.parole-ripetute](it/grammar/parole-ripetute.yml) | repetition | parole doppie | — | adjacent duplicates |
+| [grammar.ma-pero](it/grammar/ma-pero.yml) | substitution | «ma però» → «ma» | — | redundancy fix |
+| [clarity.frase-lunga](it/clarity/frase-lunga.yml) | occurrence | frasi di oltre 30 parole | — | per-sentence word counting |
+| [clarity.burocratese](it/clarity/burocratese.yml) | substitution | «al fine di» → «per» | — | swap map |
+| [vividness.cliches](it/vividness/cliches.yml) | existence | «alla fine dei conti» | — | multi-word phrases |
+| [grammar.a-me-mi](it/grammar/a-me-mi.yml) | token_pattern, **NLP** | «a me mi piace» | — | fixed 3-token `LOWER` pattern, pleonastic clitic doubling |
+| [grammar.apostrofo-errato](it/grammar/apostrofo-errato.yml) | substitution | «qual'è» → «qual è», «un pò» → «un po'» | — | swap map keying both straight and typographic apostrophes |
+| [grammar.pleonasmi](it/grammar/pleonasmi.yml) | substitution | «entrare dentro», «uscire fuori» | — | swap map over fixed verb forms |
+| [grammar.tu-lei](it/grammar/tu-lei.yml) | consistency, **NLP** | tu/ti/tuo… vs Lei/Le/La mixed across sentences | — | POS-gated variants (`PRON`/`DET` informal, `PRON`/`PROPN` formal) |
+| [style.parole-hype](it/style/parole-hype.yml) | existence | «rivoluzionario», «imperdibile» | marketing | pack-scoped word list |
+| [style.affermazioni-inverificabili](it/style/affermazioni-inverificabili.yml) | existence | «numero 1 del mercato», «leader di mercato» | marketing | multi-word phrase list, legal-risk framing |
+| [style.inflazione-esclamativi](it/style/inflazione-esclamativi.yml) | existence | «!!» | marketing | `raw` regex (`!{2,}`) |
+| [style.hedging](it/style/hedging.yml) | existence | «forse», «credo che» | techdocs | word/phrase list |
+| [style.colloquialismi](it/style/colloquialismi.yml) | existence | «roba», «un sacco di» | techdocs | word/phrase list |
+| [style.cliches-apertura](it/style/cliches-apertura.yml) | existence | «fin dalla notte dei tempi», «al giorno d'oggi» | blog | phrase list |
+
+### Known heuristic limitations
+
+- **grammar.apostrofo-errato** keys both the straight (`'`) and typographic
+  (`’`) apostrophe for the elided « qual'è »/« qual'era » forms — substitution
+  matches raw text, so tokenization does not matter, but both glyphs must be
+  listed since real text uses either.
+- **grammar.pleonasmi** matches only fixed infinitive and third-person-
+  singular forms (« entrare dentro », « entra dentro », « uscire fuori »,
+  « esce fuori »); other conjugations escape — an accepted recall limitation,
+  the same trade-off as the French/Spanish pleonasm rules.
+- **grammar.tu-lei** gates the formal variant on `TEXT: {IN: [Lei, Le, La]}`
+  with `POS: {IN: [PRON, PROPN]}` — verified live against `it_core_news_sm`:
+  « La ringrazio » tags La/PRON, « La casa » tags La/DET (article, excluded
+  by the gate), and PROPN is included because small models occasionally
+  mistag courtesy pronouns in mixed-register contexts (the literal-TEXT gate
+  makes that addition loss-free). Known limitations: sentence-initial
+  Lei/Le/La meaning "she/her/it" is capitalized by position and still votes
+  formal; enclitic courtesy forms (« informarLa ») collapse into a single
+  PROPN token and are not detected (recall gap, accepted).
+- **style.affermazioni-inverificabili** only flags « numero 1 » in its
+  qualified market-claim forms (« … del mercato », « … al mondo »): the bare
+  phrase is everyday Italian (addresses, issue numbers, « priorità numero 1 »)
+  and would over-fire at warning level.
 
 ## Japanese (`ja`)
 
