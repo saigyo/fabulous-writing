@@ -184,6 +184,15 @@ def test_seed_pack_profiles(tmp_path) -> None:
     assert ja["Blog"].llm_instructions
     assert "いかがでしたか" in ja["Blog"].example_text
 
+    for language in (Language.FR, Language.ES, Language.IT, Language.ZH):
+        profiles = {p.name: p for p in store.list_profiles(language)}
+        assert profiles["Marketing"].packs_on == ["marketing"]
+        assert profiles["Technical Documentation"].packs_on == ["techdocs"]
+        assert profiles["Blog"].packs_on == ["blog"]
+        for name in ("Marketing", "Technical Documentation", "Blog"):
+            assert profiles[name].llm_instructions, f"{language}: {name}"
+            assert profiles[name].example_text, f"{language}: {name}"
+
 
 def test_packs_on_migration_defaults_empty(tmp_path) -> None:
     # A database created before the column existed gets it via _migrate.

@@ -1,5 +1,5 @@
 """Seed checking profiles: a Standard profile per language, plus deletable
-Marketing / Technical Documentation / Blog examples for EN, DE, JA
+Marketing / Technical Documentation / Blog examples for every language
 (tracked in a marker table so deletions stick across restarts)."""
 
 from pathlib import Path
@@ -7,8 +7,8 @@ from pathlib import Path
 from app.core.models import Language
 from app.services.profiles import ProfileStore
 
-EXAMPLE_LANGUAGES = {Language.EN, Language.DE, Language.JA}
-BLOG_LANGUAGES = {Language.EN, Language.DE, Language.JA}
+EXAMPLE_LANGUAGES = set(Language)
+BLOG_LANGUAGES = set(Language)
 
 _MARKETING_INSTRUCTIONS = {
     Language.EN: (
@@ -24,6 +24,25 @@ _MARKETING_INSTRUCTIONS = {
     Language.JA: (
         "対象読者:見込み顧客。エネルギッシュで、利点を先に示す具体的な表現を優先。"
         "短い文、能動態を推奨。専門用語、曖昧な主張、根拠のない誇張を指摘すること。"
+    ),
+    Language.FR: (
+        "Public : clients potentiels. Privilégier des formulations énergiques, "
+        "concrètes, axées sur les bénéfices ; phrases courtes ; voix active. "
+        "Signaler le jargon, les affirmations vagues et les tournures hésitantes."
+    ),
+    Language.ES: (
+        "Audiencia: clientes potenciales. Preferir formulaciones enérgicas, "
+        "concretas y centradas en los beneficios; frases cortas; voz activa. "
+        "Señalar la jerga, las afirmaciones vagas y las expresiones dubitativas."
+    ),
+    Language.IT: (
+        "Pubblico: potenziali clienti. Preferire formulazioni energiche, "
+        "concrete, orientate ai benefici; frasi brevi; forma attiva. Segnalare "
+        "gergo, affermazioni vaghe e formule esitanti."
+    ),
+    Language.ZH: (
+        "目标读者:潜在客户。倾向有力、具体、以收益为先的表达;短句;主动语态。"
+        "指出行话、空泛的主张和含糊其辞。"
     ),
 }
 
@@ -43,6 +62,26 @@ _TECHDOC_INSTRUCTIONS = {
         "対象読者:手順に従う利用者。正確さ、一貫した用語、曖昧さのない表現を最優先。"
         "手順は命令形を推奨。マーケティング的な表現や曖昧な数量表現を指摘すること。"
     ),
+    Language.FR: (
+        "Public : utilisateurs suivant des instructions. Priorité à la précision, "
+        "à la terminologie cohérente et aux formulations sans ambiguïté ; "
+        "impératif pour les étapes ; signaler le langage marketing et les "
+        "quantités vagues."
+    ),
+    Language.ES: (
+        "Audiencia: usuarios que siguen instrucciones. Prioridad a la precisión, "
+        "la terminología coherente y las formulaciones inequívocas; imperativo "
+        "para los pasos; señalar el lenguaje comercial y las cantidades vagas."
+    ),
+    Language.IT: (
+        "Pubblico: utenti che seguono istruzioni. Priorità a precisione, "
+        "terminologia coerente e formulazioni univoche; imperativo per i "
+        "passaggi; segnalare linguaggio promozionale e quantità vaghe."
+    ),
+    Language.ZH: (
+        "目标读者:按步骤操作的用户。以准确、术语一致、表达无歧义为最高优先;"
+        "步骤使用祈使句;指出营销化语言和模糊的数量表述。"
+    ),
 }
 
 _BLOG_INSTRUCTIONS = {
@@ -61,6 +100,26 @@ _BLOG_INSTRUCTIONS = {
         "対象読者:ブログ読者。個人的だが引き締まった文体を推奨。抽象論より"
         "具体例、短い段落。決まり文句の導入・締めくくり、脱線、根拠のない"
         "一般化を指摘すること。"
+    ),
+    Language.FR: (
+        "Public : lecteurs de blog. Style personnel mais resserré ; exemples "
+        "concrets plutôt qu'abstractions ; paragraphes courts. Signaler les "
+        "introductions creuses, les digressions et les généralisations non "
+        "étayées."
+    ),
+    Language.ES: (
+        "Audiencia: lectores de blog. Voz personal pero contenida; ejemplos "
+        "concretos en lugar de abstracciones; párrafos cortos. Señalar aperturas "
+        "tópicas, divagaciones y generalizaciones sin respaldo."
+    ),
+    Language.IT: (
+        "Pubblico: lettori di blog. Voce personale ma asciutta; esempi concreti "
+        "invece di astrazioni; paragrafi brevi. Segnalare aperture di maniera, "
+        "divagazioni e generalizzazioni non supportate."
+    ),
+    Language.ZH: (
+        "目标读者:博客读者。提倡个人化而紧凑的文风;用具体例子代替抽象论述;"
+        "段落要短。指出套话开头、离题和缺乏依据的概括。"
     ),
 }
 

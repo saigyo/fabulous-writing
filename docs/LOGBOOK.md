@@ -1734,3 +1734,23 @@ zh-marketing still trips `wufa-zhengshi` ×2 (全网第一, 史上最) and
 `dayue-zuoyou`; zh-blog still trips `dayue-zuoyou` on 「大约读两遍左右」;
 zh-technical-documentation still trips `hedging` ×3 (可能/大概/我觉得) and
 `ni-nin` exactly once.
+
+## 2026-07-07 — Task 5: seed Marketing/TechDoc/Blog examples for all seven languages
+
+`app/services/seed_profiles.py`'s `EXAMPLE_LANGUAGES` and `BLOG_LANGUAGES`
+previously restricted the three example profiles (Marketing, Technical
+Documentation, Blog) to EN/DE/JA even though the Phase 3 packs, rules, and
+demo files for FR/ES/IT/ZH (Tasks 1-4) had already landed. Both constants
+are now `set(Language)`, and `_MARKETING_INSTRUCTIONS`,
+`_TECHDOC_INSTRUCTIONS`, `_BLOG_INSTRUCTIONS` gained FR/ES/IT/ZH entries
+(one short audience/style-guidance sentence per language, matching the
+existing EN/DE/JA tone). `example_text` for the new languages comes from
+the existing `demos/{fr,es,it,zh}-{marketing,technical-documentation,blog}.txt`
+files — no new demo content was needed.
+
+TDD: extended `test_seed_pack_profiles` in `tests/test_profiles.py` with a
+loop over FR/ES/IT/ZH asserting `packs_on`, non-empty `llm_instructions`,
+and non-empty `example_text` for all three example profiles; confirmed it
+failed with `KeyError: 'Marketing'` before the implementation change.
+
+**Verification.** `cd backend && uv run pytest -q` → 602 passed.
