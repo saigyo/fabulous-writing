@@ -1,5 +1,6 @@
 # Requires a capitalized stem (names: „Anna's“) and stoplists common verb
-# contractions (geht's, war's, Gibt's …), which are legitimate. Residual
+# and conjunction contractions (geht's, war's, Gibt's, Wenn's, Ob's …),
+# which are legitimate. Residual
 # gaps: brand names spelled with apostrophe (McDonald's) still fire — they
 # are capitalized names, deterministically indistinguishable; warning
 # severity carries it. Lowercase-stem Deppenapostrophe („des auto's“) now
@@ -9,7 +10,7 @@ message: "Apostroph vor Genitiv-s — im Deutschen meist falsch („Annas Laden�
 level: warning
 category: grammar
 raw:
-  - "\\b(?!(?:[Gg]eht|[Gg]ibt|[Ww]ar|[Hh]at|[Ii]st|[Kk]ommt|[Mm]acht|[Tt]ut|[Ww]ird|[Bb]leibt|[Ll]äuft)['’]s)[A-ZÄÖÜ]\\w*['’]s\\b"
+  - "\\b(?!(?:[Gg]eht|[Gg]ibt|[Ww]ar|[Hh]at|[Ii]st|[Kk]ommt|[Mm]acht|[Tt]ut|[Ww]ird|[Bb]leibt|[Ll]äuft|[Ss]timmt|[Kk]lappt|[Pp]asst|[Ww]enn|[Oo]b|[Ss]obald|[Ss]olang|[Ww]eil)['’]s)[A-ZÄÖÜ]\\w*['’]s\\b"
 examples:
   bad:
     - "Anna's Laden ist geöffnet."
@@ -17,3 +18,4 @@ examples:
     - "Annas Laden ist geöffnet."
     - "Wie geht's dir heute?"
     - "Das war's für heute."
+    - "Wenn's regnet, bleiben wir drinnen."
