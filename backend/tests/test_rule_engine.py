@@ -487,13 +487,22 @@ class TestConsistencyValidation:
         )
         assert len(errors) == 1 and "at least two" in errors[0]
 
-    def test_consistency_allows_one_default(self, rules_dir: Path) -> None:
+    def test_consistency_rejects_two_defaults(self, rules_dir: Path) -> None:
         errors = self._errors(
             rules_dir,
             "extends: consistency\nmessage: m\ncategory: style\n"
             "variants:\n  a:\n    default: true\n  b:\n    default: true\n",
         )
         assert len(errors) == 1 and "one default" in errors[0]
+
+    def test_default_variant_must_not_set_anchor(self, rules_dir: Path) -> None:
+        errors = self._errors(
+            rules_dir,
+            "extends: consistency\nmessage: m\ncategory: style\n"
+            "variants:\n  a:\n    pattern: [{TEXT: a}]\n"
+            "  b:\n    default: true\n    anchor: end\n",
+        )
+        assert len(errors) == 1 and "must not set 'anchor'" in errors[0]
 
     def test_default_variant_must_not_have_pattern(self, rules_dir: Path) -> None:
         errors = self._errors(
@@ -521,6 +530,7 @@ class TestConsistencyValidation:
             "variants:\n  a:\n    pattern: [{NOPE: x}]\n  b:\n    default: true\n",
         )
         assert len(errors) == 1
+        assert "a" in errors[0]
 
     def test_consistency_requires_doc(self, rules_dir: Path) -> None:
         from app.checkers.rules.loader import rule_requires_doc

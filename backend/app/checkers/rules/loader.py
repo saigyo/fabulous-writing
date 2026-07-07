@@ -105,6 +105,8 @@ class RuleSpec(BaseModel):
                     raise ValueError(
                         f"default variant '{name}' must not have a pattern"
                     )
+                if variant.default and variant.anchor != "anywhere":
+                    raise ValueError(f"default variant '{name}' must not set 'anchor'")
                 if not variant.default and not variant.pattern:
                     raise ValueError(f"variant '{name}' needs a 'pattern'")
         return self
