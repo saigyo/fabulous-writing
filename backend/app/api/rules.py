@@ -3,7 +3,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
-from app.checkers.rules.loader import LoadedRule, rule_requires_doc
+from app.checkers.rules.loader import LoadedRule, RuleExamples, rule_requires_doc
 from app.core.models import Language
 
 router = APIRouter(prefix="/api", tags=["rules"])
@@ -24,7 +24,7 @@ class RuleInfo(BaseModel):
     file: str
     detail: dict[str, Any]
     pack: str | None
-    examples: dict[str, list[str]]
+    examples: RuleExamples
 
 
 def _detail(rule: LoadedRule) -> dict[str, Any]:
@@ -61,7 +61,7 @@ def _rule_info(rule: LoadedRule) -> RuleInfo:
         file=rule.file,
         detail=_detail(rule),
         pack=rule.spec.pack,
-        examples=rule.spec.examples.model_dump(),
+        examples=rule.spec.examples,
     )
 
 
