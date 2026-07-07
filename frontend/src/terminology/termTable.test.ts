@@ -1,6 +1,15 @@
 import { describe, expect, test } from 'vitest'
 import type { Term } from '../types'
-import { filterTerms, sortTerms, toggleSort, type SortCriterion } from './termTable'
+import {
+  draftToTermPayload,
+  filterTerms,
+  parseVariants,
+  sortTerms,
+  termToDraft,
+  toggleSort,
+  type SortCriterion,
+  type TermDraft,
+} from './termTable'
 
 function term(overrides: Partial<Term> & { id: number }): Term {
   return {
@@ -118,5 +127,73 @@ describe('filterTerms', () => {
 
   test('whitespace-only query keeps all terms', () => {
     expect(filterTerms(terms, null, '   ')).toHaveLength(4)
+  })
+})
+
+describe('parseVariants', () => {
+  test('splits on commas and trims', () => {
+    expect(parseVariants(' login,  log-in ,sign-on')).toEqual(['login', 'log-in', 'sign-on'])
+  })
+
+  test('drops empty entries', () => {
+    expect(parseVariants('login,, ,')).toEqual(['login'])
+    expect(parseVariants('')).toEqual([])
+  })
+})
+
+describe('termToDraft', () => {
+  test('joins variants with a comma and space', () => {
+    const draft = termToDraft(
+      term({
+        id: 7,
+        language: 'de',
+        preferred: 'Anwendung',
+        forbidden_variants: ['App', 'Applikation'],
+        definition: 'Software',
+        case_sensitive: true,
+      }),
+    )
+    expect(draft).toEqual({
+      language: 'de',
+      preferred: 'Anwendung',
+      variants: 'App, Applikation',
+      definition: 'Software',
+      caseSensitive: true,
+    })
+  })
+})
+
+describe('draftToTermPayload', () => {
+  const draft: TermDraft = {
+    language: 'en',
+    preferred: '  sign in ',
+    variants: 'login, log-in',
+    definition: ' authenticate ',
+    caseSensitive: false,
+  }
+
+  test('trims fields and parses variants', () => {
+    expect(draftToTermPayload(draft)).toEqual({
+      language: 'en',
+      preferred: 'sign in',
+      forbidden_variants: ['login', 'log-in'],
+      definition: 'authenticate',
+      case_sensitive: false,
+    })
+  })
+
+  test('returns null when preferred is empty', () => {
+    expect(draftToTermPayload({ ...draft, preferred: '   ' })).toBeNull()
+  })
+
+  test('round-trips a term through draft and payload', () => {
+    const original = term({ id: 9, preferred: 'email', forbidden_variants: ['e-mail', 'E-Mail'] })
+    expect(draftToTermPayload(termToDraft(original))).toEqual({
+      language: original.language,
+      preferred: original.preferred,
+      forbidden_variants: original.forbidden_variants,
+      definition: original.definition,
+      case_sensitive: original.case_sensitive,
+    })
   })
 })

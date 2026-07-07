@@ -38,6 +38,48 @@ export function sortTerms(terms: Term[], criteria: SortCriterion[]): Term[] {
   })
 }
 
+// Draft of a term as authored in the table's input widgets: forbidden
+// variants are one comma-separated string, exactly like the add-term row.
+export interface TermDraft {
+  language: Language
+  preferred: string
+  variants: string
+  definition: string
+  caseSensitive: boolean
+}
+
+export function parseVariants(input: string): string[] {
+  return input
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean)
+}
+
+export function termToDraft(term: Term): TermDraft {
+  return {
+    language: term.language,
+    preferred: term.preferred,
+    variants: term.forbidden_variants.join(', '),
+    definition: term.definition,
+    caseSensitive: term.case_sensitive,
+  }
+}
+
+/** Trimmed create/update payload, or null when the preferred term is empty. */
+export function draftToTermPayload(
+  draft: TermDraft,
+): Omit<Term, 'id' | 'domain_id'> | null {
+  const preferred = draft.preferred.trim()
+  if (!preferred) return null
+  return {
+    language: draft.language,
+    preferred,
+    forbidden_variants: parseVariants(draft.variants),
+    definition: draft.definition.trim(),
+    case_sensitive: draft.caseSensitive,
+  }
+}
+
 export function filterTerms(
   terms: Term[],
   language: Language | null,
