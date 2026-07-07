@@ -670,6 +670,18 @@
   cursor: pointer;
 }
 
+/* The name (or the rename input) takes the free space so the edit and
+   delete buttons stay clustered on the right. */
+.domain-row span {
+  flex: 1;
+}
+
+.domain-row input {
+  flex: 1;
+  min-width: 0;
+  font-size: inherit;
+}
+
 .domain-row:hover {
   background: var(--accent-soft);
 }

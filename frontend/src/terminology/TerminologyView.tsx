@@ -6,6 +6,7 @@ import {
   deleteTerm,
   getDomains,
   getTerms,
+  updateDomain,
   updateTerm,
 } from '../api/client'
 import { useMessages } from '../i18n'
@@ -64,6 +65,22 @@ export function TerminologyView() {
     await refreshDomains()
   }
 
+  const [renamingId, setRenamingId] = useState<number | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+
+  function startRename(domain: { id: number; name: string }) {
+    setRenamingId(domain.id)
+    setRenameValue(domain.name)
+  }
+
+  async function saveRename() {
+    const name = renameValue.trim()
+    if (renamingId === null || !name) return // empty: stay open until corrected or cancelled
+    await updateDomain(renamingId, name)
+    setRenamingId(null)
+    await refreshDomains()
+  }
+
   return (
     <div className="terminology">
       <aside className="domain-list">
@@ -74,7 +91,31 @@ export function TerminologyView() {
             className={`domain-row${domain.id === activeDomainId ? ' selected' : ''}`}
             onClick={() => setActiveDomainId(domain.id)}
           >
-            <span>{domain.name}</span>
+            {domain.id === renamingId ? (
+              <input
+                value={renameValue}
+                autoFocus
+                onClick={(event) => event.stopPropagation()}
+                onChange={(event) => setRenameValue(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void saveRename()
+                  if (event.key === 'Escape') setRenamingId(null)
+                }}
+                onBlur={() => setRenamingId(null)}
+              />
+            ) : (
+              <span onDoubleClick={() => startRename(domain)}>{domain.name}</span>
+            )}
+            <button
+              className="icon-button"
+              title={m.renameDomainTitle}
+              onClick={(event) => {
+                event.stopPropagation()
+                startRename(domain)
+              }}
+            >
+              ✎
+            </button>
             <button
               className="icon-button"
               title={m.deleteDomainTitle}
