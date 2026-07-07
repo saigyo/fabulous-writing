@@ -1,9 +1,13 @@
 # Demonstrates: the consistency check type. Sentences are classified as
-# 敬体 (polite, sentence-final です/ます) or 常体 (plain — the default
-# variant: any other predicate ending). Minority sentences get flagged;
-# polite is declared first, so it wins a 50/50 tie. Headings and 体言止め
-# are unclassified. Bad examples must mix styles, so they are
-# multi-sentence strings.
+# 敬体 (polite, sentence-final です/ます/ください) or 常体 (plain — the
+# default variant: any other predicate ending). Minority sentences get
+# flagged; polite is declared first, so it wins a 50/50 tie. Headings and
+# 体言止め are unclassified. The polite variant matches SURFACE forms, not
+# lemmas: matching LEMMA くださる would misclassify plain honorific
+# 「くださった」 (surface くださっ, within the anchor window) as polite,
+# while the surface list catches request-form ください only. The POS gate
+# keeps ADJ まし (「その方がましだ」) from reading as polite ます.
+# Bad examples must mix styles, so they are multi-sentence strings.
 extends: consistency
 message: "文体が混在しています — 敬体（です・ます）と常体（だ・である）のどちらかに統一してください。"
 level: warning
@@ -11,7 +15,7 @@ category: style
 variants:
   polite:
     pattern:
-      - {LEMMA: {IN: [です, ます]}, POS: AUX}
+      - {TEXT: {IN: [です, でし, でしょ, ます, まし, ませ, ましょ, ください]}, POS: {IN: [AUX, VERB]}}
     anchor: end
   plain:
     default: true
@@ -21,3 +25,4 @@ examples:
   good:
     - "本製品は高速です。設定も簡単です。"
     - "本製品は高速だ。設定も簡単である。"
+    - "資料をご確認ください。ご質問があればお知らせください。よろしくお願いします。"

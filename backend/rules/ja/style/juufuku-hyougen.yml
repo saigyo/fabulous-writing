@@ -1,5 +1,7 @@
 # Redundant doublings (重複表現). Keys are CJK-edged, so they rely on the
-# edge-aware boundary handling in the substitution check.
+# edge-aware boundary handling in the substitution check. まだ未定 is keyed
+# with the following で/だ so it can never fire inside 未定義 ("undefined",
+# core techdocs vocabulary) — precision over 「まだ未定となっている」 recall.
 extends: substitution
 message: "「%s」で十分です —「%s」は重複表現です。"
 level: warning
@@ -10,12 +12,15 @@ swap:
   後で後悔: 後悔
   違和感を感じ: 違和感を覚え
   過半数を超え: 半数を超え
-  まだ未定: 未定
-  必ず必要: 必要
+  まだ未定で: 未定で
+  まだ未定だ: 未定だ
 examples:
   bad:
     - "一番最初に結論を書きます。"
     - "その説明には違和感を感じました。"
+    - "発売日はまだ未定です。"
   good:
     - "最初に結論を書きます。"
     - "その説明には違和感を覚えました。"
+    - "仕様はまだ未定義です。"
+    - "必ず必要事項を記入してください。"
