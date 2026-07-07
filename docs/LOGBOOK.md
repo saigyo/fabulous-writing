@@ -963,3 +963,28 @@ tab-button line and the resolved-model caption clears the header divider.
 Verified numerically via Playwright bounding boxes (all controls at
 center y=33.3 vs tabs 33.5) and visually against a production preview;
 README screenshots regenerated.
+
+## 2026-07-07 — Rule examples backfilled and made mandatory
+
+Commit: `9660c81`
+
+Backfilled `examples:` (bad/good sentences) into the 48 rule files that
+lacked them — `en/style/weasel-words.yml` already had one, so all 49 rules
+now self-document with trigger/clean sentence pairs. Ran
+`tests/test_rule_examples.py` against the full catalog (99 tests: 49 rules
+x bad/good + the catalog-loads check) — every proven sentence from
+`test_starter_rules.py` worked first try, no adjustments needed. Then
+flipped `RuleSpec.examples` from `RuleExamples | None = None` to a required
+field in `app/checkers/rules/loader.py` (also moved the field declaration
+up next to `pack`, before the pack-slug validator, per review), so a rule
+file without an `examples:` block now fails to load with a reported
+`RuleError` instead of loading silently. `test_rule_examples.py` no longer
+filters `RULES` by `spec.examples is not None` — it's just
+`ENGINE.list_rules()` now. Inline rule YAML snippets in
+`test_rule_engine.py` (and the `_engine_with_two_rules` helper, which wrote
+files directly rather than through `write_rule`) get an auto-appended stub
+`examples:` block when they don't already have one, so unit tests for the
+engine mechanics don't need to invent sentences that don't relate to what
+they're testing. Added `test_rule_without_examples_is_reported` as a
+regression test for the new required-field behavior. Full suite: 368
+passed.
