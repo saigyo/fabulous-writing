@@ -4,6 +4,7 @@ from app.core.models import Finding
 
 from ..context import CheckContext
 from ..loader import LoadedRule
+from .consistency import check_consistency
 from .dependency import check_dependency
 from .existence import check_existence
 from .occurrence import check_occurrence
@@ -20,4 +21,5 @@ CHECKS: dict[str, CheckFn] = {
     "repetition": check_repetition,
     "token_pattern": check_token_pattern,
     "dependency": check_dependency,
+    "consistency": check_consistency,
 }
