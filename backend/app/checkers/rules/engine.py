@@ -10,18 +10,24 @@ from .loader import LoadedRule, RuleError, load_rules
 
 
 class RuleConfig(BaseModel):
-    """Profile rule selection: category toggles + per-rule exceptions.
+    """Profile rule selection: category toggles, pack opt-ins, per-rule
+    exceptions.
 
-    A rule is active iff (category not off) XOR (rule id in exceptions):
-    exceptions invert their category's toggle, so new rule files follow
-    their category automatically.
+    A general rule is active iff (category not off) XOR (rule id in
+    exceptions). A pack rule additionally needs its pack in packs_on:
+    (pack on AND category on) XOR exception — so exceptions can opt out of
+    one rule of an enabled pack, or cherry-pick one rule without the pack.
     """
 
     categories_off: list[str] = Field(default_factory=list)
     exceptions: list[str] = Field(default_factory=list)
+    packs_on: list[str] = Field(default_factory=list)
 
-    def is_active(self, category: str, rule_id: str) -> bool:
-        return (category not in self.categories_off) != (rule_id in self.exceptions)
+    def is_active(self, category: str, rule_id: str, pack: str | None = None) -> bool:
+        base = category not in self.categories_off
+        if pack is not None:
+            base = base and pack in self.packs_on
+        return base != (rule_id in self.exceptions)
 
 
 class RuleEngine:
@@ -58,13 +64,14 @@ class RuleEngine:
         doc: object | None = None,
         config: RuleConfig | None = None,
     ) -> list[Finding]:
+        cfg = config if config is not None else RuleConfig()
         ctx = CheckContext(text=text, doc=doc)
         findings: list[Finding] = []
         for rule in self._rules:
             if rule.language != language:
                 continue
-            if config is not None and not config.is_active(
-                rule.spec.category.value, rule.rule_id
+            if not cfg.is_active(
+                rule.spec.category.value, rule.rule_id, rule.spec.pack
             ):
                 continue
             findings.extend(CHECKS[rule.spec.extends](rule, ctx))

@@ -1,8 +1,9 @@
+import re
 from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from app.core.models import Category, Language, Severity
 
@@ -39,6 +40,17 @@ class RuleSpec(BaseModel):
     pattern: list[dict] = Field(default_factory=list)
     # optional static suggestions (used by NLP rule types)
     suggestions: list[str] = Field(default_factory=list)
+    # use-case pack (None = general rule, always on unless excepted)
+    pack: str | None = None
+
+    @field_validator("pack")
+    @classmethod
+    def check_pack_slug(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[a-z][a-z0-9-]*", value):
+            raise ValueError(
+                f"pack '{value}' must be a lowercase slug ([a-z][a-z0-9-]*)"
+            )
+        return value
 
     @model_validator(mode="after")
     def check_required_fields(self) -> "RuleSpec":

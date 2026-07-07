@@ -290,3 +290,69 @@ def test_rule_config_unknown_ids_harmless(tmp_path):
     config = RuleConfig(categories_off=["nosuchcategory"], exceptions=["gone.rule"])
     text = "This is very good."
     assert "style.test-weasel" in _rule_ids(engine.check(text, Language.EN, config=config))
+
+
+class TestPacks:
+    def test_is_active_truth_table(self) -> None:
+        config = RuleConfig(
+            categories_off=["style"],
+            exceptions=["clarity.cherry", "clarity.optout"],
+            packs_on=["techdocs"],
+        )
+        # General rules: unchanged XOR semantics.
+        assert config.is_active("clarity", "clarity.plain")
+        assert not config.is_active("style", "style.plain")
+        # Pack rule, pack on, category on -> active.
+        assert config.is_active("clarity", "clarity.pack", pack="techdocs")
+        # Pack rule, pack off -> inactive.
+        assert not config.is_active("clarity", "clarity.pack", pack="marketing")
+        # Pack off + exception -> cherry-picked active.
+        assert config.is_active("clarity", "clarity.cherry", pack="marketing")
+        # Pack on + exception -> opted out.
+        assert not config.is_active("clarity", "clarity.optout", pack="techdocs")
+        # Pack on but category off -> inactive (category toggle wins).
+        assert not config.is_active("style", "style.pack", pack="techdocs")
+
+    def test_pack_rules_skipped_by_default(self, rules_dir: Path) -> None:
+        write_rule(
+            rules_dir,
+            "en",
+            "style/hype.yml",
+            """
+extends: existence
+message: "'%s' is hype."
+level: warning
+category: style
+pack: marketing
+tokens: [revolutionary]
+""",
+        )
+        engine = make_engine(rules_dir)
+        assert engine.errors == []
+        text = "A revolutionary idea."
+        # No config and empty config: pack rule stays off.
+        assert engine.check(text, Language.EN) == []
+        assert engine.check(text, Language.EN, config=RuleConfig()) == []
+        # Enabled pack: rule fires.
+        active = engine.check(
+            text, Language.EN, config=RuleConfig(packs_on=["marketing"])
+        )
+        assert [f.rule_id for f in active] == ["style.hype"]
+
+    def test_invalid_pack_slug_is_reported(self, rules_dir: Path) -> None:
+        write_rule(
+            rules_dir,
+            "en",
+            "style/bad-pack.yml",
+            """
+extends: existence
+message: "x"
+category: style
+pack: "Tech Docs"
+tokens: [x]
+""",
+        )
+        engine = make_engine(rules_dir)
+        assert engine.list_rules() == []
+        assert len(engine.errors) == 1
+        assert "pack" in engine.errors[0].error
