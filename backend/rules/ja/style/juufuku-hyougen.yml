@@ -1,0 +1,21 @@
+# Redundant doublings (重複表現). Keys are CJK-edged, so they rely on the
+# edge-aware boundary handling in the substitution check.
+extends: substitution
+message: "「%s」で十分です —「%s」は重複表現です。"
+level: warning
+category: style
+swap:
+  一番最初: 最初
+  一番最後: 最後
+  後で後悔: 後悔
+  違和感を感じ: 違和感を覚え
+  過半数を超え: 半数を超え
+  まだ未定: 未定
+  必ず必要: 必要
+examples:
+  bad:
+    - "一番最初に結論を書きます。"
+    - "その説明には違和感を感じました。"
+  good:
+    - "最初に結論を書きます。"
+    - "その説明には違和感を覚えました。"

@@ -1,0 +1,23 @@
+# Demonstrates: the consistency check type. Sentences are classified as
+# 敬体 (polite, sentence-final です/ます) or 常体 (plain — the default
+# variant: any other predicate ending). Minority sentences get flagged;
+# polite is declared first, so it wins a 50/50 tie. Headings and 体言止め
+# are unclassified. Bad examples must mix styles, so they are
+# multi-sentence strings.
+extends: consistency
+message: "文体が混在しています — 敬体（です・ます）と常体（だ・である）のどちらかに統一してください。"
+level: warning
+category: style
+variants:
+  polite:
+    pattern:
+      - {LEMMA: {IN: [です, ます]}, POS: AUX}
+    anchor: end
+  plain:
+    default: true
+examples:
+  bad:
+    - "本製品は高速です。設定も簡単だ。導入も容易です。"
+  good:
+    - "本製品は高速です。設定も簡単です。"
+    - "本製品は高速だ。設定も簡単である。"

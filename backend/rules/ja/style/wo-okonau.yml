@@ -1,0 +1,15 @@
+# Demonstrates: matching on UniDic TAG — サ変 nouns carry
+# 名詞-普通名詞-サ変可能, so 「検討を行う」 can just be 「検討する」.
+extends: token_pattern
+message: "「%s」は回りくどい表現です — 「〜する」と直接書けます（例:「検討する」）。"
+level: suggestion
+category: style
+pattern:
+  - {TAG: 名詞-普通名詞-サ変可能}
+  - {TEXT: を}
+  - {LEMMA: 行う}
+examples:
+  bad:
+    - "来週までに検討を行います。"
+  good:
+    - "来週までに検討します。"

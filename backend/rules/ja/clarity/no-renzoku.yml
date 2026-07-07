@@ -1,0 +1,20 @@
+# Demonstrates: POS chains — three or more genitive の in a row bury the
+# head noun. First slot deliberately NOUN (not PRON): keeps the pattern
+# simple; a PRON head still leaves three NOUN-の links to fire on.
+extends: token_pattern
+message: "「%s」—「の」が3回以上連続しています。語順の変更や複合語で整理してください。"
+level: suggestion
+category: clarity
+pattern:
+  - {POS: NOUN}
+  - {TEXT: の}
+  - {POS: NOUN}
+  - {TEXT: の}
+  - {POS: NOUN}
+  - {TEXT: の}
+  - {POS: NOUN}
+examples:
+  bad:
+    - "友達の会社の製品の品質が良い。"
+  good:
+    - "友達の会社が作る製品は品質が良い。"

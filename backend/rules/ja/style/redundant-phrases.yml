@@ -1,0 +1,15 @@
+# Fixed-string 冗長表現 that the token-level redundant-potential rule does
+# not reach (可能です is not できる).
+extends: substitution
+message: "「%s」と簡潔に書けます —「%s」は冗長です。"
+level: suggestion
+category: style
+swap:
+  することが可能です: できます
+  することができません: できません
+  という結果になりました: という結果でした
+examples:
+  bad:
+    - "この機能を利用することが可能です。"
+  good:
+    - "この機能を利用できます。"
