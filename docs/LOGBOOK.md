@@ -1454,3 +1454,16 @@ rule); `fr-blog.txt` trips `style.cliches-ouverture`, `grammar.pleonasmes`,
 and `grammar.tutoiement-vouvoiement` exactly once on the `vous` sentence.
 `grammar.tutoiement-vouvoiement` confirmed silent on `demos/fr.txt` and on
 the marketing/techdocs demos.
+
+**Review-driven precision fix** (commit `dd3179d`): the bare
+`numéro 1`/`n° 1` tokens in `style.affirmations-inverifiables` over-fired on
+ordinary French at warning level (addresses « au numéro 1 de la rue … »,
+magazine issues, bus lines, « priorité numéro 1 »); replaced with the
+qualified market-claim forms « numéro 1/n° 1 du marché » and « … mondial » —
+the same qualification strategy as EN's `number one`/`#1` and JA's 業界No.1.
+Added « Notre priorité numéro 1 est la sécurité. » as a good example, noted
+the passé simple « pallia » recall gap in `pallier-a` (fr_core_news_sm does
+not lemmatize it to « pallier » — accepted), and mirrored both in the README
+limitations section. Verified all four FP probe sentences clean, the demo's
+« est le numéro 1 du marché » still fires, and the full suite stays at 529
+passed.
