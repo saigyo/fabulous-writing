@@ -15,6 +15,16 @@ export function RulesView() {
   const m = useMessages()
   const [response, setResponse] = useState<RulesResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+
+  function toggleCollapsed(key: string) {
+    setCollapsed((old) => {
+      const next = new Set(old)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
   useEffect(() => {
     setResponse(null)
@@ -131,7 +141,7 @@ export function RulesView() {
       {split &&
         split.general.map((group) => (
           <section key={group.category} className="rules-group">
-            <h3 className={`category-${group.category}`}>
+            <h3>
               <input
                 type="checkbox"
                 title={m.categoryToggleTitle}
@@ -139,9 +149,21 @@ export function RulesView() {
                 disabled={!profile}
                 onChange={() => toggleCategory(group.category, group.rules)}
               />
-              {m.categoryName(group.category)}
+              <button
+                className="rules-collapse"
+                aria-expanded={!collapsed.has(group.category)}
+                onClick={() => toggleCollapsed(group.category)}
+              >
+                <span className={`category-dot fw-${group.category}`} />
+                {m.categoryName(group.category)}
+                <span className="count-badge">{group.rules.length}</span>
+                <span className="chevron">
+                  {collapsed.has(group.category) ? '▸' : '▾'}
+                </span>
+              </button>
             </h3>
-            {group.rules.map((rule) => (
+            {!collapsed.has(group.category) &&
+              group.rules.map((rule) => (
               <RuleCard
                 key={rule.rule_id}
                 rule={rule}
@@ -167,10 +189,22 @@ export function RulesView() {
                 disabled={!profile}
                 onChange={() => togglePack(section.pack, section.rules)}
               />
-              {m.packName(section.pack)}
-              <span className="rule-badge pack">{m.rulePacks}</span>
+              <button
+                className="rules-collapse"
+                aria-expanded={!collapsed.has(`pack:${section.pack}`)}
+                onClick={() => toggleCollapsed(`pack:${section.pack}`)}
+              >
+                <span className="category-dot" />
+                {m.packName(section.pack)}
+                <span className="rule-badge pack">{m.rulePacks}</span>
+                <span className="count-badge">{section.rules.length}</span>
+                <span className="chevron">
+                  {collapsed.has(`pack:${section.pack}`) ? '▸' : '▾'}
+                </span>
+              </button>
             </h3>
-            {section.rules.map((rule) => (
+            {!collapsed.has(`pack:${section.pack}`) &&
+              section.rules.map((rule) => (
               <RuleCard
                 key={rule.rule_id}
                 rule={rule}

@@ -882,6 +882,29 @@ input {
   gap: 0.5rem;
 }
 
+/* Collapse button spans the rest of the heading (checkbox stays outside so
+   toggling a category never collapses it); dot/name/count mirror the
+   sidebar's category titles, chevron pushed to the right edge. */
+.rules-group h3 .rules-collapse {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+  padding: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.rules-collapse .chevron {
+  margin-left: auto;
+  color: var(--text-dim);
+}
+
 .rules-profile-banner {
   color: var(--text-dim);
   margin: 0.2rem 0 0;

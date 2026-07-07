@@ -1917,3 +1917,13 @@ the header's language selector. Codes remain the stored/API value.
 Follow-up: the Preferred column now visually leads each row — semibold,
 full text color — while the supporting columns (language, do-not-use,
 definition) recede to the dim text color; add/edit widgets unaffected.
+
+## 2026-07-07 — Rules view: category color dots + collapsible sections
+The sidebar's category treatment now appears in the rules view: each
+section heading is [enable-checkbox] [color dot] name [count] … [chevron],
+where dot/name/count/chevron form one collapse button (the checkbox stays
+outside it, so enabling/disabling a category never collapses the section;
+the checkbox also aligns vertically with the rule-card checkboxes below).
+Pack sections share the pattern with the neutral gray dot. Collapse state
+is per-visit (component state). Verified headlessly: collapse hides cards,
+checkbox clicks don't collapse, dots carry the sidebar palette.
