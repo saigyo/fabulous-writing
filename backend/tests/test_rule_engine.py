@@ -296,7 +296,7 @@ class TestPacks:
     def test_is_active_truth_table(self) -> None:
         config = RuleConfig(
             categories_off=["style"],
-            exceptions=["clarity.cherry", "clarity.optout"],
+            exceptions=["clarity.cherry", "clarity.optout", "style.cherry"],
             packs_on=["techdocs"],
         )
         # General rules: unchanged XOR semantics.
@@ -312,6 +312,8 @@ class TestPacks:
         assert not config.is_active("clarity", "clarity.optout", pack="techdocs")
         # Pack on but category off -> inactive (category toggle wins).
         assert not config.is_active("style", "style.pack", pack="techdocs")
+        # Even with category off and pack off, an exception resurrects the rule.
+        assert config.is_active("style", "style.cherry", pack="marketing")
 
     def test_pack_rules_skipped_by_default(self, rules_dir: Path) -> None:
         write_rule(
