@@ -1064,3 +1064,27 @@ OP: "{3,}"}` + head noun) was probed against the engine and did not remove the
 mistag cascades into the parse as `compound` — so the POS-based pattern stays,
 with the limitation documented in the file comment and good examples left
 honest. Full suite: 411 passed.
+
+## 2026-07-07 — 17 new German rules (general + marketing/techdocs/blog packs)
+
+Commit: `9676c34`
+
+Task 8 of the use-case-packs plan. Added 17 DE rule files under
+`backend/rules/de/`: 5 grammar (`das-dass`, `seit-seid`, `wie-als`,
+`deppenapostroph`, `beliebte-fehler`), 5 general style/clarity
+(`funktionsverbgefuege`, `amtsdeutsch`, `doppelmoppel`, `genitivkette`,
+`verbklammer`), plus 7 pack rules (2 `marketing`: `superlativ-inflation`,
+`hype-anglizismen`; 4 `techdocs`: `man-konstruktion`,
+`futur-in-anleitungen`, `bitte-in-anleitungen`, `e-mail-schreibung`; 1
+`blog`: `floskel-einstieg`). All 50 parametrized `test_rule_examples.py`
+cases (25 DE rules x bad/good) passed with no pattern or example
+adjustments needed — parses were checked against `de_core_news_sm` for the
+flagged trouble spots (das-dass's `hoffe`→`hoffen` lemma on the
+ungrammatical sentence, `wie-als`'s `Degree=Cmp` on `schneller`,
+`funktionsverbgefuege`'s `erfolgt`→`erfolgen`, `verbklammer`'s 13-token gap
+to the `PTKVZ` "vor", `futur-in-anleitungen`'s `Mood=Ind|Tense=Pres` on
+`wird`) and all matched as designed. Two false-positive guards ("Wir
+führen die Änderungen jetzt durch." and "Die Zeitung erschien gestern.")
+produced no findings through the real engine with all packs on. Full
+suite: 445 passed (the plan's "~461" was an estimate of the pre-existing
+count, which was actually 395, not 411).
