@@ -2,16 +2,19 @@
 # (見れます → LEMMA=見れる). Fusion is context-dependent — split analyses
 # (食べ+れる) are caught by the sibling rule ranuki-split. Curated
 # ichidan/kuru forms only; godan potentials (走れる) are legitimate.
+# No POS constraint: GiNZA sometimes tags fused ら抜き tokens ADJ or NOUN
+# (来れるかどうか, 変えれる) — the ら抜き lemma alone is the signal.
 extends: token_pattern
 message: "「%s」はら抜き言葉です — 「られる」の形を使ってください（例:「見られる」）。"
 level: warning
 category: grammar
 pattern:
-  - {LEMMA: {IN: [見れる, 食べれる, 来れる, 出れる, 寝れる, 起きれる, 着れる, 降りれる, 決めれる, 信じれる, 覚えれる, 変えれる, 続けれる, 教えれる]}, POS: VERB}
+  - {LEMMA: {IN: [見れる, 食べれる, 来れる, 出れる, 寝れる, 起きれる, 着れる, 降りれる, 決めれる, 信じれる, 覚えれる, 変えれる, 続けれる, 教えれる]}}
 examples:
   bad:
     - "この映画は家でも見れます。"
     - "朝早く起きれない。"
+    - "来れるかどうか分からない。"
   good:
     - "この映画は家でも見られます。"
     - "彼はとても速く走れる。"
