@@ -433,28 +433,29 @@
   border-bottom: 1px solid var(--border);
 }
 
-/* Bottom spacing lives on the row (not the h2) so a wrapped status label
-   still ends above it instead of spilling into the severity chips. */
+/* The status label is positioned out of the flow so a wrapped (two-line)
+   label overlays the chips below instead of pushing them down; the row's
+   height comes from the heading alone and never changes. */
 .sidebar-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.5rem;
+  position: relative;
   margin-bottom: 0.75rem;
 }
 
-/* Only the status label may wrap; the heading and its count badge stay put. */
 .sidebar h2 {
   margin: 0;
   font-size: 1rem;
-  flex-shrink: 0;
   white-space: nowrap;
 }
 
 .check-status {
+  position: absolute;
+  top: 0.2rem;
+  right: 0;
+  max-width: 65%;
   font-size: 0.75rem;
   color: var(--accent);
   text-align: right;
+  pointer-events: none;
 }
 
 .llm-error {
