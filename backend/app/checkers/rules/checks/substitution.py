@@ -4,7 +4,7 @@ from app.core.models import Finding, Source, Span
 
 from ..context import CheckContext
 from ..loader import LoadedRule
-from ..text import format_message
+from ..text import bounded_pattern, format_message
 
 
 def check_substitution(rule: LoadedRule, ctx: CheckContext) -> list[Finding]:
@@ -12,7 +12,7 @@ def check_substitution(rule: LoadedRule, ctx: CheckContext) -> list[Finding]:
     flags = re.IGNORECASE if spec.ignorecase else 0
     findings: list[Finding] = []
     for bad, good in spec.swap.items():
-        for match in re.finditer(rf"\b(?:{bad})\b", ctx.text, flags):
+        for match in re.finditer(bounded_pattern(bad), ctx.text, flags):
             findings.append(
                 Finding(
                     category=spec.category,

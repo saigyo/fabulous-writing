@@ -4,13 +4,13 @@ from app.core.models import Finding, Source, Span
 
 from ..context import CheckContext
 from ..loader import LoadedRule
-from ..text import format_message
+from ..text import bounded_pattern, format_message
 
 
 def check_existence(rule: LoadedRule, ctx: CheckContext) -> list[Finding]:
     spec = rule.spec
     flags = re.IGNORECASE if spec.ignorecase else 0
-    patterns = [rf"\b(?:{token})\b" for token in spec.tokens] + list(spec.raw)
+    patterns = [bounded_pattern(token) for token in spec.tokens] + list(spec.raw)
     findings: list[Finding] = []
     for pattern in patterns:
         for match in re.finditer(pattern, ctx.text, flags):

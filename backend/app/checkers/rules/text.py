@@ -51,3 +51,18 @@ def format_message(template: str, *args: str) -> str:
     if count == 0:
         return template
     return template % args[:count]
+
+
+# Han (incl. ext. A + compatibility), Hiragana, Katakana, CJK punctuation,
+# and full-width forms. A `\b` on a side whose edge char is in these ranges
+# can never match mid-sentence (kana/kanji count as \w), so we drop it.
+_CJK_CHAR = re.compile(
+    "[\\u3000-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff\\uff00-\\uffef]"
+)
+
+
+def bounded_pattern(fragment: str) -> str:
+    """Wrap a regex fragment in word boundaries, edge-aware for CJK."""
+    left = "" if _CJK_CHAR.match(fragment[0]) else r"\b"
+    right = "" if _CJK_CHAR.match(fragment[-1]) else r"\b"
+    return rf"{left}(?:{fragment}){right}"

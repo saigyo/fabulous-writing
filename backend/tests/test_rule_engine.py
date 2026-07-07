@@ -384,3 +384,52 @@ def test_rule_without_examples_is_reported(tmp_path: Path) -> None:
     assert engine.list_rules() == []
     assert len(engine.errors) == 1
     assert "examples" in engine.errors[0].error
+
+
+class TestCjkBoundaries:
+    """\b never fires between two word chars, and kana/kanji are word
+    chars — CJK-edged keys must not be boundary-anchored on that side."""
+
+    def test_bounded_pattern_edges(self) -> None:
+        from app.checkers.rules.text import bounded_pattern
+
+        assert bounded_pattern("一番最初") == "(?:一番最初)"
+        assert bounded_pattern("very") == r"\b(?:very)\b"
+        assert bounded_pattern("No1万") == r"\b(?:No1万)"
+        assert bounded_pattern("万No1") == r"(?:万No1)\b"
+
+    def test_substitution_matches_cjk_mid_sentence(self, rules_dir: Path) -> None:
+        write_rule(
+            rules_dir,
+            "ja",
+            "style/juufuku.yml",
+            "extends: substitution\nmessage: \"%s statt %s\"\n"
+            "category: style\nswap:\n  一番最初: 最初\n",
+        )
+        engine = RuleEngine(rules_dir)
+        findings = engine.check("彼は一番最初に確認した。", Language.JA)
+        assert [f.span.text for f in findings] == ["一番最初"]
+        assert findings[0].suggestions == ["最初"]
+
+    def test_existence_tokens_match_cjk_mid_sentence(self, rules_dir: Path) -> None:
+        write_rule(
+            rules_dir,
+            "ja",
+            "style/hype.yml",
+            "extends: existence\nmessage: hype\ncategory: style\ntokens: [究極]\n",
+        )
+        engine = RuleEngine(rules_dir)
+        findings = engine.check("これぞ究極の体験です。", Language.JA)
+        assert [f.span.text for f in findings] == ["究極"]
+
+    def test_latin_keys_still_respect_word_boundaries(self, rules_dir: Path) -> None:
+        write_rule(
+            rules_dir,
+            "en",
+            "style/sub.yml",
+            "extends: substitution\nmessage: \"%s not %s\"\n"
+            "category: style\nswap:\n  cat: feline\n",
+        )
+        engine = RuleEngine(rules_dir)
+        assert engine.check("The catalog is big.", Language.EN) == []
+        assert len(engine.check("The cat sleeps.", Language.EN)) == 1
