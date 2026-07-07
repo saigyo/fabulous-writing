@@ -3,6 +3,8 @@
 # excluded, so formal detection leans on usted/ustedes only.
 # Known limitation: ustedes is also the plural of tú in Latin American
 # Spanish and votes as formal.
+# PROPN is admitted alongside PRON because es_core_news_sm occasionally
+# mistags « Usted » as PROPN; the LOWER gate keeps this loss-free.
 extends: consistency
 message: "Tuteo y ustedeo mezclados — trate al lector de forma coherente."
 level: warning
@@ -13,7 +15,7 @@ variants:
       - {LOWER: {IN: [tú, ti, contigo, te, tu, tus]}, POS: {IN: [PRON, DET]}}
   formal:
     pattern:
-      - {LOWER: {IN: [usted, ustedes]}, POS: PRON}
+      - {LOWER: {IN: [usted, ustedes]}, POS: {IN: [PRON, PROPN]}}
 examples:
   bad:
     - "Puedes empezar hoy con tu borrador. Te aviso cuando termine la revisión. Usted puede publicar después."

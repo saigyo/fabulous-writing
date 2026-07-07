@@ -1,5 +1,5 @@
 extends: substitution
-message: "«%s» es un circunloquio — mejor «%s»."
+message: "«%s» es más directo — «%s» es un circunloquio."
 level: suggestion
 category: clarity
 ignorecase: true

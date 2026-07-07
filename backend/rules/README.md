@@ -279,7 +279,10 @@ staying simple and fast. Known gaps, from review:
 - **grammar.tuteo-ustedeo** excludes possessive « su/sus » from the
   formal vote because it is third-person-ambiguous (could refer to
   someone other than the addressee); formal detection leans on
-  usted/ustedes only. Known limitation: « ustedes » is also the plural
+  usted/ustedes only. The formal variant admits `PROPN` alongside `PRON`
+  because `es_core_news_sm` occasionally mistags « Usted » as `PROPN` in
+  mixed-register contexts — the `LOWER` gate (usted/ustedes only) makes
+  this loss-free. Known limitation: « ustedes » is also the plural
   of « tú » in Latin American Spanish and always votes as formal.
 - **style.afirmaciones-inverificables** only flags « número 1 » in its
   qualified market-claim forms (« … del mercado », « … mundial »): the
