@@ -43,19 +43,33 @@ Rules and terminology checks work entirely offline, without any LLM.
 ### Checking profiles
 
 A **checking profile** bundles everything that defines *how* a text is checked, per
-language: which rules are active, which terminology domains apply, which quality
-tier — or pinned LLM provider/model — to use, extra LLM instructions (tone, audience,
-focus — appended to the built-in check prompt), and a fitting example text. Switch
-the profile in the header and the selectors follow; different kinds of writing get
-different checks — e.g. technical documentation with vividness rules off and
-precision-focused LLM guidance, marketing copy with benefit-led phrasing instructions.
+language: which rules are active, which **rule packs** are enabled, which terminology
+domains apply, which quality tier — or pinned LLM provider/model — to use, extra LLM
+instructions (tone, audience, focus — appended to the built-in check prompt), and a
+fitting example text. Switch the profile in the header and the selectors follow;
+different kinds of writing get different checks — e.g. technical documentation with
+vividness rules off and precision-focused LLM guidance, marketing copy with
+benefit-led phrasing instructions.
+
+**Rule packs** are use-case rule sets that stay off unless a profile turns them on —
+today's catalog ships `marketing`, `techdocs`, and `blog` packs for English and German,
+each toggled per profile from a chip on its Profiles-tab card or a section in the
+Rules tab. The set is extensible without touching code: dropping a new rule YAML file
+with a fresh `pack:` slug makes that pack available everywhere a pack picker appears.
+
+Every shipped rule is also **self-documenting**: it carries `bad`/`good` example
+sentences that render right on its card in the Rules tab, and the same sentences run
+as an automated test against the rule, so the catalog can't drift out of sync with
+its own documentation.
 
 Every language has a non-deletable, editable **Standard** profile; English, German,
 and Japanese additionally seed deletable **Marketing** and **Technical Documentation**
-examples, so profile switching can be tried out of the box. Header selectors can
-always be overridden ad hoc: the profile then shows a ✱ marker with save (persist the
-override into the profile) and reset actions. The **Profiles** tab manages everything
-else; the **Rules** tab doubles as the selected profile's rule editor.
+examples (with their packs pre-enabled), and English and German further seed a
+**Blog** example (with the `blog` pack enabled) — so profile switching, including rule
+packs, can be tried out of the box. Header selectors can always be overridden ad hoc:
+the profile then shows a ✱ marker with save (persist the override into the profile)
+and reset actions. The **Profiles** tab manages everything else; the **Rules** tab
+doubles as the selected profile's rule editor.
 
 ![The Profiles tab with the seeded Standard and Marketing profiles: domains and example text on the left, LLM tier or pinned model, and extra instructions on the right](docs/images/profiles.png)
 
@@ -65,10 +79,13 @@ tier (or pinned model) and instructions right.*
 ### Rule catalog
 
 The **Rules** tab shows the live catalog for the selected language: every loaded rule
-with its category, severity, and message, plus any load errors. Its checkboxes edit
-the selected checking profile: a category toggle switches a whole group, a per-rule
-switch overrides its category (a single rule can stay on inside a disabled category,
-or off inside an enabled one) — changes apply to the next check immediately.
+with its category, severity, message, and its `bad`/`good` example sentences, plus any
+load errors. Its checkboxes edit the selected checking profile: a category toggle
+switches a whole group, a per-rule switch overrides its category (a single rule can
+stay on inside a disabled category, or off inside an enabled one) — changes apply to
+the next check immediately. General rules are grouped by category as before; any
+use-case **rule packs** (marketing, techdocs, blog, …) get their own section below,
+each with a pack-level toggle plus the same per-rule overrides.
 
 ![The Rules tab listing the loaded rules for the selected language with per-profile category and rule toggles](docs/images/rules.png)
 
@@ -259,8 +276,18 @@ Rules live in `backend/rules/<language>/<group>/<name>.yml` and are picked up on
 startup or via `POST /api/rules/reload`. A catalog of all shipped rules — with
 what each one demonstrates — is in [backend/rules/README.md](backend/rules/README.md);
 the app's *Rules* tab shows the live catalog for the selected language (from
-`GET /api/rules?language=…`).
-Four check types:
+`GET /api/rules?language=…`), including each rule's flagged/clean example sentences.
+
+Every rule file **must** carry an `examples:` block — `bad` sentences the rule has to
+flag, `good` sentences it must not. This is enforced at load time (a missing block
+fails validation) and exercised by a catalog-wide test
+(`backend/tests/test_rule_examples.py`) that runs every rule against its own
+examples, so the catalog documents and tests itself in one place. A rule can also
+carry an optional `pack: <slug>` (e.g. `pack: marketing`) to mark it as a
+use-case rule: off unless a checking profile has that pack enabled (see
+[Checking profiles](#checking-profiles)); pack slugs need no registration — they are
+discovered from whichever rule files declare them.
+Four basic check types:
 
 ```yaml
 # existence: flag words/phrases (tokens get word boundaries; raw is verbatim regex)
@@ -271,12 +298,18 @@ category: style           # spelling|grammar|style|clarity|vividness|correctness
 ignorecase: true
 tokens: [very, extremely]
 raw: ['!{2,}']
+examples:
+  bad: ["This is very interesting."]
+  good: ["This is a precise result."]
 
 # substitution: flag and suggest a replacement
 extends: substitution
 message: "Use '%s' instead of '%s'."
 swap:
   utilize: use
+examples:
+  bad: ["We utilize this tool."]
+  good: ["We use this tool."]
 
 # occurrence: limit matches of a pattern per sentence
 extends: occurrence
@@ -287,10 +320,16 @@ max: 30
 # For languages without whitespace word boundaries (ja/zh), count spaCy
 # tokens instead of regex matches (requires the language's spaCy model):
 #   count: tokens
+examples:
+  bad: ["A sentence that keeps going and going and going ... (30+ words)."]
+  good: ["A short sentence."]
 
 # repetition: flag adjacent duplicated words ("the the")
 extends: repetition
 message: "'%s' is repeated."
+examples:
+  bad: ["It is is fine."]
+  good: ["It is fine."]
 ```
 
 Invalid rule files are reported by `GET /api/rules` (and at startup) but never break
@@ -313,6 +352,9 @@ pattern:
   - {LEMMA: make}
   - {POS: DET, OP: "?"}
   - {LOWER: {IN: [decision, assessment]}}
+examples:
+  bad: ["We made a decision to proceed."]
+  good: ["We decided to proceed."]
 
 # dependency: match syntax trees (spaCy DependencyMatcher syntax)
 # https://spacy.io/usage/rule-based-matching#dependencymatcher
@@ -322,12 +364,18 @@ category: style
 pattern:
   - {RIGHT_ID: verb, RIGHT_ATTRS: {TAG: VBN}}
   - {LEFT_ID: verb, REL_OP: ">", RIGHT_ID: aux, RIGHT_ATTRS: {DEP: auxpass}}
+examples:
+  bad: ["The report was written by the team."]
+  good: ["The team wrote the report."]
 ```
 
 Patterns support the full Matcher vocabulary — `LEMMA`, `POS`, `TAG`, `DEP`,
-`MORPH`, `REGEX`, `IN`/`NOT_IN` sets, and `OP` quantifiers. The rule files under
-`backend/rules/` double as a cookbook: see e.g. `en/grammar/article-an.yml`
-(REGEX), `de/style/wuerde-stil.yml` (MORPH + OP gap), `fr/style/voix-passive.yml`
+`MORPH`, `REGEX`, `IN`/`NOT_IN` sets, and `OP` quantifiers. `token_pattern`'s spaCy
+`Matcher` runs with `greedy="LONGEST"`, so a quantified pattern like
+`{POS: NOUN, OP: "{4,}"}` yields one longest match per start rather than every
+overlapping sub-match. The rule files under `backend/rules/` double as a cookbook:
+see e.g. `en/grammar/article-an.yml` (REGEX), `de/style/wuerde-stil.yml` (MORPH + OP
+gap), `en/clarity/noun-string.yml` (`{4,}` + greedy LONGEST), `fr/style/voix-passive.yml`
 (dependency via `aux:pass`), and `zh/style/jinxing.yml` (optional tokens).
 Patterns are validated when rules load; errors appear in `GET /api/rules`.
 

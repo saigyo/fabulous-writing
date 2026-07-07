@@ -1189,3 +1189,94 @@ existing `onSave` patch flow. The row only renders when `packs.length >
 existing profile-card rules. `npx vitest run`: 17 files / 138 tests green
 (unchanged — no new test surface, this is pure UI wiring reusing already-
 tested `packs_on`/`getRules` plumbing). `npm run build` clean.
+
+## 2026-07-07 — Task 12: rule packs + self-documenting examples, feature capstone
+
+Commits: `b6ac354`..`75d4c3e` (31 commits)
+
+Feature complete: use-case **rule packs** and mandatory **self-documenting rule
+examples**, across 11 implementation tasks plus this documentation pass.
+
+**What shipped.** Rules can carry an optional `pack: <slug>` marking them as
+use-case rules — off by default, active only for a profile with that pack
+enabled. Activation for a pack rule is `(category on AND pack in packs_on) XOR
+exception`; for a general rule (no pack) it stays the original `(category on)
+XOR exception`. Pack slugs are free-form and discovered from whatever `pack:`
+values appear in the rule files — `GET /api/rules?language=…` returns the
+sorted set as a top-level `packs` key, so a new pack needs a YAML file, not a
+code change. `RuleConfig.packs_on` is threaded through the engine, the
+`profiles` table (its own JSON column, migrated in-place via `PRAGMA
+table_info` + `ALTER TABLE`), the profiles API, and the frontend (types,
+`isRuleActive`, every profile-saving `PUT`/`POST` sender). A consequential
+semantic change: `RuleEngine.check(..., config=None)` now means *general rules
+only* (an empty `packs_on` excludes every pack rule), not *every rule* as
+before packs existed.
+
+Every rule file now **requires** an `examples: {bad, good}` block — enforced
+by the loader (a rule without one fails to load) and exercised by a
+catalog-wide parametrized test (`backend/tests/test_rule_examples.py`): each
+`bad` sentence must trigger the rule's own id, each `good` sentence must not.
+The same examples render on the rule's card in the Rules view, so the catalog
+documents and tests itself from one source of truth. `RuleInfo.examples` is
+the typed `RuleExamples` pydantic model in the API, not a loose dict.
+
+The catalog grew by 35 rules: 18 English (`negative-phrasing`, `noun-string`,
+`based-off`, `could-of`, `dangling-participle`, `fewer-less`, `condescension`,
+`double-negative`, `future-tense-instruction`, `hedging`, `hype-words`,
+`latin-abbreviations`, `shouting-caps`, `third-person-user`,
+`throat-clearing`, `unverifiable-claims`, `very-unique`, `weak-verb-adverb`)
+and 17 German (`genitivkette`, `verbklammer`, `beliebte-fehler`, `das-dass`,
+`deppenapostroph`, `seit-seid`, `wie-als`, `amtsdeutsch`,
+`bitte-in-anleitungen`, `doppelmoppel`, `e-mail-schreibung`,
+`floskel-einstieg`, `funktionsverbgefuege`, `futur-in-anleitungen`,
+`hype-anglizismen`, `man-konstruktion`, `superlativ-inflation`), split across
+three packs (`marketing`, `techdocs`, `blog`) plus general grammar/style/clarity
+rules. `noun-string`'s `{POS: NOUN, OP: "{4,}"}` needed the `token_pattern`
+`Matcher` switched to `greedy="LONGEST"` so a long noun run reports one
+longest match instead of every overlapping sub-match — every other
+`token_pattern` rule benefits from the same fix.
+
+Seeding: the Marketing/Technical Documentation example profiles (EN/DE/JA)
+now enable their matching packs (`packs_on: ["marketing"]` /
+`["techdocs"]`), and EN/DE additionally seed a new **Blog** example profile
+with the `blog` pack enabled.
+
+Frontend: `rules/catalog.ts`'s `splitByPack` partitions the catalog into
+general (category-grouped, as before) and per-pack sections; `RulesView.tsx`
+renders a `.rules-pack` section per pack with its own toggle, and every
+`RuleCard` renders its `bad`/`good` examples as "✗ Flags …" / "✓ Doesn't
+flag …" lines. `ProfilesView.tsx`'s profile cards grew a row of pack chips,
+discovered per language via `GET /api/rules?language=…` and labeled through
+`packName()` (a curated map for known slugs, title-case fallback for new
+ones).
+
+**Documentation pass (this task).** `backend/rules/README.md`: intro now
+explains the mandatory-examples/self-testing catalog and the free-form
+`pack:` mechanism; EN/DE tables gained a Pack column and all 35 new rows with
+filled-in *Demonstrates* entries; a new "Known heuristic limitations" section
+records the deliberate false-positive/negative trade-offs in `noun-string`,
+`dangling-participle`, `double-negative`, `weak-verb-adverb`,
+`future-tense-instruction`, `shouting-caps`, `deppenapostroph`, and
+`das-dass`. `docs/backend-architecture.md` and `docs/frontend-architecture.md`
+were largely already up to date from the per-task notes; this pass
+consolidated them and fixed one imprecision (the `_engine_with_two_rules` test
+fixture appends its examples stub by hand, not via `write_rule()`), and made
+explicit the `config=None` semantic change, the `packs_on` migration
+mechanism, and the profile-card pack-chip/`packName` details that hadn't been
+written down yet. The main `README.md` gained rule packs and self-documenting
+examples to the Checking-profiles and Rule-catalog sections, updated the
+Writing-rules walkthrough (mandatory `examples:`, optional `pack:`, `greedy`
+LONGEST, six check types instead of the stale four-in-the-intro framing), and
+noted the new Blog seed profile. `docs/superpowers/specs/2026-07-07-rule-packs-en-de-design.md`
+gained an "Implementation notes (phase 1)" section recording ten deviations
+from the original sketch (das-dass's verb-lemma gate, seit-seid's
+question-form narrowing, could-of's course/necessity lookahead,
+deppenapostroph's capitalized-stem + contraction stoplist, packs_on as its
+own column, the flat packs index, the config=None semantic flip, greedy
+LONGEST, superlativ-inflation's raw-stem approach, and the typed
+`RuleExamples` API model).
+
+**Verification.** `cd backend && uv run pytest -q` → 445 passed.
+`cd frontend && npx vitest run` → 138 passed; `npm run build` clean; `npm run
+lint` clean (only pre-existing `react-hooks/exhaustive-deps` warnings,
+unrelated to this feature).

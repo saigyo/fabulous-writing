@@ -312,3 +312,90 @@ the implementation plan fixes the full lists.
   concrete need appears.
 - LLM-prompt awareness of packs (the LLM checker is profile-instructed via
   `llm_instructions` already).
+
+## Implementation notes (phase 1)
+
+What actually shipped deviates from this design in a handful of places, all
+in the direction of tighter precision or a cleaner shape than the sketch
+above. Recorded here so the design doc stays a trustworthy account of what
+was decided *and* what changed on contact with real sentences.
+
+a. **`grammar.das-dass`** does not use the sketched
+   `{POS: PRON, MORPH: {IS_SUPERSET: [PronType=Prs]}}` pattern alone. It first
+   requires one of a fixed complement-verb lemma list (`hoffen, glauben,
+   denken, sagen, wissen, meinen, finden, vermuten, behaupten, befürchten`)
+   before the comma, *then* the `das` + `PRON` gate — with a `NOT_IN` stoplist
+   (`eine`, `eines`, `alles`) on the pronoun to exclude indefinite-pronoun
+   readings ("das eine", "das alles"). The verb-lemma precondition is a
+   meaningfully higher-precision bar than pronoun-tagging alone: a bare
+   `PronType=Prs` gate still fires after any comma+das+pronoun, including
+   plenty of correct relative-clause readings the spec didn't anticipate.
+
+b. **`grammar.seit-seid`** narrowed from the sketched `{LOWER: seit} {LOWER:
+   {IN: [ihr, wir]}}` token pattern to a `raw`/`existence` regex restricted to
+   the question form (`\bSeit ihr\b(?!\s+[A-ZÄÖÜ])[^,.!?;:]*\?`). Two changes:
+   `wir` was dropped ("seit wir" has no seid/wir confusion — linguistically
+   impossible, it was a spec oversight), and the rule now fires only when the
+   sentence is a question — "Seit ihr hier seid, läuft alles besser." is a
+   correct temporal clause, not a typo, and the trailing `?` requirement
+   filters it out. A negative lookahead for a following capitalized word
+   guards the possessive reading ("Seit ihr Vertrag läuft, sparen Sie …?" —
+   German noun capitalization makes this a reliable, not heuristic, guard).
+
+c. **`grammar.could-of`**'s swap keys carry a
+   `(?!\s+(?:course|necessity))` negative lookahead (e.g. `could of(?!\s+(?:course|necessity))`)
+   that the spec didn't call for. Without it, `error`-level autofix would
+   silently corrupt the idioms "could of course" and "must of necessity" into
+   "could have course" / "must have necessity" — worse than not firing at all
+   given the rule autofixes without a review step.
+
+d. **`grammar.deppenapostroph`** ended up considerably narrower than the
+   spec's `\w+'s\b`. The shipped `raw` regex requires a **capitalized stem**
+   (`[A-ZÄÖÜ]\w*['’]s\b`) and stoplists a set of legitimate verb/conjunction
+   contractions via negative lookahead (`geht's`, `gibt's`, `war's`, `wenn's`,
+   …). Brand names spelled with an apostrophe (`McDonald's`) remain a
+   documented residual false positive — they are capitalized stems followed
+   by `'s`, indistinguishable from the genitive error without a name
+   dictionary; `warning` severity (not `error`) carries that risk.
+
+e. **`packs_on` is its own `profiles` column** (`TEXT NOT NULL DEFAULT '[]'`,
+   JSON-encoded, added via the same `PRAGMA table_info` + `ALTER TABLE`
+   pattern as `llm_tier`), not a field folded into some single JSON rule-config
+   blob — there never was one; `categories_off` and `rule_exceptions` were
+   already separate columns, and `packs_on` followed that precedent.
+
+f. **The packs index is a flat sorted list**, not a per-language dict as one
+   reading of the spec might have suggested. `GET /api/rules` already accepts
+   `language=` as a query filter, so `packs` is just the sorted set of pack
+   slugs present in whatever subset of the catalog the response already
+   contains — no need to duplicate the per-language split inside the payload.
+
+g. **`RuleEngine.check(..., config=None)` now means "general rules only"**,
+   not "every rule" as it did before packs existed. `config=None` resolves to
+   a bare `RuleConfig()` with `packs_on=[]`, and a pack rule additionally
+   requires its pack to be listed in `packs_on` — so with no config, no pack
+   rule can ever be active. A caller that wants pack rules included as well
+   must pass an explicit `RuleConfig(packs_on=[...])` naming the packs it
+   wants. This is a deliberate, not accidental, semantic change; callers and
+   tests that relied on the old "no config = everything" behavior were
+   audited and updated.
+
+h. **`token_pattern` matching switched to `greedy="LONGEST"`** on the spaCy
+   `Matcher` registration. This wasn't in the original design, but was needed
+   the moment a quantified pattern shipped: `clarity.noun-string`'s
+   `{POS: NOUN, OP: "{4,}"}` would otherwise report every overlapping
+   sub-match of a long noun run (a 5-noun run yields matches for nouns 1-4,
+   2-5, and the full 1-5) instead of the one longest span per start position.
+
+i. **`style.superlativ-inflation`** uses `raw` regexes with a `\w*` suffix on
+   bare stems (`\beinzigartig\w*`, `\brevolutionär\w*`, …) rather than the
+   spec's plain `existence`/`tokens` list. Plain `tokens` entries are wrapped
+   in `\b…\b` by the engine, which matches the dictionary form only; German
+   inflection (`einzigartiges`, `revolutionärste`) would silently escape an
+   exact-word rule, so the stem-plus-wildcard form was necessary to catch
+   inflected marketing copy.
+
+j. **`RuleInfo.examples` is the typed `RuleExamples` pydantic model** in the
+   `GET /api/rules` response, not a loose `dict[str, Any]` — so the OpenAPI
+   schema for the endpoint (and any generated client) documents the
+   `bad`/`good` shape honestly instead of erasing it to `object`.

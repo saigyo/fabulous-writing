@@ -255,7 +255,17 @@ and clears the pin; opening Advanced and picking a provider/model — or clickin
 pin icon to adopt the displayed pair — saves the pin and implicitly leaves the tier
 button unselected (the profile is now pinned). A `pinned-note` line with a clear (✕)
 button appears whenever the profile is pinned, so returning to tier mode does not
-require the Advanced panel. `RulesView.tsx` shows the
+require the Advanced panel. Each profile card also renders a row of **pack chips**
+when the current language has any: `ProfilesView` fetches `GET /api/rules?language=…`
+on mount and on language change (`getRules(language).then(r => setPacks(r.packs))`),
+so the chip set is discovered per language rather than hardcoded — a language with no
+packed rules simply renders no chip row. Clicking a chip toggles that slug in/out of
+the profile's `packs_on` and saves immediately (the same blur-to-save `PUT`, sent with
+every other field unchanged). Chip labels go through `packName(slug)`
+(`i18n/en.ts` and friends): a small known-slug map (`marketing` → "Marketing",
+`techdocs` → "Technical docs", `blog` → "Blog") with a title-case-and-de-hyphenate
+fallback for any future pack slug the catalog introduces, so a new pack YAML file
+gets a readable label without an i18n change. `RulesView.tsx` shows the
 per-profile banner, category checkboxes, and per-rule switches that write through to
 `PUT /api/profiles/{id}`.
 

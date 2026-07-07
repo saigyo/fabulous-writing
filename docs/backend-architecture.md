@@ -197,15 +197,21 @@ Every rule also carries a required `examples:` block (`bad`/`good` sentence list
 min 1 each) — a rule file without one fails to load. `tests/test_rule_examples.py`
 runs the whole catalog against its own examples (bad must trigger the rule's own
 `rule_id`, good must not), so the catalog tests itself; inline rule snippets used in
-`tests/test_rule_engine.py`/`test_nlp_rules.py` get an auto-appended stub via
-`write_rule()` so each test only states what it's actually about.
+`tests/test_rule_engine.py`/`test_nlp_rules.py` get an auto-appended stub block via
+`write_rule()` so each test only states what it's actually about — except the
+`_engine_with_two_rules` fixture (also in `test_rule_engine.py`), which builds its two
+rule files by hand and appends the same stub itself rather than going through
+`write_rule()`.
 
 Rules optionally carry a `pack:` slug (use-case pack; `None` for general
-always-on rules). EN currently ships three: `marketing`, `techdocs`, `blog`.
-`GET /api/rules` echoes both `pack` and `examples` per rule entry and adds a
-top-level `packs` key — the sorted set of distinct pack slugs discovered across
-the (optionally language-filtered) catalog — so the frontend can build a pack
-picker without hardcoding pack names.
+always-on rules; slugs are free-form strings discovered from whatever `pack:` values
+appear in the files, so a new pack needs no code change). EN and DE each currently
+ship three: `marketing`, `techdocs`, `blog`. `GET /api/rules` echoes both `pack` and
+`examples` per rule entry (`RuleInfo.examples` is the typed `RuleExamples` model, not
+a loose dict, so the OpenAPI schema is honest) and adds a top-level `packs` key — a
+flat sorted list of the distinct pack slugs discovered across the (optionally
+language-filtered) catalog, not a per-language dict — so the frontend can build a
+pack picker without hardcoding pack names.
 
 Six check types (`extends:`), each implemented as one function in
 `checkers/rules/checks/` and dispatched via the `CHECKS` table:
@@ -230,19 +236,29 @@ single longest span per starting point instead of every overlapping sub-match.
 
 `RuleEngine.check()` iterates the language's rules, applies the profile's `RuleConfig`
 filter, runs each check with a `CheckContext` (text + optional spaCy doc), and returns
-findings sorted by span.
+findings sorted by span. `config` defaults to `None`, which is turned into a bare
+`RuleConfig()` (`categories_off=[]`, `exceptions=[]`, `packs_on=[]`) — since a pack rule
+additionally needs its pack listed in `packs_on` (see below), an empty `packs_on` means
+**every pack rule is inactive**: `config=None` means *general rules only*, not "every
+rule" (a change from before pack support, when it meant everything).
 
-**`RuleConfig` — profile rule selection.** A profile stores category toggles plus
-per-rule exceptions; a rule is active iff
+**`RuleConfig` — profile rule selection.** A profile stores category toggles, pack
+opt-ins, and per-rule exceptions; a general rule (`pack` is `None`) is active iff
 
 ```python
 (category not in categories_off) != (rule_id in exceptions)   # XOR
 ```
 
-Exceptions *invert* their category's toggle rather than pinning a state, so a newly
-added rule file automatically follows its category. The same predicate is mirrored in
-the frontend (`isRuleActive`) so the rules page can display activation without a
-round-trip.
+and a pack rule is active iff
+
+```python
+(category not in categories_off and pack in packs_on) != (rule_id in exceptions)   # pack gate ANDed in, then XOR
+```
+
+Exceptions *invert* their category's (and, for pack rules, pack's) toggle rather than
+pinning a state, so a newly added rule file automatically follows its category/pack.
+The same predicate is mirrored in the frontend (`isRuleActive`) so the rules page can
+display activation without a round-trip.
 
 ## The NLP registry
 
@@ -360,7 +376,13 @@ when a check runs (see Rule engine below); fresh seeds default it to `[]`.
 - **Storage** (`app/services/profiles.py`): a `profiles` table (JSON-encoded list
   columns, `UNIQUE(language, name)`) beside the terminology tables, plus
   `profile_seed_markers` so seeding runs once per language and deleted example profiles
-  stay deleted across restarts.
+  stay deleted across restarts. `packs_on` is its own `TEXT NOT NULL DEFAULT '[]'`
+  column (JSON-encoded list, like `categories_off`/`rule_exceptions`) — the profile's
+  rule configuration was never a single JSON blob, so adding pack support meant adding
+  a column, not reshaping one. Both `packs_on` and (earlier) `llm_tier` are added to
+  existing on-disk databases with a startup `PRAGMA table_info(profiles)` check plus
+  `ALTER TABLE ... ADD COLUMN` when missing, so upgrading in place needs no manual
+  migration step.
 - **`llm_tier` column** (nullable): the profile's quality tier
   (`quality|balanced|cheap|local`), an alternative to pinning `llm_provider`/
   `llm_model`. Precedence when a profile is applied: pin wins over tier wins over "no

@@ -110,10 +110,17 @@ await page.screenshot({ path: `${outDir}/terminology.png` })
 console.log('terminology.png captured')
 
 // Shot 4: profiles view with the seeded EN profiles (Standard selected).
+// Scroll so the Marketing card's rule-pack chips are fully in view (it sits
+// below the fold otherwise, since Standard's card is tall).
 await languageSelect.selectOption('en')
 await page.waitForTimeout(600)
 await page.locator('.view-switch button', { hasText: 'Profiles' }).click()
 await page.waitForTimeout(600)
+const marketingPacks = page
+  .locator('.profile-card', { has: page.locator('.profile-card-title input[value="Marketing"]') })
+  .locator('.profile-card-packs')
+await marketingPacks.scrollIntoViewIfNeeded()
+await page.waitForTimeout(200)
 await page.screenshot({ path: `${outDir}/profiles.png` })
 console.log('profiles.png captured, cards:', await page.locator('.profile-card').count())
 
