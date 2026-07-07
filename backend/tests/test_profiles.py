@@ -169,6 +169,21 @@ def test_packs_on_roundtrip(tmp_path) -> None:
     assert store.get_profile(profile.id).packs_on == ["techdocs"]
 
 
+def test_seed_pack_profiles(tmp_path) -> None:
+    store = ProfileStore(tmp_path / "profiles.sqlite")
+    seed_profiles(store, DEMOS, seed_examples=True)
+    en = {p.name: p for p in store.list_profiles(Language.EN)}
+    assert en["Marketing"].packs_on == ["marketing"]
+    assert en["Technical Documentation"].packs_on == ["techdocs"]
+    assert en["Blog"].packs_on == ["blog"]
+    assert en["Blog"].example_text  # demo file exists and is non-empty
+    de = {p.name: p for p in store.list_profiles(Language.DE)}
+    assert de["Blog"].packs_on == ["blog"]
+    # Japanese keeps Marketing/TechDoc (packs are no-ops there for now), no Blog.
+    ja = {p.name: p for p in store.list_profiles(Language.JA)}
+    assert "Blog" not in ja
+
+
 def test_packs_on_migration_defaults_empty(tmp_path) -> None:
     # A database created before the column existed gets it via _migrate.
     import sqlite3

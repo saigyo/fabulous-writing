@@ -23,9 +23,10 @@ def test_list_profiles_contains_seeded(client):
 
 
 def test_create_update_delete_profile(client):
+    # "Blog" is now a seeded example name for EN; use a name that doesn't collide.
     created = client.post(
         "/api/profiles",
-        json={"language": "en", "name": "Blog", "llm_provider": "ollama"},
+        json={"language": "en", "name": "Notes", "llm_provider": "ollama"},
     )
     assert created.status_code == 201
     pid = created.json()["id"]

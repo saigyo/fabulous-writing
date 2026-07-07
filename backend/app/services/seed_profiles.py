@@ -1,6 +1,7 @@
 """Seed checking profiles: a Standard profile per language, plus deletable
-Marketing / Technical Documentation examples for EN, DE, JA (tracked in a
-marker table so deletions stick across restarts)."""
+Marketing / Technical Documentation examples for EN, DE, JA, and an
+additional Blog example for EN/DE (tracked in a marker table so deletions
+stick across restarts)."""
 
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from app.core.models import Language
 from app.services.profiles import ProfileStore
 
 EXAMPLE_LANGUAGES = {Language.EN, Language.DE, Language.JA}
+BLOG_LANGUAGES = {Language.EN, Language.DE}
 
 _MARKETING_INSTRUCTIONS = {
     Language.EN: (
@@ -41,6 +43,20 @@ _TECHDOC_INSTRUCTIONS = {
     Language.JA: (
         "対象読者:手順に従う利用者。正確さ、一貫した用語、曖昧さのない表現を最優先。"
         "手順は命令形を推奨。マーケティング的な表現や曖昧な数量表現を指摘すること。"
+    ),
+}
+
+_BLOG_INSTRUCTIONS = {
+    Language.EN: (
+        "Audience: blog readers. Favor a personal but tight voice; concrete "
+        "examples over abstractions; short paragraphs. Flag filler openings, "
+        "rambling, and unsupported generalizations."
+    ),
+    Language.DE: (
+        "Zielgruppe: Blog-Leserinnen und -Leser. Persönliche, aber straffe "
+        "Sprache; konkrete Beispiele statt Abstraktionen; kurze Absätze. "
+        "Markiere Floskel-Einstiege, Abschweifungen und unbelegte "
+        "Verallgemeinerungen."
     ),
 }
 
@@ -99,6 +115,7 @@ def seed_profiles(
                 store,
                 language,
                 "Marketing",
+                packs_on=["marketing"],
                 llm_tier="balanced",
                 llm_instructions=_MARKETING_INSTRUCTIONS[language],
                 example_text=_demo(demos_dir, f"{language.value}-marketing.txt"),
@@ -108,12 +125,23 @@ def seed_profiles(
                 language,
                 "Technical Documentation",
                 categories_off=["vividness"],
+                packs_on=["techdocs"],
                 llm_tier="balanced",
                 llm_instructions=_TECHDOC_INSTRUCTIONS[language],
                 example_text=_demo(
                     demos_dir, f"{language.value}-technical-documentation.txt"
                 ),
             )
+            if language in BLOG_LANGUAGES:
+                _create_ignoring_collision(
+                    store,
+                    language,
+                    "Blog",
+                    packs_on=["blog"],
+                    llm_tier="balanced",
+                    llm_instructions=_BLOG_INSTRUCTIONS[language],
+                    example_text=_demo(demos_dir, f"{language.value}-blog.txt"),
+                )
             # Marker is set even if an insert collided with a user profile —
             # this prevents a retry loop on every subsequent run.
             store.mark_example_seeded(language)

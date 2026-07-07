@@ -1,1 +1,3 @@
 Die Konfigurationsdatei wird beim Start von der Anwendung eingelesen, wobei die Einstellungen eigentlich ziemlich einfach über das Admin-Panel geändert werden können, was allerdings erst nach einem Neustart des Servers, der von dem Administrator durchgeführt werden muss, wirksam wird. Das Feature kann quasi einfach aktiviert werden. Die Credentials werden irgendwo in der der Config gespeichert.
+
+Bitte klicken Sie auf Installieren. Man wählt anschließend den Zielordner, und der Assistent wird die Einstellungen speichern. Senden Sie uns bei Fragen eine Email.
