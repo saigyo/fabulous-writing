@@ -109,17 +109,24 @@
   max-width: min(10.5rem, 12vw);
 }
 
-/* The auto checkbox keeps its compact inline form; the control-height box
-   centers it on the shared line. */
+/* Auto-LLM toggle: the ✳ mirrors the sparkle of the LLM checking status;
+   pressed styling matches the terminology Aa case toggle. */
 .header-controls .auto-toggle {
-  flex-direction: row;
-  align-items: center;
   height: var(--control-h);
-  gap: 0.3rem;
-  padding-left: 0;
-  font-size: 0.85rem;
-  text-transform: none;
-  letter-spacing: normal;
+  width: var(--control-h);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.header-controls .auto-toggle[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 
 /* Compact mode for narrow windows: same height, tighter type and gaps. */

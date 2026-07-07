@@ -26,7 +26,6 @@ export const ja: Messages = {
   model: 'モデル',
   domainNone: 'なし',
   offlineSuffix: '(オフライン)',
-  autoLabel: '自動',
   autoTitle: '入力が止まったら LLM チェックを自動実行',
   loadExample: '例文を読み込む',
   exampleTitle: '選択中の言語の誤りを含む例文でエディターの内容を置き換える',

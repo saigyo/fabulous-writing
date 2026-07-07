@@ -27,7 +27,6 @@ export const de: Messages = {
   model: 'Modell',
   domainNone: 'keine',
   offlineSuffix: ' (offline)',
-  autoLabel: 'auto',
   autoTitle: 'LLM-Prüfung nach einer Pause automatisch ausführen',
   loadExample: 'Beispieltext laden',
   exampleTitle:

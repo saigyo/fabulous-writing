@@ -27,7 +27,6 @@ export const it: Messages = {
   model: 'Modello',
   domainNone: 'nessuno',
   offlineSuffix: ' (offline)',
-  autoLabel: 'auto',
   autoTitle: 'Esegui automaticamente il controllo LLM dopo una pausa',
   loadExample: 'Carica testo di esempio',
   exampleTitle:

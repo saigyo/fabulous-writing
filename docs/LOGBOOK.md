@@ -1867,3 +1867,14 @@ While verifying, the Vite dev server turned out to be serving stale
 transforms (file edits invisible even after `touch` — the previously parked
 staleness issue recurring). Added `server.watch.usePolling: true` to
 `vite.config.ts` and restarted the dev server.
+
+## 2026-07-07 — Auto-LLM checkbox replaced by ✳ toggle button
+Commits: see below
+
+The "auto" checkbox was the only bare checkbox in the header. It is now a
+two-state icon button (like the terminology Aa case toggle): a ✳ sparkle —
+deliberately the same glyph as the "✳ LLM checking…" status — that shows
+accent color + soft fill when auto-checking is on and dim gray when off,
+with the existing localized hover title. The unused `autoLabel` i18n key was
+removed from all seven locales. Verified in headless Chrome: aria-pressed
+toggles per click, both visual states screenshot-checked.

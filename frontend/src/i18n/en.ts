@@ -21,7 +21,6 @@ export const en: Messages = {
   model: 'Model',
   domainNone: 'none',
   offlineSuffix: ' (offline)',
-  autoLabel: 'auto',
   autoTitle: 'Run the LLM check automatically after a pause',
   loadExample: 'Load example text',
   exampleTitle: 'Replace the editor content with a flawed example text for the selected language',

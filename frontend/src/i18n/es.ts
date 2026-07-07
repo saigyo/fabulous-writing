@@ -31,7 +31,6 @@ export const es: Messages = {
   model: 'Modelo',
   domainNone: 'ninguno',
   offlineSuffix: ' (sin conexión)',
-  autoLabel: 'auto',
   autoTitle: 'Ejecutar la comprobación LLM automáticamente tras una pausa',
   loadExample: 'Cargar texto de ejemplo',
   exampleTitle:

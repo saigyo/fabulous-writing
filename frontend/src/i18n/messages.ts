@@ -31,7 +31,6 @@ export interface Messages {
   model: string
   domainNone: string
   offlineSuffix: string
-  autoLabel: string
   autoTitle: string
   loadExample: string
   exampleTitle: string

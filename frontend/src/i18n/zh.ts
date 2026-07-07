@@ -26,7 +26,6 @@ export const zh: Messages = {
   model: '模型',
   domainNone: '无',
   offlineSuffix: '(离线)',
-  autoLabel: '自动',
   autoTitle: '停顿后自动运行 LLM 检查',
   loadExample: '载入示例文本',
   exampleTitle: '用所选语言的含错示例文本替换编辑器内容',

@@ -125,14 +125,15 @@ function Header() {
           <DomainMultiSelect />
         </label>
         <LlmSelector />
-        <label className="auto-toggle" title={m.autoTitle}>
-          <input
-            type="checkbox"
-            checked={store.llmAuto}
-            onChange={(e) => store.setLlmAuto(e.target.checked)}
-          />
-          {m.autoLabel}
-        </label>
+        <button
+          type="button"
+          className="auto-toggle"
+          aria-pressed={store.llmAuto}
+          title={m.autoTitle}
+          onClick={() => store.setLlmAuto(!store.llmAuto)}
+        >
+          ✳
+        </button>
         <button
           className="check-button"
           disabled={store.checkPhase !== 'idle'}
