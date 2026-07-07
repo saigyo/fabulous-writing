@@ -6,7 +6,9 @@
 # lemmas: matching LEMMA くださる would misclassify plain honorific
 # 「くださった」 (surface くださっ, within the anchor window) as polite,
 # while the surface list catches request-form ください only. The POS gate
-# keeps ADJ まし (「その方がましだ」) from reading as polite ます.
+# keeps ADJ まし (「その方がましだ」) from reading as polite ます. GiNZA
+# emits でしょう/ましょう as fused single tokens, so both the fused and the
+# split (でしょ/ましょ) surfaces are listed.
 # Bad examples must mix styles, so they are multi-sentence strings.
 extends: consistency
 message: "文体が混在しています — 敬体（です・ます）と常体（だ・である）のどちらかに統一してください。"
@@ -15,7 +17,7 @@ category: style
 variants:
   polite:
     pattern:
-      - {TEXT: {IN: [です, でし, でしょ, ます, まし, ませ, ましょ, ください]}, POS: {IN: [AUX, VERB]}}
+      - {TEXT: {IN: [です, でし, でしょ, でしょう, ます, まし, ませ, ましょ, ましょう, ください]}, POS: {IN: [AUX, VERB]}}
     anchor: end
   plain:
     default: true
@@ -26,3 +28,4 @@ examples:
     - "本製品は高速です。設定も簡単です。"
     - "本製品は高速だ。設定も簡単である。"
     - "資料をご確認ください。ご質問があればお知らせください。よろしくお願いします。"
+    - "明日は晴れるでしょう。遠足は決行します。"
