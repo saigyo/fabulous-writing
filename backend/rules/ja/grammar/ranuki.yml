@@ -1,6 +1,7 @@
-# Demonstrates: GiNZA lemmatizes ら抜き potentials as their own lemma
-# (見れます → LEMMA=見れる), so one lemma list catches every conjugation.
-# Curated ichidan/kuru forms only — godan potentials (走れる) are legitimate.
+# ら抜き forms that GiNZA fuses into a single token with the ら抜き lemma
+# (見れます → LEMMA=見れる). Fusion is context-dependent — split analyses
+# (食べ+れる) are caught by the sibling rule ranuki-split. Curated
+# ichidan/kuru forms only; godan potentials (走れる) are legitimate.
 extends: token_pattern
 message: "「%s」はら抜き言葉です — 「られる」の形を使ってください（例:「見られる」）。"
 level: warning

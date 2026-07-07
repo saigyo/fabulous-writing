@@ -1,0 +1,19 @@
+# ら抜き forms that GiNZA analyzes as stem + れる: for ichidan verbs and
+# 来る the only correct form is られる (LEMMA=られる, a different lemma),
+# so ichidan-stem + れる(AUX) is by definition ら抜き. Complements
+# ranuki.yml, which catches the fused single-token analyses.
+# 信ずる is GiNZA's lemma for the 信じ stem (not 信じる).
+extends: token_pattern
+message: "「%s」はら抜き言葉です — 「られる」の形を使ってください（例:「食べられる」）。"
+level: warning
+category: grammar
+pattern:
+  - {LEMMA: {IN: [見る, 食べる, 来る, 出る, 寝る, 起きる, 着る, 降りる, 決める, 信じる, 信ずる, 覚える, 変える, 続ける, 教える]}, POS: VERB}
+  - {LEMMA: れる, POS: AUX}
+examples:
+  bad:
+    - "すぐに食べれる。"
+    - "すぐに来れる。"
+  good:
+    - "この魚は安心して食べられる。"
+    - "先生が明日来られる。"
