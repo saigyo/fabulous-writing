@@ -1879,3 +1879,25 @@ with the existing localized hover title. The unused `autoLabel` i18n key was
 removed from all seven locales. Verified in headless Chrome: aria-pressed
 toggles per click, both visual states screenshot-checked.
 Follow-up: glyph enlarged (1.1rem) and flex-centered in the button.
+
+## 2026-07-07 — Terminology: terms editable in place, domains renamable
+Commits: `24a50f8`…`0e1af84` + docs commit
+
+Terms previously supported only create/delete; fixing a typo meant delete +
+re-enter. Following the usual spec → plan → execution flow (spec
+`2026-07-07-editable-terms-design.md`, plan `2026-07-07-editable-terms.md`,
+executed inline): a ✎ per row now swaps it into edit mode using the same
+widgets as the add-term row via a shared `TermFieldCells` component driven by
+a `TermDraft`; ✓/Enter saves through the (pre-existing) `PUT /api/terms/{id}`,
+✕/Escape cancels. The add row moved onto the same draft object and gained
+Enter-to-add. Domains rename inline (✎ or double-click, Enter saves via new
+`updateDomain` client call, blur/Escape cancels, empty names refused).
+Draft/parse helpers (`parseVariants`, `termToDraft`, `draftToTermPayload`)
+live in `termTable.ts`, written test-first (6 new tests; suite 144).
+
+E2E with headless Chrome against the live dev servers on a scratch domain:
+edit-save round-trip verified in UI and via GET (preferred, variants,
+case-sensitivity), Escape discards, rename lands, empty rename refused,
+scratch domain cleaned up. One e2e-script pitfall worth remembering: a
+Playwright `hasText` row filter stops matching once the name span becomes an
+input (values aren't text content).

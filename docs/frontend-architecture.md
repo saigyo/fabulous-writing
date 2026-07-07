@@ -51,7 +51,10 @@ frontend/src/
 │   └── DomainMultiSelect.tsx  # checkbox-dropdown for terminology domains
 ├── sidebar/Sidebar.tsx        # counters, filters, finding list, detail card
 ├── rules/                     # rule catalog view + per-profile toggles
-├── terminology/               # domain/term management view
+├── terminology/               # domain/term management view; terms edit in place
+│                              # (row edit mode shares TermFieldCells with the add
+│                              # row; drafts/parsing in termTable.ts), domains
+│                              # rename inline via ✎ or double-click
 └── i18n/                      # 7 UI locales, hooks, interpolation
 ```
 
