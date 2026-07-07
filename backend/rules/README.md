@@ -394,9 +394,47 @@ staying simple and fast. Known gaps, from review:
 
 ## Chinese (`zh`)
 
-| Rule | Type | Flags | Demonstrates |
-|---|---|---|---|
-| [style.filler](zh/style/filler.yml) | token_pattern, **NLP** | 填充词（基本上、众所周知） | `TEXT: {IN: […]}` (zh model has no lemmas) |
-| [style.jinxing](zh/style/jinxing.yml) | token_pattern, **NLP** | “进行(了)+名词”（如“进行讨论”→“讨论”） | optional token (`OP: "?"` for 了) |
-| [clarity.long-sentence](zh/clarity/long-sentence.yml) | occurrence (`count: tokens`), **NLP** | 超过 40 个词的句子 | token counting |
-| [clarity.douhao-guoduo](zh/clarity/douhao-guoduo.yml) | occurrence | 逗号超过 5 个的句子 | regex counting for CJK punctuation |
+| Rule | Type | Flags | Pack | Demonstrates |
+|---|---|---|---|---|
+| [style.filler](zh/style/filler.yml) | token_pattern, **NLP** | 填充词（基本上、众所周知） | — | `TEXT: {IN: […]}` (zh model has no lemmas) |
+| [style.jinxing](zh/style/jinxing.yml) | token_pattern, **NLP** | “进行(了)+名词”（如“进行讨论”→“讨论”） | — | optional token (`OP: "?"` for 了) |
+| [clarity.long-sentence](zh/clarity/long-sentence.yml) | occurrence (`count: tokens`), **NLP** | 超过 40 个词的句子 | — | token counting |
+| [clarity.douhao-guoduo](zh/clarity/douhao-guoduo.yml) | occurrence | 逗号超过 5 个的句子 | — | regex counting for CJK punctuation |
+| [grammar.de-di-de](zh/grammar/de-di-de.yml) | token_pattern, **NLP** | “慢慢的走”应作“慢慢地走” | — | fine-grained `TAG: DEV` catches the tagger's own adverbial reading of 的 |
+| [grammar.ni-nin](zh/grammar/ni-nin.yml) | consistency, **NLP** | 你/你们 vs 您 混用 | — | unambiguous `TEXT` variants, no POS gate needed |
+| [style.dayue-zuoyou](zh/style/dayue-zuoyou.yml) | existence | “大约……左右” 约数重复 | — | `raw` regex with a bounded same-clause gap |
+| [style.rongyu](zh/style/rongyu.yml) | substitution | “免费赠送”→“赠送”，“涉及到”→“涉及” | — | CJK-edged swap map |
+| [style.xuanchuan-ci](zh/style/xuanchuan-ci.yml) | existence | “极致”“颠覆”“震撼” | marketing | pack-scoped word list |
+| [style.wufa-zhengshi](zh/style/wufa-zhengshi.yml) | existence | “全网第一”“史上最” | marketing | multi-word phrase list, 广告法 legal-risk framing |
+| [style.gantanhao-fanlan](zh/style/gantanhao-fanlan.yml) | existence | “！！” | marketing | `raw` regex (`[！!]{2,}`) |
+| [style.hedging](zh/style/hedging.yml) | existence | “大概”“或许”“可能” | techdocs | word list plus a `raw` lookahead excluding 可能性 |
+| [style.yuqi-ci](zh/style/yuqi-ci.yml) | existence | “……啦”“……哦” | techdocs | `raw` regex anchored on trailing punctuation, with a lookbehind excluding 干嘛/onomatopoeia |
+| [style.taoban-kaitou](zh/style/taoban-kaitou.yml) | existence | “随着社会的发展”“众所周知” | blog | phrase list |
+
+### Known heuristic limitations
+
+- **grammar.de-di-de** is deliberately narrow: it only matches
+  `ADV + 的(TAG=DEV) + VERB`, relying on `zh_core_web_sm`'s own fine-grained
+  tagging of 的 as adverbial particle (DEV) versus adjectival (DEC).
+  Verified live: 慢慢的走过来了 → 慢慢/ADV 的/DEV 走/VERB (fires); 美丽的花园
+  → 的/DEC (never fires). Coverage is limited to this high-precision
+  subcase — other 的/地/得 confusions are not attempted.
+- **grammar.ni-nin** treats 你们 (informal plural) as an informal vote
+  alongside 你, and 您 as the sole formal signal; both are unambiguous
+  PRON tokens in `zh_core_web_sm`, so no POS gate is needed (unlike the
+  French/Spanish/Italian sibling rules, which must disambiguate
+  possessive/pronoun homographs).
+- **style.dayue-zuoyou** excludes bare 约 by design: `raw` patterns are not
+  edge-wrapped by `bounded_pattern`, and 约 occurs inside 预约/合约/条约,
+  which would over-fire. The gap in the pattern excludes clause
+  punctuation (。！？，；) so the two approximation markers must stay in
+  the same clause.
+- **style.hedging**'s 可能 key uses a negative lookahead (`可能(?!性)`)
+  because CJK tokens have no `\b` word boundary to stop a bare match, and
+  可能性 ("possibility") is a legitimate noun, not a hedge.
+- **style.yuqi-ci** anchors each particle to the punctuation that follows
+  it (`(?=[。！？，、])`) so it can never match mid-word, and excludes
+  嘛 preceded by 干 (干嘛, "why") plus 啦/哦 preceded by 哗/呼/噼
+  (onomatopoeia) via a negative lookbehind — existence rules match raw
+  text, so without these guards a bare token pattern would hit inside
+  those compounds.

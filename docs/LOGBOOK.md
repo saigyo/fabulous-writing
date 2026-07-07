@@ -1617,3 +1617,84 @@ sanity via a live harness dump: `it-marketing.txt` trips `style.parole-hype`,
 `it-blog.txt` trips `style.cliches-apertura` (×3), `grammar.a-me-mi`, and
 `grammar.tu-lei` exactly once, on the Lei sentence. `grammar.tu-lei`
 confirmed silent on `demos/it.txt` and on the marketing/techdocs demos.
+
+## 2026-07-07 — Task 4 (phase 3): Chinese rules to parity with EN/DE/FR/ES/IT/JA
+Commit: `eb770a5`
+
+Task 4 of the 6-task phase-3 plan (Tasks 1–3 — French, Spanish, Italian —
+already merged). This task covers Chinese only: 10 new rules, three pack
+demo texts, fodder in the general ZH demo, and ZH cases appended to the
+shared consistency test file. `rules/zh/` already held 4 pre-existing rules
+from an earlier phase; this task added 10 more on top, bringing it to
+parity.
+
+**What shipped.**
+
+- **10 new `rules/zh/` rules.** Grammar: `de-di-de` (token_pattern, NLP —
+  deliberately narrow `ADV + 的(TAG=DEV) + VERB` pattern, leaning on
+  `zh_core_web_sm`'s own fine-grained tagging to distinguish adverbial 的
+  (misused for 地, tag DEV) from adjectival 的 (tag DEC, never matches) —
+  verified live: 慢慢的走过来了 → 慢慢/ADV 的/DEV 走/VERB fires; 美丽的花园
+  → 的/DEC does not); `ni-nin` (consistency, NLP: 你/你们 vs 您 register
+  mixing — both variants are unambiguous `TEXT` matches on PRON tokens in
+  this model, so unlike the FR/ES/IT sibling rules no POS gate is needed
+  to disambiguate homographs). Style: `dayue-zuoyou` (existence, `raw`
+  regex catching doubled approximation « 大约/大概 … 左右 » within a
+  10-char same-clause gap that excludes 。！？，；, and deliberately
+  omitting bare 约 since it occurs inside 预约/合约/条约); `rongyu`
+  (substitution swap map for redundant modifier+verb pairs like
+  免费赠送→赠送, 涉及到→涉及). Packs: `marketing` (`xuanchuan-ci` empty
+  hype words, `wufa-zhengshi` unverifiable superlatives framed around
+  广告法 legal risk, `gantanhao-fanlan` via `raw: ["[！!]{2,}"]`),
+  `techdocs` (`hedging` — word list plus a `可能(?!性)` lookahead so the
+  legitimate noun 可能性 doesn't collide with the hedge 可能; `yuqi-ci` —
+  casual sentence-final particles 啦/哦/呗/嘛 anchored to trailing
+  punctuation via lookahead, with a lookbehind excluding 干嘛 and
+  onomatopoeia 哗啦/呼啦), `blog` (`taoban-kaitou` boilerplate-opener
+  phrase list).
+- **Three ZH demo texts** (`demos/zh-marketing.txt`,
+  `zh-technical-documentation.txt`, `zh-blog.txt`), each engineered to trip
+  its pack's rules plus at least one general grammar/style rule. The
+  techdocs demo mixes register 2-vs-1 (two 你-sentences, one 您-sentence)
+  so `ni-nin` fires exactly once, on the minority 您-sentence — verified
+  live via the engine, not just by the catalog tests. Marketing and blog
+  stay single-register (no 你/您 mixing) so the consistency rule never
+  gets two variants to vote and stays silent, confirmed the same way. The
+  blog demo's original 悄悄的告诉大家 draft was swapped to 悄悄的说一句
+  ahead of any live-model surprise, since 说 is unambiguously tagged VERB;
+  in the event both `de-di-de` catalog examples and both blog-demo
+  instances (慢慢的读, 悄悄的说) fired on the first attempt with no
+  fallback needed.
+- **Fodder** appended to `demos/zh.txt`: one sentence exercising
+  `dayue-zuoyou` and `rongyu` at once; `tests/test_demo_texts.py`
+  `EXPECTED[Language.ZH]` grew by those two rule ids (the consistency rule
+  and `de-di-de` are deliberately not added there — a single fodder
+  sentence can't produce two voting sentences, and the de-di-de fodder
+  lives in zh-blog instead, per the task spec).
+- **`tests/test_register_consistency.py`** (existing file from Task 1):
+  appended `TestNiNin` (minority-formal and minority-informal each flagged
+  exactly once, a 1-vs-1 tie resolving to the first-declared variant
+  `informal` so 您 is flagged, and a single vote staying silent) — no
+  restructuring of the FR/ES/IT classes already there. All four passed
+  against the live model on the first attempt; no test-text rework was
+  needed.
+- **`rules/README.md`**: added a Pack column to the pre-existing Chinese
+  table (the 4 legacy rows had none) and 10 new rows, plus a "Known
+  heuristic limitations" section mirroring the French/Spanish/Italian ones
+  (de-di-de's TAG-based precision subcase, ni-nin's simpler no-POS-gate
+  design, dayue-zuoyou's bare-约 exclusion, hedging's 可能性 lookahead,
+  yuqi-ci's punctuation-anchored lookbehind guards).
+
+No engine code touched — this was pure YAML + demos + tests, per the task's
+binding constraint.
+
+**Verification.** `cd backend && uv run pytest -q` → 602 passed. Engine
+sanity via a live harness dump: `zh-marketing.txt` trips `style.xuanchuan-ci`
+(×4: 极致/颠覆/震撼/尖端), `style.wufa-zhengshi` (×2: 全网第一/史上最),
+`style.gantanhao-fanlan` (×2), `style.rongyu` (×2: 免费赠送/提前预约),
+`style.dayue-zuoyou`; `zh-technical-documentation.txt` trips `style.hedging`
+(可能/大概/我觉得), `style.yuqi-ci` (啦/哦), `style.rongyu` (涉及到), and
+`grammar.ni-nin` exactly once, on the 您-sentence; `zh-blog.txt` trips
+`style.taoban-kaitou` (×3), `grammar.de-di-de` (×2: 慢慢的读/悄悄的说), and
+`style.dayue-zuoyou`. `grammar.ni-nin` confirmed silent on `demos/zh.txt`
+and on the marketing/blog demos.
