@@ -1843,3 +1843,27 @@ is now absolutely positioned (right-aligned, max-width 65%, pointer-events
 none) so the header height comes from the heading alone and a wrapped second
 line visually overlays the chip row — an accepted, rare collision — instead of
 moving it. CSS-only change; verified via frontend build.
+
+## 2026-07-07 — Findings survive tab switches; Vite watcher polling
+Commits: see below
+
+Switching from the editor to another view (rules, terminology, profiles) and
+back discarded all findings and re-ran the fast check — LLM findings, which
+cost time and money, were simply lost. Root cause: `App.tsx` unmounted the
+workspace on view switch, and findings live in the CodeMirror `StateField`
+(the store's `tracked` is only a mirror), so they died with the editor
+instance; an in-flight LLM check could no longer deliver either. Fix: the
+workspace stays mounted and is hidden via the `hidden` attribute (plus a
+`.workspace[hidden]` CSS rule, since `display: flex` would override it).
+This preserves rule *and* LLM findings, scroll position, undo history, and
+lets an in-flight LLM check land while the user reads another view.
+
+Verified end-to-end with headless Chrome (playwright-core) against the live
+dev servers: 4 findings before switch, workspace `hidden` on the rules view,
+4 findings immediately after return, **0 new POST /api/checks** triggered by
+the round trip, editor remeasured correctly (screenshot checked).
+
+While verifying, the Vite dev server turned out to be serving stale
+transforms (file edits invisible even after `touch` — the previously parked
+staleness issue recurring). Added `server.watch.usePolling: true` to
+`vite.config.ts` and restarted the dev server.

@@ -19,18 +19,20 @@ import type { Language } from './types'
 export default function App() {
   const activeView = useStore((s) => s.activeView)
 
+  // The workspace is hidden (not unmounted) while another view is shown:
+  // the findings live in the CodeMirror instance, so unmounting would
+  // discard them — including LLM results — on every tab switch, and any
+  // in-flight LLM check could no longer deliver.
   return (
     <div className="app">
       <Header />
-      {activeView === 'editor' && (
-        <main className="workspace">
-          <div className="editor-area">
-            <Editor />
-            <LoadExampleButton />
-          </div>
-          <Sidebar />
-        </main>
-      )}
+      <main className="workspace" hidden={activeView !== 'editor'}>
+        <div className="editor-area">
+          <Editor />
+          <LoadExampleButton />
+        </div>
+        <Sidebar />
+      </main>
       {activeView === 'rules' && <RulesView />}
       {activeView === 'terminology' && <TerminologyView />}
       {activeView === 'profiles' && <ProfilesView />}

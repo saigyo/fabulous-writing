@@ -11,7 +11,11 @@ main ingredients:
   (`VITE_API_URL`, default `http://localhost:8000`).
 
 There is no router; four views (editor, rules, terminology, profiles) are switched by a
-store field. Logic lives in plain TypeScript modules with colocated vitest tests;
+store field. The editor workspace is special-cased: it is hidden (`hidden` attribute)
+rather than unmounted while another view is shown, because the findings — including
+paid-for LLM results — live in the CodeMirror instance and would be discarded by a
+remount; hiding also lets an in-flight LLM check deliver while the user reads another
+view. Logic lives in plain TypeScript modules with colocated vitest tests;
 components stay thin.
 
 ## Module map
