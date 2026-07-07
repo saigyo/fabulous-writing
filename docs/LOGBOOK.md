@@ -1280,3 +1280,35 @@ LONGEST, superlativ-inflation's raw-stem approach, and the typed
 `cd frontend && npx vitest run` → 138 passed; `npm run build` clean; `npm run
 lint` clean (only pre-existing `react-hooks/exhaustive-deps` warnings,
 unrelated to this feature).
+
+## 2026-07-07 — Task 1: CJK edge-aware boundary helper (`bounded_pattern`)
+
+**Commits:** `eb3c8cd`, `f32b4e6`
+
+**Why.** The upcoming Japanese rules were blocked: both the existence
+(`tokens:`) and substitution checks wrap keys in `\b…\b`, and `\b` never
+fires between two word characters — kana/kanji count as `\w` in Python's
+`re`, so `\b一番最初\b` silently never matched mid-sentence
+(「彼は一番最初に確認した。」 produced no finding).
+
+**What.** Added `bounded_pattern(fragment)` to
+`backend/app/checkers/rules/text.py`: it drops the `\b` on any side whose
+edge character is CJK (Han incl. ext. A + compatibility, Hiragana,
+Katakana, CJK punctuation, full-width forms via `_CJK_CHAR`) and keeps it
+on Latin-edged sides, so existing EN/DE rules compile to byte-for-byte
+identical patterns. Existence and substitution checks now use the helper;
+`raw:` entries stay unwrapped as before. Review follow-up (`f32b4e6`):
+empty tokens/swap keys previously passed load validation and then crashed
+`bounded_pattern` with IndexError at check time, wiping all findings for
+the document — the loader's `check_required_fields` now rejects empty
+existence tokens/raw entries and empty substitution keys as RuleErrors at
+load time. The metachar-edge limitation (a key like `(行か|読ま)せる`
+literally starts with `(`, keeps its `\b`, and won't match after kana —
+use `raw:` for such patterns) is documented in the helper's docstring
+rather than special-cased.
+
+**Verification.** TDD both rounds: 3 new CJK tests failed before the
+helper (empty findings / ImportError), 2 empty-key tests failed before
+the loader fix; all pass after. Full suite `cd backend && uv run pytest
+tests/ -q` → 451 passed. `grep -rn '\\b(?:' app/` confirms no hardcoded
+boundary wrapping remains outside the helper.
