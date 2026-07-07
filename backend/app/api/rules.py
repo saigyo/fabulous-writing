@@ -23,6 +23,8 @@ class RuleInfo(BaseModel):
     requires_nlp: bool
     file: str
     detail: dict[str, Any]
+    pack: str | None
+    examples: dict[str, list[str]]
 
 
 def _detail(rule: LoadedRule) -> dict[str, Any]:
@@ -58,6 +60,8 @@ def _rule_info(rule: LoadedRule) -> RuleInfo:
         requires_nlp=rule_requires_doc(rule.spec),
         file=rule.file,
         detail=_detail(rule),
+        pack=rule.spec.pack,
+        examples=rule.spec.examples.model_dump(),
     )
 
 
@@ -67,6 +71,7 @@ def _payload(engine: Any, language: Language | None = None) -> dict[str, Any]:
         rules = [rule for rule in rules if rule.language == language]
     return {
         "rules": [_rule_info(rule).model_dump() for rule in rules],
+        "packs": sorted({rule.spec.pack for rule in rules if rule.spec.pack}),
         "errors": [error.model_dump() for error in engine.errors],
     }
 

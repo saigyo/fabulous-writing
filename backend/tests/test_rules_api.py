@@ -61,3 +61,14 @@ def test_unfiltered_rules_keep_full_list(client: TestClient) -> None:
     body = client.get("/api/rules").json()
     languages = {rule["language"] for rule in body["rules"]}
     assert languages == {"en", "de", "fr", "es", "it", "ja", "zh"}
+
+
+def test_rules_carry_pack_examples_and_packs_index(client: TestClient) -> None:
+    payload = client.get("/api/rules?language=en").json()
+    by_id = {rule["rule_id"]: rule for rule in payload["rules"]}
+    weasel = by_id["style.weasel-words"]
+    assert weasel["pack"] is None
+    assert weasel["examples"]["bad"] and weasel["examples"]["good"]
+    # Packs are discovered from the catalog (EN pack rules land in a later
+    # task; until then the list is empty — pin the key and its sorted order).
+    assert payload["packs"] == sorted(payload["packs"])
