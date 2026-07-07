@@ -4,13 +4,15 @@ level: error
 category: grammar
 ignorecase: true
 swap:
-  could of: could have
-  should of: should have
-  would of: would have
-  might of: might have
-  must of: must have
+  could of(?!\s+(?:course|necessity)): could have
+  should of(?!\s+(?:course|necessity)): should have
+  would of(?!\s+(?:course|necessity)): would have
+  might of(?!\s+(?:course|necessity)): might have
+  must of(?!\s+(?:course|necessity)): must have
 examples:
   bad:
     - "You should of seen the demo."
   good:
     - "You should have seen the demo."
+    - "He could of course handle it alone."
+    - "They must of necessity comply."

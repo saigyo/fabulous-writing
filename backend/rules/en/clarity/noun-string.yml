@@ -1,4 +1,9 @@
 # Demonstrates: a {4,} quantifier (with greedy LONGEST matching).
+# Known limitation: en_core_web_sm sometimes mistags a 3rd-person verb as NOUN
+# (e.g. "stores" in "The user profile stores preferences."), creating a false
+# 4-noun run. A dependency-informed variant ({DEP: compound, OP: "{3,}"} + head
+# noun) was probed and does not help — the mistag cascades into the parse,
+# labelling the verb as a compound modifier too.
 extends: token_pattern
 message: "'%s' — a long noun string; break it up with prepositions or verbs."
 level: warning
