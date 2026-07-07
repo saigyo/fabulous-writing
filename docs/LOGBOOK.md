@@ -1088,3 +1088,20 @@ führen die Änderungen jetzt durch." and "Die Zeitung erschien gestern.")
 produced no findings through the real engine with all packs on. Full
 suite: 445 passed (the plan's "~461" was an estimate of the pre-existing
 count, which was actually 395, not 411).
+
+## 2026-07-07 — Task 8 review fixes: seit-seid/deppenapostroph precision, das-dass leak
+
+Commit: `cc44ee8`
+
+Review follow-up to Task 8. `grammar/seit-seid.yml` dropped the always-wrong
+`wir` alternation and added a capitalized-noun lookahead guard against the
+possessive reading („Seit ihr Vertrag läuft …?" now clean, verified through
+the engine). `grammar/deppenapostroph.yml` now requires a capitalized stem
+and stoplists common verb contractions (geht's/war's/Gibt's clean; Anna's
+and Peter's still fire; McDonald's remains a documented residual FP).
+`grammar/das-dass.yml` stoplists indefinite pronouns („das eine/alles") that
+POS=PRON let leak. Comment-only notes added to `clarity/genitivkette.yml`
+(deliberate strictness) and `style/funktionsverbgefuege.yml` (literal
+„treffen" FP); `style/e-mail-schreibung.yml` message switched from Duzen to
+Siezen. All 12 review probes matched expectations; catalog 50 passed, full
+suite 445 passed.
