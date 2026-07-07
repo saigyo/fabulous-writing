@@ -1,7 +1,6 @@
 """Seed checking profiles: a Standard profile per language, plus deletable
-Marketing / Technical Documentation examples for EN, DE, JA, and an
-additional Blog example for EN/DE (tracked in a marker table so deletions
-stick across restarts)."""
+Marketing / Technical Documentation / Blog examples for EN, DE, JA
+(tracked in a marker table so deletions stick across restarts)."""
 
 from pathlib import Path
 
@@ -9,7 +8,7 @@ from app.core.models import Language
 from app.services.profiles import ProfileStore
 
 EXAMPLE_LANGUAGES = {Language.EN, Language.DE, Language.JA}
-BLOG_LANGUAGES = {Language.EN, Language.DE}
+BLOG_LANGUAGES = {Language.EN, Language.DE, Language.JA}
 
 _MARKETING_INSTRUCTIONS = {
     Language.EN: (
@@ -57,6 +56,11 @@ _BLOG_INSTRUCTIONS = {
         "Sprache; konkrete Beispiele statt Abstraktionen; kurze Absätze. "
         "Markiere Floskel-Einstiege, Abschweifungen und unbelegte "
         "Verallgemeinerungen."
+    ),
+    Language.JA: (
+        "対象読者:ブログ読者。個人的だが引き締まった文体を推奨。抽象論より"
+        "具体例、短い段落。決まり文句の導入・締めくくり、脱線、根拠のない"
+        "一般化を指摘すること。"
     ),
 }
 

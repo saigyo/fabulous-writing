@@ -179,9 +179,10 @@ def test_seed_pack_profiles(tmp_path) -> None:
     assert en["Blog"].example_text  # demo file exists and is non-empty
     de = {p.name: p for p in store.list_profiles(Language.DE)}
     assert de["Blog"].packs_on == ["blog"]
-    # Japanese keeps Marketing/TechDoc (packs are no-ops there for now), no Blog.
     ja = {p.name: p for p in store.list_profiles(Language.JA)}
-    assert "Blog" not in ja
+    assert ja["Blog"].packs_on == ["blog"]
+    assert ja["Blog"].llm_instructions
+    assert "いかがでしたか" in ja["Blog"].example_text
 
 
 def test_packs_on_migration_defaults_empty(tmp_path) -> None:
