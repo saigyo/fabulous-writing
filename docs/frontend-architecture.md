@@ -215,10 +215,16 @@ precedence rule):
   current mode and clears the other one. `RulesView.tsx` echoes the profile's existing
   `llm_tier` back on its own rule-toggle `PUT`s, since the endpoint requires the field
   on every update (see [Checking profiles](backend-architecture.md#checking-profiles)).
-- `effectiveRuleConfig(profile)` — the `rule_config` payload for checks.
-- `isRuleActive(profile, category, ruleId)` — mirrors the backend's XOR semantics
-  (category toggle inverted by per-rule exceptions) so `RulesView` shows activation
-  states without asking the server.
+- `effectiveRuleConfig(profile)` — the `rule_config` payload for checks, now including
+  `packs_on` alongside `categories_off`/`exceptions`.
+- `isRuleActive(profile, category, ruleId, pack)` — mirrors the backend's activation
+  semantics: `(pack in packs_on AND category on) XOR exception` for pack rules (`pack`
+  non-null), the plain `(category on) XOR exception` for general rules (`pack === null`)
+  — so `RulesView` shows activation states without asking the server. `RuleInfo.pack`
+  and `RuleInfo.examples` (bad/good) came from the backend's rule-pack feature; every
+  `PUT`/POST profile sender (`ProfilesView.tsx`, `ProfileSelector.tsx`,
+  `RulesView.tsx`'s `saveRuleSelection`) carries `packs_on` the same way it carries
+  `categories_off`/`rule_exceptions`.
 
 Profile loading lives in `App.tsx`: on startup and on language change, profiles are
 fetched and the remembered profile for that language (`lastProfileByLanguage`,
