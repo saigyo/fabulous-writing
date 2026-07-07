@@ -1,0 +1,21 @@
+# raw with \w* suffix: existence tokens are wrapped in \b…\b, which would
+# miss inflected forms („einzigartiges“).
+extends: existence
+message: "„%s“ — Superlativ-Marketing; ein konkreter Nutzen überzeugt mehr."
+level: warning
+category: style
+pack: marketing
+ignorecase: true
+raw:
+  - '\beinzigartig\w*'
+  - '\brevolutionär\w*'
+  - '\bbahnbrechend\w*'
+  - '\bunschlagbar\w*'
+  - '\bsensationell\w*'
+  - '\bkonkurrenzlos\w*'
+  - '\bweltklasse\b'
+examples:
+  bad:
+    - "Unser einzigartiges, revolutionäres Produkt ist unschlagbar."
+  good:
+    - "Unser Produkt löst konkrete Probleme."

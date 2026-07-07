@@ -1,0 +1,17 @@
+extends: existence
+message: "„%s“ — Floskel-Einstieg; starte mit der Substanz."
+level: suggestion
+category: style
+pack: blog
+ignorecase: true
+tokens:
+  - in diesem Beitrag
+  - in diesem Artikel
+  - heute möchte ich
+  - ohne lange Vorrede
+  - willkommen auf meinem Blog
+examples:
+  bad:
+    - "In diesem Beitrag zeige ich euch, wie das geht."
+  good:
+    - "So funktioniert die neue Suche."

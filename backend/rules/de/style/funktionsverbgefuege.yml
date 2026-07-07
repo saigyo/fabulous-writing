@@ -1,0 +1,17 @@
+# Demonstrates: REGEX on token text (-ung noun) plus a bounded gap before a
+# function verb. Catches „Die Anmeldung erfolgt …“ and „eine Prüfung …
+# durchführen“; separated prefixes („führen … durch“) are out of reach.
+extends: token_pattern
+message: "„%s“ — Funktionsverbgefüge; das einfache Verb ist direkter (prüfen, anmelden …)."
+level: suggestion
+category: style
+pattern:
+  - {TEXT: {REGEX: "ung(en)?$"}}
+  - {OP: "{,4}", TAG: {NOT_IN: [$.]}}
+  - {LEMMA: {IN: [durchführen, vornehmen, erfolgen, tätigen, treffen]}}
+examples:
+  bad:
+    - "Die Anmeldung erfolgt über das Portal."
+    - "Wir müssen eine Prüfung der Daten durchführen."
+  good:
+    - "Wir prüfen die Daten."

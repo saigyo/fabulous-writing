@@ -1,0 +1,17 @@
+# Analog zum würde-Stil, aber Indikativ: Futur beschreibt UI-Verhalten,
+# das Präsens ist direkter. Passiv („wird gespeichert“, VVPP) bleibt außen vor.
+extends: token_pattern
+message: "„%s“ — beschreibe Verhalten im Präsens („der Dialog öffnet sich“)."
+level: suggestion
+category: style
+pack: techdocs
+pattern:
+  - {LEMMA: werden, MORPH: {IS_SUPERSET: ["Mood=Ind", "Tense=Pres"]}}
+  - {OP: "{,6}", TAG: {NOT_IN: [VVINF, $.]}}
+  - {TAG: VVINF}
+examples:
+  bad:
+    - "Der Assistent wird die Einstellungen speichern."
+  good:
+    - "Der Assistent speichert die Einstellungen."
+    - "Die Einstellungen werden gespeichert."

@@ -1,0 +1,16 @@
+extends: substitution
+message: "„%s“ ist direkter (statt „%s“)."
+level: suggestion
+category: style
+ignorecase: true
+swap:
+  zwecks: für
+  mittels: mit
+  seitens: von
+  diesbezüglich: dazu
+  im Rahmen von: bei
+examples:
+  bad:
+    - "Zwecks Klärung wenden Sie sich mittels E-Mail an den Support."
+  good:
+    - "Für die Klärung wenden Sie sich mit einer E-Mail an den Support."

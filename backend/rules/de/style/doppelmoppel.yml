@@ -1,0 +1,18 @@
+extends: existence
+message: "„%s“ ist doppelt gemoppelt."
+level: suggestion
+category: style
+ignorecase: true
+tokens:
+  - bereits schon
+  - schon bereits
+  - einzig und allein
+  - neu renoviert
+  - runde Kugel
+  - zukünftige Pläne
+  - persönlich anwesend
+examples:
+  bad:
+    - "Das war bereits schon gestern klar."
+  good:
+    - "Das war schon gestern klar."

@@ -1,0 +1,13 @@
+extends: existence
+message: "„%s“ — in technischen Anleitungen unnötig; der Imperativ genügt."
+level: suggestion
+category: style
+pack: techdocs
+ignorecase: true
+tokens:
+  - bitte
+examples:
+  bad:
+    - "Bitte klicken Sie auf Speichern."
+  good:
+    - "Klicken Sie auf Speichern."

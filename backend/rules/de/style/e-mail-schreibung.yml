@@ -1,0 +1,18 @@
+# case-sensitive, damit „email“ in Code-Kontexten unangetastet bleibt.
+extends: substitution
+message: "Schreib „%s“ statt „%s“."
+level: warning
+category: style
+pack: techdocs
+swap:
+  Email: E-Mail
+  Emails: E-Mails
+  E-mail: E-Mail
+  E-mails: E-Mails
+  eMail: E-Mail
+  eMails: E-Mails
+examples:
+  bad:
+    - "Senden Sie uns eine Email."
+  good:
+    - "Senden Sie uns eine E-Mail."

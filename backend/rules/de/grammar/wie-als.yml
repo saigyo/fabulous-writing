@@ -1,0 +1,14 @@
+# Demonstrates: MORPH Degree=Cmp — comparatives take „als“, not „wie“.
+extends: token_pattern
+message: "„%s“ — nach dem Komparativ steht „als“, nicht „wie“."
+level: warning
+category: grammar
+pattern:
+  - {POS: {IN: [ADJ, ADV]}, MORPH: {IS_SUPERSET: ["Degree=Cmp"]}}
+  - {LOWER: wie}
+examples:
+  bad:
+    - "Der neue Server ist schneller wie der alte."
+  good:
+    - "Der neue Server ist schneller als der alte."
+    - "Das System ist so schnell wie erwartet."

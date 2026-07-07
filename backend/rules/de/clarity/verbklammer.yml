@@ -1,0 +1,14 @@
+# Demonstrates: a long bounded gap ({8,}) up to a separated verb prefix (PTKVZ).
+extends: token_pattern
+message: "„%s“ — weite Verbklammer; rücke die Verbpartikel näher ans Verb."
+level: suggestion
+category: clarity
+pattern:
+  - {POS: VERB}
+  - {OP: "{8,}", TAG: {NOT_IN: [$., PTKVZ]}}
+  - {TAG: PTKVZ}
+examples:
+  bad:
+    - "Wir schlagen dem Team nach reiflicher Überlegung und langer interner Diskussion einen völlig neuen Ansatz vor."
+  good:
+    - "Wir schlagen einen neuen Ansatz vor."

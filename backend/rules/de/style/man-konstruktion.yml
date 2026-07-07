@@ -1,0 +1,12 @@
+extends: token_pattern
+message: "„%s“ — in Anleitungen besser direkte Anrede oder Imperativ statt „man“."
+level: suggestion
+category: style
+pack: techdocs
+pattern:
+  - {LOWER: man, POS: PRON}
+examples:
+  bad:
+    - "Man klickt anschließend auf OK."
+  good:
+    - "Klicken Sie anschließend auf OK."

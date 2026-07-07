@@ -1,0 +1,18 @@
+# Demonstrates: optional tokens (OP "?") inside a rigid sequence.
+extends: token_pattern
+message: "„%s“ — Genitivkette; ein Nebensatz oder Verb entzerrt sie."
+level: warning
+category: clarity
+pattern:
+  - {POS: NOUN}
+  - {LOWER: {IN: [der, des, einer, eines]}}
+  - {POS: ADJ, OP: "?"}
+  - {POS: NOUN}
+  - {LOWER: {IN: [der, des, einer, eines]}}
+  - {POS: ADJ, OP: "?"}
+  - {POS: NOUN}
+examples:
+  bad:
+    - "Die Prüfung der Umsetzung der Vorgaben der Behörde dauert an."
+  good:
+    - "Die Behörde prüft, wie die Vorgaben umgesetzt werden."

@@ -1,0 +1,18 @@
+extends: existence
+message: "„%s“ — Hype-Anglizismus; sag konkret, was das Produkt kann."
+level: warning
+category: style
+pack: marketing
+ignorecase: true
+tokens:
+  - State of the Art
+  - State-of-the-Art
+  - Game Changer
+  - Game-Changer
+  - Must-have
+  - Next Level
+examples:
+  bad:
+    - "Dieses Must-have ist ein echter Game Changer."
+  good:
+    - "Dieses Werkzeug verbessert den Arbeitsablauf deutlich."

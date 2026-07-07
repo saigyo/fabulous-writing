@@ -1,0 +1,11 @@
+extends: existence
+message: "Apostroph vor Genitiv-s — im Deutschen meist falsch („Annas Laden“)."
+level: warning
+category: grammar
+raw:
+  - "\\w+['’]s\\b"
+examples:
+  bad:
+    - "Anna's Laden ist geöffnet."
+  good:
+    - "Annas Laden ist geöffnet."

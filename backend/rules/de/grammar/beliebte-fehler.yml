@@ -1,0 +1,20 @@
+extends: substitution
+message: "Richtig ist „%s“ (statt „%s“)."
+level: error
+category: grammar
+swap:
+  Standart: Standard
+  Standarts: Standards
+  wiederspiegeln: widerspiegeln
+  wiederspiegelt: widerspiegelt
+  Imbusschlüssel: Inbusschlüssel
+  Gallerie: Galerie
+  Reperatur: Reparatur
+  seperat: separat
+  seperate: separate
+  seperaten: separaten
+examples:
+  bad:
+    - "Das ist der neue Standart für alle Projekte."
+  good:
+    - "Das ist der neue Standard für alle Projekte."
