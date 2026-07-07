@@ -1,18 +1,29 @@
-# Mixed-width claims (業界No.1) as raw: a Latin-digit edge would demand a
-# \b before following kana, which never matches — raw patterns skip the
-# boundary wrapping entirely.
+# All patterns live in raw: for two reasons. (1) Mixed-width claims
+# (業界No.1): a Latin-digit edge would demand a \b before following kana,
+# which never matches — raw patterns skip the boundary wrapping entirely.
+# (2) The CJK claims need negative lookaheads to avoid compound collisions
+# (世界一周/日本一周 round trips, 世界一流/一律/一時, 世界初期/国内初期/
+# 業界初期) — lookaheads are only safe in raw:, since tokens: would wrap
+# the trailing ')' metachar in \b.
 extends: existence
 message: "「%s」— 根拠を示せない優位性の主張は景品表示法上のリスクがあります。出典や条件を添えてください。"
 level: warning
 category: style
 pack: marketing
-tokens: [日本一, 世界一, 世界初, 国内初, 業界初]
 raw:
+  - '日本一(?![周流律時])'
+  - '世界一(?![周流律時])'
+  - '世界初(?!期)'
+  - '国内初(?!期)'
+  - '業界初(?!期)'
   - '業界No\.?1'
   - '満足度No\.?1'
   - '売上No\.?1'
 examples:
   bad:
     - "業界No.1の性能を誇る、日本一のサービスです。"
+    - "世界初のワイヤレス充電機能を搭載しました。"
   good:
     - "2025年のABC調査で最高評価を獲得したサービスです。"
+    - "世界一周の旅を計画しています。"
+    - "これは世界初期の文明の遺跡です。"

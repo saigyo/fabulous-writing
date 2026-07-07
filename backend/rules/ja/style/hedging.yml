@@ -1,3 +1,6 @@
+# Passive (と思われる) and negated (と思いません) forms are intentionally
+# included: in techdocs the whole と思う family signals hedging regardless
+# of voice or polarity.
 extends: token_pattern
 message: "「%s」— 技術文書では推測ではなく事実を書いてください。確信が持てない場合は条件を明記します。"
 level: warning
