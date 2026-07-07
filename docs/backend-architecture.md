@@ -200,11 +200,12 @@ runs the whole catalog against its own examples (bad must trigger the rule's own
 `tests/test_rule_engine.py`/`test_nlp_rules.py` get an auto-appended stub via
 `write_rule()` so each test only states what it's actually about.
 
-Rules optionally carry a `pack:` slug (use-case pack, e.g. a future `pack: legal`;
-`None` for general always-on rules). `GET /api/rules` echoes both `pack` and
-`examples` per rule entry and adds a top-level `packs` key — the sorted set of
-distinct pack slugs discovered across the (optionally language-filtered) catalog —
-so the frontend can build a pack picker without hardcoding pack names.
+Rules optionally carry a `pack:` slug (use-case pack; `None` for general
+always-on rules). EN currently ships three: `marketing`, `techdocs`, `blog`.
+`GET /api/rules` echoes both `pack` and `examples` per rule entry and adds a
+top-level `packs` key — the sorted set of distinct pack slugs discovered across
+the (optionally language-filtered) catalog — so the frontend can build a pack
+picker without hardcoding pack names.
 
 Six check types (`extends:`), each implemented as one function in
 `checkers/rules/checks/` and dispatched via the `CHECKS` table:
@@ -221,6 +222,11 @@ Six check types (`extends:`), each implemented as one function in
 NLP-backed patterns are compiled against a blank vocab at load time
 (`_validate_nlp_pattern`), so a typo in a pattern attribute fails at startup with a rule
 error instead of at check time.
+
+`token_pattern`'s `Matcher` is registered with `greedy="LONGEST"`
+(`checkers/rules/checks/token_pattern.py`), so a quantified pattern (e.g.
+`{POS: NOUN, OP: "{4,}"}` in `rules/en/clarity/noun-string.yml`) yields only the
+single longest span per starting point instead of every overlapping sub-match.
 
 `RuleEngine.check()` iterates the language's rules, applies the profile's `RuleConfig`
 filter, runs each check with a `CheckContext` (text + optional spaCy doc), and returns

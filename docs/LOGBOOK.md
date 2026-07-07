@@ -1031,3 +1031,21 @@ no rules yet are a no-op, so this ships safely ahead of the rules themselves.
 Adapted `test_create_update_delete_profile` in `test_profiles_api.py`, which
 previously created a profile named "Blog" for EN and now collides with the
 seeded example; renamed it to "Notes". Full suite: 374 passed.
+
+## 2026-07-07 — 18 new English rules + greedy LONGEST matching
+
+Commit: `3c9140a`
+
+Task 7 of the use-case-packs plan. Added a TDD regression
+(`test_quantified_pattern_yields_longest_match_only` in
+`backend/tests/test_nlp_rules.py`) proving a `{4,}`-quantified `token_pattern`
+produced three overlapping spans instead of one; fixed by registering the
+spaCy `Matcher` with `greedy="LONGEST"` in
+`backend/app/checkers/rules/checks/token_pattern.py`. Added 18 EN rule files:
+4 grammar + 3 style + 2 clarity general rules, plus 9 pack rules (4
+`marketing`, 4 `techdocs`, 1 `blog`) under `backend/rules/en/`. All 58
+parametrized `test_rule_examples.py` cases (29 EN rules x bad/good) passed
+without needing any pattern/example adjustment. Strengthened
+`test_rules_carry_pack_examples_and_packs_index` in `test_rules_api.py` to
+assert `payload["packs"] == ["blog", "marketing", "techdocs"]` now that real
+pack rules exist. Full suite: 411 passed.
