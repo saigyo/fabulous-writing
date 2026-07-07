@@ -1,0 +1,17 @@
+extends: existence
+message: "«%s» es lenguaje publicitario vacío — prefiera un beneficio concreto o una cifra."
+level: suggestion
+category: style
+pack: marketing
+ignorecase: true
+tokens:
+  - revolucionari[oa]s?
+  - espectacular(?:es)?
+  - imprescindibles?
+  - inigualables?
+  - alucinantes?
+examples:
+  bad:
+    - "Un rendimiento espectacular y una herramienta imprescindible."
+  good:
+    - "Reduce el tiempo de procesamiento un 40 %."

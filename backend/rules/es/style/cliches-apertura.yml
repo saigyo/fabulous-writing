@@ -1,0 +1,16 @@
+extends: existence
+message: "«%s» es una apertura tópica — entre directamente en materia."
+level: suggestion
+category: style
+pack: blog
+ignorecase: true
+tokens:
+  - desde tiempos inmemoriales
+  - como todos sabemos
+  - en la era digital
+  - hoy en día
+examples:
+  bad:
+    - "Desde tiempos inmemoriales, la gente escribe para ordenar sus ideas."
+  good:
+    - "La gente escribe para ordenar sus ideas desde antes de Homero."

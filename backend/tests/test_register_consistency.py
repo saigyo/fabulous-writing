@@ -63,3 +63,38 @@ class TestApresQueSubjonctif:
     def test_indicative_is_clean(self) -> None:
         text = "Après qu'il est parti, nous avons mangé."
         assert hits(text, Language.FR, "grammar.apres-que-subjonctif") == []
+
+
+ES_RULE = "grammar.tuteo-ustedeo"
+
+
+class TestTuteoUstedeo:
+    def test_minority_formal_flagged(self) -> None:
+        text = (
+            "Puedes empezar hoy con tu borrador. Te aviso cuando termine la revisión. "
+            "Usted puede publicar después."
+        )
+        found = hits(text, Language.ES, ES_RULE)
+        assert len(found) == 1
+        assert "Usted" in found[0].span.text
+
+    def test_minority_informal_flagged(self) -> None:
+        text = (
+            "Usted debe revisar el ritmo del proyecto. Usted controla el avance del proyecto. "
+            "Te aviso cuando termine la revisión."
+        )
+        found = hits(text, Language.ES, ES_RULE)
+        assert len(found) == 1
+        assert "Te aviso" in found[0].span.text
+
+    def test_single_vote_is_silent(self) -> None:
+        text = "Puedes empezar hoy mismo. El resto llegará después."
+        assert hits(text, Language.ES, ES_RULE) == []
+
+
+class TestHaberImpersonal:
+    def test_existential_plural_fires(self) -> None:
+        assert hits("Habían muchos problemas en el proyecto.", Language.ES, "grammar.haber-impersonal")
+
+    def test_auxiliary_is_clean(self) -> None:
+        assert hits("Ellos habían comido antes de salir.", Language.ES, "grammar.haber-impersonal") == []

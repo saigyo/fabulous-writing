@@ -1,0 +1,3 @@
+El archivo de configuración se carga al iniciar la aplicación. Si el servicio no responde, quizás el caché esté obsoleto; tal vez baste con reiniciarlo. Habían muchos casos donde la memoria se agotaba, o sea, conviene vigilar el consumo.
+
+Creo que la siguiente opción ayuda un montón: ejecute «widget cache clear». A pesar que el proceso tarda unos minutos, no lo interrumpa.

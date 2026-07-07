@@ -1,0 +1,24 @@
+# Claims competitors or regulators can challenge — legal risk. Digit
+# forms are qualified (« número 1 del mercado », not bare « número 1 »)
+# so addresses, issue numbers, and « prioridad número 1 » never fire —
+# same precision decision as the FR sibling rule.
+extends: existence
+message: "«%s» es una afirmación inverificable — respáldela con datos o elimínela (riesgo legal)."
+level: warning
+category: style
+pack: marketing
+ignorecase: true
+tokens:
+  - número 1 del mercado
+  - número 1 mundial
+  - líder del mercado
+  - el mejor del mundo
+  - la mejor del mundo
+  - único en el mundo
+  - única en el mundo
+examples:
+  bad:
+    - "Somos el número 1 del mercado."
+  good:
+    - "Lo usan 12 000 equipos cada semana."
+    - "Nuestra prioridad número 1 es la seguridad."

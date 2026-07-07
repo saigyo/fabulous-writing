@@ -1,0 +1,19 @@
+# Existential « haber » is impersonal: « había muchos problemas », never
+# « habían muchos ». The POS gate (next token DET/NUM/NOUN) keeps
+# auxiliary uses (« habían comido » — next token VERB) from firing.
+# Verified against es_core_news_sm: "Habían muchos" → muchos/DET,
+# "Habían tres" → tres/NUM, "habían comido" → comido/VERB.
+extends: token_pattern
+message: "«%s» — el « haber » existencial es impersonal: « había muchos », no « habían muchos »."
+level: error
+category: grammar
+pattern:
+  - {LOWER: {IN: [habían, habrían, habrán]}}
+  - {POS: {IN: [DET, NUM, NOUN]}}
+examples:
+  bad:
+    - "Habían muchos problemas en el proyecto."
+    - "Habrán muchas sorpresas mañana."
+  good:
+    - "Había muchos problemas en el proyecto."
+    - "Ellos habían comido antes de salir."

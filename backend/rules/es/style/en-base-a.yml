@@ -1,0 +1,12 @@
+extends: substitution
+message: "«%s» es la forma recomendada — «%s» está desaconsejado por la RAE."
+level: suggestion
+category: style
+ignorecase: true
+swap:
+  en base a: con base en
+examples:
+  bad:
+    - "En base a los datos, ajustamos el plan."
+  good:
+    - "Con base en los datos, ajustamos el plan."

@@ -1,0 +1,22 @@
+# Register consistency: tú vs usted. Possessive « tu/tus » counts as
+# informal; « su/sus » is third-person-ambiguous and deliberately
+# excluded, so formal detection leans on usted/ustedes only.
+# Known limitation: ustedes is also the plural of tú in Latin American
+# Spanish and votes as formal.
+extends: consistency
+message: "Tuteo y ustedeo mezclados — trate al lector de forma coherente."
+level: warning
+category: grammar
+variants:
+  informal:
+    pattern:
+      - {LOWER: {IN: [tú, ti, contigo, te, tu, tus]}, POS: {IN: [PRON, DET]}}
+  formal:
+    pattern:
+      - {LOWER: {IN: [usted, ustedes]}, POS: PRON}
+examples:
+  bad:
+    - "Puedes empezar hoy con tu borrador. Te aviso cuando termine la revisión. Usted puede publicar después."
+  good:
+    - "Puedes empezar hoy con tu borrador. Te aviso cuando termine la revisión."
+    - "Usted puede empezar hoy. Usted decide el ritmo."

@@ -1,0 +1,15 @@
+extends: existence
+message: "«%s» es coloquial — use un término preciso en la documentación."
+level: warning
+category: style
+pack: techdocs
+ignorecase: true
+tokens:
+  - un montón
+  - o sea
+  - a tope
+examples:
+  bad:
+    - "Esto pasa un montón después de una actualización."
+  good:
+    - "Esto ocurre con frecuencia después de una actualización."

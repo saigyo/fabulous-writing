@@ -1,0 +1,18 @@
+extends: existence
+message: "«%s» debilita la documentación — afirme el comportamiento o documente la condición exacta."
+level: suggestion
+category: style
+pack: techdocs
+ignorecase: true
+tokens:
+  - quizás
+  - quizá
+  - tal vez
+  - creo que
+  - me parece que
+  - a lo mejor
+examples:
+  bad:
+    - "Quizás el caché esté obsoleto."
+  good:
+    - "El caché expira a los diez minutos."

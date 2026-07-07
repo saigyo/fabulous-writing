@@ -1,0 +1,14 @@
+# Catches both stacked closing marks (!!) and doubled inverted
+# openings (¡¡ … !!).
+extends: existence
+message: "Los signos de exclamación acumulados restan credibilidad — uno basta."
+level: suggestion
+category: style
+pack: marketing
+raw:
+  - "[!¡]{2,}"
+examples:
+  bad:
+    - "¡¡Pruébalo hoy mismo!!"
+  good:
+    - "¡Pruébalo hoy mismo!"

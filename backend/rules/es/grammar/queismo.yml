@@ -1,0 +1,22 @@
+# Queísmo: omitting the required « de » before « que ». Deliberately
+# narrow, high-precision keys — bare « seguro que » is legitimate
+# colloquial Spanish and must NOT fire. Complements the existing
+# dequeismo.yml (the opposite error).
+extends: substitution
+message: "«%s» — falta la preposición: «%s» es queísmo."
+level: error
+category: grammar
+ignorecase: true
+swap:
+  me di cuenta que: me di cuenta de que
+  a pesar que: a pesar de que
+  estoy seguro que: estoy seguro de que
+  estoy segura que: estoy segura de que
+  no cabe duda que: no cabe duda de que
+examples:
+  bad:
+    - "Me di cuenta que faltaban datos."
+    - "A pesar que el proceso tarda, funciona."
+  good:
+    - "Me di cuenta de que faltaban datos."
+    - "Seguro que mañana llueve."
