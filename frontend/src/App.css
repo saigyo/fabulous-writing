@@ -1056,6 +1056,15 @@ input {
 /* The domain listbox fills its row so both row-1 cells end together. */
 .profile-card-domain select { flex: 1; min-height: 5.5rem; }
 
+.profile-card-packs {
+  margin-top: 0.5rem;
+}
+
+.profile-card-packs .field-label {
+  display: block;
+  margin-bottom: 4px;
+}
+
 .profile-card label {
   display: flex;
   flex-direction: column;

@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   createProfile,
   deleteProfile,
+  getRules,
   resetProfile,
   updateProfile,
 } from '../api/client'
@@ -18,6 +19,13 @@ export function ProfilesView() {
   const m = useMessages()
   const [newName, setNewName] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [packs, setPacks] = useState<string[]>([])
+
+  useEffect(() => {
+    getRules(language)
+      .then((response) => setPacks(response.packs))
+      .catch(() => setPacks([]))
+  }, [language])
 
   const selected = profiles.find((p) => p.id === profileId) ?? null
 
@@ -137,6 +145,7 @@ export function ProfilesView() {
             key={`${profile.id}:${profile.name}:${profile.llm_instructions}:${profile.example_text}`}
             profile={profile}
             active={profile.id === profileId}
+            packs={packs}
             onSave={(patch) => void save(profile, patch)}
             onDelete={() => void remove(profile)}
             onReset={() => void reset(profile)}
@@ -150,12 +159,14 @@ export function ProfilesView() {
 function ProfileCard({
   profile,
   active,
+  packs,
   onSave,
   onDelete,
   onReset,
 }: {
   profile: Profile
   active: boolean
+  packs: string[]
   onSave: (patch: Partial<Profile>) => void
   onDelete: () => void
   onReset: () => void
@@ -314,6 +325,32 @@ function ProfileCard({
               )}
             </div>
           </details>
+          {packs.length > 0 && (
+            <div className="profile-card-packs">
+              <span className="field-label">{m.rulePacks}</span>
+              <div className="tier-options">
+                {packs.map((pack) => {
+                  const on = profile.packs_on.includes(pack)
+                  return (
+                    <button
+                      key={pack}
+                      className={`tier-option${on ? ' selected' : ''}`}
+                      aria-pressed={on}
+                      onClick={() =>
+                        onSave({
+                          packs_on: on
+                            ? profile.packs_on.filter((p) => p !== pack)
+                            : [...profile.packs_on, pack],
+                        })
+                      }
+                    >
+                      {m.packName(pack)}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
         </div>
         <label className="profile-textarea">
           {m.exampleTextLabel}
