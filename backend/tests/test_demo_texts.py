@@ -41,6 +41,8 @@ EXPECTED = {
         "style.voix-passive",
         "grammar.mots-repetes",
         "grammar.malgre-que",
+        "grammar.pleonasmes",
+        "grammar.pallier-a",
         "clarity.phrase-longue",
         "clarity.lourdeurs",
         "vividness.cliches",

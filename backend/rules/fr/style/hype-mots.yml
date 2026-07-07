@@ -1,0 +1,21 @@
+extends: existence
+message: "«%s» est un superlatif publicitaire — préférez un bénéfice concret ou un chiffre."
+level: suggestion
+category: style
+pack: marketing
+ignorecase: true
+tokens:
+  - révolutionnaires?
+  - incontournables?
+  - ultimes?
+  - exceptionnels?
+  - exceptionnelles?
+  - inégalés?
+  - inégalées?
+  - époustouflants?
+  - époustouflantes?
+examples:
+  bad:
+    - "Une solution révolutionnaire et incontournable."
+  good:
+    - "Une solution qui réduit le temps de traitement de 40 %."

@@ -1,0 +1,12 @@
+extends: existence
+message: "Les points d'exclamation en rafale desservent le message — un seul suffit."
+level: suggestion
+category: style
+pack: marketing
+raw:
+  - "!{2,}"
+examples:
+  bad:
+    - "Essayez-le maintenant !!"
+  good:
+    - "Essayez-le maintenant !"

@@ -1,0 +1,17 @@
+# In documentation, hedges erode trust: state what the software does.
+extends: existence
+message: "«%s» affaiblit une documentation — affirmez le comportement ou documentez la condition exacte."
+level: suggestion
+category: style
+pack: techdocs
+ignorecase: true
+tokens:
+  - il semble que
+  - peut-être que
+  - probablement
+  - il se pourrait que
+examples:
+  bad:
+    - "Il semble que le cache soit parfois obsolète."
+  good:
+    - "Le cache expire après dix minutes."

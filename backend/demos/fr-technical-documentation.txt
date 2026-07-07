@@ -1,0 +1,3 @@
+Le fichier de configuration est chargé au démarrage de l'application. Il semble que le cache soit parfois obsolète ; redémarrez probablement le service si un truc ne fonctionne pas. Du coup, pour pallier à ce problème, videz le répertoire temporaire.
+
+Peut-être que la commande « widget cache clear » suffira. Si ça marche, le statut passe au vert. Après que le service soit relancé, vérifiez les journaux d'erreurs.

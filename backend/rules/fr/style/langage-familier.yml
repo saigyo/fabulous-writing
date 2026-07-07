@@ -1,0 +1,16 @@
+extends: existence
+message: "«%s» est familier — employez un terme précis dans une documentation."
+level: warning
+category: style
+pack: techdocs
+ignorecase: true
+tokens:
+  - trucs?
+  - machins?
+  - du coup
+  - ça marche
+examples:
+  bad:
+    - "Si un truc ne fonctionne pas, redémarrez le service."
+  good:
+    - "Si un composant ne fonctionne pas, redémarrez le service."

@@ -1,0 +1,22 @@
+# « après que » régit l'indicatif (le fait est accompli), pas le
+# subjonctif. fr_core_news_sm tags subjunctive AUX/VERB with Mood=Sub
+# (verified: soit, ait). The {0,3} wildcard bridges the subject NP
+# (« après que le projet soit … »); a subjunctive further away belongs
+# to another clause and must not fire. Both apostrophes (' ’) are listed
+# because the tokenizer keeps them attached to « qu' ».
+extends: token_pattern
+message: "«%s» — après « après que », on emploie l'indicatif : « après qu'il est parti »."
+level: warning
+category: grammar
+pattern:
+  - {LOWER: après}
+  - {LOWER: {IN: [que, "qu'", "qu’"]}}
+  - {OP: "{0,3}"}
+  - {MORPH: {IS_SUPERSET: [Mood=Sub]}}
+examples:
+  bad:
+    - "Après qu'il soit parti, nous avons mangé."
+    - "Après que le projet soit terminé, on fêtera."
+  good:
+    - "Après qu'il est parti, nous avons mangé."
+    - "Après que la réunion a commencé, il est arrivé."

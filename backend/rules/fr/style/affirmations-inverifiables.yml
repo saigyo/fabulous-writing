@@ -1,0 +1,19 @@
+# Claims that competitors or regulators can challenge — legal risk.
+extends: existence
+message: "«%s» est une affirmation invérifiable — étayez-la ou supprimez-la (risque juridique)."
+level: warning
+category: style
+pack: marketing
+ignorecase: true
+tokens:
+  - numéro 1
+  - "n° 1"
+  - leader mondial
+  - le meilleur du marché
+  - la meilleure du marché
+  - unique au monde
+examples:
+  bad:
+    - "SuperWidget est le numéro 1 du marché."
+  good:
+    - "SuperWidget est utilisé par 12 000 équipes."

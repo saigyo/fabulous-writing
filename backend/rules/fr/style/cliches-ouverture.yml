@@ -1,0 +1,17 @@
+extends: existence
+message: "«%s» est une ouverture convenue — entrez directement dans le sujet."
+level: suggestion
+category: style
+pack: blog
+ignorecase: true
+tokens:
+  - depuis la nuit des temps
+  - force est de constater
+  - qui n'a jamais rêvé
+  - de nos jours
+  - à l'heure où
+examples:
+  bad:
+    - "Depuis la nuit des temps, les écrivains cherchent le mot juste."
+  good:
+    - "Les écrivains cherchent le mot juste depuis Homère."

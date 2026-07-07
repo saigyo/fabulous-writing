@@ -1,0 +1,26 @@
+# Pléonasmes courants. Substitution matches literal strings, so conjugated
+# forms (« il est monté en haut ») escape — accepted recall limitation;
+# the invariant keys (au jour d'aujourd'hui, voire même, …) carry the rule.
+extends: substitution
+message: "«%s» suffit — «%s» est un pléonasme."
+level: warning
+category: grammar
+ignorecase: true
+swap:
+  monter en haut: monter
+  descendre en bas: descendre
+  prévoir à l'avance: prévoir
+  au jour d'aujourd'hui: aujourd'hui
+  voire même: voire
+  comme par exemple: par exemple
+  puis ensuite: ensuite
+  s'avérer vrai: s'avérer
+examples:
+  bad:
+    - "Il faut prévoir à l'avance chaque étape."
+    - "Au jour d'aujourd'hui, rien n'est décidé."
+    - "C'est utile, voire même indispensable."
+  good:
+    - "Il faut prévoir chaque étape."
+    - "Aujourd'hui, rien n'est décidé."
+    - "C'est utile, voire indispensable."

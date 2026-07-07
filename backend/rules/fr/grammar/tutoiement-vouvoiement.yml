@@ -1,0 +1,24 @@
+# Register consistency (phase-2 consistency check type): sentences
+# addressing the reader as « tu » vs « vous » vote; minority sentences
+# get flagged; informal is declared first and wins a tie. The POS gate
+# {PRON, DET} keeps the noun « ton » (tone) and other homographs out.
+# Known limitation: plural/impersonal « vous » votes as formal.
+# Bad examples must mix registers across sentences.
+extends: consistency
+message: "Tutoiement et vouvoiement mélangés — adressez-vous au lecteur de façon cohérente."
+level: warning
+category: grammar
+variants:
+  informel:
+    pattern:
+      - {LOWER: {IN: [tu, te, toi, ton, ta, tes]}, POS: {IN: [PRON, DET]}}
+  formel:
+    pattern:
+      - {LOWER: {IN: [vous, votre, vos]}, POS: {IN: [PRON, DET]}}
+examples:
+  bad:
+    - "Tu peux relire ton texte ce soir. Pense à corriger tes fautes. Vous pouvez ensuite le publier."
+  good:
+    - "Tu peux relire ton texte ce soir. Pense à corriger tes fautes."
+    - "Vous pouvez relire votre texte ce soir. Vous pouvez ensuite le publier."
+    - "Le ton de ce texte est juste. La conclusion est claire."

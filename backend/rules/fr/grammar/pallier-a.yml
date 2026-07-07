@@ -1,0 +1,20 @@
+# « pallier » est transitif direct : « pallier un problème », pas
+# « pallier à un problème ». No POS constraint: fr_core_news_sm tags the
+# infinitive « pallier » ADJ in « il faut pallier à … » but keeps the
+# lemma, so LEMMA alone is the reliable signal. The noun « palier »
+# (single l) has its own lemma and cannot collide.
+extends: token_pattern
+message: "«%s» — « pallier » est transitif direct : « pallier ce problème », sans « à »."
+level: warning
+category: grammar
+pattern:
+  - {LEMMA: pallier}
+  - {LOWER: {IN: [à, au, aux]}}
+examples:
+  bad:
+    - "Il faut pallier à ce problème rapidement."
+    - "Nous avons pallié au manque de personnel."
+  good:
+    - "Il faut pallier ce problème rapidement."
+    - "Nous avons pallié le manque de personnel."
+    - "L'ascenseur s'arrête à ce palier."
