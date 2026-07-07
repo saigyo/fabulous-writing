@@ -245,15 +245,52 @@ staying simple and fast. Known gaps, from review:
 
 ## Spanish (`es`)
 
-| Rule | Type | Flags | Demonstrates |
-|---|---|---|---|
-| [style.muletillas](es/style/muletillas.yml) | existence | muletillas («muy», «básicamente») | word lists |
-| [style.voz-pasiva](es/style/voz-pasiva.yml) | token_pattern, **NLP** | «fue escrito por…» | `MORPH` participle after lemma *ser* |
-| [grammar.palabras-repetidas](es/grammar/palabras-repetidas.yml) | repetition | palabras dobladas | adjacent duplicates |
-| [grammar.dequeismo](es/grammar/dequeismo.yml) | token_pattern, **NLP** | «pienso de que» | lemma sets (`LEMMA: {IN: […]}`) |
-| [clarity.frase-larga](es/clarity/frase-larga.yml) | occurrence | frases de más de 30 palabras | per-sentence word counting |
-| [clarity.circunloquios](es/clarity/circunloquios.yml) | substitution | «en base a» → «según» | swap map |
-| [vividness.cliches](es/vividness/cliches.yml) | existence | «al fin y al cabo» | multi-word phrases |
+| Rule | Type | Flags | Pack | Demonstrates |
+|---|---|---|---|---|
+| [style.muletillas](es/style/muletillas.yml) | existence | muletillas («muy», «básicamente») | — | word lists |
+| [style.voz-pasiva](es/style/voz-pasiva.yml) | token_pattern, **NLP** | «fue escrito por…» | — | `MORPH` participle after lemma *ser* |
+| [grammar.palabras-repetidas](es/grammar/palabras-repetidas.yml) | repetition | palabras dobladas | — | adjacent duplicates |
+| [grammar.dequeismo](es/grammar/dequeismo.yml) | token_pattern, **NLP** | «pienso de que» | — | lemma sets (`LEMMA: {IN: […]}`) |
+| [clarity.frase-larga](es/clarity/frase-larga.yml) | occurrence | frases de más de 30 palabras | — | per-sentence word counting |
+| [clarity.circunloquios](es/clarity/circunloquios.yml) | substitution | «en base a» → «según» | — | swap map |
+| [vividness.cliches](es/vividness/cliches.yml) | existence | «al fin y al cabo» | — | multi-word phrases |
+| [grammar.queismo](es/grammar/queismo.yml) | substitution | «me di cuenta que», «a pesar que» | — | narrow high-precision swap keys (queísmo, opposite of dequeísmo) |
+| [grammar.haber-impersonal](es/grammar/haber-impersonal.yml) | token_pattern, **NLP** | «habían muchos problemas» | — | `POS`-gated (`DET`/`NUM`/`NOUN`) impersonal-*haber* check |
+| [grammar.tuteo-ustedeo](es/grammar/tuteo-ustedeo.yml) | consistency, **NLP** | tú/te/tu… vs usted/ustedes mixed across sentences | — | POS-gated variants (`PRON`/`DET`) disambiguate tú-clitics from possessives |
+| [style.en-base-a](es/style/en-base-a.yml) | substitution | «en base a» → «con base en» | — | RAE-recommended-form swap |
+| [style.palabras-hype](es/style/palabras-hype.yml) | existence | «revolucionaria», «imprescindible» | marketing | pack-scoped word list |
+| [style.afirmaciones-inverificables](es/style/afirmaciones-inverificables.yml) | existence | «número 1 del mercado», «líder del mercado» | marketing | multi-word phrase list, legal-risk framing |
+| [style.inflacion-exclamacion](es/style/inflacion-exclamacion.yml) | existence | «¡¡ … !!» | marketing | `raw` regex (`[!¡]{2,}`) |
+| [style.hedging](es/style/hedging.yml) | existence | «quizás», «tal vez» | techdocs | word/phrase list |
+| [style.coloquialismos](es/style/coloquialismos.yml) | existence | «un montón», «o sea» | techdocs | word/phrase list |
+| [style.cliches-apertura](es/style/cliches-apertura.yml) | existence | «desde tiempos inmemoriales», «hoy en día» | blog | phrase list |
+
+### Known heuristic limitations
+
+- **grammar.queismo** matches only a fixed set of high-precision phrases
+  (« me di cuenta que », « a pesar que », « estoy segur[oa] que », « no
+  cabe duda que »); bare « seguro que » is deliberately excluded because
+  it is legitimate colloquial Spanish and would over-fire.
+- **grammar.haber-impersonal** relies on the next token's `POS` (`DET`,
+  `NUM`, or `NOUN`) to distinguish existential « habían muchos » from
+  auxiliary « habían comido » (next token `VERB`). Verified against
+  `es_core_news_sm`: "Habían muchos" → muchos/DET, "Habían tres" →
+  tres/NUM, "habían comido" → comido/VERB.
+- **grammar.tuteo-ustedeo** excludes possessive « su/sus » from the
+  formal vote because it is third-person-ambiguous (could refer to
+  someone other than the addressee); formal detection leans on
+  usted/ustedes only. Known limitation: « ustedes » is also the plural
+  of « tú » in Latin American Spanish and always votes as formal.
+- **style.afirmaciones-inverificables** only flags « número 1 » in its
+  qualified market-claim forms (« … del mercado », « … mundial »): the
+  bare phrase is everyday Spanish (addresses, priorities, issue
+  numbers — « prioridad número 1 ») and would over-fire at warning
+  level.
+- **style.en-base-a** and **clarity.circunloquios** both match « en base
+  a »: the former flags it as an RAE-disallowed form (style pack,
+  suggesting « con base en »), the latter as a wordy circumlocution
+  (clarity pack, suggesting « según »). Both fire together by design —
+  they address different concerns for the same phrase.
 
 ## Italian (`it`)
 

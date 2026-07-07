@@ -1467,3 +1467,79 @@ not lemmatize it to « pallier » — accepted), and mirrored both in the README
 limitations section. Verified all four FP probe sentences clean, the demo's
 « est le numéro 1 du marché » still fires, and the full suite stays at 529
 passed.
+
+## 2026-07-07 — Task 2 (phase 3): Spanish rules to parity with EN/DE/FR/JA
+Commit: `7c67242`
+
+Task 2 of the 6-task phase-3 plan (Task 1, French, already merged). This task
+covers Spanish only: 10 new rules, three pack demo texts, fodder in the
+general ES demo, and ES cases appended to the shared consistency test file.
+
+**What shipped.**
+
+- **10 new `rules/es/` rules.** Grammar: `queismo` (substitution swap map —
+  « me di cuenta que », « a pesar que », « estoy segur[oa] que », « no cabe
+  duda que » — deliberately narrow so bare « seguro que », legitimate
+  colloquial Spanish, never fires; complements the existing `dequeismo`,
+  the opposite error). `haber-impersonal` (token_pattern, NLP: existential
+  « habían muchos » is impersonal Spanish for « había muchos »; a `POS`
+  gate on the following token — `DET`/`NUM`/`NOUN`, verified live against
+  `es_core_news_sm` — keeps the auxiliary reading « habían comido » (next
+  token `VERB`) from firing). `tuteo-ustedeo` (consistency, NLP: tú/te/tu/tus
+  vs usted/ustedes register mixing, POS-gated `PRON`/`DET` variants; « su/sus »
+  deliberately excluded from the formal vote as third-person-ambiguous).
+  Style: `en-base-a` (RAE-recommended-form swap, « en base a » → « con base
+  en » — coexists with the pre-existing `clarity.circunloquios`, which
+  flags the same phrase as a circumlocution suggesting « según »; both fire
+  together by design, different concerns). Packs: `marketing`
+  (`palabras-hype`, `afirmaciones-inverificables` with market-claim-qualified
+  digit forms so addresses/issue-numbers/« prioridad número 1 » stay clean —
+  same precision decision as the FR sibling rule — and
+  `inflacion-exclamacion` via `raw: ["[!¡]{2,}"]` catching both `!!` and
+  `¡¡…!!`), `techdocs` (`hedging`, `coloquialismos`), `blog`
+  (`cliches-apertura`).
+- **Three ES demo texts** (`demos/es-marketing.txt`,
+  `es-technical-documentation.txt`, `es-blog.txt`), each engineered to trip
+  its pack's rules plus at least one general grammar rule (`queismo` in both
+  marketing and techdocs; `haber-impersonal` in techdocs). The blog demo
+  mixes register 2-vs-1 (two tú/te sentences, one usted sentence) so
+  `tuteo-ustedeo` fires exactly once, on the minority usted sentence —
+  verified live via the engine, not just by the catalog tests. Marketing and
+  techdocs stay all-tú/no-usted so the consistency rule doesn't have two
+  variants to vote and stays silent, confirmed the same way. One test-text
+  gotcha found live: `es_core_news_sm` tags « Usted » as `PROPN` (not `PRON`)
+  in some sentence positions (e.g. before « decide »), which silently drops
+  the formal vote — worked around by picking verbs (« debe revisar »,
+  « controla ») that keep « Usted » tagged `PRON`, confirmed with a live
+  token dump rather than guessing.
+- **Fodder** appended to `demos/es.txt`: one sentence exercising `queismo`,
+  `haber-impersonal`, and `en-base-a` at once; `tests/test_demo_texts.py`
+  `EXPECTED[Language.ES]` grew by those three rule ids (the consistency rule
+  is deliberately not added there, since a single fodder sentence can't
+  produce two voting sentences).
+- **`tests/test_register_consistency.py`** (existing file from Task 1):
+  appended `TestTuteoUstedeo` (minority-formal and minority-informal each
+  flagged exactly once, single vote staying silent) and `TestHaberImpersonal`
+  (existential plural fires, auxiliary reading stays clean) — no
+  restructuring of the FR classes already there.
+- **`rules/README.md`**: added a Pack column and 10 rows to the Spanish
+  catalog table, plus a "Known heuristic limitations" section mirroring the
+  French one (queísmo's deliberately narrow key list, haber-impersonal's
+  POS gate and its verified live behavior, tuteo-ustedeo's blindness to
+  ustedes-as-plural-tú and its su/sus exclusion, afirmaciones-inverificables'
+  qualified digit forms, and the intentional double-coverage of « en base
+  a » by two different rules).
+
+No engine code touched — this was pure YAML + demos + tests, per the task's
+binding constraint.
+
+**Verification.** `cd backend && uv run pytest -q` → 554 passed. Engine
+sanity via a live harness dump: `es-marketing.txt` trips `style.palabras-hype`,
+`style.afirmaciones-inverificables`, `style.inflacion-exclamacion`,
+`clarity.circunloquios`, `style.en-base-a`, `grammar.queismo`;
+`es-technical-documentation.txt` trips `style.hedging`,
+`style.coloquialismos`, `grammar.haber-impersonal`, `grammar.queismo`;
+`es-blog.txt` trips `style.cliches-apertura` (×4) and
+`grammar.tuteo-ustedeo` exactly once, on the usted sentence.
+`grammar.tuteo-ustedeo` confirmed silent on `demos/es.txt` and on the
+marketing/techdocs demos.
