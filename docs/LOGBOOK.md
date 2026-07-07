@@ -1754,3 +1754,81 @@ and non-empty `example_text` for all three example profiles; confirmed it
 failed with `KeyError: 'Marketing'` before the implementation change.
 
 **Verification.** `cd backend && uv run pytest -q` → 602 passed.
+
+## 2026-07-07 — Phase 3 complete: FR/ES/IT/ZH rule parity + consistency generalization
+
+**Commits:** `9cece7d..a62ecb9` (13 commits on `main`)
+
+**Spec/plan.** `docs/superpowers/specs/2026-07-07-fr-es-it-zh-rules-design.md`.
+
+**What shipped, end to end.**
+
+- **40 new rules**, 10 each across `rules/{fr,es,it,zh}/`: 3 general rules +
+  1 address-register `consistency` rule (reusing the JA-introduced check
+  type — `fr/grammar/tutoiement-vouvoiement.yml` tu/vous,
+  `es/grammar/tuteo-ustedeo.yml` tú/usted, `it/grammar/tu-lei.yml` tu/Lei,
+  `zh/grammar/ni-nin.yml` 你/您) + 3 marketing + 2 techdocs + 1 blog pack
+  rule, per language. FR/ES/IT/ZH now sit at the same rule-catalog depth
+  as EN/DE/JA, each shipping all three use-case packs.
+- **12 new demo files** (`demos/{fr,es,it,zh}-{marketing,technical-documentation,blog}.txt`),
+  each engineered to trip its pack's rules plus at least one general rule,
+  and each pack demo's register mix verified live via the engine harness
+  (blog demos mix 2-vs-1 so the new consistency rule fires exactly once on
+  the minority sentence; marketing/techdocs stay single-register so it
+  stays silent). Fodder sentences appended to the four standard demos
+  (`demos/{fr,es,it,zh}.txt`) exercising the new general rules, with
+  `tests/test_demo_texts.py` `EXPECTED` grown to match.
+- **`tests/test_register_consistency.py`** (new): pins voting behavior for
+  all four new consistency rules — minority-formal/minority-informal each
+  flagged exactly once, a single vote staying silent, ties resolving to the
+  first-declared variant (ZH).
+- **Marketing/TechDoc/Blog example profiles seeded for all seven
+  languages** (`app/services/seed_profiles.py`): `EXAMPLE_LANGUAGES` and
+  `BLOG_LANGUAGES` were still hardcoded to EN/DE/JA after Tasks 1–4 landed
+  the FR/ES/IT/ZH packs and demos; both are now `set(Language)`, with
+  per-language marketing/techdoc/blog LLM instructions added for the four
+  new languages.
+- No engine code touched anywhere in Tasks 1–4 — pure YAML + demos + tests,
+  per the plan's binding constraint; only Task 5 (profile seeding) touched
+  Python.
+
+**Review-driven precision fixes** (headline catches, all already committed
+during the feature, this entry only consolidates them):
+- **FR** (`dd3179d`): bare « numéro 1 »/« n° 1 » over-fired on ordinary
+  French (addresses, magazine issues, « priorité numéro 1 »); qualified to
+  the market-claim forms « … du marché »/« … mondial » only, mirroring EN's
+  `number one`/`#1` and JA's 業界No.1 precedent.
+- **ES** (`2fab113`): `tuteo-ustedeo`'s formal variant hardened to admit
+  `PROPN` alongside `PRON` — `es_core_news_sm` occasionally mistags
+  « Usted » as `PROPN` in exactly the mixed-register documents the rule
+  targets, and the `LOWER` gate (usted/ustedes only) makes the addition
+  loss-free; `clarity.circunloquios`'s message template had its `%s` slots
+  inverted (labeled the replacement as the circumlocution) and was
+  corrected to match the substitution convention; `es-blog.txt` gained a
+  second general-rule trigger (queísmo) without disturbing the vote tally.
+- **ZH** (`5232db8`): three raw-text collision guards added — `wufa-zhengshi`'s
+  史上最 moved to a lookbehind `(?<!历)史上最` so it stops firing inside
+  历史上最… historical prose; `dayue-zuoyou` gained a `左右(?![了着])`
+  lookahead excluding the verb readings 左右了/左右着; `hedging`'s
+  `可能`/`大概` entries gained `(?<![不尽])可能(?!性)` and `大概(?![率念])`
+  lookarounds excluding 可能性/不可能/尽可能/大概率. Plus documentation of a
+  low-frequency `ni-nin` edge case: 迷你 ("mini") can mis-segment into a
+  standalone 你 token and cast a spurious informal vote.
+
+**Documentation this phase.** `docs/backend-architecture.md`: the seeding
+paragraph now says every language gets Marketing/TechDoc/Blog example
+profiles (was EN/DE/JA-only); the `consistency` check-type paragraph now
+notes it backs five rules across two script families (JA desu-masu plus
+the four address-register rules); the pack-count sentence now says every
+language ships three packs (was EN/DE-only). `backend/rules/README.md`:
+French/Spanish/Italian/Chinese sections added (Pack column, catalog rows,
+"Known heuristic limitations" sections matching the JA structure); the
+pack-count and consistency-check-type intro sentences updated the same way
+as the architecture doc; spot-checked ~8 rows against the final rule YAMLs
+(ZH lookarounds, FR/ES qualified claim tokens, ES PROPN gate) — no
+contradictions found.
+
+**Verification.** `cd backend && uv run pytest -q` → 602 passed (final
+count for the phase; individual tasks landed at 529/554/578/602 as
+FR/ES/IT/ZH landed in turn, Task 5 added no new tests beyond extending
+`test_seed_pack_profiles`).

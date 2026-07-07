@@ -205,8 +205,8 @@ rule files by hand and appends the same stub itself rather than going through
 
 Rules optionally carry a `pack:` slug (use-case pack; `None` for general
 always-on rules; slugs are free-form strings discovered from whatever `pack:` values
-appear in the files, so a new pack needs no code change). EN and DE each currently
-ship three: `marketing`, `techdocs`, `blog`. `GET /api/rules` echoes both `pack` and
+appear in the files, so a new pack needs no code change). Every language currently
+ships three: `marketing`, `techdocs`, `blog`. `GET /api/rules` echoes both `pack` and
 `examples` per rule entry (`RuleInfo.examples` is the typed `RuleExamples` model, not
 a loose dict, so the OpenAPI schema is honest) and adds a top-level `packs` key — a
 flat sorted list of the distinct pack slugs discovered across the (optionally
@@ -239,7 +239,9 @@ matches ending within 3 tokens of the sentence end (after stripping trailing
 punctuation/symbols/particles), to absorb polite endings GiNZA splits into two
 tokens (でしょう → でしょ+う). `VariantSpec` (`loader.py`) enforces at load time:
 ≥2 variants, ≤1 default, and a default variant must not set `pattern`/`anchor`.
-`ja/style/desu-masu.yml` (敬体/常体 consistency) is the reference example.
+`ja/style/desu-masu.yml` (敬体/常体 consistency) is the reference example. The type
+now backs five rules across two script families: JA desu-masu plus four
+address-register rules — FR tu/vous, ES tú/usted, IT tu/Lei, ZH 你/您.
 
 `existence` tokens and `substitution` keys are wrapped via
 `bounded_pattern` (`checkers/rules/text.py`), which is CJK-edge-aware: a side
@@ -421,8 +423,8 @@ when a check runs (see Rule engine below); fresh seeds default it to `[]`.
   NULL.
 - **Seeding** (`app/services/seed_profiles.py`): every language gets a **Standard**
   profile (all rules on, defaults from config, example text from `backend/demos/`);
-  EN/DE/JA additionally get localized *Marketing* and *Technical Documentation* example
-  profiles when `seed_example_profiles` is on. Seeding is collision-safe: a
+  every language additionally gets localized *Marketing*, *Technical Documentation*,
+  and *Blog* example profiles when `seed_example_profiles` is on. Seeding is collision-safe: a
   user-created profile with the same name never crashes startup.
 - **API semantics** (`app/api/profiles.py`): full CRUD plus `POST
   /api/profiles/{id}/reset`. The Standard profile is editable but cannot be renamed or

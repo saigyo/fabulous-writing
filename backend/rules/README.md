@@ -19,7 +19,7 @@ default, and only active for a profile that has enabled that pack. Pack slugs ar
 free-form — they are discovered from whatever `pack:` values already appear in the
 rule files (`GET /api/rules?language=…` returns the sorted set as `packs`), so adding
 a new use-case pack is just dropping YAML files with a new slug; no code changes.
-EN, DE, and JA currently ship three: `marketing`, `techdocs`, `blog`.
+Every language currently ships three: `marketing`, `techdocs`, `blog`.
 
 Rules marked **NLP** need the spaCy model. The *Demonstrates* column makes this
 catalog double as a cookbook for writing your own rules.
@@ -73,6 +73,12 @@ must be multi-sentence strings — a single sentence can't mix styles.
 Loading fails if: fewer than two variants are declared; more than one variant
 sets `default: true`; a default variant sets `pattern` or `anchor`; or a
 non-default variant has no `pattern`.
+
+Five rules currently use this check type: `ja/style/desu-masu.yml` (敬体/常体)
+plus four address-register consistency rules —
+`fr/grammar/tutoiement-vouvoiement.yml` (tu/vous),
+`es/grammar/tuteo-ustedeo.yml` (tú/usted), `it/grammar/tu-lei.yml` (tu/Lei),
+and `zh/grammar/ni-nin.yml` (你/您).
 
 Known limitation: a quoted sentence that GiNZA segments into its own sentence
 span is classified by its own internal register, not the surrounding
