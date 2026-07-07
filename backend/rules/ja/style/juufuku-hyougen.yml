@@ -2,6 +2,8 @@
 # edge-aware boundary handling in the substitution check. まだ未定 is keyed
 # with the following で/だ so it can never fire inside 未定義 ("undefined",
 # core techdocs vocabulary) — precision over 「まだ未定となっている」 recall.
+# 必ず必要 is deliberately absent: it collides with 必ず+必要事項 and the
+# redundancy claim itself is debatable (必ず can modify what follows).
 extends: substitution
 message: "「%s」で十分です —「%s」は重複表現です。"
 level: warning

@@ -371,3 +371,38 @@ Specified in section 1.
 - `scope: document` for occurrence — superseded by `consistency`.
 - Configurable preferred style per profile for 文体統一 (minority-based is
   zero-config; revisit only if users ask).
+
+## Implementation notes (phase 2)
+
+What shipped (eb3c8cd..2178bb7 plus follow-ups) deviates from this design
+in a handful of places, all review-driven and in the direction of tighter
+precision:
+
+- **17 new rules instead of 16**: quality review found GiNZA's fusion of
+  ら抜き forms into single tokens is context-dependent; a sibling rule
+  `grammar/ranuki-split.yml` (ichidan stem + れる AUX — correct forms
+  lemmatize to られる, a distinct lemma) covers the split analyses, and
+  `ranuki.yml` dropped its `POS: VERB` constraint (fused tokens are
+  sometimes tagged ADJ/NOUN; the ら抜き lemma alone is the signal).
+- **desu-masu matches surface forms, not lemmas**: the polite variant is
+  `TEXT IN [です, でし, でしょ, でしょう, ます, まし, ませ, ましょ,
+  ましょう, ください]` with `POS IN [AUX, VERB]`. Lemma matching missed
+  ください (uniform-polite business text got flagged) and adding LEMMA
+  くださる would misclassify plain 「くださった」; でしょう/ましょう are
+  fused single tokens in GiNZA and are listed alongside their split forms.
+- **juufuku-hyougen narrowed**: `まだ未定` keyed as `まだ未定で`/`まだ未定だ`
+  (cannot fire inside 未定義); `必ず必要` dropped entirely (必ず+必要事項
+  collision; the redundancy claim is itself debatable).
+- **unverifiable-claims uses lookahead raws**: the CJK claim words moved
+  from `tokens:` to `raw:` with negative lookaheads (`世界一(?![周流律時])`
+  etc.) after live probing found 世界一周/初期費用-family false positives;
+  `raw:` is exempt from boundary wrapping, so lookaheads are safe there.
+- **Loader hardening beyond the spec**: default variants must not set
+  `anchor`; empty existence/substitution keys are rejected at load time
+  (previously they crashed `bounded_pattern` at check time).
+- **Documented consistency limitation**: a quote GiNZA segments into its
+  own sentence (『…です』) votes with its internal register — pinned by a
+  test and noted in the rules README.
+- **API detail payload**: `/api/rules` does not yet expose a consistency
+  rule's `variants` structure (only `extends` + examples); add a detail
+  case if the rules view ever wants to render variant internals.
