@@ -1,6 +1,7 @@
 # Demonstrates: high-precision das/dass heuristic — a complement-taking verb
-# before the comma plus a personal pronoun after „das“ excludes both the
-# relative-clause and the article reading.
+# before the comma plus a pronoun after „das“ excludes the article reading
+# in most cases. spaCy POS=PRON also covers indefinite pronouns, so
+# „das eine / das alles“ would leak; those are stoplisted via NOT_IN below.
 extends: token_pattern
 message: "„%s“ — nach diesem Verb leitet „dass“ den Nebensatz ein."
 level: warning
@@ -9,7 +10,7 @@ pattern:
   - {LEMMA: {IN: [hoffen, glauben, denken, sagen, wissen, meinen, finden, vermuten, behaupten, befürchten]}}
   - {TEXT: ","}
   - {LOWER: das}
-  - {POS: PRON}
+  - {POS: PRON, LOWER: {NOT_IN: [eine, eines, alles]}}
 examples:
   bad:
     - "Ich hoffe, das er morgen kommt."
@@ -18,3 +19,4 @@ examples:
     - "Das Buch, das er gestern kaufte, ist spannend."
     - "Ich hoffe, dass er morgen kommt."
     - "Ich hoffe, das Angebot gefällt Ihnen."
+    - "Ich weiß, das eine funktioniert nicht."

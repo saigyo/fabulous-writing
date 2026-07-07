@@ -1,14 +1,18 @@
-# Question form only: "Seit ihr fertig?" is near-certainly the seid-typo,
-# while temporal "Seit ihr hier seid, …" continues after a comma.
+# Question form only: "Seit ihr fertig?" is near-certainly the seid-typo.
+# Two guards keep precision: temporal "Seit ihr hier seid, …" continues after
+# a comma (excluded by the [^,.!?;:]* run), and possessive "Seit ihr Vertrag
+# läuft …?" has a capitalized noun right after „ihr“ (excluded by the
+# negative lookahead — German noun capitalization makes this reliable).
 extends: existence
 message: "„Seit“ + Pronomen als Frage — hier ist das Verb „seid“ gemeint."
 level: error
 category: grammar
 raw:
-  - '\bSeit (ihr|wir)\b[^,.!?;:]*\?'
+  - '\bSeit ihr\b(?!\s+[A-ZÄÖÜ])[^,.!?;:]*\?'
 examples:
   bad:
     - "Seit ihr mit der Installation fertig?"
   good:
     - "Seit ihr hier seid, läuft alles besser."
     - "Seid ihr mit der Installation fertig?"
+    - "Seit ihr Vertrag läuft, sparen Sie jeden Monat?"

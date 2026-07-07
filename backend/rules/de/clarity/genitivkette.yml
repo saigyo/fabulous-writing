@@ -1,4 +1,5 @@
 # Demonstrates: optional tokens (OP "?") inside a rigid sequence.
+# Deliberately strict: two chained genitives (three nouns) already fire.
 extends: token_pattern
 message: "„%s“ — Genitivkette; ein Nebensatz oder Verb entzerrt sie."
 level: warning

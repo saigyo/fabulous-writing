@@ -1,6 +1,6 @@
 # case-sensitive, damit „email“ in Code-Kontexten unangetastet bleibt.
 extends: substitution
-message: "Schreib „%s“ statt „%s“."
+message: "Schreiben Sie „%s“ statt „%s“."
 level: warning
 category: style
 pack: techdocs

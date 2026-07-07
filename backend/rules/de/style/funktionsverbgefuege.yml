@@ -1,6 +1,9 @@
 # Demonstrates: REGEX on token text (-ung noun) plus a bounded gap before a
 # function verb. Catches „Die Anmeldung erfolgt …“ and „eine Prüfung …
 # durchführen“; separated prefixes („führen … durch“) are out of reach.
+# Known FP: literal „treffen“ (= sich treffen) after an unrelated -ung noun
+# can fire („Nach der Besprechung haben wir uns getroffen.“) — suggestion
+# severity carries it.
 extends: token_pattern
 message: "„%s“ — Funktionsverbgefüge; das einfache Verb ist direkter (prüfen, anmelden …)."
 level: suggestion
