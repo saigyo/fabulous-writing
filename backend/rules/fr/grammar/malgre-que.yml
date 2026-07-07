@@ -5,3 +5,8 @@ category: grammar
 ignorecase: true
 swap:
   malgré que: bien que
+examples:
+  bad:
+    - "Malgré que ce soit difficile, nous continuons."
+  good:
+    - "Bien que ce soit difficile, nous continuons."

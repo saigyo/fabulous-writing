@@ -14,3 +14,8 @@ tokens:
   - im Prinzip
   - letztendlich
   - ziemlich
+examples:
+  bad:
+    - "Das ist halt eigentlich ganz gut."
+  good:
+    - "Das ist gut."

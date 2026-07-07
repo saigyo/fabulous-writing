@@ -7,3 +7,8 @@ pattern:
   - {TEXT: 进行}
   - {TEXT: 了, OP: "?"}
   - {TAG: NN}
+examples:
+  bad:
+    - "他对这个项目进行了分析。"
+  good:
+    - "我们明天讨论这个项目。"

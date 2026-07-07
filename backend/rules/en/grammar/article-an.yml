@@ -6,3 +6,8 @@ category: grammar
 pattern:
   - {LOWER: an}
   - {TEXT: {REGEX: '^[bcdfgjklmnpqrstvwz]'}}
+examples:
+  bad:
+    - "She gave an presentation about writing."
+  good:
+    - "She gave an honest answer in an hour."

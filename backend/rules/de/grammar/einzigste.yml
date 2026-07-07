@@ -9,3 +9,8 @@ swap:
   einzigster: einziger
   einzigstes: einziges
   einzigsten: einzigen
+examples:
+  bad:
+    - "Das ist das einzigste Problem."
+  good:
+    - "Das ist das einzige Problem."

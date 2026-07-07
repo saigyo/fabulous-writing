@@ -6,3 +6,8 @@ pattern:
   - {LEMMA: {IN: [make, take, give, have, reach]}}
   - {POS: DET, OP: "?"}
   - {LOWER: {IN: [decision, decisions, assessment, assumption, consideration, conclusion]}}
+examples:
+  bad:
+    - "We made a decision to proceed."
+  good:
+    - "We decided to proceed."

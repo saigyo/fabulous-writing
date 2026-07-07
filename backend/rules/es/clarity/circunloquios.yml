@@ -7,3 +7,8 @@ swap:
   en base a: según
   en el día de hoy: hoy
   a la mayor brevedad: pronto
+examples:
+  bad:
+    - "En base a los datos, decidimos."
+  good:
+    - "Según los datos, decidimos."

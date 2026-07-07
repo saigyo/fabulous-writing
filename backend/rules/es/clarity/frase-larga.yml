@@ -5,3 +5,8 @@ category: clarity
 scope: sentence
 token: '\b\w+\b'
 max: 30
+examples:
+  bad:
+    - "Esta frase añade cláusula tras cláusula porque quien escribe nunca se detiene a respirar, apilando palabras sobre palabras hasta que cualquier lector pierde por completo el hilo y olvida dónde empezó todo."
+  good:
+    - "La frase es corta."

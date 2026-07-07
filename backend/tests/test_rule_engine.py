@@ -6,7 +6,18 @@ from app.checkers.rules.engine import RuleConfig, RuleEngine
 from app.core.models import Category, Language, Severity
 
 
+_STUB_EXAMPLES = """
+examples:
+  bad: ["trigger sentence"]
+  good: ["clean sentence"]
+"""
+
+
 def write_rule(rules_dir: Path, lang: str, relpath: str, content: str) -> None:
+    # examples: is schema-required; inline test rules get a stub block so
+    # each test states only what it is about.
+    if "examples:" not in content:
+        content = content.rstrip() + "\n" + _STUB_EXAMPLES
     path = rules_dir / lang / relpath
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
@@ -247,10 +258,11 @@ def _engine_with_two_rules(tmp_path):
     (tmp_path / "en" / "grammar").mkdir(parents=True)
     (tmp_path / "en" / "style" / "test-weasel.yml").write_text(
         "extends: existence\nmessage: \"'%s' is weak.\"\ncategory: style\n"
-        "ignorecase: true\ntokens: [very]\n"
+        "ignorecase: true\ntokens: [very]\n" + _STUB_EXAMPLES
     )
     (tmp_path / "en" / "grammar" / "test-repeat.yml").write_text(
         "extends: repetition\nmessage: \"'%s' is repeated.\"\ncategory: grammar\n"
+        + _STUB_EXAMPLES
     )
     return RuleEngine(tmp_path)
 
@@ -358,3 +370,17 @@ tokens: [x]
         assert engine.list_rules() == []
         assert len(engine.errors) == 1
         assert "pack" in engine.errors[0].error
+
+
+def test_rule_without_examples_is_reported(tmp_path: Path) -> None:
+    rules_dir = tmp_path / "rules"
+    path = rules_dir / "en" / "style" / "bare.yml"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        'extends: existence\nmessage: "x"\ncategory: style\ntokens: [x]\n',
+        encoding="utf-8",
+    )
+    engine = RuleEngine(rules_dir)
+    assert engine.list_rules() == []
+    assert len(engine.errors) == 1
+    assert "examples" in engine.errors[0].error

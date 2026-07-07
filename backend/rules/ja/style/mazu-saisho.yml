@@ -6,3 +6,8 @@ pattern:
   - {TEXT: まず}
   - {TEXT: 最初}
 suggestions: [最初]
+examples:
+  bad:
+    - "まず最初に、計画を説明します。"
+  good:
+    - "最初に、計画を説明します。"

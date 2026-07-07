@@ -6,3 +6,8 @@ category: clarity
 scope: sentence
 token: '、'
 max: 4
+examples:
+  bad:
+    - "これは、とても、長い、複雑な、例文で、あります。"
+  good:
+    - "これは短い文です。"

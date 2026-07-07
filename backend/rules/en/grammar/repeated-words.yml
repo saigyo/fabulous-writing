@@ -3,3 +3,8 @@ message: "'%s' is repeated."
 level: error
 category: grammar
 ignorecase: true
+examples:
+  bad:
+    - "It is is fine."
+  good:
+    - "It is fine."

@@ -5,3 +5,9 @@ category: style
 pattern:
   - {RIGHT_ID: verb, RIGHT_ATTRS: {TAG: VBN}}
   - {LEFT_ID: verb, REL_OP: ">", RIGHT_ID: aux, RIGHT_ATTRS: {DEP: auxpass}}
+examples:
+  bad:
+    - "The report was written by the team."
+  good:
+    - "The team wrote the report."
+    - "The team was tired."

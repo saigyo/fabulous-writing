@@ -6,3 +6,8 @@ category: clarity
 scope: sentence
 token: ','
 max: 3
+examples:
+  bad:
+    - "Der Satz, der viele Nebensätze, die stören, enthält, ist lang."
+  good:
+    - "Der Satz ist kurz, klar und gut."

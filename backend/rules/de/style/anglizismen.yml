@@ -12,3 +12,8 @@ swap:
   downloaden: herunterladen
   committen: festlegen
   Workflow: Arbeitsablauf
+examples:
+  bad:
+    - "Wir haben ein Meeting gecancelt."
+  good:
+    - "Wir haben ein Treffen abgesagt."

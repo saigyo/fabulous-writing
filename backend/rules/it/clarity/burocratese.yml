@@ -7,3 +7,8 @@ swap:
   al fine di: per
   in data odierna: oggi
   in ottemperanza a: secondo
+examples:
+  bad:
+    - "Al fine di migliorare, cambiamo processo."
+  good:
+    - "Per migliorare, cambiamo processo."

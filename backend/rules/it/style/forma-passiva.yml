@@ -6,3 +6,8 @@ category: style
 pattern:
   - {RIGHT_ID: verb, RIGHT_ATTRS: {POS: VERB}}
   - {LEFT_ID: verb, REL_OP: ">", RIGHT_ID: aux, RIGHT_ATTRS: {DEP: "aux:pass"}}
+examples:
+  bad:
+    - "Il rapporto è stato scritto dal team."
+  good:
+    - "Il team ha scritto il rapporto."

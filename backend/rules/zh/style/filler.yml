@@ -4,3 +4,8 @@ level: suggestion
 category: style
 pattern:
   - {TEXT: {IN: [基本上, 众所周知]}}
+examples:
+  bad:
+    - "基本上，这个方法有效。"
+  good:
+    - "这个方法有效。"

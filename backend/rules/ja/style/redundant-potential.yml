@@ -7,3 +7,8 @@ pattern:
   - {TEXT: こと}
   - {TEXT: が}
   - {LEMMA: できる}
+examples:
+  bad:
+    - "私たちはこの機能を使用することができます。"
+  good:
+    - "私たちはこの機能を使えます。"

@@ -7,3 +7,8 @@ swap:
   au niveau de: concernant
   dans le cadre de: dans
   suite à: après
+examples:
+  bad:
+    - "Suite à votre message, nous répondrons."
+  good:
+    - "Après votre message, nous répondrons."

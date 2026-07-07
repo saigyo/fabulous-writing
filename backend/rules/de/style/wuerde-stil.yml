@@ -7,3 +7,8 @@ pattern:
   - {LEMMA: werden, MORPH: {IS_SUPERSET: ["Mood=Sub"]}}
   - {OP: "{,6}", TAG: {NOT_IN: [VVINF, $.]}}
   - {TAG: VVINF}
+examples:
+  bad:
+    - "Ich würde das Angebot gerne annehmen."
+  good:
+    - "Ich nehme das Angebot gerne an."

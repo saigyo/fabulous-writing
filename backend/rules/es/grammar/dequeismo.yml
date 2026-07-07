@@ -7,3 +7,8 @@ pattern:
   - {LEMMA: {IN: [pensar, creer, opinar]}}
   - {LOWER: de}
   - {LOWER: que}
+examples:
+  bad:
+    - "Pienso de que es una buena idea."
+  good:
+    - "Pienso que es una buena idea."

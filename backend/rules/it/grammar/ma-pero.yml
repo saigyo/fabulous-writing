@@ -5,3 +5,8 @@ category: grammar
 ignorecase: true
 swap:
   ma però: ma
+examples:
+  bad:
+    - "Ma però questo non funziona."
+  good:
+    - "Ma questo non funziona."

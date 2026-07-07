@@ -13,3 +13,8 @@ tokens:
   - move the needle
   - paradigm shift
   - game.changer
+examples:
+  bad:
+    - "At the end of the day, we think outside the box."
+  good:
+    - "Ultimately, we find new approaches."

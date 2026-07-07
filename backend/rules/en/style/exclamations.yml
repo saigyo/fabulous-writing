@@ -4,3 +4,8 @@ level: warning
 category: style
 raw:
   - '!{2,}'
+examples:
+  bad:
+    - "This is great!!"
+  good:
+    - "This is great!"

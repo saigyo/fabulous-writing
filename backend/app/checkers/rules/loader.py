@@ -50,6 +50,7 @@ class RuleSpec(BaseModel):
     suggestions: list[str] = Field(default_factory=list)
     # use-case pack (None = general rule, always on unless excepted)
     pack: str | None = None
+    examples: RuleExamples
 
     @field_validator("pack")
     @classmethod
@@ -59,8 +60,6 @@ class RuleSpec(BaseModel):
                 f"pack '{value}' must be a lowercase slug ([a-z][a-z0-9-]*)"
             )
         return value
-
-    examples: RuleExamples | None = None
 
     @model_validator(mode="after")
     def check_required_fields(self) -> "RuleSpec":

@@ -13,3 +13,8 @@ swap:
   in the event that: if
   a large number of: many
   has the ability to: can
+examples:
+  bad:
+    - "We utilize synergy in order to succeed."
+  good:
+    - "We use tests to succeed."

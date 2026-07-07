@@ -3,3 +3,8 @@ message: "'%s' ist doppelt."
 level: error
 category: grammar
 ignorecase: true
+examples:
+  bad:
+    - "Das ist ist ein Fehler."
+  good:
+    - "Das ist ein Fehler."

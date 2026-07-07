@@ -193,6 +193,13 @@ profiles and the rule catalog reference.
 against `RuleSpec`, a pydantic model with per-type required fields. Invalid files
 become `RuleError` entries — reported via `GET /api/rules`, never fatal.
 
+Every rule also carries a required `examples:` block (`bad`/`good` sentence lists,
+min 1 each) — a rule file without one fails to load. `tests/test_rule_examples.py`
+runs the whole catalog against its own examples (bad must trigger the rule's own
+`rule_id`, good must not), so the catalog tests itself; inline rule snippets used in
+`tests/test_rule_engine.py`/`test_nlp_rules.py` get an auto-appended stub via
+`write_rule()` so each test only states what it's actually about.
+
 Six check types (`extends:`), each implemented as one function in
 `checkers/rules/checks/` and dispatched via the `CHECKS` table:
 

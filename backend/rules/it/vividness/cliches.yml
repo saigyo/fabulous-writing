@@ -4,3 +4,8 @@ level: suggestion
 category: vividness
 ignorecase: true
 tokens: ["alla fine dei conti", "in fin dei conti", "a conti fatti"]
+examples:
+  bad:
+    - "Alla fine dei conti, funziona."
+  good:
+    - "Funziona bene."

@@ -4,3 +4,8 @@ level: warning
 category: style
 ignorecase: true
 tokens: [très, vraiment, assez, plutôt, simplement, quasiment]
+examples:
+  bad:
+    - "C'est très intéressant."
+  good:
+    - "C'est un résultat précis."

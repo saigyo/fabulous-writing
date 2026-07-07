@@ -8,3 +8,8 @@ pattern:
   - {TEXT: こと}
   - {TEXT: は}
   - {TEXT: ない}
+examples:
+  bad:
+    - "できないことはない。"
+  good:
+    - "できます。"

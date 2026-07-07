@@ -6,3 +6,8 @@ category: style
 pattern:
   - {LEMMA: ser}
   - {POS: VERB, MORPH: {IS_SUPERSET: ["VerbForm=Part"]}}
+examples:
+  bad:
+    - "El informe fue escrito por el equipo."
+  good:
+    - "El equipo escribió el informe."

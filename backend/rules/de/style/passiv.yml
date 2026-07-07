@@ -6,3 +6,8 @@ pattern:
   - {LEMMA: werden}
   - {OP: "{,4}", TAG: {NOT_IN: [VVPP, $.]}}
   - {TAG: VVPP}
+examples:
+  bad:
+    - "Der Bericht wurde vom Team geschrieben."
+  good:
+    - "Das Team schrieb den Bericht."

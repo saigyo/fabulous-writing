@@ -6,3 +6,8 @@ category: vividness
 pattern:
   - {LOWER: there, DEP: expl}
   - {LEMMA: be}
+examples:
+  bad:
+    - "There are many issues in the draft."
+  good:
+    - "The draft has many issues."

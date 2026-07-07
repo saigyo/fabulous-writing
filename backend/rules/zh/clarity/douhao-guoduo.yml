@@ -5,3 +5,8 @@ category: clarity
 scope: sentence
 token: '，'
 max: 5
+examples:
+  bad:
+    - "这个方法很好，操作简单，成本很低，效果明显，大家都很满意，值得推广，应该继续。"
+  good:
+    - "这个方法有效。"

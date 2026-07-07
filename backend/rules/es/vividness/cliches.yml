@@ -4,3 +4,8 @@ level: suggestion
 category: vividness
 ignorecase: true
 tokens: ["al fin y al cabo", "en el fondo", "a día de hoy"]
+examples:
+  bad:
+    - "Al fin y al cabo, funciona."
+  good:
+    - "Finalmente, funciona."

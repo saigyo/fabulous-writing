@@ -5,3 +5,8 @@ category: clarity
 scope: sentence
 token: '\b\w+\b'
 max: 30
+examples:
+  bad:
+    - "Questa frase aggiunge proposizione dopo proposizione perché chi scrive non si ferma mai a respirare, accumulando parole su parole finché ogni lettore perde completamente il filo e dimentica dove era cominciato tutto."
+  good:
+    - "La frase è corta."

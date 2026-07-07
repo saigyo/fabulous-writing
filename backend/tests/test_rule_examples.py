@@ -19,9 +19,7 @@ RULES_DIR = Path(__file__).parent.parent / "rules"
 ENGINE = RuleEngine(RULES_DIR)
 REGISTRY = NlpRegistry(NlpSettings().models)
 
-# Until examples are mandatory (see the backfill), rules without them are
-# simply not parametrized.
-RULES = [rule for rule in ENGINE.list_rules() if rule.spec.examples is not None]
+RULES = ENGINE.list_rules()
 
 
 def _hits(rule: LoadedRule, sentence: str) -> list[Finding]:

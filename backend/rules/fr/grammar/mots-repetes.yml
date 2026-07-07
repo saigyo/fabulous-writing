@@ -2,3 +2,8 @@ extends: repetition
 message: "« %s » est répété."
 level: error
 category: grammar
+examples:
+  bad:
+    - "C'est est une erreur."
+  good:
+    - "C'est une erreur."

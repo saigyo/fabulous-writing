@@ -7,3 +7,8 @@ pattern:
   - {TAG: TO}
   - {POS: ADV, OP: "+"}
   - {TAG: VB}
+examples:
+  bad:
+    - "We want to quickly finish the report."
+  good:
+    - "We want to finish the report quickly."

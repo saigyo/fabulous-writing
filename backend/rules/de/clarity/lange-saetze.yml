@@ -5,3 +5,8 @@ category: clarity
 scope: sentence
 token: '\b\w+\b'
 max: 30
+examples:
+  bad:
+    - "Dieser Satz reiht Nebensatz an Nebensatz, weil die Autorin niemals innehält, und türmt Wort auf Wort, bis alle Leserinnen und Leser den Faden verlieren und am Ende vergessen, wo alles überhaupt begonnen hat."
+  good:
+    - "Der Satz ist kurz."
