@@ -218,12 +218,23 @@ Six check types (`extends:`), each implemented as one function in
 
 | Type | Flags | Needs spaCy |
 |---|---|---|
-| `existence` | tokens (word-bounded) or `raw` regexes | no |
+| `existence` | tokens (word-bounded, CJK-edge-aware) or `raw` regexes | no |
 | `substitution` | bad→preferred map; the suggestion comes free | no |
 | `occurrence` | min/max matches per sentence (e.g. sentence length) | only with `count: tokens` |
 | `repetition` | adjacent duplicated words | no |
 | `token_pattern` | spaCy `Matcher` patterns over token attributes | yes |
 | `dependency` | spaCy `DependencyMatcher` patterns over syntax trees | yes |
+
+`existence` tokens and `substitution` keys are wrapped via
+`bounded_pattern` (`checkers/rules/text.py`), which is CJK-edge-aware: a side
+whose literal edge character is CJK (Han, kana, CJK punctuation, full-width
+forms) gets no `\b` — kana/kanji count as `\w`, so a boundary there would never
+fire mid-sentence — while Latin-edged sides keep `\b` (patterns for existing
+EN/DE rules are byte-for-byte unchanged). Only literal edge characters are
+inspected: a key whose edge is a regex metachar (e.g. `(行か|読ま)せる`) keeps
+its `\b`; such patterns belong in `raw:`, which is never wrapped. Empty tokens,
+`raw` entries, and swap keys are rejected at load time as rule errors (they
+would crash `bounded_pattern` at check time).
 
 NLP-backed patterns are compiled against a blank vocab at load time
 (`_validate_nlp_pattern`), so a typo in a pattern attribute fails at startup with a rule
