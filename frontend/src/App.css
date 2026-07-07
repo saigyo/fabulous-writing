@@ -750,6 +750,18 @@
   font-style: italic;
 }
 
+/* The preferred term leads each row; the supporting columns recede.
+   Inputs/selects in the add and edit rows are unaffected: they set
+   their own text color (only `font` is inherited). */
+.term-table tbody td {
+  color: var(--text-dim);
+}
+
+.term-table tbody td.term-preferred {
+  color: var(--text);
+  font-weight: 600;
+}
+
 .term-table th,
 .term-table td {
   text-align: left;

@@ -1914,3 +1914,6 @@ Follow-up: the terminology table now shows language endonyms ("Deutsch",
 "日本語") instead of raw ISO codes — rows, filter, and add/edit selects —
 via a new `languageName(code, languages)` helper (test-first), matching
 the header's language selector. Codes remain the stored/API value.
+Follow-up: the Preferred column now visually leads each row — semibold,
+full text color — while the supporting columns (language, do-not-use,
+definition) recede to the dim text color; add/edit widgets unaffected.

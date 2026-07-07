@@ -280,7 +280,7 @@ function TermTable({ domainId, terms, onChanged }: TermTableProps) {
             ) : (
               <tr key={term.id}>
                 <td>{languageName(term.language, languages)}</td>
-                <td>{term.preferred}</td>
+                <td className="term-preferred">{term.preferred}</td>
                 <td>
                   {term.forbidden_variants.join(', ')}
                   {term.case_sensitive && (
