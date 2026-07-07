@@ -34,6 +34,7 @@ home without touching the semantics of existing rules or stored profiles.
 | Phasing | 1: mechanism + EN/DE · 2: Japanese (+ `scope: document`) · 3: FR/ES/IT/ZH |
 | Seed profiles | Per language: Standard, Marketing, Technical docs, Blog — the last three with their pack enabled and a fitting example text |
 | Severities | error = near-certain, warning = context-aware heuristic, suggestion = taste; individual levels adjustable later |
+| Rule examples | Mandatory `examples` block (bad + good sentences) on every rule; existing 49 rules backfilled; examples render in the rule cards and drive a catalog-wide parametrized test |
 
 ## 1. Pack mechanism (engine)
 
@@ -93,11 +94,50 @@ Pack rules live in the same `<lang>/<category>/<name>.yml` tree as general
 rules — the `pack:` field, not the directory, carries pack membership; the
 rule id stays `<category>.<name>`.
 
+### Self-documenting examples
+
+Every rule carries an `examples` block — sentences in the rule's language
+that pin down its behavior:
+
+```yaml
+examples:
+  bad:        # each sentence MUST yield ≥1 finding from this rule
+    - "Ich hoffe, das er morgen kommt."
+  good:       # each sentence MUST yield no finding from this rule
+    - "Das Buch, das er gestern kaufte, ist spannend."
+```
+
+```python
+class RuleExamples(BaseModel):
+    bad: list[str] = Field(min_length=1)
+    good: list[str] = Field(min_length=1)
+
+class RuleSpec(BaseModel):
+    ...
+    examples: RuleExamples          # required — no default
+```
+
+`examples` is **required**: a rule file without at least one bad and one
+good sentence is a `RuleError` at load time (reported, not fatal — same as
+any schema violation). All 49 existing rules are backfilled in this phase.
+The examples serve three purposes at once:
+
+1. **Documentation** — rendered in the rule card (§3), so writers see
+   concrete flagged/unflagged sentences instead of reverse-engineering a
+   pattern.
+2. **Tests** — a catalog-wide parametrized pytest runs every rule against
+   its own examples (§7); new rules are behavior-locked by writing YAML,
+   with no accompanying Python test needed.
+3. **Spec precision** — for the heuristic NLP rules, the `good` sentences
+   encode the false-positive guards this spec calls out (das-dass, noun
+   string, double negative, …).
+
 ## 2. API + storage
 
-- `GET /api/rules`: each rule entry gains `"pack": str | null`. The response
-  gains a per-language pack index, e.g. `"packs": {"en": ["blog",
-  "marketing", "techdocs"], "de": [...]}` (sorted, discovered).
+- `GET /api/rules`: each rule entry gains `"pack": str | null` and
+  `"examples": {"bad": [...], "good": [...]}`. The response gains a
+  per-language pack index, e.g. `"packs": {"en": ["blog", "marketing",
+  "techdocs"], "de": [...]}` (sorted, discovered).
 - `POST /api/checks`: `rule_config.packs_on` accepted (defaults `[]`).
 - Profiles: `rule_config` JSON passes `packs_on` through CRUD unchanged
   (no schema migration; missing key = `[]` on read).
@@ -112,6 +152,12 @@ rule id stays `<category>.<name>`.
   adds/removes the pack in the profile's `packs_on` — mirroring the
   existing category-toggle interaction. Per-rule checkboxes keep working
   via `exceptions`.
+- **Rule card examples**: each rule card renders its `examples` — bad
+  sentences under a localized "Flags" label (✗), good sentences under
+  "Doesn't flag" (✓). The sentences themselves are in the rule's language
+  by construction; only the two labels are i18n keys (`exampleFlagged`,
+  `exampleNotFlagged`, all seven locales). This turns the rules view into
+  the user-facing rule documentation.
 - **Profile card** (ProfilesView): a "Rule packs" chip row under the
   existing rule settings — one chip per discovered pack of the profile's
   language, toggling membership in `packs_on` (multi-select chips, visual
@@ -227,16 +273,22 @@ the implementation plan fixes the full lists.
 ## 7. Testing
 
 - **Engine**: `is_active` truth-table tests (pack × packs_on × category_off ×
-  exception); loader test for invalid pack slugs (reported as RuleError).
-- **Golden tests per rule** (existing pattern in backend tests): each rule
-  gets positive matches **and** negative guards — for the heuristic rules the
-  negative case is mandatory (e.g. das-dass: „das Buch, das er kaufte“ must
-  not fire; double-negative: "not important" must not fire; noun-string:
-  three nouns must not fire).
-- **API**: `/api/rules` carries pack + packs index; check with
-  `packs_on: ["marketing"]` activates exactly the pack rules.
+  exception); loader tests for invalid pack slugs and for missing/empty
+  `examples` (both reported as RuleError).
+- **Example-driven catalog test** (replaces per-rule golden tests): one
+  parametrized pytest iterates every loaded rule and runs it in isolation
+  against its own examples — each `bad` sentence must yield ≥1 finding
+  with the rule's id, each `good` sentence must yield none. NLP rules
+  follow the existing convention when a spaCy model is unavailable
+  (skipped with a report). The heuristic false-positive guards from §5/§6
+  live in the rules' `good` lists (e.g. das-dass: „Das Buch, das er
+  gestern kaufte, ist spannend.“; double-negative: "not important";
+  noun-string: three nouns).
+- **API**: `/api/rules` carries pack, examples, and the packs index; a check
+  with `packs_on: ["marketing"]` activates exactly the pack rules.
 - **Frontend**: pack chip toggling maps to `packs_on` in save payloads;
-  rules-view pack toggle; fallback display name for unknown slugs.
+  rules-view pack toggle; example rendering in the rule card; fallback
+  display name for unknown slugs.
 
 ## 8. Documentation
 
