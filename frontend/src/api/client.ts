@@ -129,6 +129,11 @@ export const createDomain = (name: string, description = '') =>
     method: 'POST',
     body: JSON.stringify({ name, description }),
   })
+export const updateDomain = (id: number, name: string) =>
+  request<Domain>(`/api/domains/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ name }),
+  })
 export const deleteDomain = (id: number) =>
   request<void>(`/api/domains/${id}`, { method: 'DELETE' })
 

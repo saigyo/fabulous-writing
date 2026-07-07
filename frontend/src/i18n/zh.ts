@@ -100,6 +100,10 @@ export const zh: Messages = {
   definitionPlaceholder: '定义(可选)',
   deleteTermTitle: '删除术语',
   caseSensitiveTitle: '区分大小写',
+  editTermTitle: '编辑术语',
+  saveEditTitle: '保存更改',
+  cancelEditTitle: '放弃更改',
+  renameDomainTitle: '重命名领域',
 
   profilesTitle: '检查配置',
   newProfilePlaceholder: '新配置…',

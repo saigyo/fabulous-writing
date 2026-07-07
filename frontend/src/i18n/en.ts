@@ -95,6 +95,10 @@ export const en: Messages = {
   definitionPlaceholder: 'definition (optional)',
   deleteTermTitle: 'Delete term',
   caseSensitiveTitle: 'Case-sensitive matching',
+  editTermTitle: 'Edit term',
+  saveEditTitle: 'Save changes',
+  cancelEditTitle: 'Discard changes',
+  renameDomainTitle: 'Rename domain',
 
   profilesTitle: 'Checking profiles',
   newProfilePlaceholder: 'New profile…',

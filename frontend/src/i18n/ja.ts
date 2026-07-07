@@ -101,6 +101,10 @@ export const ja: Messages = {
   definitionPlaceholder: '定義(任意)',
   deleteTermTitle: '用語を削除',
   caseSensitiveTitle: '大文字と小文字を区別',
+  editTermTitle: '用語を編集',
+  saveEditTitle: '変更を保存',
+  cancelEditTitle: '変更を破棄',
+  renameDomainTitle: 'ドメイン名を変更',
 
   profilesTitle: 'チェックプロファイル',
   newProfilePlaceholder: '新しいプロファイル…',

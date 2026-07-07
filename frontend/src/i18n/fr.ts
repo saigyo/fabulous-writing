@@ -111,6 +111,10 @@ export const fr: Messages = {
   definitionPlaceholder: 'définition (facultative)',
   deleteTermTitle: 'Supprimer le terme',
   caseSensitiveTitle: 'Respecter la casse',
+  editTermTitle: 'Modifier le terme',
+  saveEditTitle: 'Enregistrer les modifications',
+  cancelEditTitle: 'Annuler les modifications',
+  renameDomainTitle: 'Renommer le domaine',
 
   profilesTitle: 'Profils de vérification',
   newProfilePlaceholder: 'Nouveau profil…',

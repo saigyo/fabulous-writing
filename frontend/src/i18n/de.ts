@@ -105,6 +105,10 @@ export const de: Messages = {
   definitionPlaceholder: 'Definition (optional)',
   deleteTermTitle: 'Begriff löschen',
   caseSensitiveTitle: 'Groß-/Kleinschreibung beachten',
+  editTermTitle: 'Begriff bearbeiten',
+  saveEditTitle: 'Änderungen speichern',
+  cancelEditTitle: 'Änderungen verwerfen',
+  renameDomainTitle: 'Domäne umbenennen',
 
   profilesTitle: 'Prüfprofile',
   newProfilePlaceholder: 'Neues Profil…',

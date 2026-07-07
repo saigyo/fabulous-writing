@@ -101,6 +101,10 @@ export interface Messages {
   definitionPlaceholder: string
   deleteTermTitle: string
   caseSensitiveTitle: string
+  editTermTitle: string
+  saveEditTitle: string
+  cancelEditTitle: string
+  renameDomainTitle: string
 
   // Profiles view
   profilesTitle: string

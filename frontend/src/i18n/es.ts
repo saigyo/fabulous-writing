@@ -111,6 +111,10 @@ export const es: Messages = {
   definitionPlaceholder: 'definición (opcional)',
   deleteTermTitle: 'Eliminar término',
   caseSensitiveTitle: 'Distinguir mayúsculas y minúsculas',
+  editTermTitle: 'Editar término',
+  saveEditTitle: 'Guardar cambios',
+  cancelEditTitle: 'Descartar cambios',
+  renameDomainTitle: 'Renombrar dominio',
 
   profilesTitle: 'Perfiles de comprobación',
   newProfilePlaceholder: 'Nuevo perfil…',
