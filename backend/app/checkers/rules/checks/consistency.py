@@ -1,10 +1,21 @@
+from typing import TYPE_CHECKING
+
 from app.core.models import Finding, Source, Span
 
 from ..context import CheckContext
-from ..loader import LoadedRule
+from ..loader import LoadedRule, RuleSpec
+
+if TYPE_CHECKING:
+    from spacy.matcher import Matcher
+    from spacy.tokens import Span as SentSpan
 
 # Trailing tokens ignored for classification: closing punctuation, symbols,
 # final particles (JA 終助詞 like か・ね・よ are POS=PART), and whitespace.
+# Known limitation: a quote that GiNZA segments into its own sentence
+# (『おはようございます』) loses its trailing bracket to this stripping and is
+# classified by its INTERNAL register — dialogue-heavy prose may see quotes
+# flagged against the narration's style. Acceptable for techdocs/business
+# prose; pinned in tests/test_consistency.py.
 _TAIL_POS = {"PUNCT", "SYM", "PART", "SPACE"}
 # A sentence only falls back to the default variant if it actually ends in
 # a predicate — headings, labels, and 体言止め stay unclassified.
@@ -66,7 +77,13 @@ def check_consistency(rule: LoadedRule, ctx: CheckContext) -> list[Finding]:
     return findings
 
 
-def _classify(spec, matchers, default_name, sent) -> str | None:
+def _classify(
+    spec: RuleSpec,
+    matchers: dict[str, "Matcher"],
+    default_name: str | None,
+    sent: "SentSpan",
+) -> str | None:
+    assert spec.variants is not None  # guaranteed by load-time validation
     tokens = [t for t in sent if not t.is_space]
     while tokens and tokens[-1].pos_ in _TAIL_POS:
         tokens.pop()

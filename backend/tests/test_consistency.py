@@ -92,6 +92,16 @@ class TestConsistency:
         findings = check(engine, text)
         assert [f.span.text for f in findings] == ["今日は晴れだ。"]
 
+    def test_standalone_quote_votes_with_its_internal_register(
+        self, engine: RuleEngine
+    ) -> None:
+        # GiNZA splits the bare quote into its own sentence; the trailing
+        # bracket is stripped as PUNCT, so the quote's internal polite
+        # register votes — documented limitation, pinned here.
+        text = "彼は部屋に入った。窓を開けた。彼女は微笑んだ。『今日はいい天気です』"
+        findings = check(engine, text)
+        assert [f.span.text for f in findings] == ["『今日はいい天気です』"]
+
     def test_single_variant_documents_never_flag(self, engine: RuleEngine) -> None:
         assert check(engine, "本製品は高速です。") == []
         assert check(engine, "本製品は高速だ。") == []
