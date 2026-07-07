@@ -1,0 +1,3 @@
+Il file di configurazione viene caricato all'avvio dell'applicazione. Se il servizio non risponde, forse la cache è obsoleta; credo che un riavvio basti nella maggior parte dei casi. Mi sembra che questa roba capiti un sacco di volte dopo un aggiornamento.
+
+Qual'è la soluzione rapida? Eseguire «widget cache clear» e ricordarsi di uscire fuori dalla modalità manutenzione.

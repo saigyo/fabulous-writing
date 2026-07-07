@@ -98,3 +98,35 @@ class TestHaberImpersonal:
 
     def test_auxiliary_is_clean(self) -> None:
         assert hits("Ellos habían comido antes de salir.", Language.ES, "grammar.haber-impersonal") == []
+
+
+IT_RULE = "grammar.tu-lei"
+
+
+class TestTuLei:
+    def test_minority_formal_flagged(self) -> None:
+        text = (
+            "Leggi i tuoi testi il giorno dopo. Ti accorgerai di ogni ripetizione. "
+            "Se Lei preferisce, ne parliamo lunedì."
+        )
+        found = hits(text, Language.IT, IT_RULE)
+        assert len(found) == 1
+        assert "Lei" in found[0].span.text
+
+    def test_minority_informal_flagged(self) -> None:
+        text = (
+            "La ringrazio per la Sua pazienza. Se Lei preferisce, ne parliamo lunedì. "
+            "Ti mando i commenti domani."
+        )
+        found = hits(text, Language.IT, IT_RULE)
+        assert len(found) == 1
+        assert "Ti mando" in found[0].span.text
+
+    def test_article_la_does_not_vote(self) -> None:
+        # Only articles/DET — no register tokens at all → silent.
+        text = "La casa è grande. Le finestre danno sul giardino."
+        assert hits(text, Language.IT, IT_RULE) == []
+
+    def test_single_vote_is_silent(self) -> None:
+        text = "Ti mando i commenti domani. Il resto arriva dopo."
+        assert hits(text, Language.IT, IT_RULE) == []

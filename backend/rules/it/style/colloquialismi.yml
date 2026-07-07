@@ -1,0 +1,14 @@
+extends: existence
+message: "«%s» è colloquiale — usare un termine preciso nella documentazione."
+level: warning
+category: style
+pack: techdocs
+ignorecase: true
+tokens:
+  - roba
+  - un sacco di
+examples:
+  bad:
+    - "Questa roba capita un sacco di volte dopo un aggiornamento."
+  good:
+    - "Questo problema si presenta spesso dopo un aggiornamento."

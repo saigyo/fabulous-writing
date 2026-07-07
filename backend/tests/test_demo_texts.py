@@ -67,6 +67,9 @@ EXPECTED = {
         "clarity.frase-lunga",
         "clarity.burocratese",
         "vividness.cliches",
+        "grammar.a-me-mi",
+        "grammar.apostrofo-errato",
+        "grammar.pleonasmi",
     },
     Language.JA: {
         "style.mazu-saisho",

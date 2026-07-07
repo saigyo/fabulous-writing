@@ -1,0 +1,27 @@
+# Register consistency: tu vs Lei. The formal variant matches
+# capitalized courtesy pronouns (Lei/Le/La) with a {PRON, PROPN} gate —
+# it_core_news_sm tags « La ringrazio » → La/PRON and « La casa » →
+# La/DET (article, excluded); PROPN is included because small models
+# occasionally mistag courtesy pronouns in mixed-register contexts, and
+# the TEXT gate makes that loss-free. Known limitations:
+# sentence-initial Lei/Le/La meaning « she/her/it » still votes formal
+# (capitalized by position); enclitic courtesy forms (« informarLa »)
+# are not detected.
+extends: consistency
+message: "Tu e Lei mescolati — rivolgersi al lettore in modo coerente."
+level: warning
+category: grammar
+variants:
+  informale:
+    pattern:
+      - {LOWER: {IN: [tu, ti, te, tuo, tua, tuoi, tue]}, POS: {IN: [PRON, DET]}}
+  formale:
+    pattern:
+      - {TEXT: {IN: [Lei, Le, La]}, POS: {IN: [PRON, PROPN]}}
+examples:
+  bad:
+    - "Leggi i tuoi testi il giorno dopo. Ti accorgerai di ogni ripetizione. Se Lei preferisce, ne parliamo lunedì."
+  good:
+    - "Leggi i tuoi testi il giorno dopo. Ti accorgerai di ogni ripetizione."
+    - "La ringrazio per la pazienza. Se Lei preferisce, ne parliamo lunedì."
+    - "La casa è grande. Le finestre danno sul giardino."

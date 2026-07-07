@@ -1,0 +1,12 @@
+extends: existence
+message: "I punti esclamativi in serie tolgono credibilità — ne basta uno."
+level: suggestion
+category: style
+pack: marketing
+raw:
+  - "!{2,}"
+examples:
+  bad:
+    - "Provalo oggi stesso!!"
+  good:
+    - "Provalo oggi stesso!"

@@ -1,0 +1,22 @@
+# « qual è » never takes an apostrophe (troncamento, not elisione);
+# « po' » takes one (elisione of « poco »). Both straight (U+0027) and
+# typographic (U+2019) apostrophes are keyed — substitution works on the
+# raw text, so tokenization is irrelevant.
+extends: substitution
+message: "«%s» è la grafia corretta — «%s» è un errore di apostrofo."
+level: error
+category: grammar
+ignorecase: true
+swap:
+  "qual'è": qual è
+  "qual’è": qual è
+  "qual'era": qual era
+  "qual’era": qual era
+  "un pò": "un po'"
+examples:
+  bad:
+    - "Qual'è il problema principale?"
+    - "Serve un pò di pazienza."
+  good:
+    - "Qual è il problema principale?"
+    - "Serve un po' di pazienza."

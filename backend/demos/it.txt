@@ -1,1 +1,3 @@
 Alla fine dei conti, il nostro nuovo editor è molto utile e davvero semplice. Il primo rapporto è stato scritto da un piccolo team. Ma però il manuale viene aggiornato ogni settimana. Al fine di migliorare la la correzione, abbiamo riscritto il motore. L'app è completamente gratuita, anche se l'abbonamento costa dieci euro al mese, e abbastanza persone la consigliano ogni giorno ai colleghi, agli amici, ai vicini e persino a perfetti sconosciuti incontrati per strada o sul treno del mattino.
+
+A me mi sembra un buon punto di partenza; qual'è il capitolo da rileggere prima di entrare dentro i dettagli?

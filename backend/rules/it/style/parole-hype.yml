@@ -1,0 +1,17 @@
+extends: existence
+message: "«%s» è linguaggio promozionale vuoto — meglio un beneficio concreto o un numero."
+level: suggestion
+category: style
+pack: marketing
+ignorecase: true
+tokens:
+  - rivoluzionari[oaie]
+  - imperdibil[ei]
+  - straordinari[oaie]
+  - senza precedenti
+  - incredibil[ei]
+examples:
+  bad:
+    - "Uno strumento rivoluzionario con prestazioni straordinarie."
+  good:
+    - "Riduce i tempi di elaborazione del 40 %."

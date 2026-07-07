@@ -1,0 +1,18 @@
+# Redundant direction adverbs. Substitution matches literal strings, so
+# only the listed forms are caught (infinitive + 3rd person singular) —
+# accepted recall limitation. « ma però » is covered by ma-pero.yml.
+extends: substitution
+message: "«%s» basta — «%s» è un pleonasmo."
+level: warning
+category: grammar
+ignorecase: true
+swap:
+  entrare dentro: entrare
+  entra dentro: entra
+  uscire fuori: uscire
+  esce fuori: esce
+examples:
+  bad:
+    - "Bisogna entrare dentro la questione."
+  good:
+    - "Bisogna entrare nella questione."

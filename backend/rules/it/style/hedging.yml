@@ -1,0 +1,17 @@
+extends: existence
+message: "«%s» indebolisce la documentazione — affermare il comportamento o documentare la condizione esatta."
+level: suggestion
+category: style
+pack: techdocs
+ignorecase: true
+tokens:
+  - forse
+  - credo che
+  - mi sembra che
+  - probabilmente
+  - direi che
+examples:
+  bad:
+    - "Forse la cache è obsoleta."
+  good:
+    - "La cache scade dopo dieci minuti."

@@ -1,0 +1,16 @@
+# « a me mi piace »: pleonastic clitic doubling — colloquial, not for
+# edited prose.
+extends: token_pattern
+message: "«%s» — basta « a me piace » oppure « mi piace », non entrambi."
+level: warning
+category: grammar
+pattern:
+  - {LOWER: a}
+  - {LOWER: me}
+  - {LOWER: mi}
+examples:
+  bad:
+    - "A me mi piace la pizza."
+  good:
+    - "A me piace la pizza."
+    - "Mi piace la pizza."

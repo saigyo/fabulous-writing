@@ -1,0 +1,19 @@
+# Both straight (') and typographic (’) apostrophes are keyed for the
+# elided forms — real text may use either, and these are regex
+# fragments matched on raw text (tokenization does not apply).
+extends: existence
+message: "«%s» è un'apertura di maniera — entrare subito nel merito."
+level: suggestion
+category: style
+pack: blog
+ignorecase: true
+tokens:
+  - fin dalla notte dei tempi
+  - al giorno d['’]oggi
+  - nell['’]era digitale
+  - come tutti sanno
+examples:
+  bad:
+    - "Fin dalla notte dei tempi, scrivere è il modo migliore per pensare."
+  good:
+    - "Scrivere è il modo migliore per pensare, e lo era già per Seneca."
