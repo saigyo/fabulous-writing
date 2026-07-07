@@ -14,9 +14,10 @@ CheckType = Literal[
     "repetition",
     "token_pattern",
     "dependency",
+    "consistency",
 ]
 
-NLP_CHECK_TYPES = {"token_pattern", "dependency"}
+NLP_CHECK_TYPES = {"token_pattern", "dependency", "consistency"}
 
 
 class RuleExamples(BaseModel):
@@ -25,6 +26,16 @@ class RuleExamples(BaseModel):
 
     bad: list[str] = Field(min_length=1)
     good: list[str] = Field(min_length=1)
+
+
+class VariantSpec(BaseModel):
+    """One style variant of a consistency rule. Non-default variants are
+    recognized by their Matcher pattern; the (single, optional) default
+    variant claims any sentence with a predicate ending no pattern matched."""
+
+    pattern: list[dict] | None = None
+    anchor: Literal["end", "anywhere"] = "anywhere"
+    default: bool = False
 
 
 class RuleSpec(BaseModel):
@@ -50,6 +61,8 @@ class RuleSpec(BaseModel):
     suggestions: list[str] = Field(default_factory=list)
     # use-case pack (None = general rule, always on unless excepted)
     pack: str | None = None
+    # consistency: named style variants; minority-variant sentences get flagged
+    variants: dict[str, VariantSpec] | None = None
     examples: RuleExamples
 
     @field_validator("pack")
@@ -78,8 +91,22 @@ class RuleSpec(BaseModel):
                 raise ValueError("occurrence rules with count: matches need 'token'")
             if self.max is None and self.min is None:
                 raise ValueError("occurrence rules need 'max' or 'min'")
-        if self.extends in NLP_CHECK_TYPES and not self.pattern:
+        if self.extends in ("token_pattern", "dependency") and not self.pattern:
             raise ValueError(f"{self.extends} rules need 'pattern'")
+        if self.extends == "consistency":
+            variants = self.variants or {}
+            if len(variants) < 2:
+                raise ValueError("consistency rules need at least two 'variants'")
+            defaults = [name for name, v in variants.items() if v.default]
+            if len(defaults) > 1:
+                raise ValueError("consistency rules allow at most one default variant")
+            for name, variant in variants.items():
+                if variant.default and variant.pattern is not None:
+                    raise ValueError(
+                        f"default variant '{name}' must not have a pattern"
+                    )
+                if not variant.default and not variant.pattern:
+                    raise ValueError(f"variant '{name}' needs a 'pattern'")
         return self
 
 
@@ -108,7 +135,12 @@ def _validate_nlp_pattern(spec: RuleSpec, language: Language) -> None:
     from spacy.matcher import DependencyMatcher, Matcher
 
     vocab = spacy.blank(language.value).vocab
-    if spec.extends == "token_pattern":
+    if spec.extends == "consistency":
+        matcher = Matcher(vocab, validate=True)
+        for name, variant in (spec.variants or {}).items():
+            if variant.pattern:
+                matcher.add(name, [variant.pattern])
+    elif spec.extends == "token_pattern":
         Matcher(vocab, validate=True).add("_", [spec.pattern])
     else:
         DependencyMatcher(vocab, validate=True).add("_", [spec.pattern])

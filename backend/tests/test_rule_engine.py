@@ -451,3 +451,80 @@ class TestCjkBoundaries:
         engine = RuleEngine(rules_dir)
         assert len(engine.errors) == 1
         assert engine.check("何でも", Language.JA) == []
+
+
+CONSISTENCY_OK = """
+extends: consistency
+message: "文体が混在しています"
+level: warning
+category: style
+variants:
+  polite:
+    pattern:
+      - {LEMMA: {IN: [です, ます]}, POS: AUX}
+    anchor: end
+  plain:
+    default: true
+"""
+
+
+class TestConsistencyValidation:
+    def _errors(self, rules_dir: Path, body: str) -> list[str]:
+        write_rule(rules_dir, "ja", "style/consistency.yml", body)
+        return [e.error for e in RuleEngine(rules_dir).errors]
+
+    def test_valid_consistency_rule_loads(self, rules_dir: Path) -> None:
+        write_rule(rules_dir, "ja", "style/desu-masu.yml", CONSISTENCY_OK)
+        engine = RuleEngine(rules_dir)
+        assert engine.errors == []
+        assert [r.rule_id for r in engine.list_rules()] == ["style.desu-masu"]
+
+    def test_consistency_requires_two_variants(self, rules_dir: Path) -> None:
+        errors = self._errors(
+            rules_dir,
+            "extends: consistency\nmessage: m\ncategory: style\n"
+            "variants:\n  polite:\n    pattern: [{TEXT: a}]\n",
+        )
+        assert len(errors) == 1 and "at least two" in errors[0]
+
+    def test_consistency_allows_one_default(self, rules_dir: Path) -> None:
+        errors = self._errors(
+            rules_dir,
+            "extends: consistency\nmessage: m\ncategory: style\n"
+            "variants:\n  a:\n    default: true\n  b:\n    default: true\n",
+        )
+        assert len(errors) == 1 and "one default" in errors[0]
+
+    def test_default_variant_must_not_have_pattern(self, rules_dir: Path) -> None:
+        errors = self._errors(
+            rules_dir,
+            "extends: consistency\nmessage: m\ncategory: style\n"
+            "variants:\n  a:\n    pattern: [{TEXT: a}]\n"
+            "  b:\n    default: true\n    pattern: [{TEXT: b}]\n",
+        )
+        assert len(errors) == 1 and "must not have a pattern" in errors[0]
+
+    def test_non_default_variant_needs_pattern(self, rules_dir: Path) -> None:
+        errors = self._errors(
+            rules_dir,
+            "extends: consistency\nmessage: m\ncategory: style\n"
+            "variants:\n  a:\n    pattern: [{TEXT: a}]\n  b: {}\n",
+        )
+        assert len(errors) == 1 and "needs a 'pattern'" in errors[0]
+
+    def test_bad_variant_pattern_attribute_is_load_error(
+        self, rules_dir: Path
+    ) -> None:
+        errors = self._errors(
+            rules_dir,
+            "extends: consistency\nmessage: m\ncategory: style\n"
+            "variants:\n  a:\n    pattern: [{NOPE: x}]\n  b:\n    default: true\n",
+        )
+        assert len(errors) == 1
+
+    def test_consistency_requires_doc(self, rules_dir: Path) -> None:
+        from app.checkers.rules.loader import rule_requires_doc
+
+        write_rule(rules_dir, "ja", "style/desu-masu.yml", CONSISTENCY_OK)
+        engine = RuleEngine(rules_dir)
+        assert rule_requires_doc(engine.list_rules()[0].spec)
