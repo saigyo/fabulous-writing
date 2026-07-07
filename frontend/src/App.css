@@ -697,8 +697,12 @@
   margin-top: 0.75rem;
 }
 
+/* min-width: 0 overrides the input's intrinsic ~20ch minimum so it yields
+   space to the button instead of pushing it out of the fixed-width list
+   (visible with wider localized labels like "Hinzufügen"). */
 .add-domain input {
   flex: 1;
+  min-width: 0;
 }
 
 .term-table {

@@ -1901,3 +1901,5 @@ case-sensitivity), Escape discards, rename lands, empty rename refused,
 scratch domain cleaned up. One e2e-script pitfall worth remembering: a
 Playwright `hasText` row filter stops matching once the name span becomes an
 input (values aren't text content).
+Follow-up: the add-domain input gets min-width: 0 so the localized
+"Hinzufügen" button fits inside the fixed-width domain list.
