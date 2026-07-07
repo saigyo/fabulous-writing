@@ -1016,3 +1016,18 @@ it on `ProfileCreate`/`ProfileUpdate` in `backend/app/api/profiles.py`, and adde
 to `standard_defaults` in `backend/app/services/seed_profiles.py`. The check API
 already passed `RuleConfig.packs_on` through untouched, so
 `test_check_accepts_packs_on` only pins that contract. Full suite: 373 passed.
+
+## 2026-07-07 — Seed Marketing/TechDoc profiles with packs_on, add Blog for EN/DE
+
+Commit: `30ae4df`
+
+Task 6 of the use-case-packs plan. `seed_profiles.py` now sets `packs_on=
+["marketing"]` / `["techdocs"]` on the seeded Marketing / Technical Documentation
+examples, and seeds a new "Blog" example (`packs_on=["blog"]`) for EN/DE only
+(`BLOG_LANGUAGES`), backed by new `demos/en-blog.txt` / `de-blog.txt`. Appended
+one extra sentence each to the EN/DE marketing and techdoc demo files so the
+still-unwritten pack rules will have something to trigger on later — packs with
+no rules yet are a no-op, so this ships safely ahead of the rules themselves.
+Adapted `test_create_update_delete_profile` in `test_profiles_api.py`, which
+previously created a profile named "Blog" for EN and now collides with the
+seeded example; renamed it to "Notes". Full suite: 374 passed.
