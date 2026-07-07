@@ -152,19 +152,26 @@ Curated godan stems only:
 raw: '(?:行か|読ま|書か|飲ま|休ま|待た|帰ら|取ら|作ら|置か|急が|払わ)させ'
 ```
 
-### grammar/nijuu-keigo.yml — 二重敬語 〜になられる (token_pattern, warning)
+### grammar/nijuu-keigo.yml — 二重敬語 〜になられる (existence raw, warning)
 
-ご覧になられます parses as に(ADP) + なら(LEMMA=なる) + れ(LEMMA=れる,AUX):
+The bare pattern に+なる+れる is **not** reliable: 「社長になられました」
+is legitimate single 尊敬語 (plain なる + honorific られる), while
+「ご覧になられます」 doubles the honorific because ご覧になる is already
+尊敬語. The safe signal is the お/ご prefix, so this is a curated raw list
+(precision-first, extendable):
 
 ```yaml
-pattern:
-  - {TEXT: に}
-  - {LEMMA: なる}
-  - {LEMMA: れる, POS: AUX}
+raw:
+  - 'ご覧になられ'
+  - 'お読みになられ'
+  - 'お越しになられ'
+  - 'お帰りになられ'
+  - 'お聞きになられ'
+  - 'お会いになられ'
+  - 'お使いになられ'
 ```
 
-Covers お読みになられる, ご覧になられる, お越しになられる. Message: 尊敬語
-「〜になる」 already suffices; drop られる.
+Message: 尊敬語「お/ご〜になる」 already suffices; drop られる.
 
 ### grammar/nijuu-keigo-honorific.yml — おっしゃられる型 (token_pattern, warning)
 
@@ -220,16 +227,21 @@ swap:
   必ず必要: 必要
 ```
 
-**Requires a small engine fix** (verified 2026-07-07): the substitution
-check wraps keys in `\b…\b`, and `\b` never fires between two word
-characters — kana/kanji are word characters, so `\b一番最初\b` does **not**
-match 「彼は一番最初に…」. Fix in `checks/substitution.py`: wrap each key
-individually and drop the boundary assertion on any side whose edge
-character is CJK (Han, Hiragana, Katakana, full-width forms); all other
-keys keep `\b` on that side, so existing EN/DE substitutions are
-byte-for-byte unchanged. This also unblocks ZH substitutions in phase 3.
-Pinned by tests: a JA swap key matches mid-sentence; an EN key still
-refuses to match inside a longer word.
+**Requires a small engine fix** (verified 2026-07-07): both the
+substitution check and the existence check's `tokens:` wrap keys in
+`\b…\b`, and `\b` never fires between two word characters — kana/kanji are
+word characters, so `\b一番最初\b` does **not** match 「彼は一番最初に…」.
+Fix: a shared `bounded_pattern(fragment)` helper in `rules/text.py`, used
+by `checks/substitution.py` and `checks/existence.py`, that wraps each
+key individually and drops the boundary assertion on any side whose edge
+character is CJK (Han, Hiragana, Katakana, CJK punctuation, full-width
+forms); all other keys keep `\b` on that side, so existing EN/DE rules are
+byte-for-byte unchanged. `raw:` entries stay unwrapped as today. Keys
+mixing widths **inside** CJK text (業界No.1 — ends in a Latin digit that
+would demand a `\b` before a following kana) go into `raw:` with
+hand-written patterns instead. This also unblocks ZH in phase 3.
+Pinned by tests: a JA swap key and a JA existence token match
+mid-sentence; an EN key still refuses to match inside a longer word.
 
 ### style/redundant-phrases.yml — 冗長表現 (substitution, suggestion)
 
@@ -255,10 +267,11 @@ Specified in section 1.
 
 - **style/hype-words.yml** (existence, suggestion): 究極, 最強, 絶対,
   圧倒的, 爆速, 神レベル, 革命的, 異次元. Message: show, don't tell.
-- **correctness/unverifiable-claims.yml** (existence, warning): 日本一,
+- **style/unverifiable-claims.yml** (existence, warning): 日本一,
   世界初, 業界No.1, 満足度No.1, 世界一, 国内初 — legal-risk claims that
-  need substantiation (景品表示法). Raw entries where mixed-width
-  characters (No.1) need care.
+  need substantiation (景品表示法). Mixed-width claims (業界No.1) as
+  `raw:` patterns; pure-CJK ones as `tokens:`. Lives under `style/` to
+  match the EN pack convention (`rules/en/style/unverifiable-claims.yml`).
 - **style/exclamation-inflation.yml** (existence raw, suggestion):
   `[！!]{2,}` runs plus occurrence-style overuse folded into one raw
   alternation: `(?:[！!]{2,})`. One ！ is emphasis; more is shouting.
