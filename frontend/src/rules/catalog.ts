@@ -68,3 +68,29 @@ export function groupRulesByCategory(rules: RuleInfo[]): RuleGroup[] {
       .sort((a, b) => a.rule_id.localeCompare(b.rule_id)),
   })).filter((group) => group.rules.length > 0)
 }
+
+export interface PackSection {
+  pack: string
+  rules: RuleInfo[]
+}
+
+/** General rules grouped by category; pack rules in one sorted section per pack. */
+export function splitByPack(rules: RuleInfo[]): {
+  general: RuleGroup[]
+  packs: PackSection[]
+} {
+  const packSlugs = [
+    ...new Set(
+      rules.map((r) => r.pack).filter((p): p is string => p !== null),
+    ),
+  ].sort()
+  return {
+    general: groupRulesByCategory(rules.filter((r) => r.pack === null)),
+    packs: packSlugs.map((pack) => ({
+      pack,
+      rules: rules
+        .filter((r) => r.pack === pack)
+        .sort((a, b) => a.rule_id.localeCompare(b.rule_id)),
+    })),
+  }
+}

@@ -127,4 +127,11 @@ export const en: Messages = {
   editingRulesFor: (p, l) => `Editing rules for: ${p} (${l})`,
   categoryToggleTitle: 'Toggle this whole category for the profile',
   ruleToggleTitle: 'Toggle this rule for the profile',
+  rulePacks: 'Rule packs',
+  packName: (slug) =>
+    ({ marketing: 'Marketing', techdocs: 'Technical docs', blog: 'Blog' })[slug] ??
+    slug.charAt(0).toUpperCase() + slug.slice(1).replace(/-/g, ' '),
+  packToggleTitle: 'Enable or disable this pack for the selected profile',
+  exampleFlagged: 'Flags',
+  exampleNotFlagged: "Doesn't flag",
 }

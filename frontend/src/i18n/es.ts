@@ -146,4 +146,11 @@ export const es: Messages = {
   editingRulesFor: (p, l) => `Editando reglas para: ${p} (${l})`,
   categoryToggleTitle: 'Activar/desactivar toda la categoría para el perfil',
   ruleToggleTitle: 'Activar/desactivar esta regla para el perfil',
+  rulePacks: 'Paquetes de reglas',
+  packName: (slug) =>
+    ({ marketing: 'Marketing', techdocs: 'Doc. técnica', blog: 'Blog' })[slug] ??
+    slug.charAt(0).toUpperCase() + slug.slice(1).replace(/-/g, ' '),
+  packToggleTitle: 'Activar o desactivar este paquete para el perfil seleccionado',
+  exampleFlagged: 'Señala',
+  exampleNotFlagged: 'No señala',
 }

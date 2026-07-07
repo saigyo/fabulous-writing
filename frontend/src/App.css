@@ -920,6 +920,37 @@ input {
   overflow-x: auto;
 }
 
+/* ---- rule examples + pack sections ---- */
+
+.rule-examples {
+  margin: 0.35rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rule-example {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.rule-example-mark {
+  display: inline-block;
+  min-width: 7.5rem;
+  margin-right: 0.5rem;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.rule-example.bad .rule-example-mark { color: #e5484d; }
+.rule-example.good .rule-example-mark { color: #2a9d63; }
+
+.rule-badge.pack {
+  background: var(--accent-soft);
+}
+
 /* ---- severity filter ---- */
 
 .severity-filter {

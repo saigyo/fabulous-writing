@@ -4,7 +4,7 @@ import { interpolate, useMessages } from '../i18n'
 import { isRuleActive } from '../profiles/profile'
 import { useStore } from '../state/store'
 import type { Category, RuleInfo } from '../types'
-import { groupRulesByCategory, ruleDetailSummary } from './catalog'
+import { ruleDetailSummary, splitByPack } from './catalog'
 
 export function RulesView() {
   const language = useStore((s) => s.language)
@@ -81,6 +81,21 @@ export function RulesView() {
     })
   }
 
+  function togglePack(pack: string, rulesInPack: RuleInfo[]) {
+    if (!profile) return
+    const on = profile.packs_on.includes(pack)
+    void saveRuleSelection({
+      packs_on: on
+        ? profile.packs_on.filter((p) => p !== pack)
+        : [...profile.packs_on, pack],
+      rule_exceptions: profile.rule_exceptions.filter(
+        (id) => !rulesInPack.some((r) => r.rule_id === id),
+      ),
+    })
+  }
+
+  const split = response ? splitByPack(response.rules) : null
+
   return (
     <div className="rules-view">
       <header className="rules-header">
@@ -113,8 +128,8 @@ export function RulesView() {
           ))}
         </section>
       )}
-      {response &&
-        groupRulesByCategory(response.rules).map((group) => (
+      {split &&
+        split.general.map((group) => (
           <section key={group.category} className="rules-group">
             <h3 className={`category-${group.category}`}>
               <input
@@ -134,6 +149,35 @@ export function RulesView() {
                   profile
                     ? isRuleActive(profile, group.category, rule.rule_id, rule.pack)
                     : true
+                }
+                onToggle={() => toggleRule(rule.rule_id)}
+                canToggle={profile !== null}
+              />
+            ))}
+          </section>
+        ))}
+      {split &&
+        split.packs.map((section) => (
+          <section key={section.pack} className="rules-group rules-pack">
+            <h3>
+              <input
+                type="checkbox"
+                title={m.packToggleTitle}
+                checked={profile?.packs_on.includes(section.pack) ?? false}
+                disabled={!profile}
+                onChange={() => togglePack(section.pack, section.rules)}
+              />
+              {m.packName(section.pack)}
+              <span className="rule-badge pack">{m.rulePacks}</span>
+            </h3>
+            {section.rules.map((rule) => (
+              <RuleCard
+                key={rule.rule_id}
+                rule={rule}
+                active={
+                  profile
+                    ? isRuleActive(profile, rule.category, rule.rule_id, rule.pack)
+                    : false
                 }
                 onToggle={() => toggleRule(rule.rule_id)}
                 canToggle={profile !== null}
@@ -181,6 +225,20 @@ function RuleCard({
       </div>
       <p className="rule-message">{rule.message}</p>
       <p className="rule-detail">{ruleDetailSummary(rule, m)}</p>
+      <div className="rule-examples">
+        {rule.examples.bad.map((sentence) => (
+          <p key={sentence} className="rule-example bad">
+            <span className="rule-example-mark">✗ {m.exampleFlagged}</span>
+            {sentence}
+          </p>
+        ))}
+        {rule.examples.good.map((sentence) => (
+          <p key={sentence} className="rule-example good">
+            <span className="rule-example-mark">✓ {m.exampleNotFlagged}</span>
+            {sentence}
+          </p>
+        ))}
+      </div>
       {isPattern && (
         <details className="rule-pattern">
           <summary>{m.pattern}</summary>

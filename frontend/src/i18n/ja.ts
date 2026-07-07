@@ -135,4 +135,11 @@ export const ja: Messages = {
   editingRulesFor: (p, l) => `ルールを編集中:${p}(${l})`,
   categoryToggleTitle: 'このカテゴリー全体を切り替え',
   ruleToggleTitle: 'このルールを切り替え',
+  rulePacks: 'ルールパック',
+  packName: (slug) =>
+    ({ marketing: 'マーケティング', techdocs: '技術文書', blog: 'ブログ' })[slug] ??
+    slug.charAt(0).toUpperCase() + slug.slice(1).replace(/-/g, ' '),
+  packToggleTitle: 'このパックを選択中のプロファイルで有効/無効にします',
+  exampleFlagged: '検出する',
+  exampleNotFlagged: '検出しない',
 }

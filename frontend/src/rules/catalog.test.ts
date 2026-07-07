@@ -1,7 +1,7 @@
 import { en } from '../i18n/en'
 import { describe, expect, it } from 'vitest'
 import type { RuleInfo } from '../types'
-import { groupRulesByCategory, ruleDetailSummary } from './catalog'
+import { groupRulesByCategory, ruleDetailSummary, splitByPack } from './catalog'
 
 function rule(overrides: Partial<RuleInfo>): RuleInfo {
   return {
@@ -81,5 +81,20 @@ describe('groupRulesByCategory', () => {
     const groups = groupRulesByCategory(rules)
     expect(groups.map((g) => g.category)).toEqual(['style', 'clarity'])
     expect(groups[0].rules.map((r) => r.rule_id)).toEqual(['style.a', 'style.b'])
+  })
+})
+
+describe('splitByPack', () => {
+  it('separates general rules from pack sections, packs sorted', () => {
+    const rules = [
+      rule({ rule_id: 'style.a', category: 'style', pack: null }),
+      rule({ rule_id: 'style.z', category: 'style', pack: 'techdocs' }),
+      rule({ rule_id: 'style.h', category: 'style', pack: 'marketing' }),
+      rule({ rule_id: 'clarity.c', category: 'clarity', pack: 'marketing' }),
+    ]
+    const { general, packs } = splitByPack(rules)
+    expect(general.map((g) => g.category)).toEqual(['style'])
+    expect(packs.map((p) => p.pack)).toEqual(['marketing', 'techdocs'])
+    expect(packs[0].rules.map((r) => r.rule_id)).toEqual(['clarity.c', 'style.h'])
   })
 })

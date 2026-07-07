@@ -136,4 +136,9 @@ export interface Messages {
   editingRulesFor: (profileName: string, languageName: string) => string
   categoryToggleTitle: string
   ruleToggleTitle: string
+  rulePacks: string
+  packName: (slug: string) => string
+  packToggleTitle: string
+  exampleFlagged: string
+  exampleNotFlagged: string
 }

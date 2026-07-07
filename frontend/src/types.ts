@@ -69,6 +69,11 @@ export type CheckType =
   | 'token_pattern'
   | 'dependency'
 
+export interface RuleExamples {
+  bad: string[]
+  good: string[]
+}
+
 export interface RuleInfo {
   rule_id: string
   language: Language
@@ -80,7 +85,7 @@ export interface RuleInfo {
   file: string
   detail: Record<string, unknown>
   pack: string | null
-  examples: { bad: string[]; good: string[] }
+  examples: RuleExamples
 }
 
 export interface RuleError {

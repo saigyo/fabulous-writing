@@ -136,4 +136,11 @@ export const zh: Messages = {
   editingRulesFor: (p, l) => `正在编辑规则:${p}(${l})`,
   categoryToggleTitle: '为该配置切换整个类别',
   ruleToggleTitle: '为该配置切换此规则',
+  rulePacks: '规则包',
+  packName: (slug) =>
+    ({ marketing: '营销', techdocs: '技术文档', blog: '博客' })[slug] ??
+    slug.charAt(0).toUpperCase() + slug.slice(1).replace(/-/g, ' '),
+  packToggleTitle: '为所选配置启用或禁用此规则包',
+  exampleFlagged: '会标记',
+  exampleNotFlagged: '不标记',
 }
