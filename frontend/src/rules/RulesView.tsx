@@ -15,16 +15,10 @@ export function RulesView() {
   const m = useMessages()
   const [response, setResponse] = useState<RulesResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
-
-  function toggleCollapsed(key: string) {
-    setCollapsed((old) => {
-      const next = new Set(old)
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
-      return next
-    })
-  }
+  const rulesCollapsed = useStore((s) => s.rulesCollapsed)
+  const toggleCollapsed = useStore((s) => s.toggleRuleSection)
+  const setRulesCollapsed = useStore((s) => s.setRulesCollapsed)
+  const collapsed = new Set(rulesCollapsed)
 
   useEffect(() => {
     setResponse(null)
@@ -105,6 +99,12 @@ export function RulesView() {
   }
 
   const split = response ? splitByPack(response.rules) : null
+  const sectionKeys = split
+    ? [
+        ...split.general.map((group) => group.category as string),
+        ...split.packs.map((section) => `pack:${section.pack}`),
+      ]
+    : []
 
   return (
     <div className="rules-view">
@@ -112,6 +112,24 @@ export function RulesView() {
         <h2>
           {m.rulesTitle} · {languageName}
           {response && <span className="rules-count">{response.rules.length}</span>}
+          {split && (
+            <>
+              <button
+                className="rules-fold"
+                title={m.expandAllTitle}
+                onClick={() => setRulesCollapsed([])}
+              >
+                <ExpandAllIcon />
+              </button>
+              <button
+                className="rules-fold"
+                title={m.collapseAllTitle}
+                onClick={() => setRulesCollapsed(sectionKeys)}
+              >
+                <CollapseAllIcon />
+              </button>
+            </>
+          )}
         </h2>
         <p className="rules-hint">
           {interpolate(m.rulesHint, {
@@ -220,6 +238,44 @@ export function RulesView() {
           </section>
         ))}
     </div>
+  )
+}
+
+function ExpandAllIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <polyline points="4,6 8,2.5 12,6" />
+      <polyline points="4,10 8,13.5 12,10" />
+    </svg>
+  )
+}
+
+function CollapseAllIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <polyline points="4,2.5 8,6 12,2.5" />
+      <polyline points="4,13.5 8,10 12,13.5" />
+    </svg>
   )
 }
 

@@ -144,6 +144,8 @@ export const zh: Messages = {
     ({ marketing: '营销', techdocs: '技术文档', blog: '博客' })[slug] ??
     slug.charAt(0).toUpperCase() + slug.slice(1).replace(/-/g, ' '),
   packToggleTitle: '为所选配置启用或禁用此规则包',
+  expandAllTitle: '全部展开',
+  collapseAllTitle: '全部折叠',
   exampleFlagged: '会标记',
   exampleNotFlagged: '不标记',
 }

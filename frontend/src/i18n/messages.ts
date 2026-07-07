@@ -142,6 +142,8 @@ export interface Messages {
   rulePacks: string
   packName: (slug: string) => string
   packToggleTitle: string
+  expandAllTitle: string
+  collapseAllTitle: string
   exampleFlagged: string
   exampleNotFlagged: string
 }

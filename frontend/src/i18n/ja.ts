@@ -143,6 +143,8 @@ export const ja: Messages = {
     ({ marketing: 'マーケティング', techdocs: '技術文書', blog: 'ブログ' })[slug] ??
     slug.charAt(0).toUpperCase() + slug.slice(1).replace(/-/g, ' '),
   packToggleTitle: 'このパックを選択中のプロファイルで有効/無効にします',
+  expandAllTitle: 'すべてのセクションを展開',
+  collapseAllTitle: 'すべてのセクションを折りたたむ',
   exampleFlagged: '検出する',
   exampleNotFlagged: '検出しない',
 }

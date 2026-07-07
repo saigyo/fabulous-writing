@@ -1927,3 +1927,7 @@ the checkbox also aligns vertically with the rule-card checkboxes below).
 Pack sections share the pattern with the neutral gray dot. Collapse state
 is per-visit (component state). Verified headlessly: collapse hides cards,
 checkbox clicks don't collapse, dots carry the sidebar palette.
+Follow-up: rules-view collapse state moved into the persisted zustand store
+(`rulesCollapsed`, survives tab switches and reloads), plus expand-all /
+collapse-all icon buttons (VS-Code-style fold/unfold chevron SVGs) in the
+title row next to the rule counter, with localized hover titles.

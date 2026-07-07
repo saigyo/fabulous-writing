@@ -148,6 +148,8 @@ export const de: Messages = {
     ({ marketing: 'Marketing', techdocs: 'Technische Doku', blog: 'Blog' })[slug] ??
     slug.charAt(0).toUpperCase() + slug.slice(1).replace(/-/g, ' '),
   packToggleTitle: 'Dieses Paket für das gewählte Profil aktivieren oder deaktivieren',
+  expandAllTitle: 'Alle Abschnitte ausklappen',
+  collapseAllTitle: 'Alle Abschnitte einklappen',
   exampleFlagged: 'Meldet',
   exampleNotFlagged: 'Meldet nicht',
 }

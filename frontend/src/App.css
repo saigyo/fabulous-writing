@@ -905,6 +905,27 @@ input {
   color: var(--text-dim);
 }
 
+/* Title row: "Rules · English [29] [expand-all] [collapse-all]" */
+.rules-header h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.rules-fold {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.rules-fold:hover {
+  color: var(--accent);
+}
+
 .rules-profile-banner {
   color: var(--text-dim);
   margin: 0.2rem 0 0;

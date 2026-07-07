@@ -135,6 +135,8 @@ export const en: Messages = {
     ({ marketing: 'Marketing', techdocs: 'Technical docs', blog: 'Blog' })[slug] ??
     slug.charAt(0).toUpperCase() + slug.slice(1).replace(/-/g, ' '),
   packToggleTitle: 'Enable or disable this pack for the selected profile',
+  expandAllTitle: 'Expand all sections',
+  collapseAllTitle: 'Collapse all sections',
   exampleFlagged: 'Flags',
   exampleNotFlagged: "Doesn't flag",
 }

@@ -50,6 +50,8 @@ interface AppState {
   profiles: Profile[]
   profileId: number | null
   lastProfileByLanguage: Record<string, number>
+  // Collapsed rules-view sections (category names and `pack:<name>` keys).
+  rulesCollapsed: string[]
   extraSuggestions: Record<string, string[]>
   suggestPendingId: string | null
   suggestErrors: Record<string, string>
@@ -78,6 +80,8 @@ interface AppState {
   setLanguages: (languages: LanguageInfo[]) => void
   setProfiles: (profiles: Profile[]) => void
   selectProfile: (profile: Profile, apply: boolean) => void
+  toggleRuleSection: (key: string) => void
+  setRulesCollapsed: (keys: string[]) => void
   setSuggestPending: (findingId: string | null) => void
   setExtraSuggestions: (findingId: string, suggestions: string[]) => void
   setSuggestError: (findingId: string, error: string | null) => void
@@ -144,6 +148,7 @@ export const useStore = create<AppState>()(
       profiles: [],
       profileId: null,
       lastProfileByLanguage: {},
+      rulesCollapsed: [],
       extraSuggestions: {},
       suggestPendingId: null,
       suggestErrors: {},
@@ -191,6 +196,13 @@ export const useStore = create<AppState>()(
           },
           ...(apply ? applyProfileToHeader(profile) : {}),
         })),
+      toggleRuleSection: (key) =>
+        set((state) => ({
+          rulesCollapsed: state.rulesCollapsed.includes(key)
+            ? state.rulesCollapsed.filter((k) => k !== key)
+            : [...state.rulesCollapsed, key],
+        })),
+      setRulesCollapsed: (rulesCollapsed) => set({ rulesCollapsed }),
       setSuggestPending: (suggestPendingId) => set({ suggestPendingId }),
       setExtraSuggestions: (findingId, suggestions) =>
         set((state) => ({
@@ -228,6 +240,7 @@ export const useStore = create<AppState>()(
         tier: state.tier,
         llmAuto: state.llmAuto,
         lastProfileByLanguage: state.lastProfileByLanguage,
+        rulesCollapsed: state.rulesCollapsed,
       }),
     },
   ),
