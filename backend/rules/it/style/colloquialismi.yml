@@ -1,3 +1,7 @@
+# Colloquialisms in documentation. « tipo » from the spec's candidate
+# list is deliberately absent: as a filler it is inseparable from the
+# legitimate « tipo di / questo tipo » uses without NLP context, so it
+# would over-fire at warning level.
 extends: existence
 message: "«%s» è colloquiale — usare un termine preciso nella documentazione."
 level: warning

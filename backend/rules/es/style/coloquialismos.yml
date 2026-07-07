@@ -1,3 +1,7 @@
+# Colloquialisms in documentation. « cosa » from the spec's candidate
+# list is deliberately absent — as a bare noun it is everyday neutral
+# Spanish and would over-fire; « a tope » replaces it as an
+# unambiguously colloquial marker.
 extends: existence
 message: "«%s» es coloquial — use un término preciso en la documentación."
 level: warning

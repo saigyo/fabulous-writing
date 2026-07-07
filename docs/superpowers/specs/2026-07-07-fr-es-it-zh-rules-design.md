@@ -208,6 +208,39 @@ general (non-pack) rules, mirroring what phase 2 did for `ja-*.txt`.
 | Small-model POS errors causing haber-impersonal FPs | POS gate is conservative (DET/NUM/NOUN); probing validates |
 | Apostrophe variants (U+0027 vs U+2019) in IT keys | Both variants keyed explicitly in `apostrofo-errato` |
 
+## Implementation notes (phase 3)
+
+Shipped in `f9b8293..0d70a8d` plus a follow-up doc-parity commit; 602 tests
+green. Precision amendments made during review, all verified with live
+false-positive probing (~480 probe sentences total) and documented in the
+YAML headers and `rules/README.md`:
+
+- **FR `affirmations-inverifiables`:** bare «numéro 1»/«n° 1» over-fired on
+  addresses, issue numbers, and «priorité numéro 1»; replaced with qualified
+  forms («numéro 1 du marché/mondial»). ES/IT shipped with qualified digit
+  forms from the start for the same reason.
+- **ES `tuteo-ustedeo`:** formal variant gate widened to
+  `POS: {IN: [PRON, PROPN]}` — `es_core_news_sm` occasionally tags «Usted»
+  PROPN in mixed-register contexts; the LOWER gate makes this loss-free. The
+  IT `tu-lei` formal variant shipped with the same hardening.
+- **ZH lookarounds:** `(?<!历)史上最` (factual 历史上最… prose collided with
+  the advertising-law rule), `左右(?![了着])` (verb reading "to sway"),
+  `(?<![不尽])可能(?!性)` and `大概(?![率念])` (不可能/尽可能/大概率 are not
+  hedges). 大概 and 史上最 moved from `tokens` to `raw` accordingly.
+- **ES/IT colloquialisms:** spec candidates «cosa» (ES) and «tipo» (IT)
+  dropped as inseparable from neutral uses; ES gained «a tope».
+- **ZH `ni-nin`:** 你/您 are *not* perfectly unambiguous — 迷你 can be
+  mis-segmented in some contexts, yielding a standalone 你 token and a
+  spurious informal vote. Documented as a low-frequency edge case.
+- **ES pre-existing fix (adjacent):** `clarity.circunloquios` rendered its
+  substitution message with the %s roles inverted; un-inverted during the
+  Task 2 review. `es-blog.txt` also gained a queísmo sentence to meet the
+  ≥2-general-rules demo requirement.
+- FR `apres-que-subjonctif` and ZH `de-di-de` shipped as the spec'd NLP
+  patterns — the live-model fallbacks were not needed (`Mood=Sub` and the
+  DEV/DEC tag distinction held up under probing; `de-di-de` measured ~47%
+  recall at 100% precision on its narrow subcase, accepted precision-first).
+
 ## Out of scope
 
 - Engine changes of any kind (none are needed).
