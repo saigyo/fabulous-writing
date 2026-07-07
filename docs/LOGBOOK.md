@@ -1379,3 +1379,78 @@ its three techdocs rules (`style.i-nuki`, `style.hedging`,
 **Verification.** `cd backend && uv run pytest tests/ -q` → 503 passed.
 Engine sanity: `RuleEngine(Path('rules')).errors` → `[]`; JA rule count → 22;
 JA packs → `['blog', 'marketing', 'techdocs']`.
+
+## 2026-07-07 — Task 1 (phase 3): French rules to parity with EN/DE/JA
+Commit: `9cece7d`
+
+Task 1 of a 6-task plan bringing FR/ES/IT/ZH up to the same rule-catalog depth
+as EN/DE/JA. This task covers French only: 10 new rules, three pack demo
+texts, fodder in the general FR demo, and a slimmer test file pinning
+consistency-voting behavior.
+
+**What shipped.**
+
+- **10 new `rules/fr/` rules.** Grammar: `pleonasmes` (substitution swap map
+  over fixed pléonasme strings — « au jour d'aujourd'hui », « voire même »,
+  « comme par exemple », « puis ensuite », etc. — recall limited to those
+  invariant forms since conjugated variants like « il est monté en haut »
+  don't match a literal-string swap); `pallier-a` (token_pattern, bare
+  `LEMMA: pallier` immediately before à/au/aux, no `POS` gate because
+  `fr_core_news_sm` mistags the infinitive `ADJ` in « il faut pallier à … »
+  while keeping the correct lemma — the homograph « palier », single l, has
+  its own lemma and can't collide); `apres-que-subjonctif` (token_pattern,
+  `MORPH: {IS_SUPERSET: [Mood=Sub]}` within an `{0,3}` wildcard of « après
+  que/qu' », both apostrophe variants listed since the tokenizer keeps `qu'`
+  fused either way); `tutoiement-vouvoiement` (the second `consistency`-type
+  rule in the catalog, after JA's `desu-masu` — tu/te/toi/ton/ta/tes vs.
+  vous/votre/vos, POS-gated to `{PRON, DET}` so the noun « ton » (tone)
+  and other homographs don't misvote; informal declared first so it wins a
+  tie). Style, three new packs: `marketing` (`hype-mots`,
+  `affirmations-inverifiables` — framed around legal/challengeable-claim
+  risk, `inflation-exclamation` via `raw: ["!{2,}"]`), `techdocs` (`hedging`,
+  `langage-familier`), `blog` (`cliches-ouverture`).
+- **Three FR demo texts** (`demos/fr-marketing.txt`, `fr-technical-documentation.txt`,
+  `fr-blog.txt`), each engineered to trip its pack's rules plus at least one
+  general grammar rule (`pallier-a` in both marketing and techdocs;
+  `apres-que-subjonctif` in techdocs; `pleonasmes` in marketing and blog).
+  The blog demo mixes register 2-vs-1 (two `tu` sentences, one `vous`
+  sentence) so `tutoiement-vouvoiement` fires exactly once, on the minority
+  `vous` sentence — verified live via the engine, not just by the catalog
+  tests. Marketing and techdocs stay all-`vous`/no-`tu` so the consistency
+  rule doesn't have two variants to vote and stays silent, confirmed the
+  same way.
+- **Fodder** appended to `demos/fr.txt`: one sentence exercising `pleonasmes`
+  (three swap keys at once) and `pallier-a`; `tests/test_demo_texts.py`
+  `EXPECTED[Language.FR]` grew by those two rule ids (the consistency rule
+  is deliberately not added there, since a single fodder sentence can't
+  produce two voting sentences).
+- **`tests/test_register_consistency.py`** (new file): pins voting behavior
+  the one-bad/one-good catalog example can't — minority-formal and
+  minority-informal each flagged exactly once, a single vote staying silent
+  (need ≥2 voting sentences), and a uniform-register document staying
+  silent. Plus the two straightforward subjunctive-fires/indicative-clean
+  cases for `apres-que-subjonctif`.
+- **`rules/README.md`**: added a Pack column and 10 rows to the French
+  catalog table, plus a "Known heuristic limitations" section mirroring the
+  JA one (pléonasme literal-string recall, pallier-a's missing POS gate and
+  why, the apres-que morphology window, tutoiement-vouvoiement's blindness
+  to impersonal/plural vous).
+
+No engine code touched — this was pure YAML + demos + tests, per the task's
+binding constraint. `docs/backend-architecture.md` needed no changes (no new
+check type; `consistency` was already documented from the JA task).
+
+**Verification.** `cd backend && uv run pytest -q` → 529 passed (up from 503:
++16 catalog examples across 10 new rules with `bad`+`good` cases, +6 in
+`test_register_consistency.py`, +2 `test_demo_texts.py`/`test_rule_examples.py`
+net from the fodder and new demo assertions — exact split not individually
+recomputed). Engine sanity via a live harness dump: `fr-marketing.txt` trips
+`style.hype-mots`, `style.affirmations-inverifiables`,
+`style.inflation-exclamation`, `grammar.pleonasmes`, `grammar.pallier-a`;
+`fr-technical-documentation.txt` trips `style.hedging`,
+`style.langage-familier`, `grammar.pallier-a`, `grammar.apres-que-subjonctif`
+(plus incidental `style.voix-passive` hits from existing passive-voice
+rule); `fr-blog.txt` trips `style.cliches-ouverture`, `grammar.pleonasmes`,
+and `grammar.tutoiement-vouvoiement` exactly once on the `vous` sentence.
+`grammar.tutoiement-vouvoiement` confirmed silent on `demos/fr.txt` and on
+the marketing/techdocs demos.

@@ -199,15 +199,43 @@ staying simple and fast. Known gaps, from review:
 
 ## French (`fr`)
 
-| Rule | Type | Flags | Demonstrates |
-|---|---|---|---|
-| [style.mots-flous](fr/style/mots-flous.yml) | existence | mots flous (« très », « plutôt ») | word lists |
-| [style.voix-passive](fr/style/voix-passive.yml) | dependency, **NLP** | « a été écrit par… » | UD relation `aux:pass` |
-| [grammar.mots-repetes](fr/grammar/mots-repetes.yml) | repetition | mots doublés | adjacent duplicates |
-| [grammar.malgre-que](fr/grammar/malgre-que.yml) | substitution | « malgré que » → « bien que » | contested-usage fix |
-| [clarity.phrase-longue](fr/clarity/phrase-longue.yml) | occurrence | phrases de plus de 30 mots | per-sentence word counting |
-| [clarity.lourdeurs](fr/clarity/lourdeurs.yml) | substitution | « au niveau de », « suite à » | swap map |
-| [vividness.cliches](fr/vividness/cliches.yml) | existence | « au bout du compte » | multi-word phrases |
+| Rule | Type | Flags | Pack | Demonstrates |
+|---|---|---|---|---|
+| [style.mots-flous](fr/style/mots-flous.yml) | existence | mots flous (« très », « plutôt ») | — | word lists |
+| [style.voix-passive](fr/style/voix-passive.yml) | dependency, **NLP** | « a été écrit par… » | — | UD relation `aux:pass` |
+| [grammar.mots-repetes](fr/grammar/mots-repetes.yml) | repetition | mots doublés | — | adjacent duplicates |
+| [grammar.malgre-que](fr/grammar/malgre-que.yml) | substitution | « malgré que » → « bien que » | — | contested-usage fix |
+| [clarity.phrase-longue](fr/clarity/phrase-longue.yml) | occurrence | phrases de plus de 30 mots | — | per-sentence word counting |
+| [clarity.lourdeurs](fr/clarity/lourdeurs.yml) | substitution | « au niveau de », « suite à » | — | swap map |
+| [vividness.cliches](fr/vividness/cliches.yml) | existence | « au bout du compte » | — | multi-word phrases |
+| [grammar.pleonasmes](fr/grammar/pleonasmes.yml) | substitution | « au jour d'aujourd'hui », « voire même » | — | swap map over fixed pléonasme strings |
+| [grammar.pallier-a](fr/grammar/pallier-a.yml) | token_pattern, **NLP** | « pallier à ce problème » | — | bare `LEMMA` match, no `POS` gate (mistagged infinitive) |
+| [grammar.apres-que-subjonctif](fr/grammar/apres-que-subjonctif.yml) | token_pattern, **NLP** | « après qu'il soit parti » | — | `MORPH: {IS_SUPERSET: [Mood=Sub]}` with an `{0,3}` wildcard bridge |
+| [grammar.tutoiement-vouvoiement](fr/grammar/tutoiement-vouvoiement.yml) | consistency, **NLP** | tu/te/ton… vs vous/votre… mixed across sentences | — | POS-gated variants (`PRON`/`DET`) disambiguate homographs like the noun « ton » |
+| [style.hype-mots](fr/style/hype-mots.yml) | existence | « révolutionnaire », « incontournable » | marketing | pack-scoped word list |
+| [style.affirmations-inverifiables](fr/style/affirmations-inverifiables.yml) | existence | « numéro 1 du marché », « leader mondial » | marketing | multi-word phrase list, legal-risk framing |
+| [style.inflation-exclamation](fr/style/inflation-exclamation.yml) | existence | « !! » | marketing | `raw` regex (`!{2,}`) |
+| [style.hedging](fr/style/hedging.yml) | existence | « il semble que », « peut-être que » | techdocs | phrase list |
+| [style.langage-familier](fr/style/langage-familier.yml) | existence | « truc », « du coup », « ça marche » | techdocs | word/phrase list |
+| [style.cliches-ouverture](fr/style/cliches-ouverture.yml) | existence | « depuis la nuit des temps », « de nos jours » | blog | phrase list |
+
+### Known heuristic limitations
+
+- **grammar.pleonasmes** matches literal invariant strings, so conjugated
+  variants of the verb-based entries (e.g. « il est monté en haut ») escape;
+  the fixed-form keys (« au jour d'aujourd'hui », « voire même », « comme par
+  exemple », « puis ensuite ») carry the rule's recall.
+- **grammar.pallier-a** has no `POS` constraint: `fr_core_news_sm` mistags the
+  infinitive « pallier » as `ADJ` in « il faut pallier à … » but keeps its
+  lemma, so bare `LEMMA` is the only reliable signal. The homograph « palier »
+  (landing/threshold, single l) has a distinct lemma and cannot collide.
+- **grammar.apres-que-subjonctif** only checks subjunctive morphology within
+  3 tokens of « après que/qu' », to bridge short subject NPs without reaching
+  into an unrelated clause; both straight and typographic apostrophes are
+  listed because the tokenizer keeps « qu' » as one token either way.
+- **grammar.tutoiement-vouvoiement** treats any impersonal/plural « vous » as
+  a formal-register vote — it cannot distinguish plural addressees from the
+  singular formal « vous ».
 
 ## Spanish (`es`)
 
