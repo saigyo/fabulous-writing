@@ -112,6 +112,9 @@
 /* Auto-LLM toggle: the ✳ mirrors the sparkle of the LLM checking status;
    pressed styling matches the terminology Aa case toggle. */
 .header-controls .auto-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   height: var(--control-h);
   width: var(--control-h);
   padding: 0;
@@ -119,7 +122,8 @@
   border-radius: 6px;
   background: none;
   color: var(--text-dim);
-  font-size: 0.9rem;
+  font-size: 1.1rem;
+  line-height: 1;
   cursor: pointer;
 }
 

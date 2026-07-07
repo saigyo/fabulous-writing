@@ -1878,3 +1878,4 @@ accent color + soft fill when auto-checking is on and dim gray when off,
 with the existing localized hover title. The unused `autoLabel` i18n key was
 removed from all seven locales. Verified in headless Chrome: aria-pressed
 toggles per click, both visual states screenshot-checked.
+Follow-up: glyph enlarged (1.1rem) and flex-centered in the button.
