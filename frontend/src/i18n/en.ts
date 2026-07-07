@@ -83,7 +83,7 @@ export const en: Messages = {
   terms: 'Terms',
   searchTermsPlaceholder: 'Search terms…',
   allLanguages: 'All languages',
-  langHeader: 'Lang',
+  langHeader: 'Language',
   preferredHeader: 'Preferred',
   doNotUseHeader: 'Do not use',
   definitionHeader: 'Definition',
