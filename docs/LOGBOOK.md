@@ -1137,3 +1137,33 @@ fixture (not named in the plan, but caught by `tsc`) got `pack: null` and
 `npx vitest run`: 17 files / 137 tests green. `npm run build` (the real type
 gate) clean; `npm run lint` only pre-existing `react-hooks/exhaustive-deps`
 warnings, unrelated to this change.
+
+## 2026-07-07 — Task 10: rules view — pack sections + example rendering
+
+Commit: `92711ec`
+
+TDD per the implementation plan. `rules/catalog.ts` gained `splitByPack`
+(and exported `PackSection`), separating general (non-packed) rules —
+grouped by category as before — from one sorted section per pack, packs
+themselves sorted alphabetically; `rules/catalog.test.ts` got the plan's
+`splitByPack` describe block, adapted to the file's existing
+`rule(overrides: Partial<RuleInfo>)` fixture builder rather than the
+positional `rule(id, category, pack)` sketched in the plan. `types.ts`:
+extracted the inline examples shape into exported `RuleExamples { bad:
+string[]; good: string[] }`, used by `RuleInfo.examples`. `i18n/messages.ts`
+gained `rulePacks`, `packName`, `packToggleTitle`, `exampleFlagged`,
+`exampleNotFlagged`; all 7 locales implement them (title-casing fallback for
+unknown pack slugs, curated names for marketing/techdocs/blog).
+`rules/RulesView.tsx`: renders `splitByPack(response.rules).general`
+exactly like the old category loop, then a `.rules-pack` section per pack
+with a heading checkbox writing `packs_on` (via new `togglePack`, which
+clears that pack's rules from `rule_exceptions` on toggle — same
+fresh-start semantics as `toggleCategory`); `RuleCard` now renders
+`rule.examples.bad`/`good` as "✗ Flags …" / "✓ Doesn't flag …" lines under
+the existing detail summary. `App.css` gained `.rule-examples`,
+`.rule-example(.bad/.good)`, `.rule-example-mark`, `.rule-badge.pack`
+matching the existing `--text-dim`/`--accent-soft` idioms. `npx vitest run`:
+17 files / 138 tests green (i18n completeness test included). `npm run
+build` clean; `npm run lint` only the same pre-existing
+`react-hooks/exhaustive-deps` warnings. Visual verification skipped per
+plan (a later task captures screenshots).
