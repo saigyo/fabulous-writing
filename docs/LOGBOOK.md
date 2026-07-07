@@ -1049,3 +1049,18 @@ without needing any pattern/example adjustment. Strengthened
 `test_rules_carry_pack_examples_and_packs_index` in `test_rules_api.py` to
 assert `payload["packs"] == ["blog", "marketing", "techdocs"]` now that real
 pack rules exist. Full suite: 411 passed.
+
+## 2026-07-07 — Task 7 review fixes: could-of lookahead guard, noun-string limitation note
+
+Commit: `39c8c85`
+
+Review follow-up to Task 7. `grammar/could-of.yml` swap keys now carry
+`(?!\s+(?:course|necessity))` so "could of course" / "must of necessity" no
+longer trigger the ERROR-level autofix (lookahead verified to survive the
+engine's `\b(?:KEY)\b` wrapping; pinned by two new good examples). For
+`clarity/noun-string.yml`, a dependency-informed candidate (`{DEP: compound,
+OP: "{3,}"}` + head noun) was probed against the engine and did not remove the
+"The user profile stores preferences." false positive — the "stores" NOUN
+mistag cascades into the parse as `compound` — so the POS-based pattern stays,
+with the limitation documented in the file comment and good examples left
+honest. Full suite: 411 passed.
