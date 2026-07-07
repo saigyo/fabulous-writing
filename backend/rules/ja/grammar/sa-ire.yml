@@ -1,0 +1,16 @@
+# さ入れ言葉: godan causatives take せる, not させる. Curated godan stems —
+# ichidan causatives (食べさせる) are legitimate, and the raw regex cannot
+# hit legit サ変 causatives (発言させて tokenizes as 発言+さ+せ but the
+# stem list only contains godan 未然形).
+extends: existence
+message: "「%s」はさ入れ言葉です — 五段動詞の使役は「せる」で作ります（例:「休ませて」）。"
+level: warning
+category: grammar
+raw:
+  - '(?:行か|読ま|書か|飲ま|休ま|待た|帰ら|取ら|作ら|置か|急が|払わ|歌わ|運ば)させ'
+examples:
+  bad:
+    - "明日は休まさせていただきます。"
+  good:
+    - "明日は休ませていただきます。"
+    - "子供に野菜を食べさせる。"

@@ -1,0 +1,14 @@
+# Demonstrates: token_pattern over honorific verb lemmas. These verbs ARE
+# the 尊敬語, so stacking れる・られる doubles the honorific.
+extends: token_pattern
+message: "「%s」は二重敬語です — この動詞はそれ自体が敬語なので「れる・られる」は不要です。"
+level: warning
+category: grammar
+pattern:
+  - {LEMMA: {IN: [おっしゃる, なさる, いらっしゃる, 召し上がる, くださる]}}
+  - {LEMMA: れる, POS: AUX}
+examples:
+  bad:
+    - "先生がそうおっしゃられました。"
+  good:
+    - "先生がそうおっしゃいました。"

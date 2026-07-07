@@ -1,0 +1,22 @@
+# 二重敬語「お/ご〜になられる」: curated raw list, NOT a token pattern —
+# the bare shape に+なる+れる also matches 「社長になられました」, which is
+# legitimate single 尊敬語 (plain なる + honorific られる). The お/ご
+# prefix is the safe signal.
+extends: existence
+message: "「%s」は二重敬語です — 「お/ご〜になる」だけで十分な敬意を表せます。"
+level: warning
+category: grammar
+raw:
+  - 'ご覧になられ'
+  - 'お読みになられ'
+  - 'お越しになられ'
+  - 'お帰りになられ'
+  - 'お聞きになられ'
+  - 'お会いになられ'
+  - 'お使いになられ'
+examples:
+  bad:
+    - "資料をご覧になられますか。"
+  good:
+    - "資料をご覧になりますか。"
+    - "社長が新しい方針を話されました。"
