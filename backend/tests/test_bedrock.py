@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any
 
 from app.checkers.llm.bedrock import BedrockProvider
@@ -47,6 +48,10 @@ class TestBedrockProvider:
 
         progress: list[int] = []
         result = await provider.generate("s", "u", on_progress=progress.append)
+        # Progress arrives via loop.call_soon_threadsafe from the worker
+        # thread; give the loop one tick to drain callbacks that may still be
+        # queued when generate() returns (flaked on slow CI runners).
+        await asyncio.sleep(0)
 
         assert result == "[]"
         assert progress[-1] == 5
