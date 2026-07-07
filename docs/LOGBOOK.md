@@ -1903,3 +1903,10 @@ Playwright `hasText` row filter stops matching once the name span becomes an
 input (values aren't text content).
 Follow-up: the add-domain input gets min-width: 0 so the localized
 "Hinzufügen" button fits inside the fixed-width domain list.
+
+## 2026-07-07 — Terminology toolbar aligned with table columns
+The language filter and term search moved from a free-floating toolbar into
+a first thead row (`term-controls-row`), so the selector sits exactly above
+and as wide as the language column and the search field matches the
+Preferred column — alignment holds in all locales automatically because the
+table does the sizing. Verified geometrically and by screenshot (de, en).

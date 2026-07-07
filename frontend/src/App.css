@@ -711,19 +711,12 @@
   overflow: auto;
 }
 
-.term-toolbar {
-  display: flex;
-  gap: 0.5rem;
-  margin-bottom: 0.6rem;
-}
-
-.term-toolbar .term-search {
-  flex: 1;
-  max-width: 20rem;
-}
-
-.term-toolbar .term-language-filter {
-  width: auto;
+/* Language filter and search live in the table head so they align with
+   (and size like) the language and preferred columns beneath them. */
+.term-controls-row td {
+  border-bottom: none;
+  padding-top: 0;
+  padding-bottom: 0.6rem;
 }
 
 .term-table table {

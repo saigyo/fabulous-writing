@@ -207,32 +207,39 @@ function TermTable({ domainId, terms, onChanged }: TermTableProps) {
   return (
     <section className="term-table">
       <h2>{m.terms}</h2>
-      <div className="term-toolbar">
-        <input
-          type="search"
-          className="term-search"
-          value={query}
-          placeholder={m.searchTermsPlaceholder}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-        <select
-          className="term-language-filter"
-          value={languageFilter ?? ''}
-          title={m.languageFilterTitle}
-          onChange={(event) =>
-            setLanguageFilter(event.target.value === '' ? null : (event.target.value as Language))
-          }
-        >
-          <option value="">{m.allLanguages}</option>
-          {languages.map((info) => (
-            <option key={info.code} value={info.code}>
-              {info.code}
-            </option>
-          ))}
-        </select>
-      </div>
       <table>
         <thead>
+          <tr className="term-controls-row">
+            <td>
+              <select
+                className="term-language-filter"
+                value={languageFilter ?? ''}
+                title={m.languageFilterTitle}
+                onChange={(event) =>
+                  setLanguageFilter(
+                    event.target.value === '' ? null : (event.target.value as Language),
+                  )
+                }
+              >
+                <option value="">{m.allLanguages}</option>
+                {languages.map((info) => (
+                  <option key={info.code} value={info.code}>
+                    {info.code}
+                  </option>
+                ))}
+              </select>
+            </td>
+            <td>
+              <input
+                type="search"
+                className="term-search"
+                value={query}
+                placeholder={m.searchTermsPlaceholder}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            </td>
+            <td colSpan={3}></td>
+          </tr>
           <tr>
             <SortableHeader label={m.langHeader} sortKey="language" criteria={sortCriteria} onToggle={onToggleSort} />
             <SortableHeader label={m.preferredHeader} sortKey="preferred" criteria={sortCriteria} onToggle={onToggleSort} />
