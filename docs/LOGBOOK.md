@@ -1832,3 +1832,14 @@ contradictions found.
 count for the phase; individual tasks landed at 529/554/578/602 as
 FR/ES/IT/ZH landed in turn, Task 5 added no new tests beyond extending
 `test_seed_pack_profiles`).
+
+## 2026-07-07 — UI: stable chip position while LLM status wraps
+Commits: `a8398c2`
+
+The LLM status label ("LLM checking… (12s · ↓ 76 tokens)") wraps to two lines
+as it grows, and because it was a flex child of the findings header it pushed
+the severity/source chips down and up again. Per the owner's choice, the label
+is now absolutely positioned (right-aligned, max-width 65%, pointer-events
+none) so the header height comes from the heading alone and a wrapped second
+line visually overlays the chip row — an accepted, rare collision — instead of
+moving it. CSS-only change; verified via frontend build.
