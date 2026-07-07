@@ -1700,3 +1700,37 @@ sanity via a live harness dump: `zh-marketing.txt` trips `style.xuanchuan-ci`
 `style.taoban-kaitou` (×3), `grammar.de-di-de` (×2: 慢慢的读/悄悄的说), and
 `style.dayue-zuoyou`. `grammar.ni-nin` confirmed silent on `demos/zh.txt`
 and on the marketing/blog demos.
+
+## 2026-07-07 — Task 4 review fixes: 史上最/左右/可能 lookarounds, ni-nin edge-case docs
+Commit: `5232db8`
+
+Reviewer follow-up on the Chinese phase-3 rules (2 Important, 2 Minor), all
+precision guards for raw-text collisions:
+
+- **`style.wufa-zhengshi`**: 史上最 moved from `tokens` to
+  `raw: ["(?<!历)史上最"]` — the bare token fired inside 历史上最… in
+  ordinary factual historical prose (历史上最长的河流是尼罗河), which is
+  not an advertising claim. New good example pins the fix. The marketing
+  demo's 「是史上最受欢迎」 still fires (preceded by 是, not 历).
+- **`style.dayue-zuoyou`**: trailing lookahead `左右(?![了着])` excludes
+  the verb readings 左右了/左右着 ("influenced/sways"), which the
+  approximation pattern hit after 大概 (大概是这些因素左右了结果). Residual
+  bare-verb collision (左右大局) accepted and documented. The blog demo's
+  「大约读两遍左右就能…」 still fires (左右 followed by 就).
+- **`style.hedging`**: `可能(?!性)` widened to `(?<![不尽])可能(?!性)` —
+  不可能 is an assertion and 尽可能 an intensifier, neither a hedge; 大概
+  moved from `tokens` to `raw: ["大概(?![率念])"]` so 大概率 ("high
+  probability", different morphology) no longer fires. Good examples added
+  for both; the original bad example still fires on all three hedges.
+- **Docs**: softened the "你/您 are unambiguous" claim in the README ZH
+  limitations and the LOGBOOK Task 4 entry — 迷你 ("mini") can be
+  mis-segmented in some contexts into a standalone 你 token
+  (这款迷你相机), casting a spurious informal vote. Documented as a
+  low-frequency edge case; the rule itself is unchanged.
+
+**Verification.** `cd backend && uv run pytest -q` → 602 passed. Live
+engine re-run confirmed all three pack demos unchanged in behavior:
+zh-marketing still trips `wufa-zhengshi` ×2 (全网第一, 史上最) and
+`dayue-zuoyou`; zh-blog still trips `dayue-zuoyou` on 「大约读两遍左右」;
+zh-technical-documentation still trips `hedging` ×3 (可能/大概/我觉得) and
+`ni-nin` exactly once.
