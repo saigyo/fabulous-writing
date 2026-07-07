@@ -988,3 +988,19 @@ engine mechanics don't need to invent sentences that don't relate to what
 they're testing. Added `test_rule_without_examples_is_reported` as a
 regression test for the new required-field behavior. Full suite: 368
 passed.
+
+## 2026-07-07 — Rules API exposes pack, examples, and discovered packs
+
+Commit: `40d6497`
+
+Task 4 of the use-case-packs plan. `RuleInfo` (`backend/app/api/rules.py`) gained
+`pack: str | None` and `examples: dict[str, list[str]]`, populated in `_rule_info`
+from `rule.spec.pack` and `rule.spec.examples.model_dump()`. `_payload` now also
+returns a top-level `packs` key: `sorted({rule.spec.pack for rule in rules if
+rule.spec.pack})`, computed from the same (possibly language-filtered) rule list
+used for `rules`, so `GET /api/rules?language=en` and the unfiltered endpoint each
+report only the packs actually present in their result. All shipped rules still
+have `pack=None`, so `packs` is `[]` today — EN pack rules land in a later task.
+Added `test_rules_carry_pack_examples_and_packs_index` to
+`backend/tests/test_rules_api.py` (TDD: confirmed it failed with `KeyError: 'pack'`
+before the implementation). Full suite: 369 passed.

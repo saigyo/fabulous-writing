@@ -200,6 +200,12 @@ runs the whole catalog against its own examples (bad must trigger the rule's own
 `tests/test_rule_engine.py`/`test_nlp_rules.py` get an auto-appended stub via
 `write_rule()` so each test only states what it's actually about.
 
+Rules optionally carry a `pack:` slug (use-case pack, e.g. a future `pack: legal`;
+`None` for general always-on rules). `GET /api/rules` echoes both `pack` and
+`examples` per rule entry and adds a top-level `packs` key — the sorted set of
+distinct pack slugs discovered across the (optionally language-filtered) catalog —
+so the frontend can build a pack picker without hardcoding pack names.
+
 Six check types (`extends:`), each implemented as one function in
 `checkers/rules/checks/` and dispatched via the `CHECKS` table:
 
