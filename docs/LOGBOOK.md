@@ -1167,3 +1167,25 @@ matching the existing `--text-dim`/`--accent-soft` idioms. `npx vitest run`:
 build` clean; `npm run lint` only the same pre-existing
 `react-hooks/exhaustive-deps` warnings. Visual verification skipped per
 plan (a later task captures screenshots).
+
+## 2026-07-07 — Task 11: profile card — rule-pack chips
+
+Commit: `55f873d`
+
+`profiles/ProfilesView.tsx`: the top-level `ProfilesView` now fetches
+`getRules(language).packs` into a `packs` state (re-fetched on language
+change, empty on error) and passes it down as a new `packs` prop on
+`ProfileCard`. `ProfileCard` renders a `.profile-card-packs` chip row —
+reusing the `.tier-options`/`.tier-option` idiom from the LLM tier
+selector but with `aria-pressed` (independent multi-select toggles, not a
+radio group) — right after the LLM `<details>` advanced block, still
+inside `.profile-card-llm` so it stays in the right-hand grid column and
+doesn't disturb the row-1/row-2 alignment the surrounding grid comments
+call out. Each chip toggles its slug in/out of `profile.packs_on` via the
+existing `onSave` patch flow. The row only renders when `packs.length >
+0`, so languages with no discovered packs show nothing extra.
+`App.css`: added `.profile-card-packs` (margin-top 0.5rem) and
+`.profile-card-packs .field-label` (block, margin-bottom 4px) next to the
+existing profile-card rules. `npx vitest run`: 17 files / 138 tests green
+(unchanged — no new test surface, this is pure UI wiring reusing already-
+tested `packs_on`/`getRules` plumbing). `npm run build` clean.
