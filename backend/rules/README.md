@@ -401,13 +401,13 @@ staying simple and fast. Known gaps, from review:
 | [clarity.long-sentence](zh/clarity/long-sentence.yml) | occurrence (`count: tokens`), **NLP** | 超过 40 个词的句子 | — | token counting |
 | [clarity.douhao-guoduo](zh/clarity/douhao-guoduo.yml) | occurrence | 逗号超过 5 个的句子 | — | regex counting for CJK punctuation |
 | [grammar.de-di-de](zh/grammar/de-di-de.yml) | token_pattern, **NLP** | “慢慢的走”应作“慢慢地走” | — | fine-grained `TAG: DEV` catches the tagger's own adverbial reading of 的 |
-| [grammar.ni-nin](zh/grammar/ni-nin.yml) | consistency, **NLP** | 你/你们 vs 您 混用 | — | unambiguous `TEXT` variants, no POS gate needed |
+| [grammar.ni-nin](zh/grammar/ni-nin.yml) | consistency, **NLP** | 你/你们 vs 您 混用 | — | plain `TEXT` variants, no POS gate needed |
 | [style.dayue-zuoyou](zh/style/dayue-zuoyou.yml) | existence | “大约……左右” 约数重复 | — | `raw` regex with a bounded same-clause gap |
 | [style.rongyu](zh/style/rongyu.yml) | substitution | “免费赠送”→“赠送”，“涉及到”→“涉及” | — | CJK-edged swap map |
 | [style.xuanchuan-ci](zh/style/xuanchuan-ci.yml) | existence | “极致”“颠覆”“震撼” | marketing | pack-scoped word list |
-| [style.wufa-zhengshi](zh/style/wufa-zhengshi.yml) | existence | “全网第一”“史上最” | marketing | multi-word phrase list, 广告法 legal-risk framing |
+| [style.wufa-zhengshi](zh/style/wufa-zhengshi.yml) | existence | “全网第一”“史上最” | marketing | phrase list plus a `raw` lookbehind (`(?<!历)史上最`), 广告法 legal-risk framing |
 | [style.gantanhao-fanlan](zh/style/gantanhao-fanlan.yml) | existence | “！！” | marketing | `raw` regex (`[！!]{2,}`) |
-| [style.hedging](zh/style/hedging.yml) | existence | “大概”“或许”“可能” | techdocs | word list plus a `raw` lookahead excluding 可能性 |
+| [style.hedging](zh/style/hedging.yml) | existence | “大概”“或许”“可能” | techdocs | word list plus `raw` lookarounds excluding 可能性/不可能/尽可能/大概率 |
 | [style.yuqi-ci](zh/style/yuqi-ci.yml) | existence | “……啦”“……哦” | techdocs | `raw` regex anchored on trailing punctuation, with a lookbehind excluding 干嘛/onomatopoeia |
 | [style.taoban-kaitou](zh/style/taoban-kaitou.yml) | existence | “随着社会的发展”“众所周知” | blog | phrase list |
 
@@ -420,18 +420,28 @@ staying simple and fast. Known gaps, from review:
   → 的/DEC (never fires). Coverage is limited to this high-precision
   subcase — other 的/地/得 confusions are not attempted.
 - **grammar.ni-nin** treats 你们 (informal plural) as an informal vote
-  alongside 你, and 您 as the sole formal signal; both are unambiguous
-  PRON tokens in `zh_core_web_sm`, so no POS gate is needed (unlike the
-  French/Spanish/Italian sibling rules, which must disambiguate
-  possessive/pronoun homographs).
+  alongside 你, and 您 as the sole formal signal; these are generally
+  clean PRON tokens in `zh_core_web_sm`, so no POS gate is used (unlike
+  the French/Spanish/Italian sibling rules, which must disambiguate
+  possessive/pronoun homographs). Documented low-frequency edge case:
+  compounds containing 你 can be mis-segmented in some contexts — e.g.
+  迷你 ("mini") in 这款迷你相机 can yield a standalone 你 token, casting
+  a spurious informal vote for that sentence.
 - **style.dayue-zuoyou** excludes bare 约 by design: `raw` patterns are not
   edge-wrapped by `bounded_pattern`, and 约 occurs inside 预约/合约/条约,
   which would over-fire. The gap in the pattern excludes clause
   punctuation (。！？，；) so the two approximation markers must stay in
-  the same clause.
-- **style.hedging**'s 可能 key uses a negative lookahead (`可能(?!性)`)
-  because CJK tokens have no `\b` word boundary to stop a bare match, and
-  可能性 ("possibility") is a legitimate noun, not a hedge.
+  the same clause. A trailing lookahead (`左右(?![了着])`) excludes the
+  verb readings 左右了/左右着 ("influenced/sways"); a residual bare-verb
+  collision (左右大局) is accepted.
+- **style.hedging**'s regex entries carry lookarounds because CJK tokens
+  have no `\b` word boundary to stop a bare match: `(?<![不尽])可能(?!性)`
+  excludes the noun 可能性, the assertion 不可能, and the intensifier
+  尽可能; `大概(?![率念])` excludes 大概率 ("high probability") and 大概念.
+- **style.wufa-zhengshi**'s 史上最 lives in `raw` with a lookbehind
+  (`(?<!历)史上最`) because the phrase also occurs inside 历史上最… in
+  ordinary factual historical prose (历史上最长的河流), which is not an
+  advertising claim.
 - **style.yuqi-ci** anchors each particle to the punctuation that follows
   it (`(?=[。！？，、])`) so it can never match mid-word, and excludes
   嘛 preceded by 干 (干嘛, "why") plus 啦/哦 preceded by 哗/呼/噼

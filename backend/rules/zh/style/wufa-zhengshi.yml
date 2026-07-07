@@ -1,13 +1,18 @@
 # Claims competitors or regulators can challenge — legal risk under
-# advertising law (广告法 bans absolute superlatives).
+# advertising law (广告法 bans absolute superlatives). 史上最 is a raw
+# lookbehind pattern because it also occurs inside 历史上最… in ordinary
+# factual historical prose (历史上最长的河流), which is not an ad claim.
 extends: existence
 message: "「%s」是无法证实的绝对化用语 — 广告法风险,请用可验证的数据。"
 level: warning
 category: style
 pack: marketing
-tokens: [全网第一, 史上最, 全球领先, 业界第一, 销量第一]
+tokens: [全网第一, 全球领先, 业界第一, 销量第一]
+raw:
+  - "(?<!历)史上最"
 examples:
   bad:
     - "上线三个月,销量全网第一。"
   good:
     - "上线三个月,服务了一万两千个团队。"
+    - "世界历史上最大的帝国是蒙古帝国。"

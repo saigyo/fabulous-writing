@@ -1636,9 +1636,11 @@ parity.
   (misused for 地, tag DEV) from adjectival 的 (tag DEC, never matches) —
   verified live: 慢慢的走过来了 → 慢慢/ADV 的/DEV 走/VERB fires; 美丽的花园
   → 的/DEC does not); `ni-nin` (consistency, NLP: 你/你们 vs 您 register
-  mixing — both variants are unambiguous `TEXT` matches on PRON tokens in
-  this model, so unlike the FR/ES/IT sibling rules no POS gate is needed
-  to disambiguate homographs). Style: `dayue-zuoyou` (existence, `raw`
+  mixing — plain `TEXT` matches, no POS gate, unlike the FR/ES/IT sibling
+  rules which must disambiguate homographs; documented low-frequency edge
+  case: 迷你 can be mis-segmented in some contexts into a standalone 你
+  token, casting a spurious informal vote). Style: `dayue-zuoyou`
+  (existence, `raw`
   regex catching doubled approximation « 大约/大概 … 左右 » within a
   10-char same-clause gap that excludes 。！？，；, and deliberately
   omitting bare 约 since it occurs inside 预约/合约/条约); `rongyu`
