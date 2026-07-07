@@ -1,0 +1,12 @@
+extends: existence
+message: "感叹号连用适得其反 — 一个就够了。"
+level: suggestion
+category: style
+pack: marketing
+raw:
+  - "[！!]{2,}"
+examples:
+  bad:
+    - "快来体验吧！！"
+  good:
+    - "快来体验吧！"

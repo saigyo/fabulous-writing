@@ -1,0 +1,17 @@
+# Casual sentence-final particles in documentation. Anchored to the
+# following punctuation so mid-word hits are impossible; the lookbehind
+# excludes 干嘛 ("why") and onomatopoeia (哗啦/呼啦).
+extends: existence
+message: "语气词「%s」过于随意 — 技术文档请用陈述句。"
+level: warning
+category: style
+pack: techdocs
+raw:
+  - "(?<![干哗呼噼])[啦哦呗嘛](?=[。！？，、])"
+examples:
+  bad:
+    - "大概重启一下就行啦。"
+    - "然后查看日志哦。"
+  good:
+    - "重启服务即可恢复。"
+    - "干嘛这么着急？"

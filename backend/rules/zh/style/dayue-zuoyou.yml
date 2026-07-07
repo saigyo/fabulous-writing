@@ -1,0 +1,17 @@
+# 大约/大概 …… 左右: the approximation is stated twice. Bare 约 is
+# deliberately absent — raw patterns are not edge-wrapped, and 约 occurs
+# inside 预约/合约/条约. The gap excludes clause punctuation so the two
+# markers stay in the same clause.
+extends: existence
+message: "「大约/大概」和「左右」只留一个 — 约数表达重复。"
+level: warning
+category: style
+raw:
+  - "(大约|大概)[^。！？，；]{0,10}左右"
+examples:
+  bad:
+    - "大约需要三个小时左右。"
+  good:
+    - "大约需要三个小时。"
+    - "需要三个小时左右。"
+    - "请提前预约三天左右。"

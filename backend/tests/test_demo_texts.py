@@ -82,6 +82,8 @@ EXPECTED = {
         "style.filler",
         "style.jinxing",
         "clarity.douhao-guoduo",
+        "style.dayue-zuoyou",
+        "style.rongyu",
     },
 }
 

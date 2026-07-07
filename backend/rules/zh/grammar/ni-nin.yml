@@ -1,0 +1,20 @@
+# Register consistency: 你 vs 您. Tokens are unambiguous PRON in
+# zh_core_web_sm; 你们 (informal plural) also votes informal. Fewer than
+# two voting sentences → silent.
+extends: consistency
+message: "「你」和「您」混用 — 对读者的称呼应保持一致。"
+level: warning
+category: grammar
+variants:
+  informal:
+    pattern:
+      - {TEXT: {IN: [你, 你们]}}
+  formal:
+    pattern:
+      - {TEXT: 您}
+examples:
+  bad:
+    - "你可以先看第一章。等你有空我们再讨论。您需要重新登录。"
+  good:
+    - "你可以先看第一章。等你有空我们再讨论。"
+    - "您可以先看第一章。您有空我们再讨论。"

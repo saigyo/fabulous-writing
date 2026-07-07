@@ -1,0 +1,11 @@
+extends: existence
+message: "「%s」是空洞的宣传语 — 用具体的收益或数字代替。"
+level: suggestion
+category: style
+pack: marketing
+tokens: [极致, 颠覆, 震撼, 尖端, 王牌]
+examples:
+  bad:
+    - "带来极致体验的颠覆性产品。"
+  good:
+    - "把处理时间缩短了40%。"

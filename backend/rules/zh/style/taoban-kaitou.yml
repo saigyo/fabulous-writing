@@ -1,0 +1,11 @@
+extends: existence
+message: "「%s」是套版开头 — 直接进入主题更有力。"
+level: suggestion
+category: style
+pack: blog
+tokens: [随着社会的发展, 众所周知, 在这个快节奏的时代, 随着科技的进步]
+examples:
+  bad:
+    - "随着社会的发展,写作已经成为每个人的必修课。"
+  good:
+    - "写作已经成为每个人的必修课。"

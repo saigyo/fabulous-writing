@@ -1,0 +1,19 @@
+# 冗余表达: the modifier repeats what the verb already says. CJK-edged
+# substitution keys rely on bounded_pattern's edge handling.
+extends: substitution
+message: "「%s」即可 —「%s」是冗余表达。"
+level: warning
+category: style
+swap:
+  免费赠送: 赠送
+  提前预约: 预约
+  亲眼目睹: 目睹
+  涉及到: 涉及
+  凯旋归来: 凯旋
+examples:
+  bad:
+    - "这个功能涉及到三个模块。"
+    - "活动奖品免费赠送。"
+  good:
+    - "这个功能涉及三个模块。"
+    - "活动奖品均可赠送。"

@@ -130,3 +130,31 @@ class TestTuLei:
     def test_single_vote_is_silent(self) -> None:
         text = "Ti mando i commenti domani. Il resto arriva dopo."
         assert hits(text, Language.IT, IT_RULE) == []
+
+
+ZH_RULE = "grammar.ni-nin"
+
+
+class TestNiNin:
+    def test_minority_formal_flagged(self) -> None:
+        text = "你可以先看第一章。等你有空我们再讨论。您需要重新登录。"
+        found = hits(text, Language.ZH, ZH_RULE)
+        assert len(found) == 1
+        assert "您" in found[0].span.text
+
+    def test_minority_informal_flagged(self) -> None:
+        text = "您可以先看第一章。您有空我们再讨论。你需要重新登录。"
+        found = hits(text, Language.ZH, ZH_RULE)
+        assert len(found) == 1
+        assert "你" in found[0].span.text
+
+    def test_tie_first_declared_wins(self) -> None:
+        # 1 informal vs 1 formal: informal is declared first → 您 flagged.
+        text = "你可以先看第一章。您需要重新登录。"
+        found = hits(text, Language.ZH, ZH_RULE)
+        assert len(found) == 1
+        assert "您" in found[0].span.text
+
+    def test_single_vote_is_silent(self) -> None:
+        text = "你可以先看第一章。剩下的以后再说。"
+        assert hits(text, Language.ZH, ZH_RULE) == []

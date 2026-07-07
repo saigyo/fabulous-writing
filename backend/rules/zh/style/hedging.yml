@@ -1,0 +1,17 @@
+# Hedges undermine documentation. 可能 uses a lookahead because 可能性
+# ("possibility") is a legitimate noun and CJK tokens have no word
+# boundary to stop the match.
+extends: existence
+message: "「%s」削弱文档的确定性 — 说明确切行为或给出确切条件。"
+level: suggestion
+category: style
+pack: techdocs
+tokens: [大概, 或许, 我觉得, 应该是]
+raw:
+  - "可能(?!性)"
+examples:
+  bad:
+    - "缓存可能已经过期,大概重启一下就行。"
+  good:
+    - "缓存十分钟后过期,重启服务即可清除。"
+    - "需要评估这种做法的可能性。"

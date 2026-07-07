@@ -1,0 +1,21 @@
+# 的/地/得 confusion, deliberately narrow: adverb + 的 + verb, where the
+# tagger itself marks 的 with fine-grained tag DEV (adverbial particle —
+# i.e. the model already reads it as 地). Adjectival 的 gets tag DEC and
+# never matches. Verified: 慢慢的走 → 慢慢/ADV 的/DEV 走/VERB;
+# 美丽的花园 → 的/DEC. Coverage is limited to this high-precision
+# subcase by design.
+extends: token_pattern
+message: "「%s」— 副词修饰动词应用「地」:「慢慢地走」,不是「慢慢的走」。"
+level: warning
+category: grammar
+pattern:
+  - {POS: ADV}
+  - {TEXT: 的, TAG: DEV}
+  - {POS: VERB}
+examples:
+  bad:
+    - "他慢慢的走过来了。"
+    - "她悄悄的离开了房间。"
+  good:
+    - "他慢慢地走过来了。"
+    - "这是一个美丽的花园。"

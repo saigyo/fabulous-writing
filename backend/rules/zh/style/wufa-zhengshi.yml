@@ -1,0 +1,13 @@
+# Claims competitors or regulators can challenge — legal risk under
+# advertising law (广告法 bans absolute superlatives).
+extends: existence
+message: "「%s」是无法证实的绝对化用语 — 广告法风险,请用可验证的数据。"
+level: warning
+category: style
+pack: marketing
+tokens: [全网第一, 史上最, 全球领先, 业界第一, 销量第一]
+examples:
+  bad:
+    - "上线三个月,销量全网第一。"
+  good:
+    - "上线三个月,服务了一万两千个团队。"
