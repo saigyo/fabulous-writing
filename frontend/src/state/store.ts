@@ -6,6 +6,7 @@ import type { SourceGroup } from '../findings/source'
 import type { Locale } from '../i18n/messages'
 import { FALLBACK_LANGUAGES } from '../languages'
 import { applyProfileToHeader } from '../profiles/profile'
+import type { Scorecard } from '../scoring/score'
 import type {
   Domain,
   Language,
@@ -52,6 +53,12 @@ interface AppState {
   lastProfileByLanguage: Record<string, number>
   // Collapsed rules-view sections (category names and `pack:<name>` keys).
   rulesCollapsed: string[]
+  // Last LLM scorecard for the current document (kept until the next one
+  // arrives); stale once the text was edited after it arrived.
+  scorecard: Scorecard | null
+  scorecardStale: boolean
+  // Live word count of the editor document (feeds the quality score).
+  docWords: number
   extraSuggestions: Record<string, string[]>
   suggestPendingId: string | null
   suggestErrors: Record<string, string>
@@ -82,6 +89,9 @@ interface AppState {
   selectProfile: (profile: Profile, apply: boolean) => void
   toggleRuleSection: (key: string) => void
   setRulesCollapsed: (keys: string[]) => void
+  setScorecard: (scorecard: Scorecard) => void
+  markScorecardStale: () => void
+  setDocWords: (docWords: number) => void
   setSuggestPending: (findingId: string | null) => void
   setExtraSuggestions: (findingId: string, suggestions: string[]) => void
   setSuggestError: (findingId: string, error: string | null) => void
@@ -149,6 +159,9 @@ export const useStore = create<AppState>()(
       profileId: null,
       lastProfileByLanguage: {},
       rulesCollapsed: [],
+      scorecard: null,
+      scorecardStale: false,
+      docWords: 0,
       extraSuggestions: {},
       suggestPendingId: null,
       suggestErrors: {},
@@ -203,6 +216,10 @@ export const useStore = create<AppState>()(
             : [...state.rulesCollapsed, key],
         })),
       setRulesCollapsed: (rulesCollapsed) => set({ rulesCollapsed }),
+      setScorecard: (scorecard) => set({ scorecard, scorecardStale: false }),
+      markScorecardStale: () =>
+        set((state) => (state.scorecard ? { scorecardStale: true } : {})),
+      setDocWords: (docWords) => set({ docWords }),
       setSuggestPending: (suggestPendingId) => set({ suggestPendingId }),
       setExtraSuggestions: (findingId, suggestions) =>
         set((state) => ({

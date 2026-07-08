@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react'
 import { basicSetup } from 'codemirror'
 import { runCheck } from '../checking/controller'
 import { createCheckScheduler } from '../checking/scheduler'
+import { wordCount } from '../scoring/score'
 import { useStore } from '../state/store'
 import { findingIdAt, findingsField, selectFindingEffect } from './findings'
 import { setEditorView } from './editorRef'
@@ -42,6 +43,9 @@ export function Editor() {
           if (update.docChanged) {
             localStorage.setItem(TEXT_STORAGE_KEY, update.state.doc.toString())
             scheduler.onInput()
+            const store = useStore.getState()
+            store.setDocWords(wordCount(update.state.doc.toString()))
+            store.markScorecardStale()
           }
           const field = update.state.field(findingsField)
           const previous = update.startState.field(findingsField)
@@ -61,6 +65,7 @@ export function Editor() {
       ],
     })
     setEditorView(view)
+    useStore.getState().setDocWords(wordCount(view.state.doc.toString()))
     void runCheck(false)
 
     return () => {

@@ -91,6 +91,21 @@ export const fr: Messages = {
     `Aucune suggestion fiable — ${
       rejected === 1 ? '1 candidat a' : `${rejected} candidats ont`
     } échoué aux vérifications locales.`,
+  scoreBadgeTitle: 'Qualité globale — cliquer pour les détails',
+  scoreTooShort: 'Texte trop court pour une note (minimum 40 mots)',
+  scoreMechanicsOnly: 'Mécanique seule — lancez une vérification LLM pour la note complète',
+  scoreOutdated: 'L’évaluation du métier précède vos dernières modifications',
+  scoreMechanics: 'Mécanique',
+  scoreCraft: 'Métier',
+  dimensionName: (d) =>
+    ({
+      consistency: 'cohérence',
+      flow: 'fluidité',
+      clarity: 'clarté',
+      vividness: 'vivacité',
+      tone: 'ton',
+      structure: 'structure',
+    })[d],
 
   domains: 'Domaines',
   newDomainPlaceholder: 'Nouveau domaine…',

@@ -75,6 +75,21 @@ export const en: Messages = {
   sentenceChangedRewriteAgain: 'The sentence changed — rewrite again.',
   noReliableSuggestion: (rejected) =>
     `No reliable suggestion — ${rejected === 1 ? '1 candidate' : `${rejected} candidates`} failed local checks.`,
+  scoreBadgeTitle: 'Overall quality score — click for details',
+  scoreTooShort: 'Too short to score (minimum 40 words)',
+  scoreMechanicsOnly: 'Mechanics only — run an LLM check for the full score',
+  scoreOutdated: 'The craft rating predates your latest edits',
+  scoreMechanics: 'Mechanics',
+  scoreCraft: 'Craft',
+  dimensionName: (d) =>
+    ({
+      consistency: 'consistency',
+      flow: 'flow',
+      clarity: 'clarity',
+      vividness: 'vividness',
+      tone: 'tone',
+      structure: 'structure',
+    })[d],
 
   domains: 'Domains',
   newDomainPlaceholder: 'New domain…',

@@ -1,4 +1,5 @@
 import type { SourceGroup } from '../findings/source'
+import type { Dimension } from '../scoring/score'
 import type { Category, Severity, Tier } from '../types'
 
 export const LOCALES = ['en', 'de', 'fr', 'es', 'it', 'ja', 'zh'] as const
@@ -80,6 +81,13 @@ export interface Messages {
   applyRewriteTitle: string
   sentenceChangedRewriteAgain: string
   noReliableSuggestion: (rejected: number) => string
+  scoreBadgeTitle: string
+  scoreTooShort: string
+  scoreMechanicsOnly: string
+  scoreOutdated: string
+  scoreMechanics: string
+  scoreCraft: string
+  dimensionName: (dimension: Dimension) => string
 
   // Terminology view
   domains: string

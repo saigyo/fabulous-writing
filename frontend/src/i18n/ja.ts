@@ -81,6 +81,21 @@ export const ja: Messages = {
   sentenceChangedRewriteAgain: '文が変更されました — もう一度書き直してください。',
   noReliableSuggestion: (rejected) =>
     `信頼できる提案はありません — ${rejected}件の候補がローカルチェックで却下されました。`,
+  scoreBadgeTitle: '総合品質スコア — クリックで詳細',
+  scoreTooShort: 'スコアを算出するには短すぎます（40語以上必要）',
+  scoreMechanicsOnly: '基礎スコアのみ — 完全なスコアにはLLMチェックを実行してください',
+  scoreOutdated: '文章力の評価は最新の編集より前のものです',
+  scoreMechanics: '基礎',
+  scoreCraft: '文章力',
+  dimensionName: (d) =>
+    ({
+      consistency: '一貫性',
+      flow: '流れ',
+      clarity: '明瞭さ',
+      vividness: '鮮やかさ',
+      tone: 'トーン',
+      structure: '構成',
+    })[d],
 
   domains: 'ドメイン',
   newDomainPlaceholder: '新しいドメイン…',

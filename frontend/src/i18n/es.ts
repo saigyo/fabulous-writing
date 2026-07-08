@@ -91,6 +91,21 @@ export const es: Messages = {
     `Ninguna sugerencia fiable — ${
       rejected === 1 ? '1 candidato no superó' : `${rejected} candidatos no superaron`
     } las comprobaciones locales.`,
+  scoreBadgeTitle: 'Calidad general — clic para ver detalles',
+  scoreTooShort: 'Demasiado corto para puntuar (mínimo 40 palabras)',
+  scoreMechanicsOnly: 'Solo mecánica — ejecuta una comprobación LLM para la puntuación completa',
+  scoreOutdated: 'La valoración de oficio es anterior a los últimos cambios',
+  scoreMechanics: 'Mecánica',
+  scoreCraft: 'Oficio',
+  dimensionName: (d) =>
+    ({
+      consistency: 'consistencia',
+      flow: 'fluidez',
+      clarity: 'claridad',
+      vividness: 'viveza',
+      tone: 'tono',
+      structure: 'estructura',
+    })[d],
 
   domains: 'Dominios',
   newDomainPlaceholder: 'Nuevo dominio…',

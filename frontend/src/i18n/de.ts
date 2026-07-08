@@ -85,6 +85,21 @@ export const de: Messages = {
     `Kein verlässlicher Vorschlag — ${
       rejected === 1 ? '1 Kandidat ist' : `${rejected} Kandidaten sind`
     } an lokalen Prüfungen gescheitert.`,
+  scoreBadgeTitle: 'Gesamtqualität — klicken für Details',
+  scoreTooShort: 'Zu kurz für eine Bewertung (mindestens 40 Wörter)',
+  scoreMechanicsOnly: 'Nur Mechanik — LLM-Prüfung für die vollständige Bewertung ausführen',
+  scoreOutdated: 'Die Handwerks-Bewertung ist älter als der aktuelle Text',
+  scoreMechanics: 'Mechanik',
+  scoreCraft: 'Handwerk',
+  dimensionName: (d) =>
+    ({
+      consistency: 'Konsistenz',
+      flow: 'Lesefluss',
+      clarity: 'Klarheit',
+      vividness: 'Lebendigkeit',
+      tone: 'Ton',
+      structure: 'Struktur',
+    })[d],
 
   domains: 'Domänen',
   newDomainPlaceholder: 'Neue Domäne…',

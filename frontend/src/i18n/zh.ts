@@ -80,6 +80,21 @@ export const zh: Messages = {
   sentenceChangedRewriteAgain: '句子已更改 — 请重新重写。',
   noReliableSuggestion: (rejected) =>
     `没有可靠的建议 — ${rejected} 个候选未通过本地检查。`,
+  scoreBadgeTitle: '总体质量评分 — 点击查看详情',
+  scoreTooShort: '文本太短，无法评分（至少 40 词）',
+  scoreMechanicsOnly: '仅基础评分 — 运行 LLM 检查以获得完整评分',
+  scoreOutdated: '文笔评价早于最近的修改',
+  scoreMechanics: '基础',
+  scoreCraft: '文笔',
+  dimensionName: (d) =>
+    ({
+      consistency: '一致性',
+      flow: '流畅度',
+      clarity: '清晰度',
+      vividness: '生动性',
+      tone: '语气',
+      structure: '结构',
+    })[d],
 
   domains: '领域',
   newDomainPlaceholder: '新领域…',

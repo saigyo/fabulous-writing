@@ -87,6 +87,21 @@ export const it: Messages = {
     `Nessun suggerimento affidabile — ${
       rejected === 1 ? '1 candidato non ha superato' : `${rejected} candidati non hanno superato`
     } i controlli locali.`,
+  scoreBadgeTitle: 'Qualità complessiva — clic per i dettagli',
+  scoreTooShort: 'Testo troppo breve per un punteggio (minimo 40 parole)',
+  scoreMechanicsOnly: 'Solo meccanica — esegui un controllo LLM per il punteggio completo',
+  scoreOutdated: 'La valutazione del mestiere è precedente alle ultime modifiche',
+  scoreMechanics: 'Meccanica',
+  scoreCraft: 'Mestiere',
+  dimensionName: (d) =>
+    ({
+      consistency: 'coerenza',
+      flow: 'fluidità',
+      clarity: 'chiarezza',
+      vividness: 'vividezza',
+      tone: 'tono',
+      structure: 'struttura',
+    })[d],
 
   domains: 'Domini',
   newDomainPlaceholder: 'Nuovo dominio…',
