@@ -13,6 +13,7 @@ import {
 } from '../findings/source'
 import { effectiveSuggestions } from '../findings/suggestions'
 import { useMessages } from '../i18n'
+import { ScoreBadge, ScorePanel } from './Score'
 import { useStore } from '../state/store'
 import type { Category, Finding } from '../types'
 
@@ -27,6 +28,7 @@ export function Sidebar() {
   const setSourceFilter = useStore((s) => s.setSourceFilter)
   const m = useMessages()
   const [collapsed, setCollapsed] = useState<Set<Category>>(new Set())
+  const [scoreOpen, setScoreOpen] = useState(false)
 
   const findings = useMemo(() => withCurrentSpans(tracked), [tracked])
   const counts = useMemo(() => countBySeverity(findings), [findings])
@@ -79,9 +81,11 @@ export function Sidebar() {
         <div className="sidebar-header">
           <h2>
             {m.findings} <span className="count-badge">{total}</span>
+            <ScoreBadge open={scoreOpen} onToggle={() => setScoreOpen(!scoreOpen)} />
           </h2>
           {checkPhase !== 'idle' && <CheckStatus phase={checkPhase} />}
         </div>
+        {scoreOpen && <ScorePanel />}
         {total > 0 && (
           <div className="severity-filter">
             {SEVERITIES.map((severity) => (

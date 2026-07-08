@@ -98,6 +98,17 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
     onProgress(tokens) {
       if (currentCheckId === checkId) useStore.setState({ llmTokens: tokens })
     },
+    onScorecard(scorecard) {
+      if (currentCheckId !== checkId) return
+      const view = getEditorView()
+      useStore.getState().setScorecard(scorecard)
+      // The scorecard describes the checked snapshot; if the user kept
+      // typing it is immediately outdated (unlike findings it has no
+      // offsets, so it is kept rather than discarded).
+      if (view && view.state.doc.toString() !== text) {
+        useStore.getState().markScorecardStale()
+      }
+    },
     onDone() {
       if (currentCheckId === checkId) {
         useStore.setState({ checkPhase: 'idle', llmStartedAt: null, llmTokens: null })

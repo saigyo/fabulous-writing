@@ -10,6 +10,7 @@ import type {
   RoutingTable,
   RuleError,
   RuleInfo,
+  Scorecard,
   Term,
 } from '../types'
 
@@ -53,6 +54,7 @@ export interface CheckEventHandlers {
   onError: (checker: string, error: string) => void
   onDone: () => void
   onProgress?: (tokens: number) => void
+  onScorecard?: (scorecard: Scorecard) => void
 }
 
 export function subscribeCheck(
@@ -67,6 +69,10 @@ export function subscribeCheck(
   source.addEventListener('llm_progress', (event) => {
     const data = JSON.parse((event as MessageEvent).data)
     handlers.onProgress?.(data.tokens)
+  })
+  source.addEventListener('scorecard', (event) => {
+    const data = JSON.parse((event as MessageEvent).data)
+    handlers.onScorecard?.(data)
   })
   source.addEventListener('checker_error', (event) => {
     const data = JSON.parse((event as MessageEvent).data)

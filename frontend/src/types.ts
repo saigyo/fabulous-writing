@@ -1,3 +1,6 @@
+import type { Scorecard } from './scoring/score'
+export type { Scorecard }
+
 export type Category =
   | 'spelling'
   | 'grammar'
@@ -104,6 +107,7 @@ export interface CheckStatus {
   check_id: string
   status: string
   findings: Finding[]
+  scorecard: Scorecard | null
 }
 
 export interface Profile {
