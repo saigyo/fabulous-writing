@@ -42,6 +42,10 @@ frontend/src/
 │   ├── equivalence.ts         # match findings across checks (id migration)
 │   ├── group.ts / severity.ts / source.ts   # sidebar grouping & counter chips
 │   └── suggestions.ts         # built-in suggestions win, else LLM-fetched extras
+├── scoring/
+│   └── score.ts               # pure scoring v1 (mechanics + craft + overall);
+│                               # normative spec docs/scoring.md; golden tests
+│                               # in score.test.ts pin the spec's worked examples
 ├── profiles/
 │   ├── profile.ts             # apply/dirty/rule-activation logic (mirrors backend XOR)
 │   └── ProfilesView.tsx       # profile management view
@@ -49,7 +53,10 @@ frontend/src/
 │   ├── ProfileSelector.tsx    # profile dropdown + dirty marker + save/reset
 │   ├── LlmSelector.tsx        # tier dropdown + resolved caption + advanced pin panel
 │   └── DomainMultiSelect.tsx  # checkbox-dropdown for terminology domains
-├── sidebar/Sidebar.tsx        # counters, filters, finding list, detail card
+├── sidebar/
+│   ├── Sidebar.tsx             # counters, filters, finding list, detail card
+│   └── Score.tsx               # ScoreBadge + ScorePanel (overall/mechanics/craft,
+│                                # six dimension bars, staleness note)
 ├── rules/                     # rule catalog view + per-profile toggles
 ├── terminology/               # domain/term management view; terms edit in place
 │                              # (row edit mode shares TermFieldCells with the add
@@ -99,6 +106,22 @@ Two store behaviors deserve a note:
   pinned provider/model — see `applyProfileToHeader` below) into the header selectors.
   `apply` is only true on user action and real language switches — not on data
   refreshes, which would silently wipe user overrides.
+
+**Quality score state.** The store tracks `scorecard: Scorecard | null` (the last LLM
+scorecard for the current document), `scorecardStale: boolean`, and `docWords: number`
+(current word count, gating the "too short" state). `scoring/score.ts` — a pure module
+with `docs/scoring.md` as its normative spec — combines the current `tracked` findings
+and `docWords` into a deterministic **mechanics** score, folds in the scorecard's six
+dimensions into a **craft** score when one is present, and derives the **overall**
+badge value; golden tests in `score.test.ts` pin the spec's worked examples. Applying a
+one-click fix removes a finding and re-scores instantly, client-side, without a new
+check. `setScorecard` clears staleness; any editor edit after a scorecard has been set
+calls `markScorecardStale`, which only flips the flag if a scorecard exists (findings
+have no analogous concept, since they're position-tracked and self-correct as the user
+types). `sidebar/Score.tsx` renders the badge (`ScoreBadge`, in the header row) and an
+expandable panel (`ScorePanel`) with per-dimension bars and notes; both show a
+mechanics-only note when no scorecard exists yet and a staleness note when one does but
+is out of date.
 
 ## The editor and finding positions
 

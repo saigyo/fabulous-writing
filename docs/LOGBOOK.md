@@ -1943,3 +1943,52 @@ the token counter live, and keeps a finding card expanded; the earlier
 shots therefore show a pristine idle header. Terminology shot now selects
 the fuller "Product docs" domain; rules shot is framed on a section
 heading so the new category dot/count/chevron and toggles are visible.
+
+## 2026-07-09 — Overall quality score: mechanics + LLM craft scorecard
+Commits: `3c300c8`…`994fc94`
+
+A live 0–100 quality gauge combining a deterministic **mechanics** score with
+a six-dimension **craft** scorecard from the LLM. Spec-first: `docs/scoring.md`
+is the normative v1 formula spec (word count is script-aware — Han/Hiragana/
+Katakana count 0.5 words each — mechanics is `round(100 · e^(−density/15))`
+from finding-severity density, craft is `round((mean(six 1–5 scores) − 1) /
+4 × 100)`, overall is their 50/50 average with half-up rounding; scores
+require ≥40 words or no score is shown at all). `frontend/src/scoring/score.ts`
+is the pure reference implementation, golden-tested against the spec's worked
+examples (`bb53d48`).
+
+Backend: the full-check LLM prompt now asks for a JSON **object envelope**
+`{"findings": [...], "scorecard": {...}}` instead of a bare array, with a
+bare-array fallback for models that ignore the wrapping instruction (findings
+still parse, just no scorecard) (`612e854`). The scorecard passes a **strict
+gate** in `LLMChecker.check()`: it must validate as the `Scorecard` model (all
+six dimensions present, each in range) or it is discarded whole — never
+partially — with zero effect on the findings list. A valid scorecard is
+emitted once as an SSE `scorecard` event and exposed as a nullable `scorecard`
+field on both `POST /api/checks` and the `GET /api/checks/{id}` polling
+fallback (`3556fd4`).
+
+Frontend: new store fields `scorecard`, `scorecardStale`, and `docWords`
+(`95fb371`); `scorecardStale` flips true on any edit after a scorecard is set
+(`markScorecardStale`, a no-op with no scorecard) so the badge can tell the
+writer the craft component is out of date without discarding it (findings
+have no analogous concept — they're position-tracked and self-correct as the
+document changes, a scorecard has no offsets to re-anchor). `sidebar/Score.tsx`
+adds `ScoreBadge` (header row, colored by score level, ◐ mark when
+mechanics-only, ⟳ mark when stale) and `ScorePanel` (expandable: overall,
+mechanics/craft split, six dimension bars with notes, freshness copy)
+(`994fc94`).
+
+Verified end to end with headless Chrome against the live dev servers: short
+default text shows the "too short" badge; loading the flawed EN example and
+running the fast check yields a numeric mechanics-only badge (23◐); applying
+a one-click fix raises the score (23 → 30) with **zero** new `POST
+/api/checks` calls, confirming client-side re-scoring; opening the panel
+shows the mechanics-only freshness note; running an LLM check against the
+local Ollama tier (mistral-nemo) delivers a scorecard via SSE — six
+`.score-dimension` rows render, overall score updates (29); a subsequent
+edit flips the badge to the staleness title. Script and screenshot were
+scratch/throwaway, not committed. One adjustment: the app's locale follows
+the OS/browser locale (German in this run, not English as headless Chrome's
+default suggested), so the check button is selected by its stable
+`.check-button` class rather than by localized text.

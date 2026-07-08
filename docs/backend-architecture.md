@@ -146,11 +146,13 @@ POST /api/checks {text, language, domain_ids, checkers, rule_config,
                       └─ provider.generate() → parse → anchor → vet
                          → drop_duplicates(llm, fast findings) → job.add_findings()
 
-202 {check_id, status, findings: [fast findings], skipped_rules}
+202 {check_id, status, findings: [fast findings], skipped_rules, scorecard: null}
   │
-GET /api/checks/{id}/events   (SSE; GET /api/checks/{id} is the polling fallback)
+GET /api/checks/{id}/events   (SSE; GET /api/checks/{id} is the polling fallback,
+                                same shape, with `scorecard` filled in once set)
   ├─ event: checker_result {checker, findings}
   ├─ event: llm_progress   {tokens}        (throttled to every 25 tokens)
+  ├─ event: scorecard      {scorecard}     (once, only if the LLM returned one)
   ├─ event: checker_error  {checker, error}   (on LLM failure; job still finishes)
   └─ event: done           {status}
 ```
@@ -360,7 +362,13 @@ gain. The Ollama ping and the Bedrock credential check are both bounded by the s
 ### Prompts
 
 `prompts.py` builds three prompt pairs — full check, span suggestion, sentence rewrite —
-all demanding **only a JSON array** as output and the flagged `quote` copied verbatim.
+all demanding the flagged `quote` copied verbatim. The full-check prompt asks for a JSON
+**object envelope**, `{"findings": [...], "scorecard": {...}}` — the scorecard is a
+holistic six-dimension assessment of the whole text (see [Parsing, anchoring,
+vetting](#parsing-anchoring-vetting--the-deterministic-gate)); span suggestion and
+sentence rewrite still demand only a bare JSON array. `extract_json_array` (used for the
+`findings` key) also tolerates a bare top-level array with no envelope, so a model that
+ignores the object-wrapping instruction still yields findings, just no scorecard.
 Messages are written in the text's language. Profile instructions are injected by
 `_with_instructions()`, which appends a clearly delimited "style and focus guidance
 only" section *after* the output-format contract; empty instructions are a byte-identical
@@ -372,7 +380,10 @@ The LLM's raw response passes through three deterministic stages in
 `LLMChecker.check()`:
 
 1. **Parse** (`checker.py`): `extract_json_array` tolerates code fences and surrounding
-   prose; items that don't validate as `RawFinding` are skipped individually.
+   prose; items that don't validate as `RawFinding` are skipped individually. The
+   optional `scorecard` object gets the opposite treatment — a **strict gate**: it must
+   validate as `Scorecard` (all six dimensions present, each score in range) or it is
+   discarded whole, with no effect on the findings list.
 2. **Anchor** (`anchoring.py`): LLM-reported offsets are unreliable, so each finding is
    located by its verbatim quote — exact match, then whitespace-tolerant match, then a
    fuzzy sliding-window match (difflib, ratio ≥ 0.8 with edge refinement). Ambiguous

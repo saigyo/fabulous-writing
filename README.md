@@ -40,6 +40,9 @@ highlighted in the text, with explanation and one-click fix.*
 
 Rules and terminology checks work entirely offline, without any LLM.
 
+- Overall quality score: live 0–100 gauge combining a deterministic mechanics score
+  with a six-dimension LLM craft scorecard — see [`docs/scoring.md`](docs/scoring.md).
+
 ### Checking profiles
 
 A **checking profile** bundles everything that defines *how* a text is checked, per
