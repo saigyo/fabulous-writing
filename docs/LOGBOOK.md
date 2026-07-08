@@ -1992,3 +1992,15 @@ scratch/throwaway, not committed. One adjustment: the app's locale follows
 the OS/browser locale (German in this run, not English as headless Chrome's
 default suggested), so the check button is selected by its stable
 `.check-button` class rather than by localized text.
+
+Addendum (`d06a124`): the final whole-branch review found that a wholesale
+document replacement (e.g. Load example) kept the previous text's craft
+scorecard blending into the badge with only a staleness marker. Added
+`clearScorecard` to the store and call it from `setEditorText` — a full
+swap leaves no old text for the scorecard to describe, unlike an in-place
+edit, which correctly only stales it. Also corrected the SSE payload
+notation for `event: scorecard` in the backend architecture doc.
+Consciously accepted: a scorecard from a superseded check (typing during
+a slow LLM check triggers a new fast check that unsubscribes the old SSE)
+is lost rather than kept-stale — inherited supersede semantics, candidate
+for a follow-up.
