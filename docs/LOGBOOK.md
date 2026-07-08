@@ -2004,3 +2004,18 @@ Consciously accepted: a scorecard from a superseded check (typing during
 a slow LLM check triggers a new fast check that unsubscribes the old SSE)
 is lost rather than kept-stale — inherited supersede semantics, candidate
 for a follow-up.
+
+## 2026-07-11 — Sidebar header polish around the quality score
+
+Three small layout fixes after using the score badge in anger
+(commit `51273ab`): the LLM status line now lives in a zero-width
+flex slot that starts after the heading, so it can never slide under
+the score badge and its wrapped second line overlays the free space
+right of the counter chips (which stay put, as before); the expanded
+score panel gained bottom margin (0.85rem) so it no longer crowds the
+severity chips; and the counter/score pills are raised 2px off the
+baseline onto the heading's optical middle (scoped to the sidebar h2 —
+flex contexts ignore vertical-align). Verified headless in de-DE with
+a live local-LLM check: status text starts 9.6px right of the badge
+across a two-line wrap, panel→chips gap 13.6px, pill centers within
+0.1px of the heading center. 161/161 tests, build green.

@@ -449,11 +449,10 @@
   border-bottom: 1px solid var(--border);
 }
 
-/* The status label is positioned out of the flow so a wrapped (two-line)
-   label overlays the chips below instead of pushing them down; the row's
-   height comes from the heading alone and never changes. */
 .sidebar-header {
-  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
   margin-bottom: 0.75rem;
 }
 
@@ -463,11 +462,21 @@
   white-space: nowrap;
 }
 
+/* Zero-width-content positioning anchor after the h2: the status label is
+   out of the flow so a wrapped (two-line) label overlays the empty space
+   right of the chips instead of pushing them down, and its left edge can
+   never reach under the score badge. */
+.check-status-slot {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
 .check-status {
   position: absolute;
-  top: 0.2rem;
+  top: 0.1rem;
+  left: 0;
   right: 0;
-  max-width: 65%;
   font-size: 0.75rem;
   color: var(--accent);
   text-align: right;
@@ -496,6 +505,12 @@
   font-size: 0.75rem;
   padding: 0.05rem 0.4rem;
   margin-left: 0.4rem;
+}
+
+/* Only in the inline heading (flex contexts ignore vertical-align): lift
+   the pill onto the heading's optical middle. */
+.sidebar h2 .count-badge {
+  vertical-align: 2px;
 }
 
 .category-group {
@@ -651,7 +666,9 @@
   font-size: 0.78rem;
   font-weight: 700;
   cursor: pointer;
-  vertical-align: middle;
+  /* Raised off the baseline so the pill centers on the heading's optical
+     middle instead of hanging below it (same treatment as the counter). */
+  vertical-align: 2px;
 }
 
 span.score-badge {
@@ -678,7 +695,7 @@ span.score-badge {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 0.6rem 0.75rem;
-  margin-top: 0.5rem;
+  margin: 0.5rem 0 0.85rem;
   display: flex;
   flex-direction: column;
   gap: 0.45rem;

@@ -83,7 +83,9 @@ export function Sidebar() {
             {m.findings} <span className="count-badge">{total}</span>
             <ScoreBadge open={scoreOpen} onToggle={() => setScoreOpen(!scoreOpen)} />
           </h2>
-          {checkPhase !== 'idle' && <CheckStatus phase={checkPhase} />}
+          <div className="check-status-slot">
+            {checkPhase !== 'idle' && <CheckStatus phase={checkPhase} />}
+          </div>
         </div>
         {scoreOpen && <ScorePanel />}
         {total > 0 && (
