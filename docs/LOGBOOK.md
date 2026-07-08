@@ -2019,3 +2019,12 @@ flex contexts ignore vertical-align). Verified headless in de-DE with
 a live local-LLM check: status text starts 9.6px right of the badge
 across a two-line wrap, panel→chips gap 13.6px, pill centers within
 0.1px of the heading center. 161/161 tests, build green.
+
+## 2026-07-11 — README screenshots refreshed for quality-score badge
+
+All four README screenshots recaptured via `npm run screenshots` to include
+the new quality-score badge in the sidebar. The editor shot shows an expanded
+finding card with the colored score pill (a small numbered badge) next to the
+Findings heading, with the LLM status text starting clearly to its right
+without overlap. Terminology, rules, and profiles shots unchanged substantively
+but regenerated for consistency.
