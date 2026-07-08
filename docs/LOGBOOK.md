@@ -2008,7 +2008,7 @@ for a follow-up.
 ## 2026-07-11 — Sidebar header polish around the quality score
 
 Three small layout fixes after using the score badge in anger
-(commit `51273ab`): the LLM status line now lives in a zero-width
+(commit `68126fc`): the LLM status line now lives in a zero-width
 flex slot that starts after the heading, so it can never slide under
 the score badge and its wrapped second line overlays the free space
 right of the counter chips (which stay put, as before); the expanded
