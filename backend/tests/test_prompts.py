@@ -9,14 +9,14 @@ from app.core.models import Language
 def test_build_prompt_without_instructions_unchanged():
     system, user = build_prompt("Hello.", Language.EN)
     assert "checking profile" not in system
-    assert "Respond with ONLY a JSON array" in system
+    assert "Respond with ONLY a JSON object" in system
 
 
 def test_build_prompt_appends_instructions_after_contract():
     system, _ = build_prompt("Hello.", Language.EN, instructions="Audience: kids.")
     assert "Audience: kids." in system
     # The JSON contract must remain, and instructions come after it.
-    contract_pos = system.index("Respond with ONLY a JSON array")
+    contract_pos = system.index("Respond with ONLY a JSON object")
     assert system.index("Audience: kids.") > contract_pos
 
 

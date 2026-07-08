@@ -313,3 +313,44 @@ def test_check_accepts_packs_on(client) -> None:
         },
     )
     assert response.status_code == 202
+
+
+SCORECARD = {
+    "consistency": {"score": 4, "note": "Terminology is uniform."},
+    "flow": {"score": 3, "note": "Transitions are functional."},
+    "clarity": {"score": 4, "note": "Mostly easy to follow."},
+    "vividness": {"score": 2, "note": "Abstract throughout."},
+    "tone": {"score": 5, "note": "Fits the genre well."},
+    "structure": {"score": 3, "note": "Sound but flat ordering."},
+}
+
+
+def test_scorecard_streams_and_polls(tmp_path: Path) -> None:
+    response = json.dumps({"findings": json.loads(LLM_RESPONSE), "scorecard": SCORECARD})
+    with make_client(tmp_path, FakeProvider(response)) as client:
+        check = client.post(
+            "/api/checks",
+            json={"text": "A nice text.", "language": "en", "checkers": ["llm"]},
+        ).json()
+        assert check["scorecard"] is None  # LLM still running at POST time
+        with client.stream("GET", f"/api/checks/{check['check_id']}/events") as stream:
+            events = _read_sse_events(stream)
+        final = client.get(f"/api/checks/{check['check_id']}").json()
+
+    scorecard_events = [data for name, data in events if name == "scorecard"]
+    assert scorecard_events == [SCORECARD]
+    assert final["scorecard"] == SCORECARD
+    # Findings from the same (object-form) response still arrive normally.
+    assert any(f["span"]["text"] == "nice" for f in final["findings"])
+
+
+def test_bare_array_response_yields_null_scorecard(client: TestClient) -> None:
+    check = client.post(
+        "/api/checks",
+        json={"text": "A nice text.", "language": "en", "checkers": ["llm"]},
+    ).json()
+    with client.stream("GET", f"/api/checks/{check['check_id']}/events") as stream:
+        events = _read_sse_events(stream)
+    final = client.get(f"/api/checks/{check['check_id']}").json()
+    assert final["scorecard"] is None
+    assert all(name != "scorecard" for name, _ in events)

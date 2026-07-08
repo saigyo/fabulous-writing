@@ -11,7 +11,7 @@ from app.checkers.llm.provider import LLMProvider
 from app.checkers.pipeline import drop_duplicates
 from app.checkers.rules.engine import RuleConfig
 from app.checkers.terminology import TerminologyChecker
-from app.core.models import Finding, Language
+from app.core.models import Finding, Language, Scorecard
 from app.services.jobs import CheckJob
 
 router = APIRouter(prefix="/api", tags=["checks"])
@@ -40,6 +40,7 @@ class CheckStatus(BaseModel):
     status: str
     findings: list[Finding]
     skipped_rules: list[str] = Field(default_factory=list)
+    scorecard: Scorecard | None = None
 
 
 @router.post("/checks", status_code=202)
@@ -88,6 +89,7 @@ async def create_check(request: Request, body: CheckRequest) -> CheckStatus:
         status=job.status,
         findings=job.findings,
         skipped_rules=job.skipped_rules,
+        scorecard=job.scorecard,
     )
 
 
@@ -110,10 +112,12 @@ async def _run_llm(
 
     try:
         checker = LLMChecker(provider, vet=vet, dictionaries_dir=dictionaries_dir)
-        findings = await checker.check(
+        result = await checker.check(
             text, language, on_progress=on_progress, instructions=instructions
         )
-        job.add_findings("llm", drop_duplicates(findings, job.findings))
+        job.add_findings("llm", drop_duplicates(result.findings, job.findings))
+        if result.scorecard is not None:
+            job.set_scorecard(result.scorecard)
     except Exception as exc:
         error = str(exc) or type(exc).__name__
         job.emit("checker_error", {"checker": "llm", "error": error})
@@ -131,6 +135,7 @@ def get_check(request: Request, check_id: str) -> CheckStatus:
         status=job.status,
         findings=job.findings,
         skipped_rules=job.skipped_rules,
+        scorecard=job.scorecard,
     )
 
 

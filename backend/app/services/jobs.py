@@ -4,7 +4,7 @@ from collections import OrderedDict
 from collections.abc import AsyncIterator
 from typing import Any
 
-from app.core.models import Finding
+from app.core.models import Finding, Scorecard
 
 MAX_JOBS = 100
 
@@ -15,6 +15,7 @@ class CheckJob:
         self.status = "running"
         self.findings: list[Finding] = []
         self.skipped_rules: list[str] = []
+        self.scorecard: Scorecard | None = None
         self.events: list[tuple[str, dict[str, Any]]] = []
         self._task: asyncio.Task[None] | None = None
         self._new_event = asyncio.Event()
@@ -32,6 +33,10 @@ class CheckJob:
                 "findings": [f.model_dump(mode="json") for f in findings],
             },
         )
+
+    def set_scorecard(self, scorecard: Scorecard) -> None:
+        self.scorecard = scorecard
+        self.emit("scorecard", scorecard.model_dump(mode="json"))
 
     def finish(self) -> None:
         self.status = "done"

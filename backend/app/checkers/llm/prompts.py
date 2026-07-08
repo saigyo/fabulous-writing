@@ -21,7 +21,9 @@ these categories: {categories}.
 - vividness: bland, abstract, or clichéd language that could be more concrete and engaging
 - correctness: statements that are internally contradictory or factually dubious
 
-Respond with ONLY a JSON array. Each element:
+Respond with ONLY a JSON object with exactly two keys, "findings" and "scorecard".
+
+"findings": an array of issues. Each element:
 {{
   "category": "<one of the categories above>",
   "severity": "error" | "warning" | "suggestion",
@@ -31,10 +33,29 @@ Respond with ONLY a JSON array. Each element:
   "suggestions": ["<improved replacement for exactly the quoted text>", ...]
 }}
 
+"scorecard": a holistic assessment of the WHOLE text with exactly these six
+dimensions, each an integer score 1-5 plus a one-sentence justification in {language}:
+{{
+  "consistency": {{"score": <1-5>, "note": "<one sentence>"}},
+  "flow": {{...}}, "clarity": {{...}}, "vividness": {{...}},
+  "tone": {{...}}, "structure": {{...}}
+}}
+
+Scorecard dimensions:
+- consistency: uniform terminology, register, and stylistic choices throughout
+- flow: transitions, rhythm, sentence-length variety
+- clarity: how understandable the document is as a whole
+- vividness: engagement, concreteness, imagery
+- tone: how well tone and formality fit the review instructions (if any) and the text's evident genre
+- structure: organization, paragraphing, logical order for this kind of text
+
+Score anchors: 1 = seriously deficient, 2 = weak, 3 = competent, 4 = strong, 5 = exemplary.
+
 Rules:
 - "quote" MUST be copied character-for-character from the input text; never paraphrase it.
 - Each suggestion must be a drop-in replacement for the quote.
-- Report at most 15 of the most important issues. If the text is fine, return [].
+- Report at most 15 of the most important issues. If the text is fine, "findings" is [].
+- The scorecard judges the text as a whole, independent of how many issues you list.
 """
 
 
