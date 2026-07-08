@@ -1,10 +1,12 @@
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 from pydantic import BaseModel, Field, ValidationError
 
-from app.core.models import Category, Finding, Language, Severity, Source
+from app.core.models import Category, Finding, Language, Scorecard, Severity, Source
 
 from .anchoring import anchor
 from .prompts import build_prompt
@@ -39,18 +41,66 @@ def extract_json_array(response: str) -> list | None:
     return None
 
 
-def parse_findings(response: str) -> list[RawFinding]:
-    """Extract findings from an LLM response, skipping invalid items."""
-    data = extract_json_array(response)
-    if data is None:
-        return []
+def extract_json_object(response: str) -> dict | None:
+    """Extract a top-level JSON object, tolerating fences and prose."""
+    candidates = [response, _CODE_FENCE.sub("", response).strip()]
+    start, end = response.find("{"), response.rfind("}")
+    if start != -1 and end > start:
+        candidates.append(response[start : end + 1])
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+class ParsedResponse(NamedTuple):
+    findings: list[RawFinding]
+    scorecard: Scorecard | None
+
+
+def parse_response(response: str) -> ParsedResponse:
+    """Parse the check response: object envelope, or bare-array fallback.
+
+    The envelope must have a "findings" list — a lone finding object (e.g.
+    the {...} inside a one-element bare array) is not mistaken for it. A
+    scorecard that fails validation is discarded whole (strict gate); the
+    findings from the same response are unaffected.
+    """
+    data = extract_json_object(response)
+    if data is not None and isinstance(data.get("findings"), list):
+        scorecard = None
+        if data.get("scorecard") is not None:
+            try:
+                scorecard = Scorecard.model_validate(data["scorecard"])
+            except ValidationError:
+                scorecard = None
+        return ParsedResponse(_validate_findings(data["findings"]), scorecard)
+    return ParsedResponse(_validate_findings(extract_json_array(response) or []), None)
+
+
+def _validate_findings(items: list) -> list[RawFinding]:
     findings = []
-    for item in data:
+    for item in items:
         try:
             findings.append(RawFinding.model_validate(item))
         except ValidationError:
             continue
     return findings
+
+
+def parse_findings(response: str) -> list[RawFinding]:
+    """Extract findings from an LLM response, skipping invalid items."""
+    return parse_response(response).findings
+
+
+@dataclass
+class LLMCheckResult:
+    findings: list[Finding]
+    scorecard: Scorecard | None
 
 
 class LLMChecker:
@@ -70,11 +120,12 @@ class LLMChecker:
         language: Language,
         on_progress: ProgressCallback | None = None,
         instructions: str = "",
-    ) -> list[Finding]:
+    ) -> "LLMCheckResult":
         system, user = build_prompt(text, language, instructions=instructions)
         response = await self.provider.generate(system, user, on_progress)
+        raw_findings, scorecard = parse_response(response)
         findings: list[Finding] = []
-        for raw in parse_findings(response):
+        for raw in raw_findings:
             span = anchor(text, raw.quote, raw.context_before)
             if span is None:
                 continue
@@ -99,4 +150,4 @@ class LLMChecker:
                 )
             )
         findings.sort(key=lambda f: (f.span.start, f.span.end))
-        return findings
+        return LLMCheckResult(findings=findings, scorecard=scorecard)

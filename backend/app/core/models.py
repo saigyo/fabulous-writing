@@ -51,3 +51,24 @@ class Finding(BaseModel):
     message: str
     span: Span
     suggestions: list[str] = Field(default_factory=list)
+
+
+class ScoreDimension(BaseModel):
+    score: int = Field(ge=1, le=5)
+    note: str = ""
+
+
+class Scorecard(BaseModel):
+    """Holistic per-dimension assessment returned alongside LLM findings.
+
+    All six dimensions are required: an incomplete or out-of-range scorecard
+    fails validation and is discarded whole (the strict gate; see
+    docs/scoring.md).
+    """
+
+    consistency: ScoreDimension
+    flow: ScoreDimension
+    clarity: ScoreDimension
+    vividness: ScoreDimension
+    tone: ScoreDimension
+    structure: ScoreDimension
