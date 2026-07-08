@@ -1,4 +1,5 @@
 import { EditorView } from '@codemirror/view'
+import { useStore } from '../state/store'
 import {
   findingsField,
   rewriteChange,
@@ -23,6 +24,10 @@ export function setEditorText(text: string): void {
     changes: { from: 0, to: view.state.doc.length, insert: text },
   })
   view.focus()
+  // A full doc replacement invalidates the holistic scorecard outright —
+  // unlike an in-place edit, which only marks it stale, there's no "old
+  // text" left for it to describe.
+  useStore.getState().clearScorecard()
 }
 
 /** Select a finding: highlight it in the editor and scroll it into view. */

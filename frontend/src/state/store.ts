@@ -90,6 +90,7 @@ interface AppState {
   toggleRuleSection: (key: string) => void
   setRulesCollapsed: (keys: string[]) => void
   setScorecard: (scorecard: Scorecard) => void
+  clearScorecard: () => void
   markScorecardStale: () => void
   setDocWords: (docWords: number) => void
   setSuggestPending: (findingId: string | null) => void
@@ -217,6 +218,7 @@ export const useStore = create<AppState>()(
         })),
       setRulesCollapsed: (rulesCollapsed) => set({ rulesCollapsed }),
       setScorecard: (scorecard) => set({ scorecard, scorecardStale: false }),
+      clearScorecard: () => set({ scorecard: null, scorecardStale: false }),
       markScorecardStale: () =>
         set((state) => (state.scorecard ? { scorecardStale: true } : {})),
       setDocWords: (docWords) => set({ docWords }),

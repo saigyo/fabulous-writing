@@ -152,7 +152,7 @@ GET /api/checks/{id}/events   (SSE; GET /api/checks/{id} is the polling fallback
                                 same shape, with `scorecard` filled in once set)
   ├─ event: checker_result {checker, findings}
   ├─ event: llm_progress   {tokens}        (throttled to every 25 tokens)
-  ├─ event: scorecard      {scorecard}     (once, only if the LLM returned one)
+  ├─ event: scorecard      {consistency, flow, …}  (once, only if the LLM returned one)
   ├─ event: checker_error  {checker, error}   (on LLM failure; job still finishes)
   └─ event: done           {status}
 ```
