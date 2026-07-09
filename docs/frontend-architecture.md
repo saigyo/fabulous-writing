@@ -221,6 +221,21 @@ Applying a held-back candidate goes through the same `suggestionChange`/`applyRe
 apply path as a normal suggestion, so nothing about the edit itself is second-class; the
 next check simply re-flags whatever issue made the candidate risky in the first place.
 
+**Advice notes.** Parenthesized guidance the LLM couldn't express as a drop-in
+replacement (the backend's `split_advice` — see
+[backend-architecture.md](backend-architecture.md)) arrives on two channels: check-time
+`finding.advice` and, for on-demand actions, per-finding `suggestAdvice`/`rewriteAdvice`
+maps in `state/store.ts`, following the exact same lifecycle as the held-back maps
+(populated on fetch, migrated across re-checks by `setTracked`/finding-equivalence). The
+sidebar concatenates both sources (`[...finding.advice, ...fetchedAdvice]`) and renders
+them unconditionally — alongside real suggestions, alongside the "no reliable
+suggestion" message, and alongside the not-yet-fetched "Suggest fix"/rewrite buttons —
+via `AdviceNotes` (`sidebar/Sidebar.tsx`), a plain `<p className="advice-note">💡
+{note}</p>` with no `onClick` at all. This is deliberate, not an oversight: advice is
+never a candidate for the apply path, so unlike every other action in the detail card it
+gets no button, no handler, and no `stopPropagation` — a click on it does nothing but
+bubble to the row's own select/deselect toggle.
+
 ## Finding identity across checks
 
 `findings/equivalence.ts` defines when two findings from different checks are "the

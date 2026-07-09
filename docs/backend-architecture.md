@@ -72,7 +72,8 @@ TypeScript interface in the frontend (`frontend/src/types.ts`):
   "rule_id": "style.weasel-words",
   "message": "explanation shown to the writer",
   "span": {"start": 120, "end": 135, "text": "exact flagged text"},
-  "suggestions": ["replacement 1", "replacement 2"]
+  "suggestions": ["replacement 1", "replacement 2"],
+  "advice": ["non-applicable guidance the LLM wrapped in parentheses"]
 }
 ```
 
@@ -83,6 +84,9 @@ Two invariants keep the rest of the system simple:
   (i.e. the LLM) must prove their spans through anchoring or their findings are dropped.
 - **Suggestions are drop-in replacements** for exactly the spanned text. Applying one
   is a plain text substitution; the frontend never has to interpret them.
+- **Advice is display-only.** `advice` (also on `SuggestionResponse`, see [Parsing,
+  anchoring, vetting](#parsing-anchoring-vetting--the-deterministic-gate)) is guidance
+  that cannot be applied as a substitution — it is never a candidate for the apply path.
 
 `Language` (en, de, fr, es, it, ja, zh) is the second shared enum; every rule, term,
 profile, and prompt is language-scoped.
@@ -376,7 +380,7 @@ no-op.
 
 ### Parsing, anchoring, vetting — the deterministic gate
 
-The LLM's raw response passes through three deterministic stages in
+The LLM's raw response passes through four deterministic stages in
 `LLMChecker.check()`:
 
 1. **Parse** (`checker.py`): `extract_json_array` tolerates code fences and surrounding
@@ -389,7 +393,18 @@ The LLM's raw response passes through three deterministic stages in
    fuzzy sliding-window match (difflib, ratio ≥ 0.8 with edge refinement). Ambiguous
    quotes are disambiguated by the LLM-provided `context_before`. **Findings whose quote
    cannot be anchored are discarded** — this is what makes LLM spans trustworthy.
-3. **Vet** (`vetting.py`, when `vet_suggestions` is on): suggested fixes pass sanity
+3. **Split advice** (`vetting.py#split_advice`, before any vetting): models sometimes
+   disguise advice as a replacement, wrapping it in parentheses ("(Consider moving this
+   sentence…)"). A candidate fully wrapped in `(...)` or `（…）` is reclassified as
+   advice (one wrapper layer stripped) instead of a suggestion — order preserved,
+   everything else passed through unchanged. This runs at both LLM surfaces: check-time
+   (`LLMChecker.check()`, feeding `Finding.advice`) and the on-demand suggestions
+   endpoint (feeding `SuggestionResponse.advice`). Advice is never spell-gated, never
+   counted as `rejected`, and never held back — it was never a candidate for the apply
+   path to begin with. All three prompt templates (`prompts.py`) additionally instruct
+   the model not to disguise advice as a replacement in the first place; the paren
+   convention is the deterministic backstop for when it does anyway.
+4. **Vet** (`vetting.py`, when `vet_suggestions` is on): suggested fixes pass sanity
    filters (non-empty, not identical, length ratio 0.25–4, no stray JSON debris) and a
    spell gate — words unknown to pyspellchecker's frequency list *and* not whitelisted
    by the document itself are rejected; optional Hunspell dictionaries (spylls) make the
@@ -398,7 +413,7 @@ The LLM's raw response passes through three deterministic stages in
    skipped for ja/zh.
 
 The on-demand suggestions endpoint (`POST /api/suggestions`) additionally runs a
-**rule re-check** (`vet_suggestions`, stage 3): the candidate is spliced into the text
+**rule re-check** (`vet_suggestions`, stage 4): the candidate is spliced into the text
 and rejected if it introduces new rule findings or fails to resolve the rule it
 addresses. Scope `span` produces drop-in replacements; scope `sentence` expands the span
 to whole sentences (`expand_to_sentences`) and asks for full rewrites.

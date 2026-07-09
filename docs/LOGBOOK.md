@@ -2118,3 +2118,36 @@ the first candidate and confirmed the editor text changed to the
 applied string. All assertions passed on the first run. Post-review fix
 `25f139f`: readable hover styling on held-back options and stale held-back
 state cleared on retry.
+
+## 2026-07-10 — Advice notes instead of fake replacement buttons
+
+Commits: `af6ab30`, `b8e5564`, `5da8205`, `607d8c5`, `2c7c516` (+ docs commit)
+
+Models sometimes disguise advice as a suggested replacement — "(Consider moving
+this sentence to its own paragraph)" — which used to render as a normal
+one-click fix button that silently spliced the parenthesized commentary into
+the text. `vetting.py#split_advice` now classifies any candidate fully wrapped
+in `(...)`/`（…）` as advice rather than a replacement, before any vetting runs,
+at both LLM surfaces: check-time (`Finding.advice`) and the on-demand
+suggestions endpoint (`SuggestionResponse.advice`). Advice is never spell-gated,
+never counted as rejected, and never held back — it was never a real candidate.
+All three prompt templates already told the model not to disguise advice as a
+replacement; the paren convention is the deterministic backstop for when it
+does it anyway. On the frontend, check-time `finding.advice` and per-finding
+`suggestAdvice`/`rewriteAdvice` fetch maps (mirroring the held-back maps'
+lifecycle — populated on fetch, migrated across re-checks by
+`setTracked`/finding-equivalence) feed a new `AdviceNotes` component that
+renders each note as a plain `<p className="advice-note">💡 {note}</p>` with no
+`onClick` — no button, no handler, no `stopPropagation`, so a click does
+nothing but bubble to the row's own select/deselect toggle.
+
+Verified headless end-to-end against the running dev servers
+(`frontend/node_modules/playwright-core`, `channel: 'chrome'`), stubbing
+`POST /api/suggestions` to return one real replacement alongside one advice
+string (all-advice output from a real LLM is nondeterministic and the
+backend's split/vet behavior is already covered by API tests): typed a
+style-flagged sentence, opened the finding, requested a fix, and confirmed
+exactly one replacement button ("much better wording") plus one 💡 advice
+note rendered as a `<P>` tag; clicking the advice note left the editor text
+byte-identical before and after. Screenshot of the rendered note and button
+saved to the scratchpad. All assertions passed on the first run.
