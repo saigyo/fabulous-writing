@@ -2056,3 +2056,16 @@ Summary and uploads use `if: always()` so failing runs keep their
 reports. Failure rendering verified locally against a synthetic junit
 file (caught two regex bugs in the vitest parser: `classname=` matching
 the `name=` lookup, and a greedy scan swallowing the failure message).
+
+## 2026-07-12 — Frontend lint warnings fixed (commit `1b4946e`)
+
+The five oxlint warnings that every frontend CI run reported are gone:
+three `react-hooks(exhaustive-deps)` (App.tsx mount fetch now pulls its
+actions from `useStore.getState()` so the empty dep array is honest;
+TerminologyView's `refreshDomains` is a `useCallback` and a real dep;
+RulesView deps include the stable per-locale catalog `m`, refiring only
+on locale switch) and two `no-unused-vars` in capture-screenshots.mjs
+(underscore-prefixed destructure-omitted keys). Verified: lint zero
+warnings, 161/161 tests, build green, headless smoke check of header
+selectors, terminology domains, and rules loading against the running
+dev servers.
