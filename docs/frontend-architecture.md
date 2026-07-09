@@ -326,5 +326,9 @@ generated.
   rendering components.
 - **Lint/build**: `npm run lint` (oxlint), `npm run build` (tsc + Vite) — both CI
   gates.
+- **Coverage**: CI runs vitest with `--coverage` (v8 provider); `vite.config.ts` counts
+  every file under `src/` (not just what tests import), so untested components lower the
+  number honestly. On pushes to `main` the workflow publishes the line percentage as
+  shields.io endpoint JSON on the orphan `badges` branch for the README badge.
 - **Screenshots**: `npm run screenshots` (`scripts/capture-screenshots.mjs`,
   playwright-core against the running dev servers) regenerates the README images.

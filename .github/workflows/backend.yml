@@ -40,4 +40,53 @@ jobs:
         run: ./scripts/install-dictionaries.sh en de fr es it
 
       - name: Run tests
-        run: uv run pytest
+        run: uv run pytest --cov=app --cov-report=json --cov-report=term
+
+      - name: Upload coverage summary
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage.json
+
+  badge:
+    # Publish the coverage percentage as shields.io endpoint JSON on the
+    # `badges` branch (rendered by the README badge). Only for pushes to main.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: badges
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: backend-coverage
+          path: /tmp/coverage
+
+      - name: Write badge JSON
+        run: |
+          pct=$(jq -r '.totals.percent_covered | round' /tmp/coverage/coverage.json)
+          if [ "$pct" -ge 80 ]; then color=brightgreen
+          elif [ "$pct" -ge 50 ]; then color=yellow
+          else color=red; fi
+          jq -n --arg msg "${pct}%" --arg color "$color" \
+            '{schemaVersion: 1, label: "backend coverage", message: $msg, color: $color}' \
+            > backend-coverage.json
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add backend-coverage.json
+          git diff --cached --quiet && exit 0
+          git commit -m "Update backend coverage badge"
+          # The frontend badge job may push to `badges` concurrently.
+          for i in 1 2 3; do
+            git push && exit 0
+            git pull --rebase
+          done
+          git push

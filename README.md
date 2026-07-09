@@ -1,7 +1,9 @@
 # Fabulous Writing
 
 [![Backend CI](https://github.com/saigyo/fabulous-writing/actions/workflows/backend.yml/badge.svg?branch=main)](https://github.com/saigyo/fabulous-writing/actions/workflows/backend.yml)
+[![Backend coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsaigyo%2Ffabulous-writing%2Fbadges%2Fbackend-coverage.json)](https://github.com/saigyo/fabulous-writing/actions/workflows/backend.yml)
 [![Frontend CI](https://github.com/saigyo/fabulous-writing/actions/workflows/frontend.yml/badge.svg?branch=main)](https://github.com/saigyo/fabulous-writing/actions/workflows/frontend.yml)
+[![Frontend coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fsaigyo%2Ffabulous-writing%2Fbadges%2Ffrontend-coverage.json)](https://github.com/saigyo/fabulous-writing/actions/workflows/frontend.yml)
 
 A writing-quality assistant for articles, documentation, and marketing copy. Text in the
 editor is continuously checked for spelling, grammar, style, clarity, vividness,
