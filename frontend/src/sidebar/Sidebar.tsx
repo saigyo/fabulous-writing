@@ -20,6 +20,7 @@ import { useStore } from '../state/store'
 import type { Category, Finding } from '../types'
 
 const NO_HELD_BACK: never[] = []
+const NO_ADVICE: string[] = []
 
 export function Sidebar() {
   const tracked = useStore((s) => s.tracked)
@@ -229,8 +230,10 @@ function SuggestionArea({ finding }: { finding: Finding }) {
   )
   const error = useStore((s) => s.suggestErrors[finding.id])
   const heldBack = useStore((s) => s.suggestHeldBack[finding.id]) ?? NO_HELD_BACK
+  const fetchedAdvice = useStore((s) => s.suggestAdvice[finding.id]) ?? NO_ADVICE
   const suggestions = effectiveSuggestions(finding, extras)
   const fetched = finding.id in extras
+  const advice = [...finding.advice, ...fetchedAdvice]
 
   if (suggestions.length > 0) {
     return (
@@ -247,6 +250,7 @@ function SuggestionArea({ finding }: { finding: Finding }) {
             {suggestion}
           </button>
         ))}
+        <AdviceNotes notes={advice} />
       </div>
     )
   }
@@ -254,7 +258,12 @@ function SuggestionArea({ finding }: { finding: Finding }) {
     return <p className="suggest-status">✨ {m.askingLlm}</p>
   }
   if (fetched) {
-    return <p className="suggest-status">{m.noReplacement}</p>
+    return (
+      <div className="suggestions">
+        <p className="suggest-status">{m.noReplacement}</p>
+        <AdviceNotes notes={advice} />
+      </div>
+    )
   }
   return (
     <div className="suggestions">
@@ -275,6 +284,7 @@ function SuggestionArea({ finding }: { finding: Finding }) {
           onApply={(text) => applySuggestion(finding.id, text)}
         />
       )}
+      <AdviceNotes notes={advice} />
     </div>
   )
 }
@@ -321,6 +331,19 @@ function HeldBackList({
   )
 }
 
+function AdviceNotes({ notes }: { notes: string[] }) {
+  if (notes.length === 0) return null
+  return (
+    <>
+      {notes.map((note) => (
+        <p key={note} className="advice-note">
+          💡 {note}
+        </p>
+      ))}
+    </>
+  )
+}
+
 function RewriteArea({ finding }: { finding: Finding }) {
   const m = useMessages()
   const rewrite = useStore((s) => s.rewrites[finding.id])
@@ -330,6 +353,7 @@ function RewriteArea({ finding }: { finding: Finding }) {
   )
   const error = useStore((s) => s.rewriteErrors[finding.id])
   const heldBack = useStore((s) => s.rewriteHeldBack[finding.id])
+  const advice = useStore((s) => s.rewriteAdvice[finding.id]) ?? NO_ADVICE
 
   function apply(option: string) {
     if (!rewrite) return
@@ -368,11 +392,17 @@ function RewriteArea({ finding }: { finding: Finding }) {
             {option}
           </button>
         ))}
+        <AdviceNotes notes={advice} />
       </div>
     )
   }
   if (rewrite) {
-    return <p className="suggest-status">{m.noRewrite}</p>
+    return (
+      <div className="rewrites">
+        <p className="suggest-status">{m.noRewrite}</p>
+        <AdviceNotes notes={advice} />
+      </div>
+    )
   }
   return (
     <div className="rewrites">
@@ -390,6 +420,7 @@ function RewriteArea({ finding }: { finding: Finding }) {
       {error && heldBack && heldBack.candidates.length > 0 && (
         <HeldBackList candidates={heldBack.candidates} onApply={applyHeldBack} />
       )}
+      <AdviceNotes notes={advice} />
     </div>
   )
 }

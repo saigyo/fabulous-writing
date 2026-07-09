@@ -679,6 +679,13 @@
   color: #b45309;
 }
 
+.advice-note {
+  margin: 0.4rem 0 0;
+  font-size: 0.78rem;
+  font-style: italic;
+  color: #6b7280;
+}
+
 /* ---- quality score ---- */
 
 .score-badge {
