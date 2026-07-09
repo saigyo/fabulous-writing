@@ -1,3 +1,4 @@
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -194,10 +195,18 @@ def test_seed_pack_profiles(tmp_path) -> None:
             assert profiles[name].example_text, f"{language}: {name}"
 
 
+def test_connection_is_closed_after_use(tmp_path: Path) -> None:
+    # `with sqlite3.connect(...)` alone only manages the transaction; the
+    # store must also close the connection or every operation leaks one.
+    store = ProfileStore(tmp_path / "profiles.db")
+    with store._connect() as conn:
+        conn.execute("SELECT 1")
+    with pytest.raises(sqlite3.ProgrammingError):
+        conn.execute("SELECT 1")
+
+
 def test_packs_on_migration_defaults_empty(tmp_path) -> None:
     # A database created before the column existed gets it via _migrate.
-    import sqlite3
-
     db = tmp_path / "old.sqlite"
     conn = sqlite3.connect(db)
     conn.executescript(

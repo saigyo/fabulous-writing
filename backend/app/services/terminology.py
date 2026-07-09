@@ -1,5 +1,7 @@
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -59,11 +61,19 @@ class TerminologyStore:
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        # sqlite3's own context manager only wraps a transaction (commit or
+        # rollback); this wrapper also closes the connection afterwards, so
+        # `with self._connect() as conn:` cannot leak connections.
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
-        return conn
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     # -- domains ---------------------------------------------------------
 

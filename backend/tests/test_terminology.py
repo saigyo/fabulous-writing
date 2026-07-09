@@ -1,3 +1,4 @@
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,14 @@ def store(tmp_path: Path) -> TerminologyStore:
 
 
 class TestStore:
+    def test_connection_is_closed_after_use(self, store: TerminologyStore) -> None:
+        # `with sqlite3.connect(...)` alone only manages the transaction; the
+        # store must also close the connection or every operation leaks one.
+        with store._connect() as conn:
+            conn.execute("SELECT 1")
+        with pytest.raises(sqlite3.ProgrammingError):
+            conn.execute("SELECT 1")
+
     def test_create_and_list_domains(self, store: TerminologyStore) -> None:
         domain = store.create_domain("Cloud", "Cloud platform docs")
         assert domain.id
