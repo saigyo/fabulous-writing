@@ -64,10 +64,12 @@ interface AppState {
   suggestPendingId: string | null
   suggestErrors: Record<string, string>
   suggestHeldBack: Record<string, HeldBackSuggestion[]>
+  suggestAdvice: Record<string, string[]>
   rewrites: Record<string, Rewrite>
   rewritePendingId: string | null
   rewriteErrors: Record<string, string>
   rewriteHeldBack: Record<string, HeldBackRewrite>
+  rewriteAdvice: Record<string, string[]>
 
   setLanguage: (language: Language) => void
   setUiLocale: (uiLocale: Locale) => void
@@ -100,10 +102,12 @@ interface AppState {
   setExtraSuggestions: (findingId: string, suggestions: string[]) => void
   setSuggestError: (findingId: string, error: string | null) => void
   setSuggestHeldBack: (findingId: string, candidates: HeldBackSuggestion[] | null) => void
+  setSuggestAdvice: (findingId: string, advice: string[] | null) => void
   setRewritePending: (findingId: string | null) => void
   setRewrite: (findingId: string, rewrite: Rewrite | null) => void
   setRewriteError: (findingId: string, error: string | null) => void
   setRewriteHeldBack: (findingId: string, heldBack: HeldBackRewrite | null) => void
+  setRewriteAdvice: (findingId: string, advice: string[] | null) => void
 }
 
 export interface Rewrite {
@@ -177,10 +181,12 @@ export const useStore = create<AppState>()(
       suggestPendingId: null,
       suggestErrors: {},
       suggestHeldBack: {},
+      suggestAdvice: {},
       rewrites: {},
       rewritePendingId: null,
       rewriteErrors: {},
       rewriteHeldBack: {},
+      rewriteAdvice: {},
 
       setLanguage: (language) => set({ language }),
       setUiLocale: (uiLocale) => set({ uiLocale }),
@@ -201,9 +207,11 @@ export const useStore = create<AppState>()(
             extraSuggestions: migrateByFinding(state.extraSuggestions, idMap),
             suggestErrors: migrateByFinding(state.suggestErrors, idMap),
             suggestHeldBack: migrateByFinding(state.suggestHeldBack, idMap),
+            suggestAdvice: migrateByFinding(state.suggestAdvice, idMap),
             rewrites: migrateByFinding(state.rewrites, idMap),
             rewriteErrors: migrateByFinding(state.rewriteErrors, idMap),
             rewriteHeldBack: migrateByFinding(state.rewriteHeldBack, idMap),
+            rewriteAdvice: migrateByFinding(state.rewriteAdvice, idMap),
           }
         }),
       setSeverityFilter: (severityFilter) => set({ severityFilter }),
@@ -249,6 +257,10 @@ export const useStore = create<AppState>()(
         set((state) => ({
           suggestHeldBack: withEntry(state.suggestHeldBack, findingId, candidates),
         })),
+      setSuggestAdvice: (findingId, advice) =>
+        set((state) => ({
+          suggestAdvice: withEntry(state.suggestAdvice, findingId, advice),
+        })),
       setRewritePending: (rewritePendingId) => set({ rewritePendingId }),
       setRewrite: (findingId, rewrite) =>
         set((state) => ({
@@ -261,6 +273,10 @@ export const useStore = create<AppState>()(
       setRewriteHeldBack: (findingId, heldBack) =>
         set((state) => ({
           rewriteHeldBack: withEntry(state.rewriteHeldBack, findingId, heldBack),
+        })),
+      setRewriteAdvice: (findingId, advice) =>
+        set((state) => ({
+          rewriteAdvice: withEntry(state.rewriteAdvice, findingId, advice),
         })),
     }),
     {

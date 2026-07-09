@@ -19,6 +19,7 @@ function tracked(
     message: 'm',
     span: { start: from, end: to, text },
     suggestions: [],
+    advice: [],
   }
   return { finding, from, to }
 }

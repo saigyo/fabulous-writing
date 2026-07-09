@@ -14,6 +14,7 @@ function tracked(id: string, from: number, to: number, text: string): TrackedFin
     message: 'm',
     span: { start: from, end: to, text },
     suggestions: [],
+    advice: [],
   }
   return { finding, from, to }
 }
@@ -114,5 +115,21 @@ describe('held-back suggestions', () => {
     expect(useStore.getState().rewriteHeldBack['f1']?.original).toBe('This is very good.')
     useStore.getState().setRewriteHeldBack('f1', null)
     expect(useStore.getState().rewriteHeldBack['f1']).toBeUndefined()
+  })
+})
+
+describe('advice notes', () => {
+  it('stores and clears suggest advice per finding', () => {
+    useStore.getState().setSuggestAdvice('f1', ['Move this sentence.'])
+    expect(useStore.getState().suggestAdvice['f1']).toEqual(['Move this sentence.'])
+    useStore.getState().setSuggestAdvice('f1', null)
+    expect(useStore.getState().suggestAdvice['f1']).toBeUndefined()
+  })
+
+  it('stores and clears rewrite advice per finding', () => {
+    useStore.getState().setRewriteAdvice('f1', ['Split into two paragraphs.'])
+    expect(useStore.getState().rewriteAdvice['f1']).toEqual(['Split into two paragraphs.'])
+    useStore.getState().setRewriteAdvice('f1', null)
+    expect(useStore.getState().rewriteAdvice['f1']).toBeUndefined()
   })
 })

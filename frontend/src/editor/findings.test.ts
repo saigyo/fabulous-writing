@@ -21,6 +21,7 @@ function makeFinding(id: string, start: number, end: number, text: string): Find
     message: 'test finding',
     span: { start, end, text },
     suggestions: ['better'],
+    advice: [],
   }
 }
 

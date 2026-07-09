@@ -36,6 +36,7 @@ export interface Finding {
   message: string
   span: Span
   suggestions: string[]
+  advice: string[]
 }
 
 export const CATEGORIES: Category[] = [

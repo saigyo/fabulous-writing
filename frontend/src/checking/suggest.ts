@@ -16,6 +16,7 @@ export async function fetchSuggestions(findingId: string): Promise<void> {
   if (llmActionPending()) return
   state.setSuggestError(findingId, null)
   state.setSuggestHeldBack(findingId, null)
+  state.setSuggestAdvice(findingId, null)
   state.setSuggestPending(findingId)
   try {
     const result = await requestForFinding(findingId, 'span')
@@ -26,6 +27,10 @@ export async function fetchSuggestions(findingId: string): Promise<void> {
         currentMessages(),
       )
       const store = useStore.getState()
+      store.setSuggestAdvice(
+        findingId,
+        result.advice.length > 0 ? result.advice : null,
+      )
       if (vetoed) {
         store.setSuggestError(findingId, vetoed)
         store.setSuggestHeldBack(
@@ -53,6 +58,7 @@ export async function fetchRewrite(findingId: string): Promise<void> {
   if (llmActionPending()) return
   state.setRewriteError(findingId, null)
   state.setRewriteHeldBack(findingId, null)
+  state.setRewriteAdvice(findingId, null)
   state.setRewritePending(findingId)
   try {
     const result = await requestForFinding(findingId, 'sentence')
@@ -63,6 +69,10 @@ export async function fetchRewrite(findingId: string): Promise<void> {
         currentMessages(),
       )
       const store = useStore.getState()
+      store.setRewriteAdvice(
+        findingId,
+        result.advice.length > 0 ? result.advice : null,
+      )
       if (vetoed) {
         store.setRewriteError(findingId, vetoed)
         store.setRewriteHeldBack(

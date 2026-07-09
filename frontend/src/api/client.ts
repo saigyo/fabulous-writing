@@ -114,6 +114,7 @@ export interface SuggestionResponse {
   original: string
   rejected: number
   held_back: HeldBackSuggestion[]
+  advice: string[]
 }
 
 export const postSuggestions = (body: SuggestionRequest) =>

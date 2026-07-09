@@ -12,6 +12,7 @@ function finding(id: string, category: Finding['category'], start = 0): Finding 
     message: 'm',
     span: { start, end: start + 1, text: 'x' },
     suggestions: [],
+    advice: [],
   }
 }
 
