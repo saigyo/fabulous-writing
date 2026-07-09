@@ -668,6 +668,11 @@
   background: rgba(217, 119, 6, 0.06);
 }
 
+.suggestion-button.held-back:hover {
+  color: #b45309;
+  background: rgba(217, 119, 6, 0.15);
+}
+
 .held-back-reason {
   margin: 0.15rem 0 0;
   font-size: 0.72rem;

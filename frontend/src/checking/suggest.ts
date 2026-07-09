@@ -15,6 +15,7 @@ export async function fetchSuggestions(findingId: string): Promise<void> {
   const state = useStore.getState()
   if (llmActionPending()) return
   state.setSuggestError(findingId, null)
+  state.setSuggestHeldBack(findingId, null)
   state.setSuggestPending(findingId)
   try {
     const result = await requestForFinding(findingId, 'span')
@@ -51,6 +52,7 @@ export async function fetchRewrite(findingId: string): Promise<void> {
   const state = useStore.getState()
   if (llmActionPending()) return
   state.setRewriteError(findingId, null)
+  state.setRewriteHeldBack(findingId, null)
   state.setRewritePending(findingId)
   try {
     const result = await requestForFinding(findingId, 'sentence')
