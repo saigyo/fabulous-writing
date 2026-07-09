@@ -2005,7 +2005,7 @@ a slow LLM check triggers a new fast check that unsubscribes the old SSE)
 is lost rather than kept-stale — inherited supersede semantics, candidate
 for a follow-up.
 
-## 2026-07-11 — Sidebar header polish around the quality score
+## 2026-07-09 — Sidebar header polish around the quality score
 
 Three small layout fixes after using the score badge in anger
 (commit `68126fc`): the LLM status line now lives in a zero-width
@@ -2020,7 +2020,7 @@ a live local-LLM check: status text starts 9.6px right of the badge
 across a two-line wrap, panel→chips gap 13.6px, pill centers within
 0.1px of the heading center. 161/161 tests, build green.
 
-## 2026-07-11 — README screenshots refreshed for quality-score badge
+## 2026-07-09 — README screenshots refreshed for quality-score badge
 
 All four README screenshots recaptured via `npm run screenshots` to include
 the new quality-score badge in the sidebar. The editor shot shows an expanded
@@ -2029,7 +2029,7 @@ Findings heading, with the LLM status text starting clearly to its right
 without overlap. Terminology, rules, and profiles shots unchanged substantively
 but regenerated for consistency.
 
-## 2026-07-12 — Coverage badges in the README (commit `0f4d35b`)
+## 2026-07-09 — Coverage badges in the README (commit `0f4d35b`)
 
 The README now shows test-coverage percentages next to the CI badges,
 self-contained (no Codecov/Coveralls): each CI workflow measures
@@ -2043,7 +2043,7 @@ every file under `src/`, not just modules the tests import (the
 default would have reported 59% by ignoring untested components).
 Concurrent badge pushes are handled with a small rebase-retry loop.
 
-## 2026-07-12 — Test results and coverage reports on the CI run page (commit `23f66c4`)
+## 2026-07-09 — Test results and coverage reports on the CI run page (commit `23f66c4`)
 
 Both CI workflows now publish investigable test evidence to the Actions
 run page: pytest/vitest write junit XML, an HTML coverage report is
@@ -2057,7 +2057,7 @@ reports. Failure rendering verified locally against a synthetic junit
 file (caught two regex bugs in the vitest parser: `classname=` matching
 the `name=` lookup, and a greedy scan swallowing the failure message).
 
-## 2026-07-12 — Frontend lint warnings fixed (commit `1b4946e`)
+## 2026-07-09 — Frontend lint warnings fixed (commit `1b4946e`)
 
 The five oxlint warnings that every frontend CI run reported are gone:
 three `react-hooks(exhaustive-deps)` (App.tsx mount fetch now pulls its
@@ -2070,7 +2070,7 @@ warnings, 161/161 tests, build green, headless smoke check of header
 selectors, terminology domains, and rules loading against the running
 dev servers.
 
-## 2026-07-12 — Backend pytest warnings eliminated (commit `e706df4`)
+## 2026-07-09 — Backend pytest warnings eliminated (commit `e706df4`)
 
 The 6,933 warnings in every backend CI run were all one bug: both
 `TerminologyStore` and `ProfileStore` used `with sqlite3.connect(...)`,

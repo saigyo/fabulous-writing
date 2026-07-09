@@ -8,7 +8,7 @@
 
 **Tech Stack:** FastAPI + pydantic (backend), pytest; React 19 + zustand + vitest (frontend); i18n catalogs ×7.
 
-**Spec:** `docs/superpowers/specs/2026-07-12-held-back-suggestions-design.md`
+**Spec:** `docs/superpowers/specs/2026-07-09-held-back-suggestions-design.md`
 
 ## Global Constraints
 
