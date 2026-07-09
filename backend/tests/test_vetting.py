@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from app.checkers.llm.vetting import vet_candidates
+from app.checkers.llm.vetting import split_advice, vet_candidates
 from app.core.models import Language
 
 DE_TEXT = (
@@ -33,6 +33,40 @@ class TestSanity:
         )
         assert result.accepted == []
         assert result.rejected == 2
+
+
+class TestSplitAdvice:
+    def test_parenthesized_candidate_is_advice(self) -> None:
+        replacements, advice = split_advice(
+            ["better text", "(Consider moving this sentence.)"]
+        )
+        assert replacements == ["better text"]
+        assert advice == ["Consider moving this sentence."]
+
+    def test_fullwidth_and_mixed_wrappers(self) -> None:
+        _, advice = split_advice(["（この文を移動してください。）", "(混在フォーム）"])
+        assert advice == ["この文を移動してください。", "混在フォーム"]
+
+    def test_single_layer_stripped_inner_parens_preserved(self) -> None:
+        _, advice = split_advice(["((keep (this) inner))"])
+        assert advice == ["(keep (this) inner)"]
+
+    def test_containing_parens_is_a_replacement(self) -> None:
+        replacements, advice = split_advice(["use the editor (v2) daily"])
+        assert replacements == ["use the editor (v2) daily"]
+        assert advice == []
+
+    def test_empty_wrappers_are_not_advice(self) -> None:
+        # No inner content means "not wrapped advice": both stay candidates
+        # (the sanity stage kills them later as artifacts/too short).
+        replacements, advice = split_advice(["()", "( )"])
+        assert replacements == ["()", "( )"]
+        assert advice == []
+
+    def test_order_preserved_within_each_list(self) -> None:
+        replacements, advice = split_advice(["a", "(x)", "b", "(y)"])
+        assert replacements == ["a", "b"]
+        assert advice == ["x", "y"]
 
 
 class TestSpellGate:

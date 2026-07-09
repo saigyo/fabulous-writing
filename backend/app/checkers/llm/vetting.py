@@ -37,6 +37,9 @@ _checkers_lock = threading.Lock()
 _dictionaries: dict[tuple[str, str], object] = {}
 _dictionaries_lock = threading.Lock()
 
+_ADVICE_OPEN = "(（"
+_ADVICE_CLOSE = ")）"
+
 
 @dataclass
 class HeldBackCandidate:
@@ -84,6 +87,32 @@ def _hunspell(code: str, dictionaries_dir: Path | None):
                 except Exception:
                     pass
         return _dictionaries[key]
+
+
+def split_advice(candidates: list[str]) -> tuple[list[str], list[str]]:
+    """Separate replacement candidates from parenthesized advice.
+
+    Models sometimes disguise advice as a replacement, wrapping it in
+    parentheses: "(Consider moving this sentence...)". A candidate fully
+    wrapped in (...) or （…） is advice — it must be shown, never applied.
+    One wrapper layer is stripped; everything else passes through unchanged,
+    order preserved. Runs before all vetting stages, so advice is never
+    spell-gated, never counted as rejected, and never held back.
+    """
+    replacements: list[str] = []
+    advice: list[str] = []
+    for candidate in candidates:
+        stripped = candidate.strip()
+        inner = stripped[1:-1].strip() if len(stripped) >= 3 else ""
+        if (
+            inner
+            and stripped[0] in _ADVICE_OPEN
+            and stripped[-1] in _ADVICE_CLOSE
+        ):
+            advice.append(inner)
+        else:
+            replacements.append(candidate)
+    return replacements, advice
 
 
 def _sane(candidate: str, original: str) -> bool:
