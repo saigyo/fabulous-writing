@@ -2042,3 +2042,17 @@ The frontend number is honest by construction: `vite.config.ts` counts
 every file under `src/`, not just modules the tests import (the
 default would have reported 59% by ignoring untested components).
 Concurrent badge pushes are handled with a small rebase-retry loop.
+
+## 2026-07-12 — Test results and coverage reports on the CI run page (commit `23f66c4`)
+
+Both CI workflows now publish investigable test evidence to the Actions
+run page: pytest/vitest write junit XML, an HTML coverage report is
+generated (pytest-cov `htmlcov/`, vitest v8 `coverage/`), and both are
+uploaded as run artifacts. New `scripts/ci-summary.py` (backend) and
+`scripts/ci-summary.mjs` (frontend) render a markdown table — tests,
+passed/failed/errors/skipped, duration, line coverage — plus a per-test
+failure list onto the run's Summary tab via `$GITHUB_STEP_SUMMARY`.
+Summary and uploads use `if: always()` so failing runs keep their
+reports. Failure rendering verified locally against a synthetic junit
+file (caught two regex bugs in the vitest parser: `classname=` matching
+the `name=` lookup, and a greedy scan swallowing the failure message).
