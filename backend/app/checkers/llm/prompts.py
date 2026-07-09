@@ -74,6 +74,8 @@ must fit grammatically when swapped in, preserving the surrounding words.
 Choose the most natural, contemporary wording a professional writer would use — \
 rephrasing is allowed — and never use archaic, stilted, or uncommon forms even if \
 they are technically correct.
+- Never disguise advice or commentary as a replacement. If you cannot offer a literal \
+drop-in replacement, return an empty JSON array [].
 - Respond with ONLY a JSON array of strings, e.g. ["first option", "second option"].
 """
 
@@ -90,6 +92,8 @@ Rules:
 Choose the most natural, contemporary wording a professional writer would use — \
 rephrasing is allowed — and never use archaic, stilted, or uncommon forms even if \
 they are technically correct.
+- Never disguise advice or commentary as a replacement. If you cannot offer a literal \
+drop-in replacement, return an empty JSON array [].
 - Respond with ONLY a JSON array of strings, e.g. ["first rewrite", "second rewrite"].
 """
 

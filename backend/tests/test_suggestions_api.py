@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.checkers.llm.prompts import build_suggestion_prompt
+from app.checkers.llm.prompts import build_rewrite_prompt, build_suggestion_prompt
 from app.checkers.llm.provider import FakeProvider, LLMProvider
 from app.core.config import Settings
 from app.core.models import Language
@@ -43,6 +43,16 @@ class TestSuggestionPrompt:
         system, _ = build_suggestion_prompt("Das ist gut.", 8, 11, "m", Language.DE)
         assert "German" in system or "Deutsch" in system
 
+    def test_suggest_and_rewrite_prompts_forbid_disguised_advice(self) -> None:
+        system, _ = build_suggestion_prompt(
+            TEXT, 17, 26, "'very good' is vague praise.", Language.EN
+        )
+        assert "Never disguise advice" in system
+        system, _ = build_rewrite_prompt(
+            "The results were very good.", "'very good' is vague praise.", Language.EN
+        )
+        assert "Never disguise advice" in system
+
 
 class TestSuggestionsEndpoint:
     def test_returns_parsed_suggestions_and_echoes_span(self, tmp_path: Path) -> None:
@@ -56,6 +66,7 @@ class TestSuggestionsEndpoint:
             "original": "very good",
             "rejected": 0,
             "held_back": [],
+            "advice": [],
         }
 
     def test_filters_echo_of_original_span_and_non_strings(self, tmp_path: Path) -> None:
@@ -144,6 +155,27 @@ class TestSentenceScope:
         assert "split" in system_prompt.lower()
 
 
+class TestAdvice:
+    def test_parenthesized_candidates_become_advice(self, tmp_path: Path) -> None:
+        provider = FakeProvider(
+            json.dumps(["excellent", "(Consider rephrasing the whole paragraph.)"])
+        )
+        client = make_client(tmp_path, provider)
+        body = client.post("/api/suggestions", json=suggestion_request()).json()
+        assert body["suggestions"] == ["excellent"]
+        assert body["advice"] == ["Consider rephrasing the whole paragraph."]
+        assert body["rejected"] == 0
+
+    def test_all_advice_is_no_replacement_not_rejection(self, tmp_path: Path) -> None:
+        provider = FakeProvider(json.dumps(["(Move this sentence elsewhere.)"]))
+        client = make_client(tmp_path, provider)
+        body = client.post("/api/suggestions", json=suggestion_request()).json()
+        assert body["suggestions"] == []
+        assert body["advice"] == ["Move this sentence elsewhere."]
+        assert body["rejected"] == 0
+        assert body["held_back"] == []
+
+
 RULES_DIR = Path(__file__).parent.parent / "rules"
 
 
@@ -227,3 +259,10 @@ class TestVetting:
         client = self.make_client(tmp_path, provider, vet=False)
         body = client.post("/api/suggestions", json=self.de_request()).json()
         assert body["held_back"] == []
+
+    def test_kill_switch_still_splits_advice(self, tmp_path: Path) -> None:
+        provider = FakeProvider(json.dumps(["(Ganz umstellen.)"]))
+        client = self.make_client(tmp_path, provider, vet=False)
+        body = client.post("/api/suggestions", json=self.de_request()).json()
+        assert body["suggestions"] == []
+        assert body["advice"] == ["Ganz umstellen."]

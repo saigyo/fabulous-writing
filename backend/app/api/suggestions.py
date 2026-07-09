@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from app.checkers.llm.checker import extract_json_array
 from app.checkers.llm.prompts import build_rewrite_prompt, build_suggestion_prompt
 from app.checkers.llm.provider import LLMProvider
-from app.checkers.llm.vetting import vet_suggestions
+from app.checkers.llm.vetting import split_advice, vet_suggestions
 from app.checkers.rules.text import expand_to_sentences
 from app.core.models import Language
 
@@ -43,6 +43,7 @@ class SuggestionResponse(BaseModel):
     original: str
     rejected: int = 0
     held_back: list[HeldBackSuggestion] = []
+    advice: list[str] = []
 
 
 @router.post("/suggestions")
@@ -89,6 +90,9 @@ async def create_suggestions(
         for item in items
         if isinstance(item, str) and item.strip() and item.strip() != original
     ]
+    # Advice must never render as an appliable replacement; split it off
+    # before vetting (also when vetting is disabled).
+    suggestions, advice = split_advice(suggestions)
     rejected = 0
     held_back: list[HeldBackSuggestion] = []
     if request.app.state.settings.vet_suggestions:
@@ -120,4 +124,5 @@ async def create_suggestions(
         original=original,
         rejected=rejected,
         held_back=held_back,
+        advice=advice,
     )
