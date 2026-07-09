@@ -654,6 +654,26 @@
   background: var(--accent-soft);
 }
 
+.suggestion-button.show-held-back {
+  border-style: dashed;
+  opacity: 0.85;
+}
+
+.held-back-option {
+  margin-top: 0.4rem;
+}
+
+.suggestion-button.held-back {
+  border: 1px dashed #d97706;
+  background: rgba(217, 119, 6, 0.06);
+}
+
+.held-back-reason {
+  margin: 0.15rem 0 0;
+  font-size: 0.72rem;
+  color: #b45309;
+}
+
 /* ---- quality score ---- */
 
 .score-badge {

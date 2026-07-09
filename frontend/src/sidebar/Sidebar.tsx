@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { HeldBackSuggestion } from '../api/client'
 import { llmStatusLabel } from '../checking/status'
 import { fetchRewrite, fetchSuggestions } from '../checking/suggest'
+import { heldBackReason } from '../checking/vetMessage'
 import { applyRewrite, applySuggestion, selectFinding } from '../editor/editorRef'
 import type { TrackedFinding } from '../editor/findings'
 import { groupByCategory } from '../findings/group'
@@ -16,6 +18,8 @@ import { useMessages } from '../i18n'
 import { ScoreBadge, ScorePanel } from './Score'
 import { useStore } from '../state/store'
 import type { Category, Finding } from '../types'
+
+const NO_HELD_BACK: never[] = []
 
 export function Sidebar() {
   const tracked = useStore((s) => s.tracked)
@@ -224,6 +228,7 @@ function SuggestionArea({ finding }: { finding: Finding }) {
     (s) => s.suggestPendingId !== null || s.rewritePendingId !== null,
   )
   const error = useStore((s) => s.suggestErrors[finding.id])
+  const heldBack = useStore((s) => s.suggestHeldBack[finding.id]) ?? NO_HELD_BACK
   const suggestions = effectiveSuggestions(finding, extras)
   const fetched = finding.id in extras
 
@@ -264,7 +269,55 @@ function SuggestionArea({ finding }: { finding: Finding }) {
         ✨ {error ? m.retrySuggestion : m.suggestFix}
       </button>
       {error && <p className="suggest-error">{error}</p>}
+      {error && heldBack.length > 0 && (
+        <HeldBackList
+          candidates={heldBack}
+          onApply={(text) => applySuggestion(finding.id, text)}
+        />
+      )}
     </div>
+  )
+}
+
+function HeldBackList({
+  candidates,
+  onApply,
+}: {
+  candidates: HeldBackSuggestion[]
+  onApply: (text: string) => void
+}) {
+  const m = useMessages()
+  const [revealed, setRevealed] = useState(false)
+  if (!revealed) {
+    return (
+      <button
+        className="suggestion-button show-held-back"
+        onClick={(event) => {
+          event.stopPropagation()
+          setRevealed(true)
+        }}
+      >
+        {m.showHeldBack(candidates.length)}
+      </button>
+    )
+  }
+  return (
+    <>
+      {candidates.map((candidate) => (
+        <div key={candidate.text} className="held-back-option">
+          <button
+            className="suggestion-button held-back"
+            onClick={(event) => {
+              event.stopPropagation()
+              onApply(candidate.text)
+            }}
+          >
+            {candidate.text}
+          </button>
+          <p className="held-back-reason">{heldBackReason(candidate, m)}</p>
+        </div>
+      ))}
+    </>
   )
 }
 
@@ -276,12 +329,22 @@ function RewriteArea({ finding }: { finding: Finding }) {
     (s) => s.suggestPendingId !== null || s.rewritePendingId !== null,
   )
   const error = useStore((s) => s.rewriteErrors[finding.id])
+  const heldBack = useStore((s) => s.rewriteHeldBack[finding.id])
 
   function apply(option: string) {
     if (!rewrite) return
     if (!applyRewrite(finding.id, rewrite.original, option)) {
       const store = useStore.getState()
       store.setRewrite(finding.id, null)
+      store.setRewriteError(finding.id, m.sentenceChangedRewriteAgain)
+    }
+  }
+
+  function applyHeldBack(option: string) {
+    if (!heldBack) return
+    if (!applyRewrite(finding.id, heldBack.original, option)) {
+      const store = useStore.getState()
+      store.setRewriteHeldBack(finding.id, null)
       store.setRewriteError(finding.id, m.sentenceChangedRewriteAgain)
     }
   }
@@ -324,6 +387,9 @@ function RewriteArea({ finding }: { finding: Finding }) {
         ↻ {error ? m.retryRewrite : m.rewriteSentence}
       </button>
       {error && <p className="suggest-error">{error}</p>}
+      {error && heldBack && heldBack.candidates.length > 0 && (
+        <HeldBackList candidates={heldBack.candidates} onApply={applyHeldBack} />
+      )}
     </div>
   )
 }
