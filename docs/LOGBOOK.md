@@ -2069,3 +2069,16 @@ on locale switch) and two `no-unused-vars` in capture-screenshots.mjs
 warnings, 161/161 tests, build green, headless smoke check of header
 selectors, terminology domains, and rules loading against the running
 dev servers.
+
+## 2026-07-12 — Backend pytest warnings eliminated (commit `e706df4`)
+
+The 6,933 warnings in every backend CI run were all one bug: both
+`TerminologyStore` and `ProfileStore` used `with sqlite3.connect(...)`,
+which manages only the transaction — the connection itself was never
+closed, so every store operation leaked one (`ResourceWarning: unclosed
+database`, surfacing at GC time under coverage's timing, attributed to
+random code like yaml/scanner.py). `_connect()` is now a
+`@contextmanager` that commits/rolls back and closes in `finally`; all
+21 existing `with self._connect()` call sites kept working unchanged.
+Two new close-behavior tests (red before the fix) guard against
+regression. Suite: 614 passed, zero warnings, coverage steady at 97%.
