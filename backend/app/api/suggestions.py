@@ -18,6 +18,13 @@ class SpanRef(BaseModel):
     end: int
 
 
+class HeldBackSuggestion(BaseModel):
+    text: str
+    reason_kind: Literal["rules", "spelling"]
+    rule_ids: list[str] = []
+    words: list[str] = []
+
+
 class SuggestionRequest(BaseModel):
     text: str
     span: SpanRef
@@ -35,6 +42,7 @@ class SuggestionResponse(BaseModel):
     span: SpanRef
     original: str
     rejected: int = 0
+    held_back: list[HeldBackSuggestion] = []
 
 
 @router.post("/suggestions")
@@ -82,6 +90,7 @@ async def create_suggestions(
         if isinstance(item, str) and item.strip() and item.strip() != original
     ]
     rejected = 0
+    held_back: list[HeldBackSuggestion] = []
     if request.app.state.settings.vet_suggestions:
         result = vet_suggestions(
             suggestions,
@@ -96,9 +105,19 @@ async def create_suggestions(
             dictionaries_dir=request.app.state.settings.dictionaries_dir,
         )
         suggestions, rejected = result.accepted, result.rejected
+        held_back = [
+            HeldBackSuggestion(
+                text=candidate.text,
+                reason_kind=candidate.reason_kind,
+                rule_ids=candidate.rule_ids,
+                words=candidate.words,
+            )
+            for candidate in result.held_back
+        ]
     return SuggestionResponse(
         suggestions=suggestions,
         span=SpanRef(start=start, end=end),
         original=original,
         rejected=rejected,
+        held_back=held_back,
     )

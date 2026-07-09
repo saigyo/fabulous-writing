@@ -55,6 +55,7 @@ class TestSuggestionsEndpoint:
             "span": {"start": 17, "end": 26},
             "original": "very good",
             "rejected": 0,
+            "held_back": [],
         }
 
     def test_filters_echo_of_original_span_and_non_strings(self, tmp_path: Path) -> None:
@@ -199,3 +200,30 @@ class TestVetting:
         body = client.post("/api/suggestions", json=self.de_request()).json()
         assert body["suggestions"] == ["empföhle Ihnen den Editor sofort"]
         assert body["rejected"] == 0
+
+    def test_all_rejected_returns_held_back_with_reasons(self, tmp_path: Path) -> None:
+        provider = FakeProvider(
+            json.dumps(
+                [
+                    "empföhle Ihnen den Editor sofort",  # spell gate
+                    "würde Ihnen den Editor wirklich sofort empfehlen",  # unresolved rule
+                ]
+            )
+        )
+        client = self.make_client(tmp_path, provider)
+        body = client.post("/api/suggestions", json=self.de_request()).json()
+        assert body["suggestions"] == []
+        assert body["rejected"] == 2
+        kinds = {item["text"]: item for item in body["held_back"]}
+        spelling = kinds["empföhle Ihnen den Editor sofort"]
+        assert spelling["reason_kind"] == "spelling"
+        assert spelling["words"] == ["empföhle"]
+        rules = kinds["würde Ihnen den Editor wirklich sofort empfehlen"]
+        assert rules["reason_kind"] == "rules"
+        assert "style.wuerde-stil" in rules["rule_ids"]
+
+    def test_kill_switch_has_empty_held_back(self, tmp_path: Path) -> None:
+        provider = FakeProvider(json.dumps(["empföhle Ihnen den Editor sofort"]))
+        client = self.make_client(tmp_path, provider, vet=False)
+        body = client.post("/api/suggestions", json=self.de_request()).json()
+        assert body["held_back"] == []
