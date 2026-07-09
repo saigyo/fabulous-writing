@@ -2115,4 +2115,6 @@ rendered (localized text confirmed in the browser's German locale —
 `Würde weiterhin auslösen: style.weasel-words` / `Nicht erkannt:
 Outstandig`), screenshotted the dashed amber option cards, then applied
 the first candidate and confirmed the editor text changed to the
-applied string. All assertions passed on the first run.
+applied string. All assertions passed on the first run. Post-review fix
+`25f139f`: readable hover styling on held-back options and stale held-back
+state cleared on retry.
