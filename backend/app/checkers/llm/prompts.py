@@ -54,6 +54,8 @@ Score anchors: 1 = seriously deficient, 2 = weak, 3 = competent, 4 = strong, 5 =
 Rules:
 - "quote" MUST be copied character-for-character from the input text; never paraphrase it.
 - Each suggestion must be a drop-in replacement for the quote.
+- Never disguise advice or commentary as a suggestion. If you cannot offer a literal \
+drop-in replacement, use an empty "suggestions" array and put the advice in "message".
 - Report at most 15 of the most important issues. If the text is fine, "findings" is [].
 - The scorecard judges the text as a whole, independent of how many issues you list.
 """

@@ -51,6 +51,7 @@ class Finding(BaseModel):
     message: str
     span: Span
     suggestions: list[str] = Field(default_factory=list)
+    advice: list[str] = Field(default_factory=list)
 
 
 class ScoreDimension(BaseModel):

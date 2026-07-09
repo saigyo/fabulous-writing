@@ -1,4 +1,5 @@
 from app.checkers.llm.prompts import (
+    _SYSTEM_TEMPLATE,
     build_prompt,
     build_rewrite_prompt,
     build_suggestion_prompt,
@@ -37,3 +38,7 @@ def test_suggestion_and_rewrite_prompts_take_instructions():
         instructions="Prefer playful wording.",
     )
     assert "Prefer playful wording." in system
+
+
+def test_check_prompt_forbids_disguised_advice() -> None:
+    assert "Never disguise advice" in _SYSTEM_TEMPLATE

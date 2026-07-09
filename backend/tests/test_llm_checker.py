@@ -147,6 +147,33 @@ async def test_inline_suggestions_are_vetted_but_finding_survives():
     assert unvetted.findings[0].suggestions == ["recieve updates", "receive updates"]
 
 
+async def test_parenthesized_suggestions_become_advice():
+    import json
+
+    from app.checkers.llm.checker import LLMChecker
+    from app.checkers.llm.provider import FakeProvider
+    from app.core.models import Language
+
+    text = "You will get updates."
+    response = json.dumps(
+        [
+            {
+                "category": "style",
+                "severity": "suggestion",
+                "quote": "get updates",
+                "message": "Vague verb.",
+                "suggestions": [
+                    "(Consider restructuring the whole sentence.)",
+                    "receive updates",
+                ],
+            }
+        ]
+    )
+    result = await LLMChecker(FakeProvider(response)).check(text, Language.EN)
+    assert result.findings[0].suggestions == ["receive updates"]
+    assert result.findings[0].advice == ["Consider restructuring the whole sentence."]
+
+
 SCORECARD = {
     "consistency": {"score": 4, "note": "Terminology is uniform."},
     "flow": {"score": 3, "note": "Transitions are functional."},
