@@ -206,6 +206,21 @@ tracked span. Results and errors are cached per finding in the store; only one L
 action runs at a time. When vetting rejected every candidate, `vetMessage.ts` turns
 that into an honest "no reliable suggestion" message instead of an empty list.
 
+An all-vetoed response still carries `held_back` candidates (the backend's revealable
+spell-gate/rule-recheck rejects — see [backend-architecture.md](backend-architecture.md)),
+and the store keeps them separately from the shown suggestions: `suggestHeldBack` and
+`rewriteHeldBack` (`state/store.ts`) are per-finding, migrated across re-checks by the
+same `setTracked`/finding-equivalence machinery as everything else. The sidebar
+(`sidebar/Sidebar.tsx`) doesn't show them by default — the "no reliable suggestion"
+message is paired with a `show-held-back` button ("Show N held-back suggestions"); only
+on click does `HeldBackList` render each candidate as a dashed, warning-styled
+`held-back-option`, with a localized `held-back-reason` line built by
+`vetMessage.ts#heldBackReason` (`reason_kind: "rules"` names the rule ids it would still
+trigger, `"spelling"` names the unrecognized words — one i18n string pair per language).
+Applying a held-back candidate goes through the same `suggestionChange`/`applyRewrite`
+apply path as a normal suggestion, so nothing about the edit itself is second-class; the
+next check simply re-flags whatever issue made the candidate risky in the first place.
+
 ## Finding identity across checks
 
 `findings/equivalence.ts` defines when two findings from different checks are "the

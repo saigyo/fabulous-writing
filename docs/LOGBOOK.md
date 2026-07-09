@@ -2082,3 +2082,37 @@ random code like yaml/scanner.py). `_connect()` is now a
 21 existing `with self._connect()` call sites kept working unchanged.
 Two new close-behavior tests (red before the fix) guard against
 regression. Suite: 614 passed, zero warnings, coverage steady at 97%.
+
+## 2026-07-09 — Held-back suggestions with on-demand reveal
+
+When every LLM-suggested fix for a finding fails vetting, the app used to
+just say so and stop. Four commits (`0855756` backend vetting, `6547f5f`
+API field, `b431095` frontend data layer/i18n, `fd1e8ad` sidebar UI) teach
+the whole stack to keep the rejected-but-plausible candidates around and
+let the user reveal them on request instead of silently discarding them.
+`vetting.py`'s spell gate and rule-recheck now collect their rejects as
+`HeldBackCandidate` (`reason_kind` `rules`/`spelling`, with rule ids or
+unrecognized words); sanity-filter rejects (empty, identical, garbage
+length) stay non-revealable, since there's nothing legitimate to show.
+`SuggestionResponse.held_back` carries them to the client, where the
+store keeps `suggestHeldBack`/`rewriteHeldBack` per finding (migrated
+across re-checks like every other per-finding cache) and the sidebar
+adds a "Show N held-back suggestions" button that reveals dashed,
+warning-styled options with a localized reason line per candidate.
+Applying one goes through the ordinary apply path, so a later check
+re-flags whatever made it risky in the first place — no special-cased
+edit semantics.
+
+Verified headless end-to-end against the running dev servers
+(`frontend/node_modules/playwright-core`, `channel: 'chrome'`), stubbing
+`POST /api/suggestions` to force the all-vetoed path deterministically
+(the real gate is already covered by Task 2's API tests, and a live LLM
+can't reliably produce a 100%-rejected response on demand): typed a
+weasel-word sentence, opened the finding, requested a fix, hit the
+stubbed all-vetoed response, clicked "Show held-back suggestions", and
+confirmed both a `rules`-reason and a `spelling`-reason candidate
+rendered (localized text confirmed in the browser's German locale —
+`Würde weiterhin auslösen: style.weasel-words` / `Nicht erkannt:
+Outstandig`), screenshotted the dashed amber option cards, then applied
+the first candidate and confirmed the editor text changed to the
+applied string. All assertions passed on the first run.

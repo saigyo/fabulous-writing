@@ -403,6 +403,18 @@ and rejected if it introduces new rule findings or fails to resolve the rule it
 addresses. Scope `span` produces drop-in replacements; scope `sentence` expands the span
 to whole sentences (`expand_to_sentences`) and asks for full rewrites.
 
+Not every reject is thrown away silently. Spell-gate rejects and rule-recheck rejects
+are **revealable**: `vet_candidates`/`vet_suggestions` collect them as
+`HeldBackCandidate` entries (`reason_kind` `"spelling"` with the offending `words`, or
+`"rules"` with the `rule_ids` the candidate still triggers or fails to resolve).
+Sanity-filter rejects (stage 1 above) are never revealable — they're malformed or
+degenerate output, not a legitimate candidate a user might still want. `HeldBackCandidate`
+travels on `VetResult.held_back` alongside the existing `accepted`/`rejected` fields, and
+the suggestions API (`api/suggestions.py`) maps it onto the response's
+`SuggestionResponse.held_back: list[HeldBackSuggestion]`, so an all-vetoed response (empty
+`suggestions`, `rejected > 0`) still gives the client something to show on request instead
+of a dead end.
+
 ## Checking profiles
 
 A **profile** bundles language-specific checking presets: rule selection
