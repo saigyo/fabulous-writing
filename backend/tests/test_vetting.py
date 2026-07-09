@@ -89,6 +89,33 @@ class TestSpellGate:
         assert result.rejected == 0
 
 
+class TestHeldBack:
+    def test_spell_gate_reject_lands_in_held_back_with_words(self) -> None:
+        result = vet_candidates(
+            ["empföhle Ihnen den Editor sofort"],
+            original=DE_ORIGINAL,
+            text=DE_TEXT,
+            language=Language.DE,
+        )
+        assert result.rejected == 1
+        assert len(result.held_back) == 1
+        candidate = result.held_back[0]
+        assert candidate.text == "empföhle Ihnen den Editor sofort"
+        assert candidate.reason_kind == "spelling"
+        assert candidate.words == ["empföhle"]
+        assert candidate.rule_ids == []
+
+    def test_sanity_rejects_are_not_held_back(self) -> None:
+        result = vet_candidates(
+            ["", DE_ORIGINAL, "wort " * 60],
+            original=DE_ORIGINAL,
+            text=DE_TEXT,
+            language=Language.DE,
+        )
+        assert result.rejected == 3
+        assert result.held_back == []
+
+
 class TestRuleRecheck:
     """Full pipeline with the shipped rules and real spaCy parses."""
 
@@ -163,6 +190,35 @@ class TestRuleRecheck:
             rule_id=None,
         )
         assert result.accepted == ["really"]
+
+    def test_unresolved_rule_lands_in_held_back(self) -> None:
+        result = self._vet(
+            ["extremely"],
+            text="This is very good.",
+            original="very",
+            language=Language.EN,
+            rule_id="style.weasel-words",
+        )
+        assert result.accepted == []
+        assert len(result.held_back) == 1
+        candidate = result.held_back[0]
+        assert candidate.text == "extremely"
+        assert candidate.reason_kind == "rules"
+        assert candidate.rule_ids == ["style.weasel-words"]
+        assert candidate.words == []
+
+    def test_introduced_finding_lands_in_held_back_with_rule_id(self) -> None:
+        result = self._vet(
+            ["quite quite"],
+            text="This is very good.",
+            original="very",
+            language=Language.EN,
+            rule_id="style.weasel-words",
+        )
+        assert result.accepted == []
+        assert len(result.held_back) == 1
+        assert result.held_back[0].reason_kind == "rules"
+        assert "grammar.repeated-words" in result.held_back[0].rule_ids
 
 
 DICTS = Path(__file__).parent.parent / "dictionaries"

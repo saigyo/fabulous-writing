@@ -7,9 +7,9 @@ See docs/superpowers/specs/2026-07-04-suggestion-vetting-design.md.
 import re
 import threading
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from app.core.models import Language
 
@@ -39,9 +39,20 @@ _dictionaries_lock = threading.Lock()
 
 
 @dataclass
+class HeldBackCandidate:
+    """A revealable reject: why vetting suppressed this candidate."""
+
+    text: str
+    reason_kind: Literal["rules", "spelling"]
+    rule_ids: list[str] = field(default_factory=list)
+    words: list[str] = field(default_factory=list)
+
+
+@dataclass
 class VetResult:
     accepted: list[str]
     rejected: int
+    held_back: list[HeldBackCandidate] = field(default_factory=list)
 
 
 def _spell_checker(code: str):
@@ -85,18 +96,18 @@ def _sane(candidate: str, original: str) -> bool:
     return _MIN_LENGTH_RATIO <= ratio <= _MAX_LENGTH_RATIO
 
 
-def _has_unknown_words(
+def _unknown_words(
     candidate: str,
     language: Language,
     whitelist: set[str],
     dictionaries_dir: Path | None = None,
-) -> bool:
+) -> list[str]:
     code = _SPELL_LANGUAGES.get(language)
     if code is None:
-        return False
+        return []
     checker = _spell_checker(code)
     if checker is None:
-        return False
+        return []
     words = [
         word
         for word in _WORD.findall(candidate)
@@ -106,17 +117,18 @@ def _has_unknown_words(
         [word.lower() for word in words]
     )
     if not unknown:
-        return False
+        return []
+    offending = list(dict.fromkeys(w for w in words if w.lower() in unknown))
     dictionary = _hunspell(code, dictionaries_dir)
     if dictionary is None:
-        return True
+        return offending
     # Union gate: hunspell rescues frequency-unknown words that are
     # morphologically valid (inflections, German compounds).
-    return any(
-        not dictionary.lookup(word)  # type: ignore[attr-defined]
-        for word in words
-        if word.lower() in unknown
-    )
+    return [
+        word
+        for word in offending
+        if not dictionary.lookup(word)  # type: ignore[attr-defined]
+    ]
 
 
 def vet_candidates(
@@ -127,15 +139,29 @@ def vet_candidates(
     language: Language,
     dictionaries_dir: Path | None = None,
 ) -> VetResult:
-    """Stages 1–2: sanity filters and the spell gate with a document whitelist."""
+    """Stages 1–2: sanity filters and the spell gate with a document whitelist.
+
+    Spell-gate rejects are revealable and land in `held_back`; sanity rejects
+    are garbage and are only counted.
+    """
     whitelist = {word.lower() for word in _WORD.findall(text)}
-    accepted = [
-        candidate.strip()
-        for candidate in candidates
-        if _sane(candidate, original)
-        and not _has_unknown_words(candidate, language, whitelist, dictionaries_dir)
-    ]
-    return VetResult(accepted=accepted, rejected=len(candidates) - len(accepted))
+    accepted: list[str] = []
+    held_back: list[HeldBackCandidate] = []
+    rejected = 0
+    for candidate in candidates:
+        if not _sane(candidate, original):
+            rejected += 1
+            continue
+        stripped = candidate.strip()
+        words = _unknown_words(stripped, language, whitelist, dictionaries_dir)
+        if words:
+            rejected += 1
+            held_back.append(
+                HeldBackCandidate(text=stripped, reason_kind="spelling", words=words)
+            )
+            continue
+        accepted.append(stripped)
+    return VetResult(accepted=accepted, rejected=rejected, held_back=held_back)
 
 
 def _finding_counts(
@@ -149,7 +175,7 @@ def _finding_counts(
     )
 
 
-def _passes_rule_recheck(
+def _rule_recheck_failures(
     candidate: str,
     *,
     before: Counter[str],
@@ -160,14 +186,19 @@ def _passes_rule_recheck(
     rule_id: str | None,
     engine: Any,
     nlp: Any,
-) -> bool:
+) -> list[str]:
     patched = text[:start] + candidate + text[end:]
     after = _finding_counts(engine, patched, language, nlp)
-    if any(count > before[rid] for rid, count in after.items()):
-        return False  # the fix introduces new problems
-    if rule_id is not None and rule_id in before and after[rule_id] >= before[rule_id]:
-        return False  # the fix does not resolve the rule it addresses
-    return True
+    # Rules whose count increased: the fix introduces new problems.
+    failures = [rid for rid, count in after.items() if count > before[rid]]
+    if (
+        rule_id is not None
+        and rule_id in before
+        and after[rule_id] >= before[rule_id]
+        and rule_id not in failures
+    ):
+        failures.append(rule_id)  # the fix does not resolve the rule it addresses
+    return failures
 
 
 def vet_suggestions(
@@ -192,10 +223,11 @@ def vet_suggestions(
         dictionaries_dir=dictionaries_dir,
     )
     before = _finding_counts(engine, text, language, nlp)
-    accepted = [
-        candidate
-        for candidate in result.accepted
-        if _passes_rule_recheck(
+    accepted: list[str] = []
+    held_back = list(result.held_back)
+    rejected = result.rejected
+    for candidate in result.accepted:
+        failures = _rule_recheck_failures(
             candidate,
             before=before,
             text=text,
@@ -206,5 +238,11 @@ def vet_suggestions(
             engine=engine,
             nlp=nlp,
         )
-    ]
-    return VetResult(accepted=accepted, rejected=len(candidates) - len(accepted))
+        if failures:
+            rejected += 1
+            held_back.append(
+                HeldBackCandidate(text=candidate, reason_kind="rules", rule_ids=failures)
+            )
+        else:
+            accepted.append(candidate)
+    return VetResult(accepted=accepted, rejected=rejected, held_back=held_back)
