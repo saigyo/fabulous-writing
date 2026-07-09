@@ -2028,3 +2028,17 @@ finding card with the colored score pill (a small numbered badge) next to the
 Findings heading, with the LLM status text starting clearly to its right
 without overlap. Terminology, rules, and profiles shots unchanged substantively
 but regenerated for consistency.
+
+## 2026-07-12 — Coverage badges in the README (commit `0f4d35b`)
+
+The README now shows test-coverage percentages next to the CI badges,
+self-contained (no Codecov/Coveralls): each CI workflow measures
+coverage — backend `pytest --cov=app` (97% at introduction), frontend
+vitest with the v8 provider (25%) — and a follow-up job on pushes to
+main writes shields.io endpoint JSON to the orphan `badges` branch
+(seeded manually so the badges rendered immediately). Colors mirror
+the app's score thresholds: <50 red, <80 yellow, ≥80 bright green.
+The frontend number is honest by construction: `vite.config.ts` counts
+every file under `src/`, not just modules the tests import (the
+default would have reported 59% by ignoring untested components).
+Concurrent badge pushes are handled with a small rebase-retry loop.
