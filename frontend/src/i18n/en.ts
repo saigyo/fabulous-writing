@@ -75,6 +75,10 @@ export const en: Messages = {
   sentenceChangedRewriteAgain: 'The sentence changed — rewrite again.',
   noReliableSuggestion: (rejected) =>
     `No reliable suggestion — ${rejected === 1 ? '1 candidate' : `${rejected} candidates`} failed local checks.`,
+  showHeldBack: (count) =>
+    `Show ${count} held-back ${count === 1 ? 'suggestion' : 'suggestions'}`,
+  heldBackRules: (rules) => `Would still trip: ${rules}`,
+  heldBackSpelling: (words) => `Unrecognized: ${words}`,
   scoreBadgeTitle: 'Overall quality score — click for details',
   scoreTooShort: 'Too short to score (minimum 40 words)',
   scoreMechanicsOnly: 'Mechanics only — run an LLM check for the full score',

@@ -87,6 +87,10 @@ export const it: Messages = {
     `Nessun suggerimento affidabile — ${
       rejected === 1 ? '1 candidato non ha superato' : `${rejected} candidati non hanno superato`
     } i controlli locali.`,
+  showHeldBack: (count) =>
+    count === 1 ? 'Mostra 1 suggerimento trattenuto' : `Mostra ${count} suggerimenti trattenuti`,
+  heldBackRules: (rules) => `Attiverebbe ancora: ${rules}`,
+  heldBackSpelling: (words) => `Non riconosciuto: ${words}`,
   scoreBadgeTitle: 'Qualità complessiva — clic per i dettagli',
   scoreTooShort: 'Testo troppo breve per un punteggio (minimo 40 parole)',
   scoreMechanicsOnly: 'Solo meccanica — esegui un controllo LLM per il punteggio completo',

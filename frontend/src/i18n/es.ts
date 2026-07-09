@@ -91,6 +91,10 @@ export const es: Messages = {
     `Ninguna sugerencia fiable — ${
       rejected === 1 ? '1 candidato no superó' : `${rejected} candidatos no superaron`
     } las comprobaciones locales.`,
+  showHeldBack: (count) =>
+    count === 1 ? 'Mostrar 1 sugerencia retenida' : `Mostrar ${count} sugerencias retenidas`,
+  heldBackRules: (rules) => `Seguiría activando: ${rules}`,
+  heldBackSpelling: (words) => `No reconocido: ${words}`,
   scoreBadgeTitle: 'Calidad general — clic para ver detalles',
   scoreTooShort: 'Demasiado corto para puntuar (mínimo 40 palabras)',
   scoreMechanicsOnly: 'Solo mecánica — ejecuta una comprobación LLM para la puntuación completa',

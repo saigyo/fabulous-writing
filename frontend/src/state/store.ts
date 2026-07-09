@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import type { HeldBackSuggestion } from '../api/client'
 import type { TrackedFinding } from '../editor/findings'
 import { mapEquivalentIds } from '../findings/equivalence'
 import type { SourceGroup } from '../findings/source'
@@ -62,9 +63,11 @@ interface AppState {
   extraSuggestions: Record<string, string[]>
   suggestPendingId: string | null
   suggestErrors: Record<string, string>
+  suggestHeldBack: Record<string, HeldBackSuggestion[]>
   rewrites: Record<string, Rewrite>
   rewritePendingId: string | null
   rewriteErrors: Record<string, string>
+  rewriteHeldBack: Record<string, HeldBackRewrite>
 
   setLanguage: (language: Language) => void
   setUiLocale: (uiLocale: Locale) => void
@@ -96,14 +99,21 @@ interface AppState {
   setSuggestPending: (findingId: string | null) => void
   setExtraSuggestions: (findingId: string, suggestions: string[]) => void
   setSuggestError: (findingId: string, error: string | null) => void
+  setSuggestHeldBack: (findingId: string, candidates: HeldBackSuggestion[] | null) => void
   setRewritePending: (findingId: string | null) => void
   setRewrite: (findingId: string, rewrite: Rewrite | null) => void
   setRewriteError: (findingId: string, error: string | null) => void
+  setRewriteHeldBack: (findingId: string, heldBack: HeldBackRewrite | null) => void
 }
 
 export interface Rewrite {
   original: string
   options: string[]
+}
+
+export interface HeldBackRewrite {
+  original: string
+  candidates: HeldBackSuggestion[]
 }
 
 function withEntry<T>(
@@ -166,9 +176,11 @@ export const useStore = create<AppState>()(
       extraSuggestions: {},
       suggestPendingId: null,
       suggestErrors: {},
+      suggestHeldBack: {},
       rewrites: {},
       rewritePendingId: null,
       rewriteErrors: {},
+      rewriteHeldBack: {},
 
       setLanguage: (language) => set({ language }),
       setUiLocale: (uiLocale) => set({ uiLocale }),
@@ -188,8 +200,10 @@ export const useStore = create<AppState>()(
             selectedId,
             extraSuggestions: migrateByFinding(state.extraSuggestions, idMap),
             suggestErrors: migrateByFinding(state.suggestErrors, idMap),
+            suggestHeldBack: migrateByFinding(state.suggestHeldBack, idMap),
             rewrites: migrateByFinding(state.rewrites, idMap),
             rewriteErrors: migrateByFinding(state.rewriteErrors, idMap),
+            rewriteHeldBack: migrateByFinding(state.rewriteHeldBack, idMap),
           }
         }),
       setSeverityFilter: (severityFilter) => set({ severityFilter }),
@@ -231,6 +245,10 @@ export const useStore = create<AppState>()(
         set((state) => ({
           suggestErrors: withEntry(state.suggestErrors, findingId, error),
         })),
+      setSuggestHeldBack: (findingId, candidates) =>
+        set((state) => ({
+          suggestHeldBack: withEntry(state.suggestHeldBack, findingId, candidates),
+        })),
       setRewritePending: (rewritePendingId) => set({ rewritePendingId }),
       setRewrite: (findingId, rewrite) =>
         set((state) => ({
@@ -239,6 +257,10 @@ export const useStore = create<AppState>()(
       setRewriteError: (findingId, error) =>
         set((state) => ({
           rewriteErrors: withEntry(state.rewriteErrors, findingId, error),
+        })),
+      setRewriteHeldBack: (findingId, heldBack) =>
+        set((state) => ({
+          rewriteHeldBack: withEntry(state.rewriteHeldBack, findingId, heldBack),
         })),
     }),
     {

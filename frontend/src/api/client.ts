@@ -101,11 +101,19 @@ export interface SuggestionRequest {
   llm_instructions?: string
 }
 
+export interface HeldBackSuggestion {
+  text: string
+  reason_kind: 'rules' | 'spelling'
+  rule_ids: string[]
+  words: string[]
+}
+
 export interface SuggestionResponse {
   suggestions: string[]
   span: { start: number; end: number }
   original: string
   rejected: number
+  held_back: HeldBackSuggestion[]
 }
 
 export const postSuggestions = (body: SuggestionRequest) =>

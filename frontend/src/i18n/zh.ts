@@ -80,6 +80,9 @@ export const zh: Messages = {
   sentenceChangedRewriteAgain: '句子已更改 — 请重新重写。',
   noReliableSuggestion: (rejected) =>
     `没有可靠的建议 — ${rejected} 个候选未通过本地检查。`,
+  showHeldBack: (count) => `显示 ${count} 条被保留的建议`,
+  heldBackRules: (rules) => `仍会触发：${rules}`,
+  heldBackSpelling: (words) => `无法识别：${words}`,
   scoreBadgeTitle: '总体质量评分 — 点击查看详情',
   scoreTooShort: '文本太短，无法评分（至少 40 词）',
   scoreMechanicsOnly: '仅基础评分 — 运行 LLM 检查以获得完整评分',

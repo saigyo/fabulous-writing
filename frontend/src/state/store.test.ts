@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import type { HeldBackSuggestion } from '../api/client'
 import type { TrackedFinding } from '../editor/findings'
 import type { Finding } from '../types'
 import { useStore } from './store'
@@ -87,5 +88,31 @@ describe('tier / pin semantics', () => {
     expect(state.tier).toBeNull()
     expect(state.provider).toBe('mistral')
     expect(state.model).toBe('mistral-large-latest')
+  })
+})
+
+describe('held-back suggestions', () => {
+  const candidate: HeldBackSuggestion = {
+    text: 'extremely',
+    reason_kind: 'rules',
+    rule_ids: ['style.weasel-words'],
+    words: [],
+  }
+
+  it('stores and clears suggest held-back per finding', () => {
+    useStore.getState().setSuggestHeldBack('f1', [candidate])
+    expect(useStore.getState().suggestHeldBack['f1']).toEqual([candidate])
+    useStore.getState().setSuggestHeldBack('f1', null)
+    expect(useStore.getState().suggestHeldBack['f1']).toBeUndefined()
+  })
+
+  it('stores and clears rewrite held-back per finding', () => {
+    useStore.getState().setRewriteHeldBack('f1', {
+      original: 'This is very good.',
+      candidates: [candidate],
+    })
+    expect(useStore.getState().rewriteHeldBack['f1']?.original).toBe('This is very good.')
+    useStore.getState().setRewriteHeldBack('f1', null)
+    expect(useStore.getState().rewriteHeldBack['f1']).toBeUndefined()
   })
 })

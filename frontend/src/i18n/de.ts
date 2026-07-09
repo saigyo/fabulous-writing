@@ -85,6 +85,12 @@ export const de: Messages = {
     `Kein verlässlicher Vorschlag — ${
       rejected === 1 ? '1 Kandidat ist' : `${rejected} Kandidaten sind`
     } an lokalen Prüfungen gescheitert.`,
+  showHeldBack: (count) =>
+    count === 1
+      ? '1 zurückgehaltenen Vorschlag anzeigen'
+      : `${count} zurückgehaltene Vorschläge anzeigen`,
+  heldBackRules: (rules) => `Würde weiterhin auslösen: ${rules}`,
+  heldBackSpelling: (words) => `Nicht erkannt: ${words}`,
   scoreBadgeTitle: 'Gesamtqualität — klicken für Details',
   scoreTooShort: 'Zu kurz für eine Bewertung (mindestens 40 Wörter)',
   scoreMechanicsOnly: 'Nur Mechanik — LLM-Prüfung für die vollständige Bewertung ausführen',

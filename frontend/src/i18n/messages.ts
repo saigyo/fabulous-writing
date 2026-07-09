@@ -81,6 +81,9 @@ export interface Messages {
   applyRewriteTitle: string
   sentenceChangedRewriteAgain: string
   noReliableSuggestion: (rejected: number) => string
+  showHeldBack: (count: number) => string
+  heldBackRules: (rules: string) => string
+  heldBackSpelling: (words: string) => string
   scoreBadgeTitle: string
   scoreTooShort: string
   scoreMechanicsOnly: string

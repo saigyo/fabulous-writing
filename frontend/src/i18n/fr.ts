@@ -91,6 +91,10 @@ export const fr: Messages = {
     `Aucune suggestion fiable — ${
       rejected === 1 ? '1 candidat a' : `${rejected} candidats ont`
     } échoué aux vérifications locales.`,
+  showHeldBack: (count) =>
+    count === 1 ? 'Afficher 1 suggestion retenue' : `Afficher ${count} suggestions retenues`,
+  heldBackRules: (rules) => `Déclencherait encore : ${rules}`,
+  heldBackSpelling: (words) => `Non reconnu : ${words}`,
   scoreBadgeTitle: 'Qualité globale — cliquer pour les détails',
   scoreTooShort: 'Texte trop court pour une note (minimum 40 mots)',
   scoreMechanicsOnly: 'Mécanique seule — lancez une vérification LLM pour la note complète',

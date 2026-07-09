@@ -81,6 +81,9 @@ export const ja: Messages = {
   sentenceChangedRewriteAgain: '文が変更されました — もう一度書き直してください。',
   noReliableSuggestion: (rejected) =>
     `信頼できる提案はありません — ${rejected}件の候補がローカルチェックで却下されました。`,
+  showHeldBack: (count) => `保留された候補を${count}件表示`,
+  heldBackRules: (rules) => `依然として該当: ${rules}`,
+  heldBackSpelling: (words) => `未知の語: ${words}`,
   scoreBadgeTitle: '総合品質スコア — クリックで詳細',
   scoreTooShort: 'スコアを算出するには短すぎます（40語以上必要）',
   scoreMechanicsOnly: '基礎スコアのみ — 完全なスコアにはLLMチェックを実行してください',

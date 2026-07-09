@@ -24,8 +24,17 @@ export async function fetchSuggestions(findingId: string): Promise<void> {
         result.rejected,
         currentMessages(),
       )
-      if (vetoed) useStore.getState().setSuggestError(findingId, vetoed)
-      else useStore.getState().setExtraSuggestions(findingId, result.suggestions)
+      const store = useStore.getState()
+      if (vetoed) {
+        store.setSuggestError(findingId, vetoed)
+        store.setSuggestHeldBack(
+          findingId,
+          result.held_back.length > 0 ? result.held_back : null,
+        )
+      } else {
+        store.setExtraSuggestions(findingId, result.suggestions)
+        store.setSuggestHeldBack(findingId, null)
+      }
     }
   } catch (error) {
     useStore.getState().setSuggestError(findingId, error instanceof Error ? error.message : String(error))
@@ -51,13 +60,21 @@ export async function fetchRewrite(findingId: string): Promise<void> {
         result.rejected,
         currentMessages(),
       )
+      const store = useStore.getState()
       if (vetoed) {
-        useStore.getState().setRewriteError(findingId, vetoed)
+        store.setRewriteError(findingId, vetoed)
+        store.setRewriteHeldBack(
+          findingId,
+          result.held_back.length > 0
+            ? { original: result.original, candidates: result.held_back }
+            : null,
+        )
       } else {
-        useStore.getState().setRewrite(findingId, {
+        store.setRewrite(findingId, {
           original: result.original,
           options: result.suggestions,
         })
+        store.setRewriteHeldBack(findingId, null)
       }
     }
   } catch (error) {
