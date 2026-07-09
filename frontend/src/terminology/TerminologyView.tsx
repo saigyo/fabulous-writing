@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   createDomain,
   createTerm,
@@ -32,11 +32,11 @@ export function TerminologyView() {
   const [newDomain, setNewDomain] = useState('')
   const m = useMessages()
 
-  const refreshDomains = () => getDomains().then(setDomains)
+  const refreshDomains = useCallback(() => getDomains().then(setDomains), [setDomains])
 
   useEffect(() => {
     void refreshDomains()
-  }, [])
+  }, [refreshDomains])
 
   useEffect(() => {
     if (activeDomainId === null && domains.length > 0) {

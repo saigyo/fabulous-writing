@@ -28,7 +28,9 @@ export function RulesView() {
       // `error` holds an already-formatted message (this path and
       // saveRuleSelection use different wordings), so format at set-time.
       .catch((e: Error) => setError(m.couldNotLoadRules(e.message)))
-  }, [language])
+    // `m` is the per-locale catalog (stable identity): this refires only on a
+    // real locale switch, which also re-formats the error in the new language.
+  }, [language, m])
 
   const languageName =
     languages.find((info) => info.code === language)?.name ?? language

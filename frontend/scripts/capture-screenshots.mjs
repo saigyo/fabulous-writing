@@ -165,7 +165,7 @@ if (standardProfile) {
   const now = (await (await fetch(`${API}/api/profiles?language=en`)).json()).find(
     (p) => p.id === standardProfile.id,
   )
-  const { id, is_standard, language, ...payload } = {
+  const { id, is_standard: _is_standard, language: _language, ...payload } = {
     ...now,
     llm_tier: standardProfile.llm_tier,
     llm_provider: standardProfile.llm_provider,

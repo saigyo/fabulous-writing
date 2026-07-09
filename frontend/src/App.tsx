@@ -45,10 +45,13 @@ function Header() {
   const m = useMessages()
 
   useEffect(() => {
-    getProviders().then(store.setProviders).catch(() => store.setProviders([]))
-    getDomains().then(store.setDomains).catch(() => store.setDomains([]))
-    getLanguages().then(store.setLanguages).catch(() => {})
-    getRouting().then(store.setRouting).catch(() => store.setRouting(null))
+    // Mount-only fetch; grab the actions off the store object directly so the
+    // effect has no reactive dependencies.
+    const { setProviders, setDomains, setLanguages, setRouting } = useStore.getState()
+    getProviders().then(setProviders).catch(() => setProviders([]))
+    getDomains().then(setDomains).catch(() => setDomains([]))
+    getLanguages().then(setLanguages).catch(() => {})
+    getRouting().then(setRouting).catch(() => setRouting(null))
   }, [])
 
   const prevLanguage = useRef<Language | null>(null)
