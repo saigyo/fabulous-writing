@@ -328,7 +328,10 @@ generated.
   gates.
 - **Coverage**: CI runs vitest with `--coverage` (v8 provider); `vite.config.ts` counts
   every file under `src/` (not just what tests import), so untested components lower the
-  number honestly. On pushes to `main` the workflow publishes the line percentage as
-  shields.io endpoint JSON on the orphan `badges` branch for the README badge.
+  number honestly. `scripts/ci-summary.mjs` renders test counts, failures, and the
+  coverage total onto the run's Summary page; the junit XML and HTML coverage report
+  are uploaded as run artifacts. On pushes to `main` the workflow publishes the line
+  percentage as shields.io endpoint JSON on the orphan `badges` branch for the README
+  badge.
 - **Screenshots**: `npm run screenshots` (`scripts/capture-screenshots.mjs`,
   playwright-core against the running dev servers) regenerates the README images.

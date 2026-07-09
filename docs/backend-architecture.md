@@ -477,6 +477,9 @@ each API router, anchoring, vetting, providers, profiles, seeding, …). Convent
   fallback, unanchorable discard; spell-gate whitelisting, length ratios).
 - `scripts/vetting-benchmark.py` measures the spell gate's false-reject rate against
   provider outputs.
-- CI (`.github/workflows/backend.yml`) runs the suite with `--cov=app`; on pushes to
-  `main` a follow-up job converts the total percentage into shields.io endpoint JSON on
-  the orphan `badges` branch, which the README's coverage badge renders.
+- CI (`.github/workflows/backend.yml`) runs the suite with `--cov=app` and junit XML
+  output; `scripts/ci-summary.py` renders test counts, failures, and the coverage total
+  onto the run's Summary page, and the junit XML plus the HTML coverage report are
+  uploaded as run artifacts. On pushes to `main` a follow-up job converts the total
+  percentage into shields.io endpoint JSON on the orphan `badges` branch, which the
+  README's coverage badge renders.
