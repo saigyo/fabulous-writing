@@ -147,6 +147,34 @@ describe('autosave', () => {
     expect(updateDocument).toHaveBeenCalledTimes(2)
   })
 
+  it('flush() awaited during an in-flight push resolves only after that push and its follow-up complete', async () => {
+    let resolveFirst!: (value: unknown) => void
+    vi.mocked(updateDocument).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirst = resolve
+        }) as never,
+    )
+
+    const p1 = flush() // save #1 starts and is now in flight
+    expect(updateDocument).toHaveBeenCalledTimes(1)
+
+    let callsWhenP2Resolved = -1
+    const p2 = flush().then(() => {
+      // By the time an awaited flush() resolves, the follow-up push it
+      // queued must already have happened too.
+      callsWhenP2Resolved = vi.mocked(updateDocument).mock.calls.length
+    })
+
+    resolveFirst(serverDoc(3))
+    await vi.advanceTimersByTimeAsync(0)
+    await p1
+    await p2
+
+    expect(callsWhenP2Resolved).toBe(2)
+    expect(updateDocument).toHaveBeenCalledTimes(2)
+  })
+
   it('a failed in-flight save does not fire the queued flush immediately', async () => {
     let rejectFirst!: (reason?: unknown) => void
     vi.mocked(updateDocument).mockImplementationOnce(

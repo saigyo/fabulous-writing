@@ -66,9 +66,53 @@ function currentSettings() {
   }
 }
 
+// Set while an orphan-replay's conflict recovery is running so recoverSnapshot
+// doesn't also re-hydrate: we're already in the middle of hydrating a
+// different, unrelated target document and must not re-enter hydration for
+// the document the orphaned snapshot belonged to.
+let skipRecoveryHydrate = false
+
+/** The buffer is a single slot for the CURRENT document only. If it still
+ * holds a dirty snapshot for a document other than the one about to be
+ * hydrated (e.g. the user switched documents while a save was failing),
+ * that snapshot is about to be silently overwritten. Give it one direct
+ * replay attempt first so the edits aren't lost. */
+async function replayOrphanedSnapshot(targetDocId: number): Promise<void> {
+  const existing = readSnapshot()
+  if (!existing?.dirty || existing.docId === targetDocId) return
+  try {
+    await updateDocument(existing.docId, {
+      revision: existing.revision,
+      content: {
+        text: existing.text,
+        findings: existing.findings,
+        scorecard: existing.scorecard,
+      },
+      settings: existing.settings,
+    })
+  } catch (error) {
+    if (
+      error instanceof HttpError &&
+      (error.status === 409 || error.status === 404)
+    ) {
+      skipRecoveryHydrate = true
+      try {
+        await recoverSnapshot(existing)
+      } finally {
+        skipRecoveryHydrate = false
+      }
+    }
+    // Any other failure (offline/network): accepted limitation per spec —
+    // the buffer is a single slot by design (current document only), so an
+    // unsaved snapshot cannot survive an offline document switch. Drop it;
+    // hydrating the target document below overwrites the buffer anyway.
+  }
+}
+
 /** Load a document into store + editor. The editor change and the restored
  * findings ride ONE transaction, so spans apply to the new text. */
-function hydrateFromDocument(doc: DocumentFull): void {
+async function hydrateFromDocument(doc: DocumentFull): Promise<void> {
+  await replayOrphanedSnapshot(doc.id)
   beginHydration()
   try {
     const store = useStore.getState()
@@ -121,8 +165,8 @@ function hydrateFromDocument(doc: DocumentFull): void {
 }
 
 /** Offline path: bring the buffered document up without a backend. */
-function hydrateFromBuffer(snapshot: DocSnapshot): void {
-  hydrateFromDocument({
+async function hydrateFromBuffer(snapshot: DocSnapshot): Promise<void> {
+  await hydrateFromDocument({
     id: snapshot.docId,
     owner_id: 1,
     name: snapshot.name,
@@ -158,7 +202,7 @@ export async function refreshDocuments(): Promise<void> {
 export async function openDocument(id: number): Promise<void> {
   await flush()
   const doc = await getDocument(id)
-  hydrateFromDocument(doc)
+  await hydrateFromDocument(doc)
 }
 
 export async function createNewDocument(): Promise<void> {
@@ -170,7 +214,7 @@ export async function createNewDocument(): Promise<void> {
     ...currentSettings(),
   })
   useStore.getState().setDocuments([summaryOf(doc), ...state.documents])
-  hydrateFromDocument(doc)
+  await hydrateFromDocument(doc)
 }
 
 export async function renameDocument(id: number, name: string): Promise<void> {
@@ -200,7 +244,7 @@ export async function removeDocument(id: number): Promise<void> {
   if (store.docMeta?.id !== id) return
   if (remaining.length > 0) {
     const doc = await getDocument(remaining[0].id)
-    hydrateFromDocument(doc)
+    await hydrateFromDocument(doc)
   } else {
     useStore.getState().setDocMeta(null)
     await createNewDocument()
@@ -220,19 +264,33 @@ async function recoverSnapshot(snapshot: DocSnapshot): Promise<void> {
   })
   clearSnapshot()
   await refreshDocuments()
+  // Reached via replayOrphanedSnapshot: we're mid-hydration of an unrelated
+  // target document, so this snapshot's own document must not be re-entered.
+  if (skipRecoveryHydrate) return
   if (useStore.getState().docMeta?.id !== snapshot.docId) return
   try {
     const original = await getDocument(snapshot.docId)
-    hydrateFromDocument(original)
+    await hydrateFromDocument(original)
   } catch {
     // The original is gone server-side; the recovered copy takes over.
-    hydrateFromDocument(copy)
+    await hydrateFromDocument(copy)
   }
 }
 
+let initInFlight: Promise<void> | null = null
+
 /** App startup: replay dirty buffer, fetch list, migrate legacy text,
  * open the last-open (or most recent) document. */
-export async function initDocuments(): Promise<void> {
+export function initDocuments(): Promise<void> {
+  // StrictMode double-invokes the mount effect; concurrent runs would
+  // double-create documents and double-replay the dirty buffer.
+  initInFlight ??= runInit().finally(() => {
+    initInFlight = null
+  })
+  return initInFlight
+}
+
+async function runInit(): Promise<void> {
   setConflictHandler(recoverSnapshot)
   const buffered = readSnapshot()
   if (buffered?.dirty) {
@@ -264,7 +322,7 @@ export async function initDocuments(): Promise<void> {
   } catch {
     useStore.getState().setDocListError(true)
     const snapshot = readSnapshot()
-    if (snapshot) hydrateFromBuffer(snapshot)
+    if (snapshot) await hydrateFromBuffer(snapshot)
     return
   }
   useStore.getState().setDocListError(false)
@@ -281,7 +339,7 @@ export async function initDocuments(): Promise<void> {
         ...currentSettings(),
       })
       useStore.getState().setDocuments([summaryOf(doc)])
-      hydrateFromDocument(doc)
+      await hydrateFromDocument(doc)
       return
     }
     await createNewDocument()
@@ -293,5 +351,5 @@ export async function initDocuments(): Promise<void> {
   const persistedId = useStore.getState().currentDocId
   const target = documents.find((d) => d.id === persistedId) ?? documents[0]
   const doc = await getDocument(target.id)
-  hydrateFromDocument(doc)
+  await hydrateFromDocument(doc)
 }

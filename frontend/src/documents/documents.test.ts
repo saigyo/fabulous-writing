@@ -101,6 +101,49 @@ describe('openDocument', () => {
     await openDocument(3)
     expect(consumeProfileApplySuppression()).toBe(false)
   })
+
+  it('replays another document\'s dirty buffered snapshot before hydrating the target', async () => {
+    writeSnapshot({
+      docId: 1, revision: 4, dirty: true, name: 'Doc 1',
+      text: 'orphaned text', findings: [], scorecard: null,
+      settings: {
+        language: 'de', profile_id: null, domain_ids: [],
+        llm_provider: null, llm_model: null, llm_tier: 'balanced', llm_auto: true,
+      },
+    })
+    vi.mocked(updateDocument).mockResolvedValue(doc(1, { revision: 5 }))
+    vi.mocked(getDocument).mockResolvedValue(doc(2))
+    await openDocument(2)
+    expect(updateDocument).toHaveBeenCalledWith(1, expect.objectContaining({ revision: 4 }))
+    expect(useStore.getState().docMeta?.id).toBe(2)
+  })
+
+  it('recovers the orphaned snapshot as a copy on conflict, then still hydrates the target', async () => {
+    writeSnapshot({
+      docId: 1, revision: 4, dirty: true, name: 'Doc 1',
+      text: 'orphaned text', findings: [], scorecard: null,
+      settings: {
+        language: 'de', profile_id: null, domain_ids: [],
+        llm_provider: null, llm_model: null, llm_tier: 'balanced', llm_auto: true,
+      },
+    })
+    vi.mocked(updateDocument).mockRejectedValue(new HttpError(409, 'stale'))
+    vi.mocked(createDocument).mockResolvedValue(
+      doc(11, { name: 'Doc 1 (recovered)', name_source: 'user' }),
+    )
+    vi.mocked(listDocuments).mockResolvedValue([summaryOf(doc(11)), summaryOf(doc(2))])
+    vi.mocked(getDocument).mockResolvedValue(doc(2))
+    await openDocument(2)
+    expect(createDocument).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'orphaned text',
+        name_source: 'user',
+        name: expect.stringContaining('recovered'),
+      }),
+    )
+    // The target document is still the one that ends up hydrated.
+    expect(useStore.getState().docMeta?.id).toBe(2)
+  })
 })
 
 describe('initDocuments', () => {
@@ -147,6 +190,17 @@ describe('initDocuments', () => {
     vi.mocked(listDocuments).mockResolvedValue([])
     vi.mocked(createDocument).mockResolvedValue(doc(1, { text: '' }))
     await initDocuments()
+    expect(createDocument).toHaveBeenCalledTimes(1)
+    expect(useStore.getState().docMeta?.id).toBe(1)
+  })
+
+  it('is re-entrant: two concurrent calls (StrictMode double-invoke) only create one document', async () => {
+    vi.mocked(listDocuments).mockResolvedValue([])
+    vi.mocked(createDocument).mockResolvedValue(doc(1, { text: '' }))
+    const p1 = initDocuments()
+    const p2 = initDocuments()
+    expect(p2).toBe(p1) // both calls share the same in-flight run
+    await Promise.all([p1, p2])
     expect(createDocument).toHaveBeenCalledTimes(1)
     expect(useStore.getState().docMeta?.id).toBe(1)
   })

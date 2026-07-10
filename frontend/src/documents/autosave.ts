@@ -19,6 +19,12 @@ let retryDelay = RETRY_BASE_MS
 let saving = false
 let pending = false
 let hydrating = false
+// The promise of the push currently in flight, chained through any
+// follow-up push triggered by `pending`. Awaited by flush() so callers
+// (e.g. openDocument) that need the save to have actually landed before
+// switching documents get a promise that only resolves once the whole
+// chain — including the queued follow-up — has settled.
+let inFlight: Promise<void> | null = null
 // Injected by documents.ts (avoids a module cycle): resolves a 409/404 by
 // preserving the stale snapshot as a recovered copy.
 let onConflict: ((snapshot: DocSnapshot) => Promise<void>) | null = null
@@ -45,6 +51,7 @@ export function resetAutosaveForTests(): void {
   timer = retryTimer = null
   retryDelay = RETRY_BASE_MS
   saving = pending = hydrating = false
+  inFlight = null
   onConflict = null
   titleAttempted.clear()
 }
@@ -93,7 +100,10 @@ export function noteChange(): void {
   timer = setTimeout(() => void flush(), DEBOUNCE_MS)
 }
 
-/** Save now (document switch, completed check, beforeunload). */
+/** Save now (document switch, completed check, beforeunload). Waits for a
+ * push already in flight (and the follow-up it queues) rather than firing a
+ * concurrent PUT — a document switch needs the save to have truly landed
+ * before it moves on. */
 export async function flush(): Promise<void> {
   if (timer) {
     clearTimeout(timer)
@@ -101,12 +111,19 @@ export async function flush(): Promise<void> {
   }
   if (saving) {
     pending = true
+    // The in-flight push's own finally block owns the follow-up push (see
+    // `push` below); we just wait for the whole chain to settle instead of
+    // starting a second, concurrent one.
+    while (saving && inFlight) {
+      await inFlight
+    }
     return
   }
   const snapshot = collectSnapshot()
   if (!snapshot) return
   writeSnapshot(snapshot)
-  await push(snapshot)
+  inFlight = push(snapshot)
+  await inFlight
 }
 
 async function push(snapshot: DocSnapshot): Promise<void> {
@@ -157,7 +174,10 @@ async function push(snapshot: DocSnapshot): Promise<void> {
       // bypass that backoff. The already-scheduled retry re-collects the
       // latest snapshot, so no edits are lost.
       if (succeeded) {
-        void flush()
+        // Awaited (not fire-and-forget): keeps `inFlight` — and hence any
+        // flush() callers waiting on it — pending until this follow-up
+        // push has also settled.
+        await flush()
       }
     }
   }
