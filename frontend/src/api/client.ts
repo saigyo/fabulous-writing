@@ -18,11 +18,11 @@ import type {
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 
 export class HttpError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string,
-  ) {
+  readonly status: number
+
+  constructor(status: number, message: string) {
     super(message)
+    this.status = status
   }
 }
 
