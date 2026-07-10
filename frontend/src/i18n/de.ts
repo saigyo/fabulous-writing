@@ -174,6 +174,15 @@ export const de: Messages = {
   exampleFlagged: 'Meldet',
   exampleNotFlagged: 'Meldet nicht',
 
+  docNew: 'Neues Dokument',
   docUntitled: 'Ohne Titel',
   docRecovered: (name) => `${name} (wiederhergestellt)`,
+  docRename: 'Umbenennen',
+  docDelete: 'Löschen',
+  docDeleteConfirm: (name) => `"${name}" löschen? Das kann nicht rückgängig gemacht werden.`,
+  docListError: 'Dokumente konnten nicht geladen werden.',
+  docRetry: 'Erneut versuchen',
+  docSidebarShow: 'Dokumente anzeigen',
+  docSidebarHide: 'Dokumente ausblenden',
+  docMenu: 'Dokumentaktionen',
 }

@@ -178,6 +178,15 @@ export const fr: Messages = {
   exampleFlagged: 'Signale',
   exampleNotFlagged: 'Ne signale pas',
 
+  docNew: 'Nouveau document',
   docUntitled: 'Sans titre',
   docRecovered: (name) => `${name} (récupéré)`,
+  docRename: 'Renommer',
+  docDelete: 'Supprimer',
+  docDeleteConfirm: (name) => `Supprimer « ${name} » ? Cette action est irréversible.`,
+  docListError: 'Impossible de charger les documents.',
+  docRetry: 'Réessayer',
+  docSidebarShow: 'Afficher les documents',
+  docSidebarHide: 'Masquer les documents',
+  docMenu: 'Actions du document',
 }

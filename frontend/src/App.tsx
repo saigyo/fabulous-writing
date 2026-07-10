@@ -4,6 +4,7 @@ import { getDomains, getLanguages, getProfiles, getProviders, getRouting } from 
 import { runCheck } from './checking/controller'
 import { flush, noteChange } from './documents/autosave'
 import { consumeProfileApplySuppression, initDocuments } from './documents/documents'
+import { DocumentSidebar } from './documents/DocumentSidebar'
 import { Editor } from './editor/Editor'
 import { setEditorText } from './editor/editorRef'
 import { DomainMultiSelect } from './header/DomainMultiSelect'
@@ -59,6 +60,7 @@ export default function App() {
     <div className="app">
       <Header />
       <main className="workspace" hidden={activeView !== 'editor'}>
+        <DocumentSidebar />
         <div className="editor-area">
           <Editor />
           <LoadExampleButton />

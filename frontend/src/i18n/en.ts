@@ -159,6 +159,15 @@ export const en: Messages = {
   exampleFlagged: 'Flags',
   exampleNotFlagged: "Doesn't flag",
 
+  docNew: 'New document',
   docUntitled: 'Untitled',
   docRecovered: (name) => `${name} (recovered)`,
+  docRename: 'Rename',
+  docDelete: 'Delete',
+  docDeleteConfirm: (name) => `Delete "${name}"? This cannot be undone.`,
+  docListError: 'Could not load documents.',
+  docRetry: 'Retry',
+  docSidebarShow: 'Show documents',
+  docSidebarHide: 'Hide documents',
+  docMenu: 'Document actions',
 }

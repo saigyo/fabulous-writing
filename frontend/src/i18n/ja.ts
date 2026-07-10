@@ -166,6 +166,15 @@ export const ja: Messages = {
   exampleFlagged: '検出する',
   exampleNotFlagged: '検出しない',
 
+  docNew: '新規ドキュメント',
   docUntitled: '無題',
   docRecovered: (name) => `${name}（復元）`,
+  docRename: '名前を変更',
+  docDelete: '削除',
+  docDeleteConfirm: (name) => `「${name}」を削除しますか？この操作は取り消せません。`,
+  docListError: 'ドキュメントを読み込めませんでした。',
+  docRetry: '再試行',
+  docSidebarShow: 'ドキュメントを表示',
+  docSidebarHide: 'ドキュメントを非表示',
+  docMenu: 'ドキュメント操作',
 }

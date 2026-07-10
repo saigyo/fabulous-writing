@@ -174,6 +174,15 @@ export const it: Messages = {
   exampleFlagged: 'Segnala',
   exampleNotFlagged: 'Non segnala',
 
+  docNew: 'Nuovo documento',
   docUntitled: 'Senza titolo',
   docRecovered: (name) => `${name} (recuperato)`,
+  docRename: 'Rinomina',
+  docDelete: 'Elimina',
+  docDeleteConfirm: (name) => `Eliminare "${name}"? L'operazione non può essere annullata.`,
+  docListError: 'Impossibile caricare i documenti.',
+  docRetry: 'Riprova',
+  docSidebarShow: 'Mostra documenti',
+  docSidebarHide: 'Nascondi documenti',
+  docMenu: 'Azioni documento',
 }

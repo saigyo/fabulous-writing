@@ -167,6 +167,15 @@ export const zh: Messages = {
   exampleFlagged: '会标记',
   exampleNotFlagged: '不标记',
 
+  docNew: '新建文档',
   docUntitled: '无标题',
   docRecovered: (name) => `${name}（已恢复）`,
+  docRename: '重命名',
+  docDelete: '删除',
+  docDeleteConfirm: (name) => `删除“${name}”？此操作无法撤销。`,
+  docListError: '无法加载文档。',
+  docRetry: '重试',
+  docSidebarShow: '显示文档',
+  docSidebarHide: '隐藏文档',
+  docMenu: '文档操作',
 }

@@ -178,6 +178,15 @@ export const es: Messages = {
   exampleFlagged: 'Señala',
   exampleNotFlagged: 'No señala',
 
+  docNew: 'Documento nuevo',
   docUntitled: 'Sin título',
   docRecovered: (name) => `${name} (recuperado)`,
+  docRename: 'Renombrar',
+  docDelete: 'Eliminar',
+  docDeleteConfirm: (name) => `¿Eliminar «${name}»? Esta acción no se puede deshacer.`,
+  docListError: 'No se pudieron cargar los documentos.',
+  docRetry: 'Reintentar',
+  docSidebarShow: 'Mostrar documentos',
+  docSidebarHide: 'Ocultar documentos',
+  docMenu: 'Acciones del documento',
 }

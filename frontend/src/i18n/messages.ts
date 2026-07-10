@@ -159,6 +159,15 @@ export interface Messages {
   exampleNotFlagged: string
 
   // Document lifecycle
+  docNew: string
   docUntitled: string
   docRecovered: (name: string) => string
+  docRename: string
+  docDelete: string
+  docDeleteConfirm: (name: string) => string
+  docListError: string
+  docRetry: string
+  docSidebarShow: string
+  docSidebarHide: string
+  docMenu: string
 }
