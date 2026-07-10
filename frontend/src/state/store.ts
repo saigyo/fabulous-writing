@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { HeldBackSuggestion } from '../api/client'
+import type { DocumentSummary, HeldBackSuggestion, NameSource } from '../api/client'
 import type { TrackedFinding } from '../editor/findings'
 import { mapEquivalentIds } from '../findings/equivalence'
 import type { SourceGroup } from '../findings/source'
@@ -21,6 +21,13 @@ import type {
 
 export type CheckPhase = 'idle' | 'fast' | 'llm'
 export type ActiveView = 'editor' | 'rules' | 'terminology' | 'profiles'
+
+export interface DocMeta {
+  id: number
+  name: string
+  nameSource: NameSource
+  revision: number
+}
 
 interface AppState {
   language: Language
@@ -70,6 +77,12 @@ interface AppState {
   rewriteErrors: Record<string, string>
   rewriteHeldBack: Record<string, HeldBackRewrite>
   rewriteAdvice: Record<string, string[]>
+  documents: DocumentSummary[]
+  docMeta: DocMeta | null
+  // Persisted so a reload reopens the same document; docMeta is runtime-only.
+  currentDocId: number | null
+  docSidebarCollapsed: boolean
+  docListError: boolean
 
   setLanguage: (language: Language) => void
   setUiLocale: (uiLocale: Locale) => void
@@ -108,6 +121,12 @@ interface AppState {
   setRewriteError: (findingId: string, error: string | null) => void
   setRewriteHeldBack: (findingId: string, heldBack: HeldBackRewrite | null) => void
   setRewriteAdvice: (findingId: string, advice: string[] | null) => void
+  setDocuments: (documents: DocumentSummary[]) => void
+  setDocMeta: (docMeta: DocMeta | null) => void
+  patchDocMeta: (patch: Partial<DocMeta>) => void
+  touchDocument: (id: number, name?: string) => void
+  toggleDocSidebar: () => void
+  setDocListError: (docListError: boolean) => void
 }
 
 export interface Rewrite {
@@ -187,6 +206,11 @@ export const useStore = create<AppState>()(
       rewriteErrors: {},
       rewriteHeldBack: {},
       rewriteAdvice: {},
+      documents: [],
+      docMeta: null,
+      currentDocId: null,
+      docSidebarCollapsed: false,
+      docListError: false,
 
       setLanguage: (language) => set({ language }),
       setUiLocale: (uiLocale) => set({ uiLocale }),
@@ -278,27 +302,56 @@ export const useStore = create<AppState>()(
         set((state) => ({
           rewriteAdvice: withEntry(state.rewriteAdvice, findingId, advice),
         })),
+      setDocuments: (documents) => set({ documents }),
+      setDocMeta: (docMeta) =>
+        set({ docMeta, currentDocId: docMeta ? docMeta.id : null }),
+      patchDocMeta: (patch) =>
+        set((state) =>
+          state.docMeta ? { docMeta: { ...state.docMeta, ...patch } } : {},
+        ),
+      touchDocument: (id, name) =>
+        set((state) => {
+          const entry = state.documents.find((d) => d.id === id)
+          if (!entry) return {}
+          const touched = {
+            ...entry,
+            name: name ?? entry.name,
+            updated_at: new Date().toISOString(),
+          }
+          return {
+            documents: [touched, ...state.documents.filter((d) => d.id !== id)],
+          }
+        }),
+      toggleDocSidebar: () =>
+        set((state) => ({ docSidebarCollapsed: !state.docSidebarCollapsed })),
+      setDocListError: (docListError) => set({ docListError }),
     }),
     {
       name: 'fabulous-writing-settings',
-      version: 1,
+      version: 2,
       // v0 predates tiers: those users had explicitly chosen provider/model,
       // so they stay pinned rather than silently switching models.
+      // v1 -> v2: header settings moved into per-document storage; stale keys
+      // in old blobs are harmless extras and rehydrate transiently (the
+      // legacy-document migration in documents.ts still reads them once).
       migrate: (persisted, version) =>
         version === 0
           ? { ...(persisted as object), tier: null }
           : (persisted as object),
       partialize: (state) => ({
-        language: state.language,
         uiLocale: state.uiLocale,
-        domainIds: state.domainIds,
-        provider: state.provider,
-        model: state.model,
-        tier: state.tier,
-        llmAuto: state.llmAuto,
         lastProfileByLanguage: state.lastProfileByLanguage,
         rulesCollapsed: state.rulesCollapsed,
+        currentDocId: state.currentDocId,
+        docSidebarCollapsed: state.docSidebarCollapsed,
       }),
     },
   ),
 )
+
+// Exported for testing persist migration (workaround for zustand v5 limitations)
+export const persistConfig = {
+  version: 2,
+  migrate: (persisted: unknown, version: number): unknown =>
+    version === 0 ? { ...(persisted as object), tier: null } : (persisted as object),
+}

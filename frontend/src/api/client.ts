@@ -11,10 +11,20 @@ import type {
   RuleError,
   RuleInfo,
   Scorecard,
+  Tier,
   Term,
 } from '../types'
 
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+
+export class HttpError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message)
+  }
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${BASE}${path}`, {
@@ -22,7 +32,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   })
   if (!response.ok) {
-    throw new Error(`${init?.method ?? 'GET'} ${path} failed: ${response.status}`)
+    throw new HttpError(
+      response.status,
+      `${init?.method ?? 'GET'} ${path} failed: ${response.status}`,
+    )
   }
   if (response.status === 204) return undefined as T
   return response.json()
@@ -179,3 +192,93 @@ export const deleteProfile = (id: number) =>
   request<void>(`/api/profiles/${id}`, { method: 'DELETE' })
 export const resetProfile = (id: number) =>
   request<Profile>(`/api/profiles/${id}/reset`, { method: 'POST' })
+
+export interface DocumentSummary {
+  id: number
+  name: string
+  language: Language
+  updated_at: string
+}
+
+export interface SavedFinding {
+  finding: Finding
+  from: number
+  to: number
+}
+
+export interface ScorecardSnapshot {
+  card: Scorecard
+  stale: boolean
+}
+
+export type NameSource = 'fallback' | 'llm' | 'user'
+
+export interface DocumentFull {
+  id: number
+  owner_id: number
+  name: string
+  name_source: NameSource
+  text: string
+  language: Language
+  profile_id: number | null
+  domain_ids: number[]
+  llm_provider: string | null
+  llm_model: string | null
+  llm_tier: Tier | null
+  llm_auto: boolean
+  last_findings: SavedFinding[]
+  scorecard: ScorecardSnapshot | null
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface DocumentSettingsPayload {
+  language: Language
+  profile_id: number | null
+  domain_ids: number[]
+  llm_provider: string | null
+  llm_model: string | null
+  llm_tier: Tier | null
+  llm_auto: boolean
+}
+
+export interface DocumentContentPayload {
+  text: string
+  findings: SavedFinding[]
+  scorecard: ScorecardSnapshot | null
+}
+
+export interface DocumentCreatePayload extends Partial<DocumentSettingsPayload> {
+  name: string
+  language: Language
+  name_source?: 'fallback' | 'user'
+  text?: string
+  findings?: SavedFinding[]
+  scorecard?: ScorecardSnapshot | null
+}
+
+export interface DocumentUpdatePayload {
+  revision: number
+  name?: string
+  content?: DocumentContentPayload
+  settings?: DocumentSettingsPayload
+}
+
+export const listDocuments = () => request<DocumentSummary[]>('/api/documents')
+export const getDocument = (id: number) =>
+  request<DocumentFull>(`/api/documents/${id}`)
+export const createDocument = (payload: DocumentCreatePayload) =>
+  request<DocumentFull>('/api/documents', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+export const updateDocument = (id: number, payload: DocumentUpdatePayload) =>
+  request<DocumentFull>(`/api/documents/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+export const deleteDocument = (id: number) =>
+  request<void>(`/api/documents/${id}`, { method: 'DELETE' })
+export const generateDocumentName = (id: number) =>
+  request<DocumentFull>(`/api/documents/${id}/generate-name`, { method: 'POST' })

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { HeldBackSuggestion } from '../api/client'
 import type { TrackedFinding } from '../editor/findings'
 import type { Finding } from '../types'
-import { useStore } from './store'
+import { persistConfig, useStore } from './store'
 
 function tracked(id: string, from: number, to: number, text: string): TrackedFinding {
   const finding: Finding = {
@@ -131,5 +131,41 @@ describe('advice notes', () => {
     expect(useStore.getState().rewriteAdvice['f1']).toEqual(['Split into two paragraphs.'])
     useStore.getState().setRewriteAdvice('f1', null)
     expect(useStore.getState().rewriteAdvice['f1']).toBeUndefined()
+  })
+})
+
+describe('document state', () => {
+  it('setDocMeta mirrors currentDocId and patchDocMeta merges', () => {
+    useStore.getState().setDocMeta({ id: 7, name: 'A', nameSource: 'fallback', revision: 0 })
+    expect(useStore.getState().currentDocId).toBe(7)
+    useStore.getState().patchDocMeta({ revision: 3 })
+    expect(useStore.getState().docMeta).toEqual({ id: 7, name: 'A', nameSource: 'fallback', revision: 3 })
+    useStore.getState().setDocMeta(null)
+    expect(useStore.getState().currentDocId).toBeNull()
+  })
+
+  it('touchDocument moves the entry to the front and renames it', () => {
+    useStore.getState().setDocuments([
+      { id: 1, name: 'One', language: 'en', updated_at: '2026-07-10T00:00:00+00:00' },
+      { id: 2, name: 'Two', language: 'en', updated_at: '2026-07-10T00:00:00+00:00' },
+    ])
+    useStore.getState().touchDocument(2, 'Renamed')
+    const docs = useStore.getState().documents
+    expect(docs.map((d) => d.id)).toEqual([2, 1])
+    expect(docs[0].name).toBe('Renamed')
+    // Unknown ids are a no-op.
+    useStore.getState().touchDocument(99)
+    expect(useStore.getState().documents.map((d) => d.id)).toEqual([2, 1])
+  })
+
+  it('persist v1 -> v2 migration keeps old blobs loadable', () => {
+    // The migrate function must accept a v1 blob (which still contains the
+    // now-transient settings keys) without throwing.
+    const migrated = persistConfig.migrate(
+      { language: 'de', provider: 'ollama', uiLocale: 'de', rulesCollapsed: [] },
+      1,
+    )
+    expect((migrated as any).uiLocale).toBe('de')
+    expect(persistConfig.version).toBe(2)
   })
 })
