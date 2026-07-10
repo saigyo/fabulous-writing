@@ -21,7 +21,7 @@ on reopening.
 3. **Check results:** persisted after every completed check (immediate save),
    together with the text they belong to — text and findings are always
    written in the same PUT so they cannot disagree.
-4. **Auto-naming:** the LLM titles a document through the **fast tier**
+4. **Auto-naming:** the LLM titles a document through the **cheap tier**
    regardless of the document's own provider settings. Generated **once**
    when the text first passes the threshold; after that only manual rename
    changes the name. First-words fallback when the LLM call fails.
@@ -92,7 +92,7 @@ New router `backend/app/api/documents.py`, mounted like the existing routers.
 | `GET /api/documents/{id}` | Full document: text, settings, `last_findings`, `scorecard`, `revision`, name fields. |
 | `PUT /api/documents/{id}` | Partial update — the autosave endpoint. Accepts any subset of: text+findings+scorecard (always together), settings fields, `name` (rename sets `name_source='user'`). Requires the client's base `revision`; on match, applies, increments `revision`, bumps `updated_at`, returns the new revision. On mismatch → **409** with the current server revision. |
 | `DELETE /api/documents/{id}` | Hard delete. 404 if missing. |
-| `POST /api/documents/{id}/generate-name` | Runs the title prompt through the fast tier. Acts only if `name_source == 'fallback'`; otherwise no-op returning the current name. On success stores the title, sets `name_source='llm'`. On LLM failure keeps the fallback name and `name_source='fallback'` (a later call may retry). |
+| `POST /api/documents/{id}/generate-name` | Runs the title prompt through the cheap tier. Acts only if `name_source == 'fallback'`; otherwise no-op returning the current name. On success stores the title, sets `name_source='llm'`. On LLM failure keeps the fallback name and `name_source='fallback'` (a later call may retry). |
 
 Last-write-wins within a matching revision; no merge machinery.
 
@@ -102,7 +102,7 @@ Last-write-wins within a matching revision; no merge machinery.
   reaches ≥ 20 words, fire `generate-name` once per session per document.
 - Fallback name: first ~6 words of the text (trimmed, single-spaced), or the
   localized "Untitled" while empty.
-- The title prompt asks the fast tier for a short (≤ 8 words) title in the
+- The title prompt asks the cheap tier for a short (≤ 8 words) title in the
   document's language, returning plain text (stripped of quotes/trailing
   punctuation).
 
