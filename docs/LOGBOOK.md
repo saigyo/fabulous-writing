@@ -2317,3 +2317,24 @@ editor and findings panel intact.
 npx vitest run` → 197 passed (21 files); `npx tsc --noEmit` clean; `npm run lint`
 (oxlint) clean; `npm run build` clean (only the pre-existing >500kB chunk-size
 advisory, unrelated).
+
+## 2026-07-11 — Documents feature: final whole-branch review fixes
+
+Commits: `011d448` (fixes), `8229ad8` (test repair)
+
+The final whole-branch review (commits c5545e5..5b9f3f1) returned NOT READY
+with five Important composition-seam findings, all fixed in `011d448`:
+offline startup now arms the autosave retry loop after hydrating from the
+buffer (I-1); `GET /api/documents/{id}` prunes a deleted `profile_id` to
+null at read time, and opening such a document no longer autosaves a
+spurious Standard-profile reassignment into it (I-2); `set_name` gained an
+`only_if_source` guard so a user rename landing during the title-LLM call
+can no longer be clobbered by `generate-name` (I-3); deleting a document
+with a still-dirty buffer snapshot clears the snapshot instead of
+resurrecting the deleted text as a "(recovered)" copy (I-4); and the legacy
+localStorage text key is now removed only after the migration create
+succeeds, so a failing backend can no longer lose the pre-feature document
+(I-5). A verification review mutation-tested every fix; its one finding — a
+vacuous covering test for I-1 — was repaired in `8229ad8` (the test now
+fails without the fix). Gates after both commits: backend 666 passed,
+frontend 203 passed, tsc/build/lint clean.
