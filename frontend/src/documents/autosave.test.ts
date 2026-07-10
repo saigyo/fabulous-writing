@@ -127,7 +127,7 @@ describe('autosave', () => {
     expect(generateDocumentName).not.toHaveBeenCalled()
   })
 
-  it('a flush during an in-flight save queues exactly one follow-up', async () => {
+  it('a flush during an in-flight save queues exactly one follow-up (content changed meanwhile)', async () => {
     let resolveFirst!: (value: unknown) => void
     vi.mocked(updateDocument).mockImplementationOnce(
       () =>
@@ -138,6 +138,9 @@ describe('autosave', () => {
 
     void flush() // save #1 starts and is now in flight
     expect(updateDocument).toHaveBeenCalledTimes(1)
+    // The queued follow-up only produces a real PUT if something actually
+    // changed in the meantime — otherwise the no-op guard suppresses it.
+    docText = 'hello world, edited'
     void flush() // in flight: just sets pending
     void flush() // still in flight: pending already set
 
@@ -158,6 +161,8 @@ describe('autosave', () => {
 
     const p1 = flush() // save #1 starts and is now in flight
     expect(updateDocument).toHaveBeenCalledTimes(1)
+    // As above: the follow-up only PUTs again if content actually changed.
+    docText = 'hello world, edited'
 
     let callsWhenP2Resolved = -1
     const p2 = flush().then(() => {
@@ -172,6 +177,19 @@ describe('autosave', () => {
     await p2
 
     expect(callsWhenP2Resolved).toBe(2)
+    expect(updateDocument).toHaveBeenCalledTimes(2)
+  })
+
+  it('flush() no-ops when nothing changed since the last successful save; a real edit lifts the guard', async () => {
+    await flush()
+    expect(updateDocument).toHaveBeenCalledTimes(1)
+    expect(readSnapshot()?.dirty).toBe(false)
+
+    await flush() // nothing changed: must not PUT again
+    expect(updateDocument).toHaveBeenCalledTimes(1)
+
+    docText = 'hello world, edited'
+    await flush() // a real edit: the guard must not stick
     expect(updateDocument).toHaveBeenCalledTimes(2)
   })
 

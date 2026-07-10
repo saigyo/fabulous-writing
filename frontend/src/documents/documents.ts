@@ -256,8 +256,31 @@ export async function removeDocument(id: number): Promise<void> {
 }
 
 /** 409/404 resolution: the local snapshot becomes a recovered copy; the
- * server version wins in place. Lossless, deterministic, no dialogs. */
+ * server version wins in place. Lossless, deterministic, no dialogs.
+ *
+ * Before doing that, check whether this "conflict" is actually our own
+ * write racing itself: a beforeunload flush can be aborted client-side
+ * during navigation teardown after the server already durably applied it,
+ * leaving the buffer dirty with a stale revision. The next replay of that
+ * stale revision then gets a genuine 409/404 against content that is
+ * byte-identical to what's already on the server — nothing to recover. */
 async function recoverSnapshot(snapshot: DocSnapshot): Promise<void> {
+  try {
+    const server = await getDocument(snapshot.docId)
+    if (server.text === snapshot.text) {
+      clearSnapshot()
+      await refreshDocuments()
+      if (skipRecoveryHydrate) return
+      if (useStore.getState().docMeta?.id !== snapshot.docId) return
+      await hydrateFromDocument(server)
+      return
+    }
+  } catch (error) {
+    if (!(error instanceof HttpError && error.status === 404)) throw error
+    // The document is genuinely gone server-side: fall through to the
+    // recovered-copy logic below, same as the existing 404 handling.
+  }
+
   const copy = await apiCreateDocument({
     name: currentMessages().docRecovered(snapshot.name),
     name_source: 'user',

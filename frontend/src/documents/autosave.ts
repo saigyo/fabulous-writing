@@ -6,7 +6,7 @@ import {
 import { getEditorView } from '../editor/editorRef'
 import { wordCount } from '../scoring/score'
 import { useStore } from '../state/store'
-import { writeSnapshot, type DocSnapshot } from './buffer'
+import { readSnapshot, writeSnapshot, type DocSnapshot } from './buffer'
 
 const DEBOUNCE_MS = 1500
 const RETRY_BASE_MS = 2000
@@ -90,6 +90,20 @@ export function collectSnapshot(): DocSnapshot | null {
   }
 }
 
+/** True when two snapshots carry the same document content — everything a
+ * PUT would actually change (name, text, findings, scorecard, settings). */
+function sameContent(a: DocSnapshot, b: DocSnapshot): boolean {
+  const contentOf = (s: DocSnapshot) =>
+    JSON.stringify({
+      name: s.name,
+      text: s.text,
+      findings: s.findings,
+      scorecard: s.scorecard,
+      settings: s.settings,
+    })
+  return contentOf(a) === contentOf(b)
+}
+
 /** Editor/settings changed: buffer synchronously, save debounced. */
 export function noteChange(): void {
   if (hydrating) return
@@ -121,6 +135,21 @@ export async function flush(): Promise<void> {
   }
   const snapshot = collectSnapshot()
   if (!snapshot) return
+  const buffered = readSnapshot()
+  if (
+    buffered &&
+    !buffered.dirty &&
+    buffered.docId === snapshot.docId &&
+    buffered.revision === snapshot.revision &&
+    sameContent(buffered, snapshot)
+  ) {
+    // Nothing changed since the last successful save: a redundant PUT here
+    // (e.g. from an unconditional beforeunload flush on a plain reload)
+    // could still be aborted client-side after the server durably applies
+    // it, leaving the buffer dirty with a stale revision — see the
+    // duplicate-recovered-document bug this guards against.
+    return
+  }
   writeSnapshot(snapshot)
   inFlight = push(snapshot)
   await inFlight

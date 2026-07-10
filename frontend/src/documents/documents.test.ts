@@ -254,7 +254,7 @@ describe('initDocuments', () => {
     expect(readSnapshot()?.dirty).toBe(true) // still awaiting sync
   })
 
-  it('recovers a conflicted replay as a new user-named document', async () => {
+  it('recovers a conflicted replay as a new user-named document (server text differs)', async () => {
     writeSnapshot({
       docId: 3, revision: 4, dirty: true, name: 'Doc 3',
       text: 'diverged text', findings: [], scorecard: null,
@@ -264,9 +264,13 @@ describe('initDocuments', () => {
       },
     })
     vi.mocked(updateDocument).mockRejectedValue(new HttpError(409, 'stale'))
+    // getDocument (the self-write check, and later the "hydrate original"
+    // fetch) returns the server doc, whose text ('stored text') genuinely
+    // differs from the buffered snapshot's ('diverged text') — a real
+    // conflict, so the recovered-copy path must still run.
+    vi.mocked(getDocument).mockResolvedValue(doc(3))
     vi.mocked(createDocument).mockResolvedValue(doc(11, { name: 'Doc 3 (recovered)', name_source: 'user' }))
     vi.mocked(listDocuments).mockResolvedValue([summaryOf(doc(11)), summaryOf(doc(3))])
-    vi.mocked(getDocument).mockResolvedValue(doc(3))
     useStore.setState({ currentDocId: 3 })
     await initDocuments()
     expect(createDocument).toHaveBeenCalledWith(
@@ -278,6 +282,29 @@ describe('initDocuments', () => {
     )
     // The server version of the original wins in place.
     expect(useStore.getState().docMeta?.id).toBe(3)
+  })
+
+  it('detects a self-write conflict (server already has the buffered content) and skips recovery entirely', async () => {
+    writeSnapshot({
+      docId: 3, revision: 4, dirty: true, name: 'Doc 3',
+      // Identical to doc(3)'s default text: this simulates our own
+      // beforeunload PUT having landed server-side before the client saw
+      // the response, so the replay's 409 is not a real conflict.
+      text: 'stored text', findings: [], scorecard: null,
+      settings: {
+        language: 'de', profile_id: null, domain_ids: [],
+        llm_provider: null, llm_model: null, llm_tier: 'balanced', llm_auto: true,
+      },
+    })
+    vi.mocked(updateDocument).mockRejectedValue(new HttpError(409, 'stale'))
+    vi.mocked(getDocument).mockResolvedValue(doc(3, { revision: 7 }))
+    vi.mocked(listDocuments).mockResolvedValue([summaryOf(doc(3, { revision: 7 }))])
+    useStore.setState({ currentDocId: 3 })
+    await initDocuments()
+    expect(createDocument).not.toHaveBeenCalled()
+    expect(useStore.getState().docMeta?.id).toBe(3)
+    expect(useStore.getState().docMeta?.revision).toBe(7)
+    expect(readSnapshot()?.dirty).toBe(false)
   })
 })
 
