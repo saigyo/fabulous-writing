@@ -49,6 +49,11 @@ frontend/src/
 ├── profiles/
 │   ├── profile.ts             # apply/dirty/rule-activation logic (mirrors backend XOR)
 │   └── ProfilesView.tsx       # profile management view
+├── documents/
+│   ├── buffer.ts              # write-through DocSnapshot cache (localStorage)
+│   ├── autosave.ts            # debounced save, retry backoff, no-op suppression, auto-title
+│   ├── documents.ts           # lifecycle: open/create/rename/delete, replay, recovery
+│   └── DocumentSidebar.tsx    # sidebar UI: list, new, rename, delete
 ├── header/
 │   ├── ProfileSelector.tsx    # profile dropdown + dirty marker + save/reset
 │   ├── LlmSelector.tsx        # tier dropdown + resolved caption + advanced pin panel
@@ -83,12 +88,17 @@ authoritative. `routing: RoutingTable | null` holds the `GET /api/routing` respo
 (fetched at startup alongside providers) and is **ephemeral** — never persisted, since
 availability is only meaningful for the current process.
 
-The `persist` middleware saves only the settings slice (language, UI locale, domain
-ids, provider, model, `tier`, llmAuto, `lastProfileByLanguage`) to localStorage;
-results, caches, and `routing` are ephemeral. The document text is persisted
-separately by the editor under its own key. A `migrate` step handles the pre-tier
-persisted shape (version 0): those users had explicitly chosen a provider/model, so
-they land in pinned mode (`tier: null`) rather than silently switching to tier mode.
+The `persist` middleware (v2) saves a small cross-document slice to localStorage:
+`uiLocale`, `lastProfileByLanguage`, `rulesCollapsed`, `currentDocId`, and
+`docSidebarCollapsed`. Everything that used to live here in v1 — `language`,
+`domainIds`, `provider`, `model`, `tier`, `llmAuto` — moved into per-document storage
+(the backend's `settings` columns; see [Documents](#documents)) once multiple documents
+each needed their own header configuration. Results, caches, and `routing` stay
+ephemeral as before. A `migrate` step still handles the pre-tier persisted shape
+(version 0): those users had explicitly chosen a provider/model, so they land in pinned
+mode (`tier: null`) rather than silently switching to tier mode; version 1 passes
+through unchanged into v2 (its now-stale header fields are harmless extras that the
+legacy-document migration in `documents.ts` reads once, then ignores).
 
 Two store behaviors deserve a note:
 
@@ -328,6 +338,130 @@ fallback for any future pack slug the catalog introduces, so a new pack YAML fil
 gets a readable label without an i18n change. `RulesView.tsx` shows the
 per-profile banner, category checkboxes, and per-rule switches that write through to
 `PUT /api/profiles/{id}`.
+
+## Documents
+
+`src/documents/` gives each piece of writing its own persisted text, check-state
+snapshot, and header settings, backed by the `/api/documents` endpoints (see
+[backend-architecture.md](backend-architecture.md#documents)):
+
+- `buffer.ts` — a thin localStorage wrapper (`fabulous-writing-doc-buffer` key,
+  `writeSnapshot`/`readSnapshot`/`clearSnapshot`) around one `DocSnapshot`: `docId`,
+  `revision`, `dirty`, `name`, `text`, `findings`, `scorecard`, `settings`. It is a
+  **write-through cache**, never the source of truth — it only bridges network
+  failures and tab closes until the backend confirms the write (`dirty: false`).
+- `autosave.ts` — the save engine.
+- `documents.ts` — document lifecycle: open/create/rename/delete, startup replay,
+  legacy-text migration, orphan replay on document switch, and 409/404 recovery.
+- `DocumentSidebar.tsx` — the collapsible sidebar UI (`.doc-sidebar`; new/rename/delete,
+  relative timestamps via `Intl.RelativeTimeFormat`).
+
+### The write-through buffer and autosave engine
+
+`collectSnapshot()` assembles the current `DocSnapshot` from the editor (text) and the
+store (tracked findings, scorecard, header settings) — always marked `dirty: true`, since
+it describes *what should be saved*, not what has been. `noteChange()` (called from the
+editor's update listener and from the header's settings-change effect) buffers that
+snapshot synchronously via `writeSnapshot` and arms a 1.5 s debounce before calling
+`flush()`, so a fast typist never fires one PUT per keystroke while a crash or reload
+mid-typing still has a recent snapshot to replay.
+
+`flush()` is also called synchronously at document-switch and `beforeunload` — points
+where a save must be *attempted* immediately rather than waiting for the debounce. Two
+guards keep this from causing redundant writes:
+
+- **In-flight coalescing**: if a push is already in flight, `flush()` sets `pending` and
+  awaits the same promise chain rather than starting a second concurrent PUT; the
+  in-flight push's own completion handler fires the queued follow-up (`push`'s `finally`
+  block), so callers that need the save to have truly landed (e.g. `openDocument`) get a
+  promise that resolves only once the whole chain settles.
+- **No-op suppression**: before writing anything, `flush()` compares the fresh snapshot
+  against the buffered one (`sameContent`, a `JSON.stringify` comparison of `name`,
+  `text`, `findings`, `scorecard`, `settings`). If the buffer is already clean
+  (`dirty: false`), matches the same `docId`/`revision`, and the content is identical,
+  `flush()` returns without writing the buffer or calling `updateDocument`. This closes a
+  real bug found during end-to-end verification: `Editor.tsx`'s unconditional
+  `beforeunload → flush()` PUT on every reload, even with zero edits, could be aborted
+  client-side by the browser during navigation teardown *after* the server had already
+  durably applied it — leaving the buffer `dirty` with a now-stale revision. The next
+  boot then replayed that stale revision, got a genuine 409 against the client's own
+  prior write, and unconditionally spawned a "(recovered)" duplicate. No-op suppression
+  removes the trigger at the source: a plain reload with nothing changed now issues no
+  PUT at all.
+
+A failed push retries with exponential backoff (`RETRY_BASE_MS` 2 s, doubling to
+`RETRY_MAX_MS` 30 s, reset on success) — except a 409/404, which hands off to the
+conflict handler (`recoverSnapshot`, injected from `documents.ts` via
+`setConflictHandler` to avoid a module cycle) instead of retrying blindly. `cancelRetry()`
+lets a document switch take sole ownership of a pending retry before replaying it as an
+orphaned snapshot (below).
+
+**Auto-title trigger**: once a save succeeds, `maybeGenerateTitle` fires
+`POST /documents/{id}/generate-name` exactly once per fallback-named document
+(`titleAttempted` set, checked against `docMeta.nameSource === 'fallback'`), gated on the
+text having reached `TITLE_WORD_THRESHOLD` (20) words — mirroring the backend's own
+short-circuit for anything already titled or user-renamed.
+
+### Document lifecycle and self-write-aware recovery
+
+`documents.ts` owns the document list and the currently open document:
+
+- `openDocument`/`createNewDocument`/`renameDocument`/`removeDocument` are the sidebar's
+  verbs; `openDocument` and `createNewDocument` both `flush()` the outgoing document
+  first so a switch never silently drops an edit. `removeDocument` falls back to
+  creating a fresh document when the last one is deleted — there is always exactly one
+  open document.
+- `hydrateFromDocument(doc)` loads a document into the store and editor as **one**
+  CodeMirror transaction (text replacement + `setFindingsEffect` together), so restored
+  finding spans are never applied against the wrong text. It also copies the document's
+  settings (language, domains, provider/model/tier, `llmAuto`, profile) into the header,
+  setting a one-shot `suppressProfileApply` flag when the language changed so the
+  header's own profile-apply effect doesn't immediately overwrite the document's stored
+  settings with the newly-selected-profile's defaults (`consumeProfileApplySuppression`,
+  read once by `App.tsx`).
+- **Orphan replay**: the buffer is a single slot for the current document only. If it
+  still holds a *dirty* snapshot for a document other than the one about to be hydrated
+  (the user switched documents while a previous save was failing),
+  `replayOrphanedSnapshot` takes over the pending retry (`cancelRetry()`) and gives that
+  snapshot one direct replay attempt before it's overwritten, so a failing save doesn't
+  silently lose edits just because the user moved on.
+- **Startup replay** (`runInit`, wrapped by `initDocuments` behind an `initInFlight`
+  guard so React StrictMode's double-invoked mount effect can't double-replay): a dirty
+  buffered snapshot from a previous session is replayed first, the document list is
+  fetched, a legacy pre-multi-document text blob is migrated into a new document if the
+  list is empty, and finally the persisted `currentDocId` (or the most recent document)
+  is opened.
+- **Self-write detection before recovery** (`recoverSnapshot`): every 409/404 path — a
+  live autosave conflict, an orphan replay, or a startup replay — funnels into this one
+  function. Before creating a "recovered copy," it first fetches the server's current
+  version of the same document (`getDocument(snapshot.docId)`). If the server's `text`
+  already matches the buffered snapshot's `text`, the "conflict" is the client's own
+  earlier write landing after the client itself gave up on the request (the same
+  aborted-`beforeunload`-PUT race the no-op guard above targets, for the case where a
+  real edit *was* pending, not just a no-op) — there is nothing to recover. The function
+  clears the buffer, refreshes the document list, and hydrates the server's version in
+  place (respecting `skipRecoveryHydrate` and an is-this-still-the-open-document check),
+  without ever calling `createDocument`. Only when the server's text genuinely differs
+  (or a 404 means the document is gone server-side) does the original recovered-copy
+  path run: a new document named via `docRecovered(name)`, seeded with the buffered
+  content, while the original id (if it still exists) is reloaded from the server in
+  place. Together with the autosave no-op guard, this closes the reload-duplication bug
+  end to end — the guard stops the redundant write from happening in the common case,
+  and this check stops a redundant write that *does* still race from spawning a
+  duplicate.
+
+### Per-document header settings and persistence
+
+Each document carries its own `language`, `domain_ids`, `llm_provider`/`llm_model`/
+`llm_tier`/`llm_auto`, and `profile_id` — the entire header configuration travels with
+the document rather than being global, so switching documents can switch language and
+LLM setup without a separate "per-document settings" UI. See [State
+management](#state-management) above for what persist v2 keeps globally
+(`uiLocale`, `lastProfileByLanguage`, `rulesCollapsed`, `currentDocId`,
+`docSidebarCollapsed`) versus what now lives per-document on the backend. The one
+remaining piece of document content in localStorage is the write-through buffer
+(`fabulous-writing-doc-buffer`, above) — a cache of the *currently open* document only,
+never a second source of truth for the list.
 
 ## Internationalization
 

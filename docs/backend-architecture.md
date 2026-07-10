@@ -473,6 +473,63 @@ when a check runs (see Rule engine below); fresh seeds default it to `[]`.
   `null` when omitted, while `ProfileUpdate` requires the field on every `PUT` (still
   nullable) since a full replacement should not leave it implicit.
 
+## Documents
+
+Documents give each piece of writing its own persisted text, check-state snapshot, and
+per-document settings — the multi-document upgrade from the earlier single-buffer model.
+There is one owner (`owner_id` defaults to `1`; the column exists so a future multi-user
+mode is a data migration, not a schema change — nothing today issues a different value).
+
+- **Storage** (`app/services/documents.py`): a single `documents` table — `id`, `owner_id`,
+  `name`, `name_source` (`fallback|llm|user`), `text`, `language`, `profile_id`,
+  `domain_ids` (JSON list), `llm_provider`/`llm_model`/`llm_tier`/`llm_auto` (the same
+  per-document LLM settings the header exposes), `last_findings` (JSON list) and
+  `scorecard` (JSON object or `NULL`) — the check-state snapshot travels with the text
+  so a reload restores findings without re-checking — `revision`, `created_at`,
+  `updated_at`.
+- **`DocumentStore`** (same module) is the optimistic-locking guard: `update_document(id,
+  base_revision, **fields)` applies a `WHERE id = ? AND revision = ?` conditional update
+  that also bumps `revision` and `updated_at`; a `rowcount == 0` means the document either
+  moved past `base_revision` (raises `RevisionConflictError(current_revision)`, → HTTP
+  409) or no longer exists (`None`, → 404). `set_name(id, name, name_source)` is the one
+  deliberate exception: it updates `name`/`name_source`/`updated_at` **without** touching
+  `revision`, so a server-side rename (auto-titling, see below) can never invalidate a
+  client's in-flight autosave by moving the revision out from under it. `list_documents()`
+  returns the lighter `DocumentSummary` (`id`, `name`, `language`, `updated_at` — no
+  `revision`, no content) ordered most-recently-updated first, for the sidebar; the full
+  `Document` (content, settings, `revision`) is only fetched per-document via `GET
+  /api/documents/{id}`.
+- **API** (`app/api/documents.py`, `/api/documents` prefix):
+
+  | Endpoint | Purpose |
+  |---|---|
+  | `GET /api/documents` | list summaries (sidebar) |
+  | `POST /api/documents` | create (`name`, `language`, optional seed `text`/settings/findings/scorecard); `name_source` defaults to `fallback`, `llm` is server-assigned only — a client cannot claim it |
+  | `GET /api/documents/{id}` | full document incl. `revision` |
+  | `PUT /api/documents/{id}` | revision-guarded update of any of `name`/`content` (`text`+`findings`+`scorecard`, always written together so findings can never describe different text than they were computed against)/`settings`; a body `name` also stamps `name_source="user"` |
+  | `DELETE /api/documents/{id}` | remove |
+  | `POST /api/documents/{id}/generate-name` | auto-title (below) |
+
+  `PUT` requires `revision` in the body and maps a `RevisionConflictError` to 409 with the
+  current server revision in the message, so the client can decide how to reconcile
+  (see the frontend's recovered-copy flow in `docs/frontend-architecture.md`).
+- **Auto-naming** (`generate_name` in `app/api/documents.py` + `app/services/naming.py`):
+  a no-op once a document has ever been titled or user-renamed (`name_source != "fallback"`
+  short-circuits immediately — "Untitled" documents are the only ones eligible). Otherwise
+  it resolves the **cheap tier** for the document's language from
+  `settings.routing.languages[language]["cheap"]`, builds a title prompt
+  (`build_title_prompt`), and asks that provider for one line. Any failure (missing tier
+  entry, empty text, provider error) is swallowed silently and falls through to the
+  fallback — auto-titling must never surface an error to the user. A usable LLM reply is
+  cleaned by `clean_title()` (first line, whitespace-collapsed, surrounding
+  quotes/guillemets/corner-brackets and trailing punctuation stripped, capped at 80 chars)
+  and saved via `set_name(..., "llm")`. If the LLM path produced nothing (or text is
+  empty), `fallback_name()` takes the first six words of the text (capped at 40 characters
+  to bound spaceless CJK) and saves that via `set_name(..., "fallback")`; empty text keeps
+  the localized "Untitled" name entirely (no `set_name` call). Either path uses `set_name`,
+  never `update_document`, so auto-titling never bumps `revision` or risks a 409 against a
+  concurrent autosave.
+
 ## API surface
 
 | Endpoint | Purpose |
@@ -482,6 +539,7 @@ when a check runs (see Rule engine below); fresh seeds default it to `[]`.
 | `GET /api/rules`, `POST /api/rules/reload` | rule catalog + validation errors; hot reload |
 | `GET/POST/PUT/DELETE /api/domains`, `/api/domains/{id}/terms`, `/api/terms/{id}` | terminology CRUD |
 | `GET/POST/PUT/DELETE /api/profiles`, `POST /api/profiles/{id}/reset` | profile CRUD |
+| `GET/POST/PUT/DELETE /api/documents`, `POST /api/documents/{id}/generate-name` | revision-guarded document CRUD + auto-titling (see [Documents](#documents)) |
 | `GET /api/providers` | provider availability + model discovery |
 | `GET /api/routing` | tier routing table with per-tier availability + reason |
 | `GET /api/languages` | languages + NLP model status |

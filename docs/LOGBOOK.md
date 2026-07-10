@@ -2219,3 +2219,101 @@ awaited-flush-waits-for-follow-up, orphan-replay-success,
 orphan-replay-409-recovers); full suite 20 files / 192 tests green, `tsc
 --noEmit` clean, `npm run build` clean, `oxlint` zero warnings. Fix report
 appended to `.superpowers/sdd/task-6-report.md`.
+
+## 2026-07-11 — Multi-document management, feature capstone
+
+Commits: `4befffb`..`9709e38` (14 commits) plus this documentation commit.
+
+```
+4befffb feat: add DocumentStore with revision-guarded updates
+c522c0f feat: add /api/documents CRUD with revision-guarded autosave endpoint
+9bb5f37 feat: LLM document auto-naming via cheap tier with first-words fallback
+771b9eb feat: document API client, store document state, persist v2
+1092c5c fix: HttpError without parameter properties (erasableSyntaxOnly)
+c1ee2c0 feat: write-through autosave engine with retry, conflict handoff, auto-title
+516d773 fix: autosave backoff integrity, phantom-retry cancel, scoped test env
+84531f0 docs: log autosave review-fix session in LOGBOOK
+d48d976 feat: document lifecycle - open/create/rename/delete, startup replay, legacy migration
+63d77ef fix: re-entrant init guard, awaitable flush, orphaned-snapshot replay on switch
+a7aa517 docs: log document-lifecycle review-fix session in LOGBOOK
+b16c473 fix: cancel pending autosave retry when orphan replay takes over a snapshot
+56ccad0 feat: collapsible document sidebar with rename/delete and recency list
+9709e38 fix: no-op flush suppression and self-write detection before conflict recovery
+```
+
+Feature complete: the app moved from one implicit document (a single localStorage
+text blob) to full **multi-document management** — a documents list, per-document
+persistence with optimistic-locking autosave, auto-titling, and a sidebar to
+create/switch/rename/delete — across 8 implementation tasks. The two mid-feature
+review-fix sessions are logged separately above (2026-07-10, "Autosave review
+fixes" and "Document-lifecycle review fixes"); this entry covers the feature as a
+whole, plus a third fix found and closed during this task's own end-to-end pass.
+
+**Backend.** A `documents` table (`app/services/documents.py`) stores per-document
+text, settings (language, domains, LLM provider/model/tier/auto), a check-state
+snapshot (`last_findings`, `scorecard`) so a reload restores findings without
+re-checking, and a `revision` counter. `DocumentStore.update_document` is a
+`WHERE id = ? AND revision = ?` conditional update — a stale revision raises
+`RevisionConflictError` (→ HTTP 409), a missing document returns `None` (→ 404).
+`set_name` is the deliberate exception: it renames without bumping `revision`, so
+server-side naming can never invalidate a client's in-flight autosave. Five CRUD
+endpoints plus `POST /api/documents/{id}/generate-name` (`app/api/documents.py`):
+auto-titling resolves the **cheap tier** for the document's language from the
+routing config, asks that provider for a one-line title (`clean_title` strips
+quotes/punctuation, caps at 80 chars), and falls back silently to the first six
+words of the text (`fallback_name`, capped at 40 chars) on any failure — both
+paths go through `set_name`, never bumping `revision`. See
+`docs/backend-architecture.md#documents`.
+
+**Frontend.** `src/documents/`: `buffer.ts` (a write-through `DocSnapshot` cache in
+localStorage, never the source of truth), `autosave.ts` (1.5 s debounce, exponential
+backoff retry with 409/404 handoff to conflict recovery, one-shot auto-title
+trigger past a 20-word threshold), `documents.ts` (open/create/rename/delete
+lifecycle, startup replay of a dirty buffer, orphan-snapshot replay on document
+switch, legacy single-document migration), and `DocumentSidebar.tsx` (collapsible
+list with relative timestamps, rename-in-place, delete with confirm). Persist v2
+moved header settings (language, domains, provider/model/tier, `llmAuto`) out of
+the global localStorage slice and onto each document's own backend row; the global
+slice now keeps only `uiLocale`, `lastProfileByLanguage`, `rulesCollapsed`,
+`currentDocId`, and `docSidebarCollapsed`. See `docs/frontend-architecture.md#documents`.
+
+**Third bug, found and fixed during this task's own end-to-end verification.**
+Task 8's e2e run initially reproduced a real, deterministic-enough bug: a plain
+page reload (zero edits) could leave behind a spurious "(recovered)" duplicate
+document. Root cause: `Editor.tsx`'s unconditional `beforeunload → flush()` PUTs
+on every reload regardless of whether anything changed; on localhost the round
+trip is fast enough that the browser can abort the request client-side during
+navigation teardown *after* the server already durably applied the write, leaving
+the write-through buffer `dirty` with a now-stale revision. The next boot replayed
+that stale revision, hit a genuine 409 against the client's own prior write, and
+`recoverSnapshot()` unconditionally spawned a recovered copy without checking
+whether the "conflict" was actually identical to what the server already had.
+Fixed in `9709e38` with two complementary changes: (1) `flush()` now no-ops when
+the buffer is already clean and byte-identical to the fresh snapshot, so a plain
+reload with nothing changed issues no PUT at all; (2) `recoverSnapshot()` now
+fetches the server's current document first and, if its text already matches the
+buffered snapshot, adopts the server's revision and hydrates in place instead of
+creating a duplicate — closing the race for the case where a real edit genuinely
+was in flight. Two new tests cover both changes (`autosave.test.ts`,
+`documents.test.ts`); full detail in `.superpowers/sdd/task-8-report.md`.
+
+**End-to-end verification (this task).** A scratch stack (backend on
+`127.0.0.1:8001` with a fresh SQLite DB, `vite preview` on `127.0.0.1:4199` built
+with `VITE_API_URL` pointed at it, driven headlessly via `playwright-core`) ran
+the full user-facing flow: fresh load creates one document, typing triggers fast
+findings and an autosaved PUT, the fallback-name auto-title fires (the scratch
+backend has no LLM credentials, so the cheap tier fails and the first-six-words
+fallback applies, as expected), a reload restores text and findings from the
+persisted snapshot, a second document can be created/switched/deleted, and a
+rename survives a reload. A dedicated regression block reloaded the page 4 times
+with zero edits afterward and asserted the document count stayed constant, no
+document name gained a "(recovered)"/"(wiederhergestellt)" suffix, and the
+document's `revision` (fetched via the API) was unchanged before vs. after the
+loop — directly re-testing the scenario the bug above was found in. All 27
+assertions passed. Final screenshot inspected: sidebar shows exactly one document,
+editor and findings panel intact.
+
+**Verification.** `cd backend && uv run pytest -q` → 662 passed. `cd frontend &&
+npx vitest run` → 197 passed (21 files); `npx tsc --noEmit` clean; `npm run lint`
+(oxlint) clean; `npm run build` clean (only the pre-existing >500kB chunk-size
+advisory, unrelated).
