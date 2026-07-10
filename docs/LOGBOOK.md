@@ -2179,3 +2179,43 @@ instead to a `// @vitest-environment happy-dom` docblock in
 `autosave.test.ts`; full suite (19 files / 179 tests) still green, so the
 global setting wasn't needed by any other test. Removed the unused `jsdom`
 devDependency (project uses happy-dom) and re-ran `npm install`.
+
+## 2026-07-10 — Document-lifecycle review fixes: re-entrant init, awaitable flush, orphaned-snapshot replay
+
+Commit: `63d77ef`
+
+Three review findings against the document-lifecycle layer
+(`frontend/src/documents/documents.ts`, `autosave.ts`). (1, High)
+`initDocuments()` wasn't re-entrant: React StrictMode's double-invoked mount
+effect raced two concurrent runs — on an empty backend both created a fresh
+document, and with a dirty buffered snapshot both replayed the same
+revision (one succeeded, the other hit a genuine 409 and spawned a spurious
+"(recovered)" copy). Fixed with a module-level in-flight promise memo
+(`initInFlight ??= runInit().finally(() => initInFlight = null)`) so
+concurrent callers share one run; the memo clears on completion so the
+sidebar's retry button still works. (2, Medium) A failed/in-flight save
+could be silently lost on document switch, for two cooperating reasons:
+`flush()` returned immediately (just setting `pending`) when a push was
+already in flight, so `openDocument`'s `await flush()` didn't actually wait
+for the save; and the backoff retry calls `flush()`, which collects the
+*current* store/editor state, so if the user had switched documents
+meanwhile the retry saved the new document while the old document's dirty
+buffer slot silently got overwritten by hydration (the buffer is a single
+slot for the current document only). Fixed by tracking the in-flight push's
+promise (chained through its own queued follow-up) so `flush()` can
+genuinely await the whole chain without ever firing a second concurrent PUT
+from callers that don't await (the debounce timer, the retry timer,
+`beforeunload`); and by adding `replayOrphanedSnapshot()`, run at the top of
+`hydrateFromDocument` before it overwrites the buffer — if the buffered
+snapshot is dirty and belongs to a different document than the one about to
+be hydrated, it attempts one direct replay, routing 409/404 to the existing
+recovered-copy path and dropping any other failure (accepted limitation:
+single-slot buffer can't survive an offline document switch). (3, Low) Same
+fix as (2b) closes this one. Added a `skipRecoveryHydrate` guard so
+`recoverSnapshot` (which itself calls `hydrateFromDocument`) doesn't
+re-enter hydration for the orphaned document while a *different* target
+document is mid-hydration. Added 4 new regression tests (re-entrant init,
+awaited-flush-waits-for-follow-up, orphan-replay-success,
+orphan-replay-409-recovers); full suite 20 files / 192 tests green, `tsc
+--noEmit` clean, `npm run build` clean, `oxlint` zero warnings. Fix report
+appended to `.superpowers/sdd/task-6-report.md`.
