@@ -6,6 +6,8 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   test: {
+    environment: 'happy-dom',
+    setupFiles: ['./vitest.setup.ts'],
     coverage: {
       // Count every source file, not just the ones tests happen to import —
       // otherwise untested components silently inflate the percentage.
