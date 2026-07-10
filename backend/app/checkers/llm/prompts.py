@@ -97,6 +97,12 @@ drop-in replacement, return an empty JSON array [].
 - Respond with ONLY a JSON array of strings, e.g. ["first rewrite", "second rewrite"].
 """
 
+_TITLE_SYSTEM_TEMPLATE = (
+    "You create document titles. Reply with the title only - no quotes, no "
+    "trailing punctuation, no explanation. The title must be at most 8 words "
+    "and written in {language}."
+)
+
 
 def _with_instructions(system: str, instructions: str) -> str:
     """Append profile instructions without touching the output contract."""
@@ -165,4 +171,10 @@ def build_prompt(
     )
     system = _with_instructions(system, instructions)
     user = f"Review the following text:\n\n{text}"
+    return system, user
+
+
+def build_title_prompt(text: str, language: Language) -> tuple[str, str]:
+    system = _TITLE_SYSTEM_TEMPLATE.format(language=_LANGUAGE_NAMES[language])
+    user = f"Create a title for this document:\n\n{text[:1000]}"
     return system, user

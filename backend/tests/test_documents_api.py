@@ -94,3 +94,51 @@ def test_delete(client):
     doc = make_doc(client)
     assert client.delete(f"/api/documents/{doc['id']}").status_code == 204
     assert client.delete(f"/api/documents/{doc['id']}").status_code == 404
+
+
+from app.checkers.llm.provider import FakeProvider
+
+
+def with_provider(client: TestClient, response: str | None) -> None:
+    """Route every provider request to a fake; None simulates provider failure."""
+    if response is None:
+        def failing(name=None, model=None):
+            raise RuntimeError("provider unavailable")
+        client.app.state.provider_factory = failing
+    else:
+        client.app.state.provider_factory = (
+            lambda name=None, model=None: FakeProvider(response=response)
+        )
+
+
+def test_generate_name_titles_fallback_document(client):
+    doc = make_doc(client, text="A long enough body about widget assembly.")
+    with_provider(client, '"Widget Assembly Guide."')
+    body = client.post(f"/api/documents/{doc['id']}/generate-name").json()
+    assert body["name"] == "Widget Assembly Guide"
+    assert body["name_source"] == "llm"
+    assert body["revision"] == doc["revision"]  # naming never bumps revision
+
+
+def test_generate_name_failure_falls_back_to_first_words(client):
+    doc = make_doc(client, text="alpha beta gamma delta epsilon zeta eta")
+    with_provider(client, None)
+    body = client.post(f"/api/documents/{doc['id']}/generate-name").json()
+    assert body["name"] == "alpha beta gamma delta epsilon zeta"
+    assert body["name_source"] == "fallback"
+
+
+def test_generate_name_noop_when_named(client):
+    doc = make_doc(client, text="some body text here")
+    client.put(f"/api/documents/{doc['id']}", json={"revision": 0, "name": "Mine"})
+    with_provider(client, "Ignored Title")
+    body = client.post(f"/api/documents/{doc['id']}/generate-name").json()
+    assert body["name"] == "Mine" and body["name_source"] == "user"
+
+
+def test_generate_name_empty_text_keeps_name(client):
+    doc = make_doc(client, name="Untitled", text="")
+    with_provider(client, "Ignored")
+    body = client.post(f"/api/documents/{doc['id']}/generate-name").json()
+    assert body["name"] == "Untitled" and body["name_source"] == "fallback"
+    assert client.post("/api/documents/9999/generate-name").status_code == 404

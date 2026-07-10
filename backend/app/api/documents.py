@@ -3,6 +3,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from app.checkers.llm.prompts import build_title_prompt
 from app.core.models import Language
 from app.services.documents import (
     Document,
@@ -10,6 +11,7 @@ from app.services.documents import (
     DocumentSummary,
     RevisionConflictError,
 )
+from app.services.naming import clean_title, fallback_name
 
 router = APIRouter(prefix="/api", tags=["documents"])
 
@@ -134,3 +136,39 @@ def delete_document(request: Request, document_id: int) -> Response:
     if not _store(request).delete_document(document_id):
         raise HTTPException(404, "Document not found")
     return Response(status_code=204)
+
+
+@router.post("/documents/{document_id}/generate-name")
+async def generate_name(request: Request, document_id: int) -> Document:
+    store = _store(request)
+    document = store.get_document(document_id)
+    if document is None:
+        raise HTTPException(404, "Document not found")
+    if document.name_source != "fallback":
+        return document  # titled or user-named: never auto-touched again
+
+    title: str | None = None
+    entry = (
+        request.app.state.settings.routing.languages.get(
+            document.language.value, {}
+        ).get("cheap")
+    )
+    if entry is not None and document.text.strip():
+        try:
+            provider = request.app.state.provider_factory(
+                entry.provider, entry.model
+            )
+            system, user = build_title_prompt(document.text, document.language)
+            title = clean_title(await provider.generate(system, user))
+        except Exception:
+            title = None  # silent per spec; the fallback below still applies
+
+    if title:
+        named = store.set_name(document_id, title, "llm")
+    else:
+        fallback = fallback_name(document.text)
+        if fallback is None:
+            return document  # empty text: keep the localized Untitled
+        named = store.set_name(document_id, fallback, "fallback")
+    assert named is not None
+    return named
