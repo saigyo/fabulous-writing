@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.checks import router as checks_router
+from app.api.documents import router as documents_router
 from app.api.languages import router as languages_router
 from app.api.profiles import router as profiles_router
 from app.api.providers import router as providers_router
@@ -20,6 +21,7 @@ from app.checkers.llm.provider import LLMProvider
 from app.checkers.rules.engine import RuleEngine
 from app.core.config import Settings, load_settings
 from app.nlp.registry import NlpRegistry
+from app.services.documents import DocumentStore
 from app.services.jobs import JobManager
 from app.services.profiles import ProfileStore
 from app.services.seed import seed_terminology
@@ -91,6 +93,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.jobs = JobManager()
     app.state.nlp = NlpRegistry(settings.nlp.models)
     app.state.provider_factory = make_provider_factory(settings)
+    app.state.document_store = DocumentStore(settings.db_path)
     app.state.profile_store = ProfileStore(settings.db_path)
     seed_profiles(
         app.state.profile_store,
@@ -103,6 +106,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(rules_router)
     app.include_router(providers_router)
     app.include_router(suggestions_router)
+    app.include_router(documents_router)
     app.include_router(profiles_router)
     app.include_router(routing_router)
 
