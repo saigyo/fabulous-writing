@@ -2151,3 +2151,31 @@ exactly one replacement button ("much better wording") plus one 💡 advice
 note rendered as a `<P>` tag; clicking the advice note left the editor text
 byte-identical before and after. Screenshot of the rendered note and button
 saved to the scratchpad. All assertions passed on the first run.
+
+## 2026-07-10 — Autosave review fixes: backoff integrity, phantom-retry cancel
+
+Commit: `516d773`
+
+Code review on the write-through autosave engine (`frontend/src/documents/autosave.ts`,
+introduced in `c1ee2c0`) found that a flush arriving while a save was already
+in flight (`pending = true`) got fired immediately from `push()`'s `finally`
+block even when the in-flight save had just failed — bypassing the freshly
+scheduled backoff retry timer and effectively double-doubling the retry delay
+on every failure burst. Fixed by tracking a local `succeeded` flag set only
+after a push fully succeeds; `finally` now only fires the queued flush when
+`succeeded` is true, otherwise it just drops `pending` back to `false` and
+lets the already-scheduled retry timer (which re-collects the latest
+snapshot) do the retry — no edits lost, no backoff bypass. Also: a
+successful push now cancels any still-pending retry timer (previously a
+stale timer could fire a phantom extra `flush()` after a save had already
+succeeded), and `onConflict?.(snapshot)` is now wrapped in its own try/catch
+so a throwing conflict handler can't escape into the wrong catch branch.
+Added two fake-timer regression tests to `autosave.test.ts` covering both the
+happy-path coalescing (one queued flush after three overlapping calls) and
+the failure path (no immediate bypass-retry, backoff retry still fires).
+Also reverted `vite.config.ts`'s global `environment: 'happy-dom'` (added in
+`c1ee2c0` for this one test file) back to vitest's default, scoping it
+instead to a `// @vitest-environment happy-dom` docblock in
+`autosave.test.ts`; full suite (19 files / 179 tests) still green, so the
+global setting wasn't needed by any other test. Removed the unused `jsdom`
+devDependency (project uses happy-dom) and re-ran `npm install`.
