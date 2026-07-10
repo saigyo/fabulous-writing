@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { HttpError, type DocumentFull } from '../api/client'
 import { useStore } from '../state/store'
 import { clearSnapshot, readSnapshot, writeSnapshot } from './buffer'
-import { resetAutosaveForTests } from './autosave'
+import { flush, resetAutosaveForTests } from './autosave'
 import {
   consumeProfileApplySuppression,
   fallbackName,
@@ -143,6 +143,38 @@ describe('openDocument', () => {
     )
     // The target document is still the one that ends up hydrated.
     expect(useStore.getState().docMeta?.id).toBe(2)
+  })
+})
+
+describe('replayOrphanedSnapshot vs. a stale autosave retry', () => {
+  it('cancels a pending backoff retry once the orphan replay takes over the snapshot', async () => {
+    vi.useFakeTimers()
+    try {
+      useStore.getState().setDocMeta({ id: 1, name: 'Doc 1', nameSource: 'user', revision: 4 })
+      vi.mocked(updateDocument).mockRejectedValueOnce(new TypeError('offline'))
+      await flush() // fails: buffer stays dirty for doc 1, a backoff retry is scheduled
+      expect(updateDocument).toHaveBeenCalledTimes(1)
+      expect(readSnapshot()?.dirty).toBe(true)
+
+      // Simulate the user having moved off doc 1 entirely: the orphaned
+      // dirty snapshot for doc 1 still sits in the single-slot buffer, and
+      // its backoff retry is still pending.
+      useStore.getState().setDocMeta(null)
+
+      vi.mocked(updateDocument).mockResolvedValueOnce(doc(1, { revision: 5 }))
+      vi.mocked(getDocument).mockResolvedValue(doc(2))
+      await openDocument(2)
+
+      // Only the orphan replay's own PUT happened.
+      expect(updateDocument).toHaveBeenCalledTimes(2)
+      expect(useStore.getState().docMeta?.id).toBe(2)
+
+      // The stale retry must have been cancelled by the replay, not fired.
+      await vi.advanceTimersByTimeAsync(60000)
+      expect(updateDocument).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

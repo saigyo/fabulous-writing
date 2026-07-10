@@ -192,6 +192,16 @@ function scheduleRetry(): void {
   retryDelay = Math.min(retryDelay * 2, RETRY_MAX_MS)
 }
 
+/** Cancel a pending backoff retry; the caller takes over responsibility
+ * for the buffered snapshot (e.g. the orphan replay on document switch). */
+export function cancelRetry(): void {
+  if (retryTimer) {
+    clearTimeout(retryTimer)
+    retryTimer = null
+  }
+  retryDelay = RETRY_BASE_MS
+}
+
 /** Fire the one-shot LLM titling once a fallback-named doc has enough text. */
 async function maybeGenerateTitle(snapshot: DocSnapshot): Promise<void> {
   const meta = useStore.getState().docMeta

@@ -14,6 +14,7 @@ import { currentMessages } from '../i18n'
 import { useStore } from '../state/store'
 import {
   beginHydration,
+  cancelRetry,
   collectSnapshot,
   endHydration,
   flush,
@@ -80,6 +81,9 @@ let skipRecoveryHydrate = false
 async function replayOrphanedSnapshot(targetDocId: number): Promise<void> {
   const existing = readSnapshot()
   if (!existing?.dirty || existing.docId === targetDocId) return
+  // Take sole ownership of the orphaned snapshot: a pending backoff retry
+  // for the previous document would otherwise race this direct PUT.
+  cancelRetry()
   try {
     await updateDocument(existing.docId, {
       revision: existing.revision,
