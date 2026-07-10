@@ -157,4 +157,8 @@ export interface Messages {
   collapseAllTitle: string
   exampleFlagged: string
   exampleNotFlagged: string
+
+  // Document lifecycle
+  docUntitled: string
+  docRecovered: (name: string) => string
 }

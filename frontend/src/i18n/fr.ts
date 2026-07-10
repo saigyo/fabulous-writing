@@ -177,4 +177,7 @@ export const fr: Messages = {
   collapseAllTitle: 'Replier toutes les sections',
   exampleFlagged: 'Signale',
   exampleNotFlagged: 'Ne signale pas',
+
+  docUntitled: 'Sans titre',
+  docRecovered: (name) => `${name} (récupéré)`,
 }

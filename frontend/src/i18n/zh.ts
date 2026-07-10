@@ -166,4 +166,7 @@ export const zh: Messages = {
   collapseAllTitle: '全部折叠',
   exampleFlagged: '会标记',
   exampleNotFlagged: '不标记',
+
+  docUntitled: '无标题',
+  docRecovered: (name) => `${name}（已恢复）`,
 }

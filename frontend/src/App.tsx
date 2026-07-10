@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react'
 import './App.css'
 import { getDomains, getLanguages, getProfiles, getProviders, getRouting } from './api/client'
 import { runCheck } from './checking/controller'
+import { flush, noteChange } from './documents/autosave'
+import { consumeProfileApplySuppression, initDocuments } from './documents/documents'
 import { Editor } from './editor/Editor'
 import { setEditorText } from './editor/editorRef'
 import { DomainMultiSelect } from './header/DomainMultiSelect'
@@ -18,6 +20,36 @@ import type { Language } from './types'
 
 export default function App() {
   const activeView = useStore((s) => s.activeView)
+
+  useEffect(() => {
+    // Startup: replay dirty buffer, load the document list, open the last
+    // document. Runs once; StrictMode double-invocation is tolerated because
+    // a clean replay is a no-op and hydration is idempotent.
+    void initDocuments()
+  }, [])
+
+  useEffect(() => {
+    // Leaving the editor view is a natural save point.
+    if (activeView !== 'editor') void flush()
+  }, [activeView])
+
+  useEffect(() => {
+    // Per-document settings autosave: any change to the header selection
+    // fields buffers + debounces a save, exactly like typing does.
+    let previous = useStore.getState()
+    return useStore.subscribe((state) => {
+      const changed =
+        state.language !== previous.language ||
+        state.domainIds !== previous.domainIds ||
+        state.provider !== previous.provider ||
+        state.model !== previous.model ||
+        state.tier !== previous.tier ||
+        state.llmAuto !== previous.llmAuto ||
+        state.profileId !== previous.profileId
+      previous = state
+      if (changed && state.docMeta) noteChange()
+    })
+  }, [])
 
   // The workspace is hidden (not unmounted) while another view is shown:
   // the findings live in the CodeMirror instance, so unmounting would
@@ -71,7 +103,8 @@ function Header() {
         )
         const chosen =
           remembered ?? profiles.find((p) => p.is_standard) ?? profiles[0]
-        if (chosen) s.selectProfile(chosen, isSwitch)
+        const suppressed = consumeProfileApplySuppression()
+        if (chosen) s.selectProfile(chosen, isSwitch && !suppressed)
       })
       .catch(() => {})
   }, [store.language])

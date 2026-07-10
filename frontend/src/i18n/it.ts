@@ -173,4 +173,7 @@ export const it: Messages = {
   collapseAllTitle: 'Comprimi tutte le sezioni',
   exampleFlagged: 'Segnala',
   exampleNotFlagged: 'Non segnala',
+
+  docUntitled: 'Senza titolo',
+  docRecovered: (name) => `${name} (recuperato)`,
 }

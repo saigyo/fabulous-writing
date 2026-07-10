@@ -165,4 +165,7 @@ export const ja: Messages = {
   collapseAllTitle: 'すべてのセクションを折りたたむ',
   exampleFlagged: '検出する',
   exampleNotFlagged: '検出しない',
+
+  docUntitled: '無題',
+  docRecovered: (name) => `${name}（復元）`,
 }

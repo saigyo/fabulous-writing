@@ -158,4 +158,7 @@ export const en: Messages = {
   collapseAllTitle: 'Collapse all sections',
   exampleFlagged: 'Flags',
   exampleNotFlagged: "Doesn't flag",
+
+  docUntitled: 'Untitled',
+  docRecovered: (name) => `${name} (recovered)`,
 }

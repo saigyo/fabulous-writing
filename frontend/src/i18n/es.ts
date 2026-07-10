@@ -177,4 +177,7 @@ export const es: Messages = {
   collapseAllTitle: 'Contraer todas las secciones',
   exampleFlagged: 'Señala',
   exampleNotFlagged: 'No señala',
+
+  docUntitled: 'Sin título',
+  docRecovered: (name) => `${name} (recuperado)`,
 }

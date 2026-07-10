@@ -4,20 +4,11 @@ import { useEffect, useRef } from 'react'
 import { basicSetup } from 'codemirror'
 import { runCheck } from '../checking/controller'
 import { createCheckScheduler } from '../checking/scheduler'
+import { flush, noteChange } from '../documents/autosave'
 import { wordCount } from '../scoring/score'
 import { useStore } from '../state/store'
 import { findingIdAt, findingsField, selectFindingEffect } from './findings'
 import { setEditorView } from './editorRef'
-
-const TEXT_STORAGE_KEY = 'fabulous-writing-text'
-
-const DEFAULT_TEXT = `# Welcome to Fabulous Writing
-
-Start typing, and your text is checked continuously. This sentence is very good
-and utilizes many words in order to demonstrate a a few issues.
-
-Delete this text and write something fabulous.
-`
 
 export function Editor() {
   const container = useRef<HTMLDivElement>(null)
@@ -32,7 +23,7 @@ export function Editor() {
     })
 
     const view = new EditorView({
-      doc: localStorage.getItem(TEXT_STORAGE_KEY) ?? DEFAULT_TEXT,
+      doc: '',
       parent: container.current!,
       extensions: [
         basicSetup,
@@ -41,7 +32,7 @@ export function Editor() {
         findingsField,
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
-            localStorage.setItem(TEXT_STORAGE_KEY, update.state.doc.toString())
+            noteChange()
             scheduler.onInput()
             const store = useStore.getState()
             store.setDocWords(wordCount(update.state.doc.toString()))
@@ -66,9 +57,12 @@ export function Editor() {
     })
     setEditorView(view)
     useStore.getState().setDocWords(wordCount(view.state.doc.toString()))
-    void runCheck(false)
+
+    const onBeforeUnload = () => void flush()
+    window.addEventListener('beforeunload', onBeforeUnload)
 
     return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload)
       scheduler.dispose()
       setEditorView(null)
       view.destroy()

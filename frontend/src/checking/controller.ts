@@ -1,4 +1,5 @@
 import { postCheck, subscribeCheck } from '../api/client'
+import { flush } from '../documents/autosave'
 import { getEditorView } from '../editor/editorRef'
 import { mergeFindingsEffect } from '../editor/findings'
 import { currentMessages } from '../i18n'
@@ -78,6 +79,7 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
   }
 
   applyFindings(text, ['rule', 'terminology'], fastFindings(result.findings))
+  void flush()
 
   if (!wantLlm || result.status === 'done') {
     useStore.setState({ checkPhase: 'idle', llmStartedAt: null, llmTokens: null })
@@ -90,6 +92,7 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
     onResult(checker, findings) {
       if (checker === 'llm' && currentCheckId === checkId) {
         applyFindings(text, ['llm'], findings)
+        void flush()
       }
     },
     onError(_checker, error) {
@@ -108,6 +111,7 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
       if (view && view.state.doc.toString() !== text) {
         useStore.getState().markScorecardStale()
       }
+      void flush()
     },
     onDone() {
       if (currentCheckId === checkId) {

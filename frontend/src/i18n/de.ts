@@ -173,4 +173,7 @@ export const de: Messages = {
   collapseAllTitle: 'Alle Abschnitte einklappen',
   exampleFlagged: 'Meldet',
   exampleNotFlagged: 'Meldet nicht',
+
+  docUntitled: 'Ohne Titel',
+  docRecovered: (name) => `${name} (wiederhergestellt)`,
 }
