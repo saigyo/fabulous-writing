@@ -257,20 +257,40 @@ describe('initDocuments', () => {
   })
 
   it('arms the retry loop on offline startup with a dirty buffer (no user input needed)', async () => {
-    writeSnapshot({
-      docId: 9, revision: 1, dirty: true, name: 'Buffered',
-      text: 'offline text', findings: [], scorecard: null,
-      settings: {
-        language: 'en', profile_id: null, domain_ids: [],
-        llm_provider: null, llm_model: null, llm_tier: 'cheap', llm_auto: true,
-      },
-    })
-    vi.mocked(listDocuments).mockRejectedValue(new TypeError('offline'))
-    // The backend has come back for the flush() this should trigger, even
-    // though nothing the user did asked for a save.
-    vi.mocked(updateDocument).mockResolvedValue(doc(9, { revision: 2 }))
-    await initDocuments()
-    expect(updateDocument).toHaveBeenCalledWith(9, expect.objectContaining({ revision: 1 }))
+    vi.useFakeTimers()
+    try {
+      writeSnapshot({
+        docId: 9, revision: 1, dirty: true, name: 'Buffered',
+        text: 'offline text', findings: [], scorecard: null,
+        settings: {
+          language: 'en', profile_id: null, domain_ids: [],
+          llm_provider: null, llm_model: null, llm_tier: 'cheap', llm_auto: true,
+        },
+      })
+      vi.mocked(listDocuments).mockRejectedValue(new TypeError('offline'))
+      // The first updateDocument call (startup replay) and the armed flush's
+      // immediate push both fail (backend is offline), then the backend comes
+      // back and subsequent calls succeed. This forces the backoff retry to
+      // actually trigger and verify the void flush() fix is necessary.
+      vi.mocked(updateDocument)
+        .mockRejectedValueOnce(new TypeError('offline'))
+        .mockRejectedValueOnce(new TypeError('offline'))
+        .mockResolvedValue(doc(9, { revision: 2 }))
+
+      await initDocuments()
+      // After initDocuments, the first replay attempt should have failed
+      expect(updateDocument).toHaveBeenCalledWith(9, expect.objectContaining({ revision: 1 }))
+      expect(updateDocument).toHaveBeenCalledTimes(2) // replay + armed flush immediate attempt
+
+      // Now advance the timer to trigger the backoff retry
+      await vi.advanceTimersByTimeAsync(2000)
+
+      // The backoff retry should have been called
+      expect(updateDocument).toHaveBeenCalledTimes(3)
+      expect(updateDocument).toHaveBeenLastCalledWith(9, expect.objectContaining({ revision: 1 }))
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('leaves the legacy text in place and flags the list when the migration create fails', async () => {
