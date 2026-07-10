@@ -3,7 +3,7 @@ import './App.css'
 import { getDomains, getLanguages, getProfiles, getProviders, getRouting } from './api/client'
 import { runCheck } from './checking/controller'
 import { flush, noteChange } from './documents/autosave'
-import { consumeProfileApplySuppression, initDocuments } from './documents/documents'
+import { applyHeaderProfileSelection, initDocuments } from './documents/documents'
 import { DocumentSidebar } from './documents/DocumentSidebar'
 import { Editor } from './editor/Editor'
 import { setEditorText } from './editor/editorRef'
@@ -105,8 +105,7 @@ function Header() {
         )
         const chosen =
           remembered ?? profiles.find((p) => p.is_standard) ?? profiles[0]
-        const suppressed = consumeProfileApplySuppression()
-        if (chosen) s.selectProfile(chosen, isSwitch && !suppressed)
+        if (chosen) applyHeaderProfileSelection(s.selectProfile, chosen, isSwitch)
       })
       .catch(() => {})
   }, [store.language])

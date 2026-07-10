@@ -83,6 +83,18 @@ def test_set_name_does_not_bump_revision(store):
     assert store.set_name(9999, "x", "llm") is None
 
 
+def test_set_name_guard_is_noop_on_mismatched_source(store):
+    doc = store.create_document("Untitled", Language.EN)
+    store.set_name(doc.id, "User Title", "user")
+    result = store.set_name(
+        doc.id, "Auto Title", "fallback", only_if_source="fallback"
+    )
+    # The document was already renamed by the user (name_source="user"), so
+    # the guarded call — simulating a generate-name race that lost — must
+    # leave it untouched rather than clobbering the user's name.
+    assert result.name == "User Title" and result.name_source == "user"
+
+
 def test_delete_document(store):
     doc = store.create_document("A", Language.EN)
     assert store.delete_document(doc.id) is True

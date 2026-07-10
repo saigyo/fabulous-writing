@@ -93,6 +93,13 @@ def get_document(request: Request, document_id: int) -> Document:
     document = _store(request).get_document(document_id)
     if document is None:
         raise HTTPException(404, "Document not found")
+    if document.profile_id is not None:
+        profile_store = request.app.state.profile_store
+        if profile_store.get_profile(document.profile_id) is None:
+            # The referenced profile was deleted: present a read-time view
+            # with no profile rather than a dangling id. This is not
+            # persisted — the DB keeps the raw value.
+            return document.model_copy(update={"profile_id": None})
     return document
 
 
@@ -164,11 +171,15 @@ async def generate_name(request: Request, document_id: int) -> Document:
             title = None  # silent per spec; the fallback below still applies
 
     if title:
-        named = store.set_name(document_id, title, "llm")
+        named = store.set_name(
+            document_id, title, "llm", only_if_source="fallback"
+        )
     else:
         fallback = fallback_name(document.text)
         if fallback is None:
             return document  # empty text: keep the localized Untitled
-        named = store.set_name(document_id, fallback, "fallback")
+        named = store.set_name(
+            document_id, fallback, "fallback", only_if_source="fallback"
+        )
     assert named is not None
     return named

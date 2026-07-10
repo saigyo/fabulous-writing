@@ -254,18 +254,33 @@ class DocumentStore:
         )
 
     def set_name(
-        self, document_id: int, name: str, name_source: str
+        self,
+        document_id: int,
+        name: str,
+        name_source: str,
+        *,
+        only_if_source: str | None = None,
     ) -> Document | None:
         """Server-side naming; deliberately no revision bump, so it can never
-        409 the client's in-flight autosaves."""
+        409 the client's in-flight autosaves.
+
+        When `only_if_source` is given, the update is guarded by the
+        document's current name_source: if the document has since been
+        renamed away from that source (e.g. the user typed a name while an
+        LLM titling call was in flight), the write is skipped and the
+        document is returned unchanged instead of clobbering the newer name.
+        """
+        query = "UPDATE documents SET name = ?, name_source = ?, updated_at = ? WHERE id = ?"
+        params: tuple[object, ...] = (name, name_source, _utcnow(), document_id)
+        if only_if_source is not None:
+            query += " AND name_source = ?"
+            params += (only_if_source,)
         with self._connect() as conn:
-            cursor = conn.execute(
-                "UPDATE documents SET name = ?, name_source = ?, updated_at = ?"
-                " WHERE id = ?",
-                (name, name_source, _utcnow(), document_id),
-            )
+            cursor = conn.execute(query, params)
         if cursor.rowcount == 0:
-            return None
+            # Either no such document, or (when guarded) it was renamed away
+            # from `only_if_source` in the meantime: leave it as-is.
+            return self.get_document(document_id)
         return self.get_document(document_id)
 
     def delete_document(self, document_id: int) -> bool:

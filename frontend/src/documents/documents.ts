@@ -12,6 +12,7 @@ import { getEditorView } from '../editor/editorRef'
 import { setFindingsEffect } from '../editor/findings'
 import { currentMessages } from '../i18n'
 import { useStore } from '../state/store'
+import type { Profile } from '../types'
 import {
   beginHydration,
   cancelRetry,
@@ -37,6 +38,34 @@ export function consumeProfileApplySuppression(): boolean {
   const value = suppressProfileApply
   suppressProfileApply = false
   return value
+}
+
+/** Header's language-switch effect calls this once it has picked which
+ * profile to show. Normally a real language switch applies the profile's
+ * values to the header selectors (autosaving them onto the document). But
+ * when opening a document supplied no profile (profileId is still null —
+ * e.g. its profile_id was pruned server-side because the profile was
+ * deleted) and this apply is suppressed (see consumeProfileApplySuppression),
+ * the selection is for DISPLAY only: still show `chosen` as selected, but do
+ * not let the settings-autosave subscription (App.tsx) persist it onto the
+ * document. beginHydration/endHydration gate that subscription's noteChange
+ * call for the (synchronous, zustand v5) duration of the state update. */
+export function applyHeaderProfileSelection(
+  selectProfile: (profile: Profile, apply: boolean) => void,
+  chosen: Profile,
+  isSwitch: boolean,
+): void {
+  const suppressed = consumeProfileApplySuppression()
+  if (suppressed && useStore.getState().profileId === null) {
+    beginHydration()
+    try {
+      selectProfile(chosen, false)
+    } finally {
+      endHydration()
+    }
+  } else {
+    selectProfile(chosen, isSwitch && !suppressed)
+  }
 }
 
 /** Mirrors the backend rule in app/services/naming.py. */
@@ -241,6 +270,14 @@ export async function renameDocument(id: number, name: string): Promise<void> {
 }
 
 export async function removeDocument(id: number): Promise<void> {
+  // A dirty buffered snapshot for the document being deleted must not
+  // survive the delete: left in place, it would later replay via
+  // replayOrphanedSnapshot, 404 against the now-gone document, and
+  // resurrect it as a "(recovered)" copy.
+  if (readSnapshot()?.docId === id) {
+    cancelRetry()
+    clearSnapshot()
+  }
   await apiDeleteDocument(id)
   const store = useStore.getState()
   const remaining = store.documents.filter((d) => d.id !== id)
@@ -349,22 +386,40 @@ async function runInit(): Promise<void> {
   } catch {
     useStore.getState().setDocListError(true)
     const snapshot = readSnapshot()
-    if (snapshot) await hydrateFromBuffer(snapshot)
+    if (snapshot) {
+      await hydrateFromBuffer(snapshot)
+      // The buffer is dirty (offline edits pending) and hydrateFromBuffer
+      // restored that dirty truth: arm the backoff retry loop now so the
+      // push happens as soon as the backend comes back, even with no
+      // further user input. Without this, a dirty buffer at offline
+      // startup would sit inert until the user typed again.
+      void flush()
+    }
     return
   }
   useStore.getState().setDocListError(false)
 
   if (documents.length === 0) {
     const legacy = localStorage.getItem(LEGACY_TEXT_KEY)
-    localStorage.removeItem(LEGACY_TEXT_KEY)
     if (legacy?.trim()) {
       const state = useStore.getState()
-      const doc = await apiCreateDocument({
-        name: fallbackName(legacy) ?? currentMessages().docUntitled,
-        language: state.language,
-        text: legacy,
-        ...currentSettings(),
-      })
+      let doc: DocumentFull
+      try {
+        doc = await apiCreateDocument({
+          name: fallbackName(legacy) ?? currentMessages().docUntitled,
+          language: state.language,
+          text: legacy,
+          ...currentSettings(),
+        })
+      } catch {
+        // The migration create failed: leave the legacy text in place (it
+        // would otherwise be permanently lost) and surface the retry
+        // surface via the doc-list error, same as the offline path.
+        useStore.getState().setDocListError(true)
+        return
+      }
+      // Only drop the legacy key once the migration has actually landed.
+      localStorage.removeItem(LEGACY_TEXT_KEY)
       useStore.getState().setDocuments([summaryOf(doc)])
       await hydrateFromDocument(doc)
       return

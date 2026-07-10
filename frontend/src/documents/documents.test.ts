@@ -2,9 +2,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { HttpError, type DocumentFull } from '../api/client'
 import { useStore } from '../state/store'
+import type { Profile } from '../types'
 import { clearSnapshot, readSnapshot, writeSnapshot } from './buffer'
-import { flush, resetAutosaveForTests } from './autosave'
+import { flush, noteChange, resetAutosaveForTests } from './autosave'
 import {
+  applyHeaderProfileSelection,
   consumeProfileApplySuppression,
   fallbackName,
   initDocuments,
@@ -254,6 +256,33 @@ describe('initDocuments', () => {
     expect(readSnapshot()?.dirty).toBe(true) // still awaiting sync
   })
 
+  it('arms the retry loop on offline startup with a dirty buffer (no user input needed)', async () => {
+    writeSnapshot({
+      docId: 9, revision: 1, dirty: true, name: 'Buffered',
+      text: 'offline text', findings: [], scorecard: null,
+      settings: {
+        language: 'en', profile_id: null, domain_ids: [],
+        llm_provider: null, llm_model: null, llm_tier: 'cheap', llm_auto: true,
+      },
+    })
+    vi.mocked(listDocuments).mockRejectedValue(new TypeError('offline'))
+    // The backend has come back for the flush() this should trigger, even
+    // though nothing the user did asked for a save.
+    vi.mocked(updateDocument).mockResolvedValue(doc(9, { revision: 2 }))
+    await initDocuments()
+    expect(updateDocument).toHaveBeenCalledWith(9, expect.objectContaining({ revision: 1 }))
+  })
+
+  it('leaves the legacy text in place and flags the list when the migration create fails', async () => {
+    localStorage.setItem('fabulous-writing-text', 'old legacy words here')
+    vi.mocked(listDocuments).mockResolvedValue([])
+    vi.mocked(createDocument).mockRejectedValue(new TypeError('offline'))
+    await initDocuments()
+    expect(localStorage.getItem('fabulous-writing-text')).toBe('old legacy words here')
+    expect(useStore.getState().docListError).toBe(true)
+    expect(useStore.getState().docMeta).toBeNull()
+  })
+
   it('recovers a conflicted replay as a new user-named document (server text differs)', async () => {
     writeSnapshot({
       docId: 3, revision: 4, dirty: true, name: 'Doc 3',
@@ -317,6 +346,132 @@ describe('removeDocument', () => {
     await removeDocument(1)
     expect(useStore.getState().docMeta?.id).toBe(2)
     expect(useStore.getState().documents.map((d) => d.id)).toEqual([2])
+  })
+
+  it('cancels a pending backoff retry and clears the buffer when the retrying document is deleted', async () => {
+    vi.useFakeTimers()
+    try {
+      useStore.getState().setDocuments([summaryOf(doc(1)), summaryOf(doc(2))])
+      useStore.getState().setDocMeta({ id: 1, name: 'Doc 1', nameSource: 'user', revision: 4 })
+      vi.mocked(updateDocument).mockRejectedValueOnce(new TypeError('offline'))
+      await flush() // fails: buffer stays dirty for doc 1, a backoff retry is scheduled
+      expect(updateDocument).toHaveBeenCalledTimes(1)
+      expect(readSnapshot()?.dirty).toBe(true)
+
+      // Simulate having moved off doc 1 entirely (its dirty snapshot and
+      // backoff retry still sit in the single buffer slot) before deleting
+      // it from the sidebar.
+      useStore.getState().setDocMeta(null)
+
+      // Deleting doc 1 must not let that stale dirty snapshot survive: left
+      // in place it would later replay via replayOrphanedSnapshot, 404
+      // against the now-gone document, and resurrect it as a "(recovered)"
+      // copy.
+      vi.mocked(deleteDocument).mockResolvedValue(undefined)
+      await removeDocument(1)
+      expect(readSnapshot()).toBeNull()
+
+      // The stale retry must have been cancelled by the delete, not fired.
+      await vi.advanceTimersByTimeAsync(60000)
+      expect(updateDocument).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('leaves an unrelated dirty buffered snapshot alone when deleting a different document', async () => {
+    writeSnapshot({
+      docId: 2, revision: 1, dirty: true, name: 'Doc 2',
+      text: 'unsaved edits on doc 2', findings: [], scorecard: null,
+      settings: {
+        language: 'en', profile_id: null, domain_ids: [],
+        llm_provider: null, llm_model: null, llm_tier: 'balanced', llm_auto: true,
+      },
+    })
+    useStore.getState().setDocuments([summaryOf(doc(1)), summaryOf(doc(2))])
+    useStore.getState().setDocMeta(null) // neither doc is the currently open one
+    vi.mocked(deleteDocument).mockResolvedValue(undefined)
+    await removeDocument(1)
+    expect(readSnapshot()?.docId).toBe(2)
+    expect(readSnapshot()?.dirty).toBe(true)
+  })
+})
+
+describe('applyHeaderProfileSelection', () => {
+  const chosen: Profile = {
+    id: 7,
+    language: 'de',
+    name: 'Formal',
+    is_standard: true,
+    categories_off: [],
+    rule_exceptions: [],
+    packs_on: [],
+    domain_ids: [],
+    llm_provider: null,
+    llm_model: null,
+    llm_tier: null,
+    llm_instructions: '',
+    example_text: '',
+  }
+
+  it('shows a header profile pick without autosaving it onto a just-opened null-profile document', async () => {
+    vi.useFakeTimers()
+    try {
+      // Wire the same settings-autosave subscription App.tsx installs, so
+      // this exercises the actual hydration-gate mechanism rather than just
+      // the `apply` argument passed to selectProfile.
+      let previous = useStore.getState()
+      const unsubscribe = useStore.subscribe((state) => {
+        const changed = state.profileId !== previous.profileId
+        previous = state
+        if (changed && state.docMeta) noteChange()
+      })
+      try {
+        useStore.setState({ language: 'en' })
+        vi.mocked(getDocument).mockResolvedValue(doc(3, { profile_id: null }))
+        await openDocument(3) // language switch en -> de arms the suppression
+        expect(useStore.getState().profileId).toBeNull()
+
+        applyHeaderProfileSelection(useStore.getState().selectProfile, chosen, true)
+        // Still shown as selected for display...
+        expect(useStore.getState().profileId).toBe(7)
+
+        // ...but must not have queued an autosave of that re-selection.
+        await vi.advanceTimersByTimeAsync(5000)
+        expect(updateDocument).not.toHaveBeenCalled()
+      } finally {
+        unsubscribe()
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('applies and autosaves a profile pick normally when no suppression is armed', async () => {
+    vi.useFakeTimers()
+    try {
+      let previous = useStore.getState()
+      const unsubscribe = useStore.subscribe((state) => {
+        const changed = state.profileId !== previous.profileId
+        previous = state
+        if (changed && state.docMeta) noteChange()
+      })
+      try {
+        useStore.getState().setDocMeta({ id: 3, name: 'Doc 3', nameSource: 'user', revision: 5 })
+        useStore.setState({ profileId: 4 })
+        vi.mocked(updateDocument).mockResolvedValue(doc(3, { revision: 6 }))
+
+        applyHeaderProfileSelection(useStore.getState().selectProfile, chosen, true)
+        expect(useStore.getState().profileId).toBe(7)
+
+        await vi.advanceTimersByTimeAsync(5000)
+        expect(updateDocument).toHaveBeenCalled()
+      } finally {
+        unsubscribe()
+      }
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

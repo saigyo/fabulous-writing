@@ -42,6 +42,21 @@ def test_get_full_document_and_404(client):
     assert client.get("/api/documents/9999").status_code == 404
 
 
+def test_get_document_prunes_dead_profile_id(client):
+    doc = make_doc(client, profile_id=9999)
+    body = client.get(f"/api/documents/{doc['id']}").json()
+    assert body["profile_id"] is None
+
+
+def test_get_document_preserves_live_profile_id(client):
+    from app.core.models import Language
+
+    profile = client.app.state.profile_store.create_profile(Language.EN, "Formal")
+    doc = make_doc(client, profile_id=profile.id)
+    body = client.get(f"/api/documents/{doc['id']}").json()
+    assert body["profile_id"] == profile.id
+
+
 def test_put_content_and_settings(client):
     doc = make_doc(client)
     response = client.put(
@@ -142,3 +157,33 @@ def test_generate_name_empty_text_keeps_name(client):
     body = client.post(f"/api/documents/{doc['id']}/generate-name").json()
     assert body["name"] == "Untitled" and body["name_source"] == "fallback"
     assert client.post("/api/documents/9999/generate-name").status_code == 404
+
+
+class RenamingProvider:
+    """Simulates a user renaming the document while the LLM call is in
+    flight, to exercise the generate-name check-then-set TOCTOU race."""
+
+    name = "fake"
+
+    def __init__(self, store, document_id: int, response: str) -> None:
+        self.store = store
+        self.document_id = document_id
+        self.response = response
+
+    async def generate(self, system, user, on_progress=None) -> str:
+        self.store.update_document(
+            self.document_id, 0, name="User Renamed", name_source="user"
+        )
+        return self.response
+
+
+def test_generate_name_toctou_user_rename_wins(client):
+    doc = make_doc(client, text="A long enough body about widget assembly.")
+    store = client.app.state.document_store
+    client.app.state.provider_factory = lambda name=None, model=None: (
+        RenamingProvider(store, doc["id"], '"Some Title."')
+    )
+    body = client.post(f"/api/documents/{doc['id']}/generate-name").json()
+    # The user's rename (which landed mid-flight) must survive; the LLM
+    # title from the stale check must not clobber it.
+    assert body["name"] == "User Renamed" and body["name_source"] == "user"
