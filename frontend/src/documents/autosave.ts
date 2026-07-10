@@ -111,6 +111,7 @@ export async function flush(): Promise<void> {
 
 async function push(snapshot: DocSnapshot): Promise<void> {
   saving = true
+  let succeeded = false
   try {
     const updated = await updateDocument(snapshot.docId, {
       revision: snapshot.revision,
@@ -122,6 +123,10 @@ async function push(snapshot: DocSnapshot): Promise<void> {
       settings: snapshot.settings,
     })
     retryDelay = RETRY_BASE_MS
+    if (retryTimer) {
+      clearTimeout(retryTimer)
+      retryTimer = null
+    }
     const store = useStore.getState()
     if (store.docMeta?.id === snapshot.docId) {
       store.patchDocMeta({ revision: updated.revision })
@@ -129,12 +134,17 @@ async function push(snapshot: DocSnapshot): Promise<void> {
       store.touchDocument(snapshot.docId)
     }
     await maybeGenerateTitle(snapshot)
+    succeeded = true
   } catch (error) {
     if (
       error instanceof HttpError &&
       (error.status === 409 || error.status === 404)
     ) {
-      await onConflict?.(snapshot)
+      try {
+        await onConflict?.(snapshot)
+      } catch {
+        // Silent: buffer stays as the handler left it.
+      }
     } else {
       scheduleRetry()
     }
@@ -142,7 +152,13 @@ async function push(snapshot: DocSnapshot): Promise<void> {
     saving = false
     if (pending) {
       pending = false
-      void flush()
+      // A failed push already scheduled a backoff retry timer (or handed
+      // off to the conflict handler); firing an immediate flush here would
+      // bypass that backoff. The already-scheduled retry re-collects the
+      // latest snapshot, so no edits are lost.
+      if (succeeded) {
+        void flush()
+      }
     }
   }
 }

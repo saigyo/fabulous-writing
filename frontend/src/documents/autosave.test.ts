@@ -1,8 +1,8 @@
+// @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { HttpError } from '../api/client'
 import { useStore } from '../state/store'
-// eslint-disable-next-line no-unused-vars
-import { readSnapshot, writeSnapshot, clearSnapshot } from './buffer'
+import { readSnapshot, clearSnapshot } from './buffer'
 import {
   beginHydration,
   endHydration,
@@ -125,5 +125,49 @@ describe('autosave', () => {
     useStore.getState().patchDocMeta({ nameSource: 'user' })
     await flush()
     expect(generateDocumentName).not.toHaveBeenCalled()
+  })
+
+  it('a flush during an in-flight save queues exactly one follow-up', async () => {
+    let resolveFirst!: (value: unknown) => void
+    vi.mocked(updateDocument).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirst = resolve
+        }) as never,
+    )
+
+    void flush() // save #1 starts and is now in flight
+    expect(updateDocument).toHaveBeenCalledTimes(1)
+    void flush() // in flight: just sets pending
+    void flush() // still in flight: pending already set
+
+    resolveFirst(serverDoc(3))
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(updateDocument).toHaveBeenCalledTimes(2)
+  })
+
+  it('a failed in-flight save does not fire the queued flush immediately', async () => {
+    let rejectFirst!: (reason?: unknown) => void
+    vi.mocked(updateDocument).mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectFirst = reject
+        }) as never,
+    )
+
+    void flush() // save #1 starts and is now in flight
+    void flush() // in flight: sets pending
+
+    rejectFirst(new TypeError('offline'))
+    await vi.advanceTimersByTimeAsync(0)
+
+    // The failed push scheduled a backoff retry; the queued flush must not
+    // fire immediately (that would bypass the backoff).
+    expect(updateDocument).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(2000) // the scheduled retry fires
+    expect(updateDocument).toHaveBeenCalledTimes(2)
+    expect(readSnapshot()?.dirty).toBe(false)
   })
 })
