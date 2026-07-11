@@ -19,14 +19,54 @@ Write or paste your text into the editor, pick the text's language, and findings
 in the sidebar as you type: rule and terminology checks run about a second after you
 pause, the LLM check after a longer pause (the **auto** toggle) or on demand via
 **Check**. Click a finding to highlight it in the text and see the explanation; apply a
-suggested fix with one click. The **⤓ Example** button in the editor's corner loads
-the selected checking profile's example text — deliberately flawed material that
-matches the profile — the quickest way to see everything in action.
+suggested fix with one click. While a document is still empty, the **⤓ Example**
+button in the editor's corner loads the selected checking profile's example text —
+deliberately flawed material that matches the profile — the quickest way to see
+everything in action.
 
-![The editor with categorized findings in the sidebar; the selected terminology finding is highlighted in the text and offers a one-click fix](docs/images/editor.png)
+![The editor with the document sidebar on the left and categorized findings on the right; the selected terminology finding is highlighted in the text and offers a one-click fix](docs/images/editor.png)
 
-*The editor view: findings grouped by category on the right, the selected finding
-highlighted in the text, with explanation and one-click fix.*
+*The editor view: documents and folders on the left, findings grouped by category on
+the right, the selected finding highlighted in the text with explanation and
+one-click fix.*
+
+### Documents and project folders
+
+Your writing lives in **documents** — stored server-side and autosaved as you type
+(about 1.5 s after you pause). The collapsible sidebar left of the editor lists them
+most-recently-edited first; only real edits and renames reorder the list — opening a
+document or its automatic checks never do. A new document names itself after the
+first ~20 words (generated once by the economical LLM tier, first words as fallback);
+rename or delete it via its ⋯ menu, hover it for the exact edited-at time. Each
+document remembers its own checking setup — language, profile, terminology domains,
+LLM choice, and the auto toggle travel with the document, so switching documents
+switches the whole header.
+
+Edits are buffered locally and replayed if the backend is momentarily unreachable;
+should the replay conflict with what the server has meanwhile, the local version is
+preserved as a *«name» (recovered)* copy instead of silently losing either side.
+
+Documents can be grouped into **project folders** (the ⊞ icon in the sidebar
+header): collapsible groups above the ungrouped list, menu-based moving ("Move to
+folder"), and "New document here" in each folder's ⋯ menu. Deleting a folder never
+deletes documents — members simply return to the ungrouped list.
+
+![The document sidebar with two project folders, their documents, and a folder's ⋯ menu open](docs/images/documents.png)
+
+*The document sidebar: project folders with their documents, the ungrouped list
+below, and a folder's ⋯ menu.*
+
+A folder can carry **defaults** — language, checking profile, terminology domains,
+LLM choice, and the auto toggle, each individually optional — applied to documents
+created inside it. Unset fields fall back to whatever the header shows at creation
+time, and **Take from current document** snapshots your current setup into the
+folder in one click. Moving an existing document into a folder never changes its
+settings.
+
+![The folder-defaults dialog with a language, profile, domain, and auto-check default set](docs/images/folder-defaults.png)
+
+*Folder defaults: per-folder settings for new documents, in the spirit of project
+instructions.*
 
 ### Two checking phases
 
@@ -44,6 +84,11 @@ Rules and terminology checks work entirely offline, without any LLM.
 
 - Overall quality score: live 0–100 gauge combining a deterministic mechanics score
   with a six-dimension LLM craft scorecard — see [`docs/scoring.md`](docs/scoring.md).
+
+![The quality score badge expanded into its scorecard: the overall score with its mechanics and craft split, and six LLM-scored craft dimensions with notes](docs/images/scorecard.png)
+
+*The quality score expanded: deterministic mechanics plus the six LLM-scored craft
+dimensions, each with a one-line note.*
 
 ### Checking profiles
 
@@ -273,7 +318,9 @@ false-reject rates of the suggestion-vetting spell gate.
 
 To refresh the README screenshots after UI changes (with both dev servers running):
 `cd frontend && npm run screenshots` (needs
-`npx playwright install --only-shell chromium` once).
+`npx playwright install --only-shell chromium` once). The script stages its own
+scratch documents and folders through the API and removes them afterwards; it never
+opens or modifies existing documents.
 
 ### Writing rules
 

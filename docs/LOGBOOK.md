@@ -2602,3 +2602,26 @@ error but closing the dialog does not refresh the folder list (spec asked
 for a refresh; one-line follow-up if strict conformance is wanted), and the
 narrow dialog stale-profiles race (backend 422 + inline error backstop).
 Gates at close: backend 696, frontend 230, tsc/lint/build clean.
+
+## 2026-07-11 — README refresh: documents/folders screenshots, scorecard crop, new feature section
+
+Updated the README for the documents & project-folders era. New
+"Documents and project folders" section (persistent autosaved documents,
+auto-naming, recency semantics, offline recovery copies, folders, per-folder
+defaults) with two new screenshots: `documents.png` (sidebar with folders and
+an open folder ⋯ menu) and `folder-defaults.png` (the defaults dialog,
+pre-filled). New `scorecard.png` — the editor cropped to the expanded quality
+scorecard (overall + mechanics·craft split + six LLM-scored dimensions) —
+placed at the quality-score bullet. Editor section now mentions the document
+sidebar and that ⤓ Example only appears while a document is empty.
+
+`frontend/scripts/capture-screenshots.mjs` reworked for the documents era:
+it stages its own scratch folders/documents via the API (aborts on 409
+rather than reuse existing folders), captures the two new sidebar shots and
+the scorecard (waiting for the local-tier check to complete), and deletes
+all scratch content in a finally block. First capture against the live dev
+stack showed the owner's real document names in the sidebar shots —
+re-captured against a scratch stack (fresh seeded DB on :8001 + built
+preview on :4199), now supported via `SHOTS_API`/`SHOTS_APP` env overrides
+and documented in the script header and README. All seven images verified
+visually; scratch stack torn down and the production dist rebuilt.
