@@ -381,7 +381,8 @@ snapshot, and header settings, backed by the `/api/documents` endpoints (see
 ### Server-authoritative sidebar reordering: `patchDocumentSummary`
 
 `store.patchDocumentSummary(id, patch: Partial<DocumentSummary>)` (`state/store.ts`) is
-the one place the sidebar list is mutated after the initial load, and it replaces the
+the one place the sidebar list is *re-ordered* after the initial load (create/move/delete
+still mutate it via `setDocuments`), and it replaces the
 older `touchDocument(id, name?)` helper. The old helper *assumed* every save meant "this
 document is now the most recent" and unconditionally spliced the touched entry to the
 front of the array with a freshly-minted client-side timestamp. That assumption broke
