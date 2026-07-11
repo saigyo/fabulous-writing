@@ -2561,3 +2561,44 @@ against the pre-fix code before applying the fix.
 **Verification.** `cd frontend && npx vitest run` → 230 passed (22 files);
 `npx tsc --noEmit` clean; `npm run lint` (oxlint) clean; `npm run build`
 clean (only the pre-existing >500 kB chunk-size advisory, unrelated).
+
+## 2026-07-11 — Per-folder defaults (phase 3): folder settings applied to documents created inside
+
+Folders now carry optional default settings — language, profile, domains,
+LLM provider/model/tier, auto-flag — applied when a document is created in
+the folder via "New document here" (spec
+`docs/superpowers/specs/2026-07-11-folder-defaults-design.md`, plan
+`docs/superpowers/plans/2026-07-11-folder-defaults.md`). Moving a document
+into a folder never touches its settings; the top-level "+ New document"
+is unaffected.
+
+**Backend** (`1c4ede3`, `bd0e723`): seven nullable columns on `folders` via
+the reserved idempotent `_migrate()`; `FolderDefaults` model (`Folder`
+inherits it); `set_defaults` full replace. `PUT /api/folders/{id}/defaults`
+with the 422 matrix (profile default requires a matching-language language
+default; unknown profile/domain; tier `Literal`), 404 unknown folder;
+read-time pruning of dead profile/domain references in `GET /api/folders`
+(the row is never modified). `default_domain_ids` distinguishes NULL
+(unset) from `[]` ("default: no domains").
+
+**Frontend** (`5c0e988`, `8d0ba10`): `applyFolderDefaults` overlays the set
+fields onto the create payload (LLM triple as one unit; a language-only
+default clears a cross-language header profile so an en profile never leaks
+onto a de document); `FolderDefaultsDialog` from the folder ⋯ menu with
+profile⇒language coupling, NULL-vs-`[]` domains toggle, tri-state
+auto-flag, "Take from current document" (the only way pins enter), inline
+error handling; nine i18n keys ×7 catalogs.
+
+**E2E + real bug found** (`5d857d8`, `a4e41cb`, see previous entry): the
+acceptance run caught the pre-existing pruned-profile adoption bug; after
+the fix the full suite passed 10/10 on a fresh scratch stack.
+
+**Docs** (`c9fcf0b`): backend/frontend architecture sections.
+
+Final whole-branch review (fable): READY, no Critical/Important; ten minors
+keep-accepted with rationale in `.superpowers/sdd/progress.md` — notably
+M1: a 404 on saving defaults (folder deleted elsewhere) shows the inline
+error but closing the dialog does not refresh the folder list (spec asked
+for a refresh; one-line follow-up if strict conformance is wanted), and the
+narrow dialog stale-profiles race (backend 422 + inline error backstop).
+Gates at close: backend 696, frontend 230, tsc/lint/build clean.
