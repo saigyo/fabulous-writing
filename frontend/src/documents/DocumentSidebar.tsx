@@ -212,14 +212,24 @@ function FolderGroup({
   )
   const [menuOpen, setMenuOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
+  const [conflict, setConflict] = useState(false)
 
-  const commitRename = (value: string) => {
-    setRenaming(false)
+  const commitRename = async (value: string) => {
     const name = value.trim()
-    if (name && name !== folder.name) {
-      renameFolderById(folder.id, name).catch(() => {
+    if (!name || name === folder.name) {
+      setRenaming(false)
+      return
+    }
+    try {
+      await renameFolderById(folder.id, name)
+      setRenaming(false)
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 409) {
+        setConflict(true) // keep the input open; the name is taken
+      } else {
         useStore.getState().setDocListError(true)
-      })
+        setRenaming(false)
+      }
     }
   }
 
@@ -232,14 +242,18 @@ function FolderGroup({
       >
         {renaming ? (
           <input
-            className="doc-rename-input"
+            className={conflict ? 'doc-rename-input conflict' : 'doc-rename-input'}
             defaultValue={folder.name}
             autoFocus
             onFocus={(e) => e.target.select()}
-            onBlur={(e) => commitRename(e.target.value)}
+            onChange={() => setConflict(false)}
+            onBlur={(e) => void commitRename(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') commitRename(e.currentTarget.value)
-              if (e.key === 'Escape') setRenaming(false)
+              if (e.key === 'Enter') void commitRename(e.currentTarget.value)
+              if (e.key === 'Escape') {
+                setConflict(false)
+                setRenaming(false)
+              }
             }}
           />
         ) : (
@@ -355,10 +369,17 @@ function DocumentItem({ doc }: { doc: DocumentSummary }) {
           ⋯
         </button>
         {menuOpen && (
-          <div className="doc-menu" onMouseLeave={() => setMenuOpen(false)}>
+          <div
+            className="doc-menu"
+            onMouseLeave={() => {
+              setMenuOpen(false)
+              setMoving(false)
+            }}
+          >
             <button
               onClick={() => {
                 setMenuOpen(false)
+                setMoving(false)
                 setRenaming(true)
               }}
             >
@@ -398,6 +419,7 @@ function DocumentItem({ doc }: { doc: DocumentSummary }) {
               className="doc-menu-delete"
               onClick={() => {
                 setMenuOpen(false)
+                setMoving(false)
                 if (window.confirm(m.docDeleteConfirm(doc.name))) {
                   void removeDocument(doc.id)
                 }

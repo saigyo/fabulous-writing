@@ -531,6 +531,40 @@ describe('folders', () => {
     expect(docs.map((d) => d.id)).toEqual([1, 2])
   })
 
+  it('moveDocumentToFolder refreshes folders and documents on a 422 (target folder vanished)', async () => {
+    const docs = [
+      { ...summaryOf(doc(1)), folder_id: null },
+      { ...summaryOf(doc(2)), folder_id: null },
+    ]
+    useStore.getState().setDocuments(docs)
+    vi.mocked(moveDocument).mockRejectedValue(new HttpError(422, 'folder gone'))
+    vi.mocked(listFolders).mockResolvedValue([])
+    vi.mocked(listDocuments).mockResolvedValue(docs)
+    await moveDocumentToFolder(2, 5)
+    expect(listFolders).toHaveBeenCalled()
+    expect(listDocuments).toHaveBeenCalled()
+    const stored = useStore.getState().documents
+    expect(stored.find((d) => d.id === 2)?.folder_id).toBeNull()
+    expect(stored.find((d) => d.id === 1)?.folder_id).toBeNull()
+    expect(useStore.getState().docListError).toBe(false)
+  })
+
+  it('moveDocumentToFolder sets docListError on non-422 failures without refreshing', async () => {
+    const docs = [
+      { ...summaryOf(doc(1)), folder_id: null },
+      { ...summaryOf(doc(2)), folder_id: null },
+    ]
+    useStore.getState().setDocuments(docs)
+    vi.mocked(moveDocument).mockRejectedValue(new TypeError('offline'))
+    await moveDocumentToFolder(2, 5)
+    expect(listFolders).not.toHaveBeenCalled()
+    expect(listDocuments).not.toHaveBeenCalled()
+    const stored = useStore.getState().documents
+    expect(stored.find((d) => d.id === 2)?.folder_id).toBeNull()
+    expect(stored.find((d) => d.id === 1)?.folder_id).toBeNull()
+    expect(useStore.getState().docListError).toBe(true)
+  })
+
   it('removeFolder refreshes folders and documents', async () => {
     vi.mocked(deleteFolder).mockResolvedValue(undefined)
     vi.mocked(listFolders).mockResolvedValue([])

@@ -1694,6 +1694,9 @@ input {
 .new-folder-input.conflict {
   border-color: #e5484d;
 }
+.doc-rename-input.conflict {
+  border-color: #e5484d;
+}
 .doc-submenu {
   display: flex;
   flex-direction: column;

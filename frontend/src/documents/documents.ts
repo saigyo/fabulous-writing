@@ -280,7 +280,20 @@ export async function moveDocumentToFolder(
   id: number,
   folderId: number | null,
 ): Promise<void> {
-  const moved = await apiMoveDocument(id, folderId)
+  let moved: DocumentFull
+  try {
+    moved = await apiMoveDocument(id, folderId)
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 422) {
+      // The target folder vanished meanwhile: drop the stale entry from
+      // the submenu and re-sync memberships.
+      await refreshFolders()
+      await refreshDocuments()
+    } else {
+      useStore.getState().setDocListError(true)
+    }
+    return
+  }
   const store = useStore.getState()
   store.setDocuments(
     store.documents.map((d) =>

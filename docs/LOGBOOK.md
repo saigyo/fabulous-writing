@@ -2410,3 +2410,39 @@ plus two ungrouped documents, one marked current).
 warnings. `cd frontend && npx vitest run` → 210 passed (21 files);
 `npx tsc --noEmit` clean; `npm run lint` (oxlint) clean; `npm run build`
 clean (only the pre-existing >500 kB chunk-size advisory, unrelated).
+
+## 2026-07-11 — Project folders: final-review fixes (move errors, rename conflict, submenu reset)
+
+Three findings from the final capstone review, all in the frontend:
+
+- **I-1 (important, spec-mandated)**: `moveDocumentToFolder` previously rethrew
+  every failure and both submenu call sites called it as `void moveDocumentToFolder(...)`,
+  so move failures vanished silently. Now the function catches its own errors: a 422
+  (target folder deleted meanwhile) calls `refreshFolders()` then `refreshDocuments()`
+  so the stale submenu entry disappears; any other failure sets `docListError(true)`.
+  The document's `folder_id` is only patched in `store.documents` after the API call
+  resolves, so a failed move already left it untouched — no rollback needed.
+- **M-1 (minor)**: folder rename's 409 (duplicate name) used to close the inline input
+  and show the generic doc-list-error banner. `FolderGroup`'s `commitRename` is now
+  async with its own `conflict` state, mirroring `NewFolderInput`: a 409 sets
+  `conflict` and keeps the input open with a new `.doc-rename-input.conflict` CSS rule
+  (typing clears it); other errors still close the input and set `docListError`;
+  Escape cancels and clears conflict.
+- **Bonus**: `DocumentItem`'s `moving` submenu state wasn't reset when the ⋯ menu
+  closed via `onMouseLeave`, so reopening the menu showed the submenu pre-expanded.
+  Fixed by resetting `moving` alongside `menuOpen` in `onMouseLeave` and in the
+  Rename/Delete button handlers.
+
+Added two `documents.test.ts` cases covering `moveDocumentToFolder`'s new branches
+(422 → both lists refreshed, summaries unchanged, no `docListError`; other error →
+`docListError` true, no refresh, summaries unchanged). Updated
+`docs/frontend-architecture.md`'s "Error paths" and `moveDocumentToFolder` bullets,
+which previously claimed the function rethrows and call sites catch — no longer true
+now that the handling lives inside the function itself.
+
+**Verification.** `cd frontend && npx vitest run` → 212 passed (21 files);
+`npx tsc --noEmit` clean; `npm run lint` (oxlint) clean; `npm run build` clean (same
+pre-existing >500 kB chunk-size advisory, unrelated).
+
+Commit: `fix: handle move failures per spec, inline rename conflicts, submenu state reset`
+(not pushed).

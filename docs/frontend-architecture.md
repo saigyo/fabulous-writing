@@ -505,7 +505,12 @@ from `documents` + `folders` on every render instead of maintaining a third sync
     trying to reconstruct the new grouping from the delete response alone.
   - `moveDocumentToFolder` patches only the moved document's `folder_id` in
     `store.documents` from the move response — cheaper than a full refetch since a
-    move never changes any other document or folder.
+    move never changes any other document or folder. On failure it does not rethrow
+    (unlike `addFolder`): a 422 means the target folder vanished meanwhile, so it
+    re-fetches both lists (`refreshFolders()` then `refreshDocuments()`) to drop the
+    stale entry from the submenu; any other error sets `docListError` instead. Either
+    way the document's `folder_id` is left untouched, since the in-place patch above
+    only runs after the API call resolves.
   - `createNewDocument(folderId?)` passes `folder_id` straight through to
     `POST /api/documents` when given, so "new document here" (the folder's ⋯ menu)
     creates already-grouped instead of creating ungrouped and then moving.
@@ -516,12 +521,18 @@ from `documents` + `folders` on every render instead of maintaining a third sync
   editor's save loop. This mirrors the backend split between `update_document` (revision-
   guarded) and `set_folder` (revision-free, see `docs/backend-architecture.md#folders`):
   the frontend simply never gives the autosave path a `folder_id` to send.
-- **Error paths**: a failed `moveDocumentToFolder`/`renameFolderById`/`removeFolder`
-  rejects out of its promise; each call site (`DocumentSidebar.tsx`) catches it and sets
-  `docListError`, surfacing the existing retry banner rather than a bespoke per-action
-  error UI. A failed move in particular leaves the document where it was — there is no
-  optimistic client-side move that would need rolling back, since `moveDocumentToFolder`
-  only patches state after the API call resolves.
+- **Error paths**: a failed `renameFolderById`/`removeFolder` rejects out of its
+  promise; each call site (`DocumentSidebar.tsx`) catches it and sets `docListError`,
+  surfacing the existing retry banner rather than a bespoke per-action error UI.
+  `moveDocumentToFolder` is the exception — it handles its own failures internally
+  (both submenu call sites just fire-and-forget it) so the one spot covers both: a 422
+  (the target folder was deleted meanwhile) re-fetches folders and documents so the
+  stale submenu entry disappears, while any other failure sets `docListError`. A failed
+  move in particular leaves the document where it was — there is no optimistic
+  client-side move that would need rolling back, since `moveDocumentToFolder` only
+  patches state after the API call resolves. `renameFolderById`'s inline rename input
+  mirrors `NewFolderInput`'s 409 handling: a duplicate name keeps the input open with
+  `.conflict` styling instead of closing it into the generic error banner.
 
 ### Per-document header settings and persistence
 
