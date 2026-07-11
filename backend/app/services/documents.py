@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS documents (
     llm_auto INTEGER NOT NULL DEFAULT 1,
     last_findings TEXT NOT NULL DEFAULT '[]',
     scorecard TEXT,
+    folder_id INTEGER,
     revision INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -48,6 +49,7 @@ class Document(BaseModel):
     llm_auto: bool = True
     last_findings: list[dict[str, Any]] = Field(default_factory=list)
     scorecard: dict[str, Any] | None = None
+    folder_id: int | None = None
     revision: int = 0
     created_at: str
     updated_at: str
@@ -57,6 +59,7 @@ class DocumentSummary(BaseModel):
     id: int
     name: str
     language: Language
+    folder_id: int | None = None
     updated_at: str
 
 
@@ -88,6 +91,7 @@ def _row_to_document(row: sqlite3.Row) -> Document:
         llm_auto=bool(row["llm_auto"]),
         last_findings=json.loads(row["last_findings"]),
         scorecard=json.loads(row["scorecard"]) if row["scorecard"] else None,
+        folder_id=row["folder_id"],
         revision=row["revision"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -102,6 +106,7 @@ class DocumentStore:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+            self._migrate(conn)
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -116,6 +121,12 @@ class DocumentStore:
                 yield conn
         finally:
             conn.close()
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        # Pre-existing databases lack columns added later; guard by name.
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(documents)")}
+        if "folder_id" not in columns:
+            conn.execute("ALTER TABLE documents ADD COLUMN folder_id INTEGER")
 
     def create_document(
         self,
@@ -132,6 +143,7 @@ class DocumentStore:
         llm_auto: bool = True,
         last_findings: list[dict[str, Any]] | None = None,
         scorecard: dict[str, Any] | None = None,
+        folder_id: int | None = None,
     ) -> Document:
         now = _utcnow()
         with self._connect() as conn:
@@ -139,8 +151,8 @@ class DocumentStore:
                 """INSERT INTO documents
                    (name, name_source, text, language, profile_id, domain_ids,
                     llm_provider, llm_model, llm_tier, llm_auto, last_findings,
-                    scorecard, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    scorecard, folder_id, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     name,
                     name_source,
@@ -154,6 +166,7 @@ class DocumentStore:
                     int(llm_auto),
                     json.dumps(last_findings or []),
                     json.dumps(scorecard) if scorecard is not None else None,
+                    folder_id,
                     now,
                     now,
                 ),
@@ -167,7 +180,7 @@ class DocumentStore:
     def list_documents(self) -> list[DocumentSummary]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT id, name, language, updated_at FROM documents"
+                "SELECT id, name, language, folder_id, updated_at FROM documents"
                 " ORDER BY updated_at DESC, id DESC"
             ).fetchall()
         return [
@@ -175,6 +188,7 @@ class DocumentStore:
                 id=row["id"],
                 name=row["name"],
                 language=Language(row["language"]),
+                folder_id=row["folder_id"],
                 updated_at=row["updated_at"],
             )
             for row in rows
@@ -281,6 +295,20 @@ class DocumentStore:
             # Either no such document, or (when guarded) it was renamed away
             # from `only_if_source` in the meantime: leave it as-is.
             return self.get_document(document_id)
+        return self.get_document(document_id)
+
+    def set_folder(
+        self, document_id: int, folder_id: int | None
+    ) -> Document | None:
+        """Organizational move; like set_name it never bumps revision, so a
+        sidebar move can never 409 an in-flight autosave. Last move wins."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE documents SET folder_id = ?, updated_at = ? WHERE id = ?",
+                (folder_id, _utcnow(), document_id),
+            )
+        if cursor.rowcount == 0:
+            return None
         return self.get_document(document_id)
 
     def delete_document(self, document_id: int) -> bool:

@@ -116,3 +116,56 @@ def test_connection_is_closed_after_use(tmp_path: Path):
         conn.execute("SELECT 1")
     with pytest.raises(sqlite3.ProgrammingError):
         conn.execute("SELECT 1")
+
+
+def test_folder_id_roundtrip_and_summary(store):
+    doc = store.create_document("A", Language.EN, folder_id=7)
+    assert doc.folder_id == 7
+    assert store.get_document(doc.id).folder_id == 7
+    assert store.list_documents()[0].folder_id == 7
+    plain = store.create_document("B", Language.EN)
+    assert plain.folder_id is None
+
+
+def test_set_folder_bumps_updated_at_but_not_revision(store):
+    doc = store.create_document("A", Language.EN)
+    store.update_document(doc.id, 0, text="body")
+    moved = store.set_folder(doc.id, 3)
+    assert moved.folder_id == 3
+    assert moved.revision == 1  # unchanged
+    cleared = store.set_folder(doc.id, None)
+    assert cleared.folder_id is None
+    assert store.set_folder(9999, 1) is None
+
+
+def test_folder_id_migration_adds_column(tmp_path: Path):
+    # A database created before the column existed gets it via _migrate.
+    db = tmp_path / "old.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """CREATE TABLE documents (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               owner_id INTEGER NOT NULL DEFAULT 1,
+               name TEXT NOT NULL,
+               name_source TEXT NOT NULL DEFAULT 'fallback',
+               text TEXT NOT NULL DEFAULT '',
+               language TEXT NOT NULL,
+               profile_id INTEGER,
+               domain_ids TEXT NOT NULL DEFAULT '[]',
+               llm_provider TEXT, llm_model TEXT, llm_tier TEXT,
+               llm_auto INTEGER NOT NULL DEFAULT 1,
+               last_findings TEXT NOT NULL DEFAULT '[]',
+               scorecard TEXT,
+               revision INTEGER NOT NULL DEFAULT 0,
+               created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+           INSERT INTO documents (name, language, created_at, updated_at)
+           VALUES ('Old', 'en', '2026-01-01T00:00:00+00:00',
+                   '2026-01-01T00:00:00+00:00');"""
+    )
+    conn.commit()
+    conn.close()
+    migrated = DocumentStore(db)
+    old = migrated.list_documents()[0]
+    assert old.folder_id is None
+    # Opening twice must not fail on the ALTER TABLE guard.
+    DocumentStore(db)
