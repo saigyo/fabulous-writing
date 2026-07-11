@@ -2341,7 +2341,7 @@ frontend 203 passed, tsc/build/lint clean.
 
 ## 2026-07-11 — Subtler document-sidebar controls
 
-Commit: see below
+Commit: `e0fe788`
 
 Restyled the "+ New document" and collapse/expand buttons to match the
 Claude app's quiet sidebar controls: the new-document button is now a
