@@ -87,6 +87,9 @@ function summaryOf(doc: DocumentFull): DocumentSummary {
     name: doc.name,
     language: doc.language,
     folder_id: doc.folder_id,
+    created_at: doc.created_at,
+    edited_at: doc.edited_at,
+    checked_at: doc.checked_at,
     updated_at: doc.updated_at,
   }
 }
@@ -225,6 +228,8 @@ async function hydrateFromBuffer(snapshot: DocSnapshot): Promise<void> {
     revision: snapshot.revision,
     created_at: '',
     updated_at: '',
+    edited_at: '',
+    checked_at: null,
   })
   // hydrate marked the buffer clean; restore the dirty truth so the retry
   // loop keeps pushing it.
@@ -337,7 +342,10 @@ export async function renameDocument(id: number, name: string): Promise<void> {
       revision: updated.revision,
     })
   }
-  store.touchDocument(id, updated.name)
+  store.patchDocumentSummary(id, {
+    name: updated.name,
+    edited_at: updated.edited_at,
+  })
 }
 
 export async function removeDocument(id: number): Promise<void> {

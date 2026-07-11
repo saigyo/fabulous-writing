@@ -127,7 +127,7 @@ interface AppState {
   setDocuments: (documents: DocumentSummary[]) => void
   setDocMeta: (docMeta: DocMeta | null) => void
   patchDocMeta: (patch: Partial<DocMeta>) => void
-  touchDocument: (id: number, name?: string) => void
+  patchDocumentSummary: (id: number, patch: Partial<DocumentSummary>) => void
   toggleDocSidebar: () => void
   setDocListError: (docListError: boolean) => void
   setFolders: (folders: Folder[]) => void
@@ -316,18 +316,19 @@ export const useStore = create<AppState>()(
         set((state) =>
           state.docMeta ? { docMeta: { ...state.docMeta, ...patch } } : {},
         ),
-      touchDocument: (id, name) =>
+      // Merge server-returned fields into one summary and re-sort. Entries
+      // only move when the server bumped edited_at — the client never fakes
+      // recency locally.
+      patchDocumentSummary: (id, patch) =>
         set((state) => {
-          const entry = state.documents.find((d) => d.id === id)
-          if (!entry) return {}
-          const touched = {
-            ...entry,
-            name: name ?? entry.name,
-            updated_at: new Date().toISOString(),
-          }
-          return {
-            documents: [touched, ...state.documents.filter((d) => d.id !== id)],
-          }
+          if (!state.documents.some((d) => d.id === id)) return {}
+          const documents = state.documents
+            .map((d) => (d.id === id ? { ...d, ...patch } : d))
+            .sort(
+              (a, b) =>
+                b.edited_at.localeCompare(a.edited_at) || b.id - a.id,
+            )
+          return { documents }
         }),
       toggleDocSidebar: () =>
         set((state) => ({ docSidebarCollapsed: !state.docSidebarCollapsed })),

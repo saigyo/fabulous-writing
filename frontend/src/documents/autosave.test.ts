@@ -28,12 +28,28 @@ let docText = 'hello world'
 function seedStore(): void {
   useStore.getState().setDocMeta({ id: 5, name: 'Doc', nameSource: 'user', revision: 2 })
   useStore.getState().setDocuments([
-    { id: 5, name: 'Doc', language: 'en', folder_id: null, updated_at: '2026-07-10T00:00:00+00:00' },
+    {
+      id: 5,
+      name: 'Doc',
+      language: 'en',
+      folder_id: null,
+      created_at: '2026-07-10T00:00:00+00:00',
+      edited_at: '2026-07-10T00:00:00+00:00',
+      checked_at: null,
+      updated_at: '2026-07-10T00:00:00+00:00',
+    },
   ])
 }
 
 function serverDoc(revision: number) {
-  return { id: 5, revision, name: 'Doc', name_source: 'user' }
+  return {
+    id: 5,
+    revision,
+    name: 'Doc',
+    name_source: 'user',
+    edited_at: '2026-07-11T00:00:00+00:00',
+    checked_at: null,
+  }
 }
 
 beforeEach(() => {

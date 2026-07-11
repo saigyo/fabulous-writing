@@ -19,6 +19,17 @@ function tracked(id: string, from: number, to: number, text: string): TrackedFin
   return { finding, from, to }
 }
 
+const summary = (id: number, name: string, edited_at: string) => ({
+  id,
+  name,
+  language: 'en' as const,
+  folder_id: null,
+  created_at: '2026-07-11T08:00:00+00:00',
+  edited_at,
+  checked_at: null,
+  updated_at: edited_at,
+})
+
 describe('setTracked cache migration', () => {
   beforeEach(() => {
     useStore.setState({
@@ -159,18 +170,32 @@ describe('document state', () => {
     expect(useStore.getState().currentDocId).toBeNull()
   })
 
-  it('touchDocument moves the entry to the front and renames it', () => {
+  it('patchDocumentSummary merges and re-sorts by edited_at', () => {
     useStore.getState().setDocuments([
-      { id: 1, name: 'One', language: 'en', folder_id: null, updated_at: '2026-07-10T00:00:00+00:00' },
-      { id: 2, name: 'Two', language: 'en', folder_id: null, updated_at: '2026-07-10T00:00:00+00:00' },
+      summary(2, 'Two', '2026-07-11T10:00:00+00:00'),
+      summary(1, 'One', '2026-07-11T09:00:00+00:00'),
     ])
-    useStore.getState().touchDocument(2, 'Renamed')
-    const docs = useStore.getState().documents
+    // Patch without edited_at: name updates, order unchanged.
+    useStore.getState().patchDocumentSummary(1, { name: 'Renamed' })
+    let docs = useStore.getState().documents
     expect(docs.map((d) => d.id)).toEqual([2, 1])
-    expect(docs[0].name).toBe('Renamed')
-    // Unknown ids are a no-op.
-    useStore.getState().touchDocument(99)
-    expect(useStore.getState().documents.map((d) => d.id)).toEqual([2, 1])
+    expect(docs[1].name).toBe('Renamed')
+    // Bumped edited_at moves the entry to the front.
+    useStore.getState().patchDocumentSummary(1, { edited_at: '2026-07-11T11:00:00+00:00' })
+    docs = useStore.getState().documents
+    expect(docs.map((d) => d.id)).toEqual([1, 2])
+    // Unknown id is a no-op.
+    useStore.getState().patchDocumentSummary(99, { name: 'X' })
+    expect(useStore.getState().documents.map((d) => d.id)).toEqual([1, 2])
+  })
+
+  it('patchDocumentSummary breaks edited_at ties by id desc', () => {
+    useStore.getState().setDocuments([
+      summary(3, 'C', '2026-07-11T10:00:00+00:00'),
+      summary(1, 'A', '2026-07-11T10:00:00+00:00'),
+    ])
+    useStore.getState().patchDocumentSummary(1, { edited_at: '2026-07-11T10:00:00+00:00' })
+    expect(useStore.getState().documents.map((d) => d.id)).toEqual([3, 1])
   })
 
   it('persist v1 -> v2 migration keeps old blobs loadable', () => {

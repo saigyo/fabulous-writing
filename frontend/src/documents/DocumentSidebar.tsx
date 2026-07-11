@@ -357,7 +357,7 @@ function DocumentItem({ doc }: { doc: DocumentSummary }) {
           }}
         >
           <span className="doc-name">{doc.name}</span>
-          <span className="doc-time">{relativeTime(doc.updated_at, locale)}</span>
+          <span className="doc-time">{relativeTime(doc.edited_at, locale)}</span>
         </button>
       )}
       <div className="doc-actions">

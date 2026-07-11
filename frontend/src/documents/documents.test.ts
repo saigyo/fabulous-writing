@@ -73,12 +73,23 @@ function doc(id: number, over: Partial<DocumentFull> = {}): DocumentFull {
     revision: 5,
     created_at: '2026-07-10T00:00:00+00:00',
     updated_at: '2026-07-10T00:00:00+00:00',
+    edited_at: '2026-07-10T00:00:00+00:00',
+    checked_at: null,
     ...over,
   }
 }
 
 function summaryOf(d: DocumentFull) {
-  return { id: d.id, name: d.name, language: d.language, folder_id: d.folder_id, updated_at: d.updated_at }
+  return {
+    id: d.id,
+    name: d.name,
+    language: d.language,
+    folder_id: d.folder_id,
+    created_at: d.created_at,
+    edited_at: d.edited_at,
+    checked_at: d.checked_at,
+    updated_at: d.updated_at,
+  }
 }
 
 beforeEach(() => {

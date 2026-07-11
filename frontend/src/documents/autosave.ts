@@ -177,7 +177,10 @@ async function push(snapshot: DocSnapshot): Promise<void> {
     if (store.docMeta?.id === snapshot.docId) {
       store.patchDocMeta({ revision: updated.revision })
       writeSnapshot({ ...snapshot, revision: updated.revision, dirty: false })
-      store.touchDocument(snapshot.docId)
+      store.patchDocumentSummary(snapshot.docId, {
+        edited_at: updated.edited_at,
+        checked_at: updated.checked_at,
+      })
     }
     await maybeGenerateTitle(snapshot)
     succeeded = true
@@ -245,7 +248,7 @@ async function maybeGenerateTitle(snapshot: DocSnapshot): Promise<void> {
     if (store.docMeta?.id === doc.id) {
       store.patchDocMeta({ name: doc.name, nameSource: doc.name_source })
     }
-    store.touchDocument(doc.id, doc.name)
+    useStore.getState().patchDocumentSummary(doc.id, { name: doc.name })
   } catch {
     // Silent per spec; a later session may retry.
   }

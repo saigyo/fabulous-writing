@@ -198,6 +198,9 @@ export interface DocumentSummary {
   name: string
   language: Language
   folder_id: number | null
+  created_at: string
+  edited_at: string
+  checked_at: string | null
   updated_at: string
 }
 
@@ -233,6 +236,8 @@ export interface DocumentFull {
   revision: number
   created_at: string
   updated_at: string
+  edited_at: string
+  checked_at: string | null
 }
 
 export interface DocumentSettingsPayload {
