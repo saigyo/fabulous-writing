@@ -352,9 +352,25 @@ snapshot, and header settings, backed by the `/api/documents` endpoints (see
   failures and tab closes until the backend confirms the write (`dirty: false`).
 - `autosave.ts` — the save engine.
 - `documents.ts` — document lifecycle: open/create/rename/delete, startup replay,
-  legacy-text migration, orphan replay on document switch, and 409/404 recovery.
+  legacy-text migration, orphan replay on document switch, and 409/404 recovery. Also
+  owns folder lifecycle verbs (`addFolder`, `renameFolderById`, `removeFolder`,
+  `moveDocumentToFolder`) that call the `/api/folders` endpoints and patch
+  `store.folders`/`store.documents` in place; `createNewDocument(folderId?)` creates
+  directly inside a folder.
 - `DocumentSidebar.tsx` — the collapsible sidebar UI (`.doc-sidebar`; new/rename/delete,
-  relative timestamps via `Intl.RelativeTimeFormat`).
+  relative timestamps via `Intl.RelativeTimeFormat`). `groupDocuments(documents, folders)`
+  is an exported pure helper (unit-tested standalone) that buckets the flat,
+  recency-ordered document list by `folder_id` into a `Map<folderId, DocumentSummary[]>`
+  plus an `ungrouped` array; a document whose `folder_id` points at a folder that no
+  longer exists falls back to ungrouped rather than being hidden. `FolderGroup` renders
+  each folder as a collapsible row (`docFoldersCollapsed`, persisted, toggled via
+  `toggleFolderCollapsed`) with its own ⋯ menu (new document here / rename / delete —
+  deleting keeps the documents and moves them to ungrouped, never destroys them).
+  `NewFolderInput` is an inline ghost-styled text input reached from a folder-plus button
+  next to "+ New document"; a 409 (duplicate name) keeps the input open with a `.conflict`
+  red border instead of dismissing it. Each document's own ⋯ menu gained a "Move to
+  folder ▸" submenu (between Rename and Delete) listing "No folder" plus every folder,
+  disabling whichever entry matches the document's current location.
 
 ### The write-through buffer and autosave engine
 
