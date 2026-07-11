@@ -187,3 +187,31 @@ def test_generate_name_toctou_user_rename_wins(client):
     # The user's rename (which landed mid-flight) must survive; the LLM
     # title from the stale check must not clobber it.
     assert body["name"] == "User Renamed" and body["name_source"] == "user"
+
+
+def test_create_document_with_unknown_folder_is_422(client):
+    response = client.post(
+        "/api/documents",
+        json={"name": "Doc", "language": "en", "folder_id": 9999},
+    )
+    assert response.status_code == 422
+
+
+def test_move_document_between_folders(client):
+    folder = client.post("/api/folders", json={"name": "Target"}).json()
+    doc = make_doc(client)
+    moved = client.post(
+        f"/api/documents/{doc['id']}/move", json={"folder_id": folder["id"]}
+    )
+    assert moved.status_code == 200
+    assert moved.json()["folder_id"] == folder["id"]
+    assert moved.json()["revision"] == doc["revision"]  # moves never bump
+    assert client.get("/api/documents").json()[0]["folder_id"] == folder["id"]
+    back = client.post(f"/api/documents/{doc['id']}/move", json={"folder_id": None})
+    assert back.json()["folder_id"] is None
+    assert client.post(
+        f"/api/documents/{doc['id']}/move", json={"folder_id": 9999}
+    ).status_code == 422
+    assert client.post(
+        "/api/documents/9999/move", json={"folder_id": None}
+    ).status_code == 404

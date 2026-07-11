@@ -32,6 +32,11 @@ class DocumentCreate(BaseModel):
     llm_auto: bool = True
     findings: list[dict[str, Any]] = Field(default_factory=list)
     scorecard: dict[str, Any] | None = None
+    folder_id: int | None = None
+
+
+class MoveRequest(BaseModel):
+    folder_id: int | None
 
 
 class DocumentContent(BaseModel):
@@ -72,6 +77,9 @@ def list_documents(request: Request) -> list[DocumentSummary]:
 def create_document(request: Request, body: DocumentCreate) -> Document:
     if not body.name.strip():
         raise HTTPException(422, "Document name must not be empty")
+    if body.folder_id is not None:
+        if request.app.state.folder_store.get_folder(body.folder_id) is None:
+            raise HTTPException(422, "Unknown folder")
     return _store(request).create_document(
         body.name.strip(),
         body.language,
@@ -85,6 +93,7 @@ def create_document(request: Request, body: DocumentCreate) -> Document:
         llm_auto=body.llm_auto,
         last_findings=body.findings,
         scorecard=body.scorecard,
+        folder_id=body.folder_id,
     )
 
 
@@ -143,6 +152,19 @@ def delete_document(request: Request, document_id: int) -> Response:
     if not _store(request).delete_document(document_id):
         raise HTTPException(404, "Document not found")
     return Response(status_code=204)
+
+
+@router.post("/documents/{document_id}/move")
+def move_document(
+    request: Request, document_id: int, body: MoveRequest
+) -> Document:
+    if body.folder_id is not None:
+        if request.app.state.folder_store.get_folder(body.folder_id) is None:
+            raise HTTPException(422, "Unknown folder")
+    moved = _store(request).set_folder(document_id, body.folder_id)
+    if moved is None:
+        raise HTTPException(404, "Document not found")
+    return moved
 
 
 @router.post("/documents/{document_id}/generate-name")
