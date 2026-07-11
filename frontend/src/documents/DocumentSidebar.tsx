@@ -21,6 +21,15 @@ export function relativeTime(iso: string, locale: string, now = Date.now()): str
   return rtf.format(Math.round(hours / 24), 'day')
 }
 
+function PanelIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" />
+      <path d="M6 2.5v11" stroke="currentColor" />
+    </svg>
+  )
+}
+
 export function DocumentSidebar() {
   const m = useMessages()
   const collapsed = useStore((s) => s.docSidebarCollapsed)
@@ -37,7 +46,7 @@ export function DocumentSidebar() {
           aria-label={m.docSidebarShow}
           onClick={toggle}
         >
-          ▸
+          <PanelIcon />
         </button>
       </aside>
     )
@@ -46,7 +55,10 @@ export function DocumentSidebar() {
     <aside className="doc-sidebar">
       <div className="doc-sidebar-head">
         <button className="doc-new" onClick={() => void createNewDocument()}>
-          + {m.docNew}
+          <span className="doc-new-icon" aria-hidden="true">
+            +
+          </span>
+          {m.docNew}
         </button>
         <button
           className="doc-sidebar-toggle"
@@ -54,7 +66,7 @@ export function DocumentSidebar() {
           aria-label={m.docSidebarHide}
           onClick={toggle}
         >
-          ◂
+          <PanelIcon />
         </button>
       </div>
       {error && (

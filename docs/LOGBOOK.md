@@ -2338,3 +2338,15 @@ succeeds, so a failing backend can no longer lose the pre-feature document
 vacuous covering test for I-1 — was repaired in `8229ad8` (the test now
 fails without the fix). Gates after both commits: backend 666 passed,
 frontend 203 passed, tsc/build/lint clean.
+
+## 2026-07-11 — Subtler document-sidebar controls
+
+Commit: see below
+
+Restyled the "+ New document" and collapse/expand buttons to match the
+Claude app's quiet sidebar controls: the new-document button is now a
+chrome-less ghost row (circled + icon, plain-weight label, hover tint) and
+the toggle is an icon-only ghost button using a new inline `PanelIcon` SVG
+(rounded rectangle with a vertical divider) instead of the ▸/◂ arrows.
+Verified visually on a scratch stack (expanded, hover, and collapsed
+screenshots). Gates: vitest 203, tsc, oxlint, build all clean.

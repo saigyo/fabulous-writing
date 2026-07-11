@@ -1490,14 +1490,47 @@ input {
 }
 .doc-new {
   flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   text-align: left;
-  padding: 0.4rem 0.6rem;
+  padding: 0.3rem 0.45rem;
+  border: none;
+  background: none;
   border-radius: 6px;
-  font-weight: 600;
+  color: var(--text);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.doc-new:hover {
+  background: var(--accent-soft);
+}
+.doc-new-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.2rem;
+  height: 1.2rem;
+  border-radius: 50%;
+  background: var(--border);
+  color: var(--text);
+  font-size: 0.9rem;
+  line-height: 1;
 }
 .doc-sidebar-toggle {
-  padding: 0.3rem 0.45rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35rem;
+  border: none;
+  background: none;
   border-radius: 6px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.doc-sidebar-toggle:hover {
+  background: var(--accent-soft);
+  color: var(--text);
 }
 .doc-list {
   list-style: none;
