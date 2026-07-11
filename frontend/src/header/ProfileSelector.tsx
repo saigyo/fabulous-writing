@@ -65,6 +65,11 @@ export function ProfileSelector() {
             if (next) selectProfile(next, true)
           }}
         >
+          {profileId === null && (
+            <option value="" disabled>
+              —
+            </option>
+          )}
           {profiles.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name}

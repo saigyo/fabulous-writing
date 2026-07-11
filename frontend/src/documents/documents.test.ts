@@ -468,7 +468,7 @@ describe('applyHeaderProfileSelection', () => {
     example_text: '',
   }
 
-  it('shows a header profile pick without autosaving it onto a just-opened null-profile document', async () => {
+  it('leaves a just-opened null-profile document with no profile selected (does not adopt the fallback)', async () => {
     vi.useFakeTimers()
     try {
       // Wire the same settings-autosave subscription App.tsx installs, so
@@ -481,16 +481,19 @@ describe('applyHeaderProfileSelection', () => {
         if (changed && state.docMeta) noteChange()
       })
       try {
-        useStore.setState({ language: 'en' })
+        useStore.setState({ language: 'en', lastProfileByLanguage: {} })
         vi.mocked(getDocument).mockResolvedValue(doc(3, { profile_id: null }))
         await openDocument(3) // language switch en -> de arms the suppression
         expect(useStore.getState().profileId).toBeNull()
 
         applyHeaderProfileSelection(useStore.getState().selectProfile, chosen, true)
-        // Still shown as selected for display...
-        expect(useStore.getState().profileId).toBe(7)
+        // A pruned document has no profile; the fallback must NOT be
+        // adopted into the store, even for display only — that would be
+        // deferred corruption once the next autosave persists it.
+        expect(useStore.getState().profileId).toBeNull()
+        expect(useStore.getState().lastProfileByLanguage).toEqual({})
 
-        // ...but must not have queued an autosave of that re-selection.
+        // No autosave was queued either.
         await vi.advanceTimersByTimeAsync(5000)
         expect(updateDocument).not.toHaveBeenCalled()
       } finally {
@@ -499,6 +502,25 @@ describe('applyHeaderProfileSelection', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('adopts the profile without applying its values when suppressed but the document already has a profile', async () => {
+    useStore.setState({ language: 'en' })
+    // The opened document supplies its own profile (id 4), so
+    // hydrateFromDocument leaves profileId non-null.
+    vi.mocked(getDocument).mockResolvedValue(
+      doc(3, { profile_id: 4, domain_ids: [9] }),
+    )
+    await openDocument(3) // language switch en -> de arms the suppression
+    expect(useStore.getState().profileId).toBe(4)
+
+    applyHeaderProfileSelection(useStore.getState().selectProfile, chosen, true)
+    // Adopted (selectProfile with apply=false: profileId/lastProfileByLanguage
+    // update but the profile's own values are not copied onto the header)...
+    expect(useStore.getState().profileId).toBe(7)
+    expect(useStore.getState().lastProfileByLanguage.de).toBe(7)
+    // ...so the document's own header values must not be overwritten.
+    expect(useStore.getState().domainIds).toEqual([9])
   })
 
   it('applies and autosaves a profile pick normally when no suppression is armed', async () => {

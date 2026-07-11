@@ -52,13 +52,15 @@ export function consumeProfileApplySuppression(): boolean {
 /** Header's language-switch effect calls this once it has picked which
  * profile to show. Normally a real language switch applies the profile's
  * values to the header selectors (autosaving them onto the document). But
- * when opening a document supplied no profile (profileId is still null —
- * e.g. its profile_id was pruned server-side because the profile was
+ * when opening a document that supplied no profile (profileId is still null
+ * — e.g. its profile_id was pruned server-side because the profile was
  * deleted) and this apply is suppressed (see consumeProfileApplySuppression),
- * the selection is for DISPLAY only: still show `chosen` as selected, but do
- * not let the settings-autosave subscription (App.tsx) persist it onto the
- * document. beginHydration/endHydration gate that subscription's noteChange
- * call for the (synchronous, zustand v5) duration of the state update. */
+ * the document HAS no profile: adopting the fallback into the store — even
+ * "display only" — is deferred corruption, because selectProfile
+ * unconditionally writes profileId/lastProfileByLanguage, and the next
+ * autosave would persist that onto a document that deliberately has none.
+ * So this case leaves the store untouched; the selector shows an explicit
+ * empty selection instead. */
 export function applyHeaderProfileSelection(
   selectProfile: (profile: Profile, apply: boolean) => void,
   chosen: Profile,
@@ -66,15 +68,9 @@ export function applyHeaderProfileSelection(
 ): void {
   const suppressed = consumeProfileApplySuppression()
   if (suppressed && useStore.getState().profileId === null) {
-    beginHydration()
-    try {
-      selectProfile(chosen, false)
-    } finally {
-      endHydration()
-    }
-  } else {
-    selectProfile(chosen, isSwitch && !suppressed)
+    return
   }
+  selectProfile(chosen, isSwitch && !suppressed)
 }
 
 /** Mirrors the backend rule in app/services/naming.py. */
