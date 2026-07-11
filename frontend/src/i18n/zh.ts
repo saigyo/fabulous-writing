@@ -187,4 +187,13 @@ export const zh: Messages = {
   folderMoveTo: '移动到文件夹',
   folderNone: '无文件夹',
   folderMenu: '文件夹操作',
+  folderDefaults: '文件夹默认设置',
+  folderDefaultsNone: '— 无默认值 —',
+  folderDefaultsTakeCurrent: '从当前文档获取',
+  folderDefaultsAuto: '自动检查',
+  folderDefaultsAutoOn: '开',
+  folderDefaultsAutoOff: '关',
+  folderDefaultsSave: '保存',
+  folderDefaultsCancel: '取消',
+  folderDefaultsError: '保存文件夹默认设置失败。',
 }

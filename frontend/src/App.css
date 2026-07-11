@@ -1708,3 +1708,71 @@ input {
   color: var(--text-dim);
   cursor: default;
 }
+
+/* Folder-defaults dialog */
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.folder-defaults-dialog {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  width: 340px;
+  max-height: 80vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.folder-defaults-dialog h2 {
+  font-size: 0.95rem;
+  margin: 0 0 0.25rem;
+  color: var(--text);
+}
+.folder-defaults-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+.folder-defaults-dialog select {
+  font-size: 0.85rem;
+}
+.folder-defaults-dialog .fd-domains-toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.35rem;
+}
+.fd-domain-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding-left: 1.2rem;
+}
+.folder-defaults-dialog .fd-domain-list label {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.35rem;
+}
+.fd-buttons {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  align-items: center;
+}
+.fd-spacer {
+  flex: 1;
+}
+.fd-error {
+  color: #e5484d;
+  font-size: 0.8rem;
+  margin: 0;
+}

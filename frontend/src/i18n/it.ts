@@ -195,4 +195,13 @@ export const it: Messages = {
   folderMoveTo: 'Sposta in cartella',
   folderNone: 'Nessuna cartella',
   folderMenu: 'Azioni cartella',
+  folderDefaults: 'Impostazioni predefinite della cartella',
+  folderDefaultsNone: '— nessun valore predefinito —',
+  folderDefaultsTakeCurrent: 'Prendi dal documento corrente',
+  folderDefaultsAuto: 'Controllo automatico',
+  folderDefaultsAutoOn: 'Attivo',
+  folderDefaultsAutoOff: 'Disattivo',
+  folderDefaultsSave: 'Salva',
+  folderDefaultsCancel: 'Annulla',
+  folderDefaultsError: 'Salvataggio delle impostazioni predefinite della cartella non riuscito.',
 }

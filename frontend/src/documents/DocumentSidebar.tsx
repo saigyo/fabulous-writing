@@ -14,6 +14,7 @@ import {
   renameDocument,
   renameFolderById,
 } from './documents'
+import { FolderDefaultsDialog } from './FolderDefaultsDialog'
 
 /** "2 hours ago" in the UI locale; future stamps clamp to now. */
 // oxlint-disable-next-line react/only-export-components -- pure helper, unit-tested in isolation
@@ -224,6 +225,7 @@ function FolderGroup({
   const [menuOpen, setMenuOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [conflict, setConflict] = useState(false)
+  const [defaultsOpen, setDefaultsOpen] = useState(false)
 
   const commitRename = async (value: string) => {
     const name = value.trim()
@@ -297,6 +299,14 @@ function FolderGroup({
               <button
                 onClick={() => {
                   setMenuOpen(false)
+                  setDefaultsOpen(true)
+                }}
+              >
+                {m.folderDefaults}
+              </button>
+              <button
+                onClick={() => {
+                  setMenuOpen(false)
                   setRenaming(true)
                 }}
               >
@@ -325,6 +335,12 @@ function FolderGroup({
             <DocumentItem key={doc.id} doc={doc} />
           ))}
         </ul>
+      )}
+      {defaultsOpen && (
+        <FolderDefaultsDialog
+          folder={folder}
+          onClose={() => setDefaultsOpen(false)}
+        />
       )}
     </div>
   )

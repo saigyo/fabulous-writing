@@ -199,4 +199,13 @@ export const fr: Messages = {
   folderMoveTo: 'Déplacer vers un dossier',
   folderNone: 'Aucun dossier',
   folderMenu: 'Actions du dossier',
+  folderDefaults: 'Valeurs par défaut du dossier',
+  folderDefaultsNone: '— aucun défaut —',
+  folderDefaultsTakeCurrent: 'Reprendre du document actuel',
+  folderDefaultsAuto: 'Vérification auto',
+  folderDefaultsAutoOn: 'Activée',
+  folderDefaultsAutoOff: 'Désactivée',
+  folderDefaultsSave: 'Enregistrer',
+  folderDefaultsCancel: 'Annuler',
+  folderDefaultsError: "Échec de l'enregistrement des valeurs par défaut du dossier.",
 }

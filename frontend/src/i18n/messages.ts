@@ -179,4 +179,13 @@ export interface Messages {
   folderMoveTo: string
   folderNone: string
   folderMenu: string
+  folderDefaults: string
+  folderDefaultsNone: string
+  folderDefaultsTakeCurrent: string
+  folderDefaultsAuto: string
+  folderDefaultsAutoOn: string
+  folderDefaultsAutoOff: string
+  folderDefaultsSave: string
+  folderDefaultsCancel: string
+  folderDefaultsError: string
 }

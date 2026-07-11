@@ -187,4 +187,13 @@ export const ja: Messages = {
   folderMoveTo: 'フォルダに移動',
   folderNone: 'フォルダなし',
   folderMenu: 'フォルダ操作',
+  folderDefaults: 'フォルダーの既定値',
+  folderDefaultsNone: '— 既定値なし —',
+  folderDefaultsTakeCurrent: '現在のドキュメントから取得',
+  folderDefaultsAuto: '自動チェック',
+  folderDefaultsAutoOn: 'オン',
+  folderDefaultsAutoOff: 'オフ',
+  folderDefaultsSave: '保存',
+  folderDefaultsCancel: 'キャンセル',
+  folderDefaultsError: 'フォルダーの既定値の保存に失敗しました。',
 }

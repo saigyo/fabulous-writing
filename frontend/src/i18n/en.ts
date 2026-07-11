@@ -180,4 +180,13 @@ export const en: Messages = {
   folderMoveTo: 'Move to folder',
   folderNone: 'No folder',
   folderMenu: 'Folder actions',
+  folderDefaults: 'Folder defaults',
+  folderDefaultsNone: '— no default —',
+  folderDefaultsTakeCurrent: 'Take from current document',
+  folderDefaultsAuto: 'Auto-check',
+  folderDefaultsAutoOn: 'On',
+  folderDefaultsAutoOff: 'Off',
+  folderDefaultsSave: 'Save',
+  folderDefaultsCancel: 'Cancel',
+  folderDefaultsError: 'Saving folder defaults failed.',
 }

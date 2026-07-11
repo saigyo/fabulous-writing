@@ -199,4 +199,13 @@ export const es: Messages = {
   folderMoveTo: 'Mover a carpeta',
   folderNone: 'Sin carpeta',
   folderMenu: 'Acciones de carpeta',
+  folderDefaults: 'Valores predeterminados de la carpeta',
+  folderDefaultsNone: '— sin valor predeterminado —',
+  folderDefaultsTakeCurrent: 'Tomar del documento actual',
+  folderDefaultsAuto: 'Comprobación automática',
+  folderDefaultsAutoOn: 'Activada',
+  folderDefaultsAutoOff: 'Desactivada',
+  folderDefaultsSave: 'Guardar',
+  folderDefaultsCancel: 'Cancelar',
+  folderDefaultsError: 'No se pudieron guardar los valores predeterminados de la carpeta.',
 }

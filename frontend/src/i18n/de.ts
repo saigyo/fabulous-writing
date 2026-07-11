@@ -195,4 +195,13 @@ export const de: Messages = {
   folderMoveTo: 'In Ordner verschieben',
   folderNone: 'Kein Ordner',
   folderMenu: 'Ordneraktionen',
+  folderDefaults: 'Ordner-Standardwerte',
+  folderDefaultsNone: '— kein Standard —',
+  folderDefaultsTakeCurrent: 'Vom aktuellen Dokument übernehmen',
+  folderDefaultsAuto: 'Auto-Prüfung',
+  folderDefaultsAutoOn: 'An',
+  folderDefaultsAutoOff: 'Aus',
+  folderDefaultsSave: 'Speichern',
+  folderDefaultsCancel: 'Abbrechen',
+  folderDefaultsError: 'Speichern der Ordner-Standardwerte fehlgeschlagen.',
 }
