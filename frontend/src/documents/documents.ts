@@ -9,10 +9,13 @@ import {
   listDocuments,
   listFolders,
   moveDocument as apiMoveDocument,
+  putFolderDefaults,
   updateDocument,
+  type DocumentCreatePayload,
   type DocumentFull,
   type DocumentSummary,
   type Folder,
+  type FolderDefaults,
 } from '../api/client'
 import { getEditorView } from '../editor/editorRef'
 import { setFindingsEffect } from '../editor/findings'
@@ -259,6 +262,55 @@ function sortedByName(folders: Folder[]): Folder[] {
   )
 }
 
+/** Overlay a folder's set defaults on a document-create payload. Unset
+ * (null) defaults leave the header-derived values alone. Creation-time
+ * only: moves never touch settings. */
+export function applyFolderDefaults(
+  payload: DocumentCreatePayload,
+  folder: Folder | undefined,
+): DocumentCreatePayload {
+  if (!folder) return payload
+  const out = { ...payload }
+  if (folder.default_language !== null) {
+    if (
+      folder.default_language !== payload.language &&
+      folder.default_profile_id === null
+    ) {
+      // The header profile belongs to the header language; it must not
+      // leak onto a document created in a different default language.
+      out.profile_id = null
+    }
+    out.language = folder.default_language
+  }
+  if (folder.default_profile_id !== null)
+    out.profile_id = folder.default_profile_id
+  if (folder.default_domain_ids !== null)
+    out.domain_ids = folder.default_domain_ids
+  const llmSet =
+    folder.default_llm_provider !== null ||
+    folder.default_llm_model !== null ||
+    folder.default_llm_tier !== null
+  if (llmSet) {
+    // One composite unit, mirroring the header selector's pin-vs-tier model.
+    out.llm_provider = folder.default_llm_provider
+    out.llm_model = folder.default_llm_model
+    out.llm_tier = folder.default_llm_tier
+  }
+  if (folder.default_llm_auto !== null) out.llm_auto = folder.default_llm_auto
+  return out
+}
+
+/** Persist a folder's defaults (full replace) and update it in place.
+ * Errors are rethrown: the defaults dialog shows them inline. */
+export async function saveFolderDefaults(
+  id: number,
+  defaults: FolderDefaults,
+): Promise<void> {
+  const updated = await putFolderDefaults(id, defaults)
+  const store = useStore.getState()
+  store.setFolders(store.folders.map((f) => (f.id === id ? updated : f)))
+}
+
 /** Create a folder. Errors are rethrown: the sidebar shows a 409 inline. */
 export async function addFolder(name: string): Promise<void> {
   const folder = await apiCreateFolder(name.trim())
@@ -316,12 +368,17 @@ export async function openDocument(id: number): Promise<void> {
 export async function createNewDocument(folderId?: number): Promise<void> {
   await flush()
   const state = useStore.getState()
-  const doc = await apiCreateDocument({
+  const base: DocumentCreatePayload = {
     name: currentMessages().docUntitled,
     language: state.language,
     ...currentSettings(),
     ...(folderId !== undefined ? { folder_id: folderId } : {}),
-  })
+  }
+  const folder =
+    folderId !== undefined
+      ? state.folders.find((f) => f.id === folderId)
+      : undefined
+  const doc = await apiCreateDocument(applyFolderDefaults(base, folder))
   useStore.getState().setDocuments([summaryOf(doc), ...state.documents])
   await hydrateFromDocument(doc)
 }

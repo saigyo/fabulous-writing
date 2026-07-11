@@ -149,7 +149,7 @@ describe('folder state', () => {
   it('setFolders stores and toggleFolderCollapsed round-trips', () => {
     useStore.getState().setFolders([
       { id: 1, name: 'Blog', created_at: '2026-07-11T00:00:00+00:00' },
-    ])
+    ] as never[])
     expect(useStore.getState().folders[0].name).toBe('Blog')
     useStore.getState().toggleFolderCollapsed(1)
     expect(useStore.getState().docFoldersCollapsed).toEqual([1])

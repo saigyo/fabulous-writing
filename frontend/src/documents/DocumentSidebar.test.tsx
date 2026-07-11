@@ -37,7 +37,7 @@ describe('groupDocuments', () => {
   const folders = [
     { id: 1, name: 'Blog', created_at: '' },
     { id: 2, name: 'Work', created_at: '' },
-  ]
+  ] as never[]
   const docs = [
     { id: 10, name: 'A', language: 'en', folder_id: 2, updated_at: '' },
     { id: 11, name: 'B', language: 'en', folder_id: null, updated_at: '' },

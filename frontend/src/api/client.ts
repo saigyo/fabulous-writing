@@ -291,7 +291,17 @@ export const deleteDocument = (id: number) =>
 export const generateDocumentName = (id: number) =>
   request<DocumentFull>(`/api/documents/${id}/generate-name`, { method: 'POST' })
 
-export interface Folder {
+export interface FolderDefaults {
+  default_language: Language | null
+  default_profile_id: number | null
+  default_domain_ids: number[] | null
+  default_llm_provider: string | null
+  default_llm_model: string | null
+  default_llm_tier: Tier | null
+  default_llm_auto: boolean | null
+}
+
+export interface Folder extends FolderDefaults {
   id: number
   name: string
   created_at: string
@@ -310,6 +320,13 @@ export const renameFolder = (id: number, name: string) =>
   })
 export const deleteFolder = (id: number) =>
   request<void>(`/api/folders/${id}`, { method: 'DELETE' })
+
+export const putFolderDefaults = (id: number, defaults: FolderDefaults) =>
+  request<Folder>(`/api/folders/${id}/defaults`, {
+    method: 'PUT',
+    body: JSON.stringify(defaults),
+  })
+
 export const moveDocument = (id: number, folderId: number | null) =>
   request<DocumentFull>(`/api/documents/${id}/move`, {
     method: 'POST',

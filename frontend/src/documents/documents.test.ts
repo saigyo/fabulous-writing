@@ -1,12 +1,18 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { HttpError, type DocumentFull } from '../api/client'
+import {
+  HttpError,
+  type DocumentCreatePayload,
+  type DocumentFull,
+  type Folder,
+} from '../api/client'
 import { useStore } from '../state/store'
 import type { Profile } from '../types'
 import { clearSnapshot, readSnapshot, writeSnapshot } from './buffer'
 import { flush, noteChange, resetAutosaveForTests } from './autosave'
 import {
   addFolder,
+  applyFolderDefaults,
   applyHeaderProfileSelection,
   consumeProfileApplySuppression,
   createNewDocument,
@@ -16,6 +22,7 @@ import {
   openDocument,
   removeDocument,
   removeFolder,
+  saveFolderDefaults,
 } from './documents'
 
 vi.mock('../api/client', async (importOriginal) => ({
@@ -30,6 +37,7 @@ vi.mock('../api/client', async (importOriginal) => ({
   renameFolder: vi.fn(),
   deleteFolder: vi.fn(),
   moveDocument: vi.fn(),
+  putFolderDefaults: vi.fn(),
 }))
 vi.mock('../editor/editorRef', () => ({
   getEditorView: () => fakeView,
@@ -44,6 +52,7 @@ import {
   listDocuments,
   listFolders,
   moveDocument,
+  putFolderDefaults,
   updateDocument,
 } from '../api/client'
 
@@ -590,8 +599,8 @@ describe('folders', () => {
     useStore.getState().setFolders([
       { id: 1, name: 'alpha', created_at: '' },
       { id: 2, name: 'Zulu', created_at: '' },
-    ])
-    vi.mocked(createFolder).mockResolvedValue({ id: 3, name: 'Mango', created_at: '' })
+    ] as never[])
+    vi.mocked(createFolder).mockResolvedValue({ id: 3, name: 'Mango', created_at: '' } as never)
     await addFolder('  Mango  ')
     expect(createFolder).toHaveBeenCalledWith('Mango')
     expect(useStore.getState().folders.map((f) => f.name)).toEqual([
@@ -611,5 +620,135 @@ describe('folders', () => {
       expect.objectContaining({ folder_id: 4 }),
     )
     expect(useStore.getState().documents[0].folder_id).toBe(4)
+  })
+})
+
+function folderWith(overrides: Partial<Folder>): Folder {
+  return {
+    id: 1,
+    name: 'F',
+    created_at: '',
+    default_language: null,
+    default_profile_id: null,
+    default_domain_ids: null,
+    default_llm_provider: null,
+    default_llm_model: null,
+    default_llm_tier: null,
+    default_llm_auto: null,
+    ...overrides,
+  }
+}
+
+function basePayload(): DocumentCreatePayload {
+  return {
+    name: 'Untitled',
+    language: 'en',
+    profile_id: 7,
+    domain_ids: [1, 2],
+    llm_provider: null,
+    llm_model: null,
+    llm_tier: 'balanced',
+    llm_auto: true,
+  }
+}
+
+describe('applyFolderDefaults', () => {
+  it('no folder or no defaults: payload unchanged', () => {
+    expect(applyFolderDefaults(basePayload(), undefined)).toEqual(basePayload())
+    expect(applyFolderDefaults(basePayload(), folderWith({}))).toEqual(
+      basePayload(),
+    )
+  })
+
+  it('overrides exactly the set fields', () => {
+    const folder = folderWith({
+      default_language: 'en',
+      default_profile_id: 42,
+      default_llm_auto: false,
+    })
+    const out = applyFolderDefaults(basePayload(), folder)
+    expect(out.language).toBe('en')
+    expect(out.profile_id).toBe(42)
+    expect(out.llm_auto).toBe(false)
+    // Unset defaults leave the header values alone.
+    expect(out.domain_ids).toEqual([1, 2])
+    expect(out.llm_tier).toBe('balanced')
+  })
+
+  it('a language default without a profile default clears a cross-language header profile', () => {
+    // Header is en with profile 7; the folder pins de but no profile. The en
+    // profile must not leak onto a de document.
+    const out = applyFolderDefaults(
+      basePayload(),
+      folderWith({ default_language: 'de' }),
+    )
+    expect(out.language).toBe('de')
+    expect(out.profile_id).toBeNull()
+  })
+
+  it('a language default equal to the header language keeps the header profile', () => {
+    const out = applyFolderDefaults(
+      basePayload(),
+      folderWith({ default_language: 'en' }),
+    )
+    expect(out.profile_id).toBe(7)
+  })
+
+  it('empty domains default overrides ([] is set, not unset)', () => {
+    const out = applyFolderDefaults(
+      basePayload(),
+      folderWith({ default_domain_ids: [] }),
+    )
+    expect(out.domain_ids).toEqual([])
+  })
+
+  it('the LLM triple applies as one unit (tier default)', () => {
+    const header: DocumentCreatePayload = {
+      ...basePayload(),
+      llm_provider: 'ollama',
+      llm_model: 'llama3',
+      llm_tier: null,
+    }
+    const out = applyFolderDefaults(
+      header,
+      folderWith({ default_llm_tier: 'cheap' }),
+    )
+    expect(out.llm_tier).toBe('cheap')
+    expect(out.llm_provider).toBeNull()
+    expect(out.llm_model).toBeNull()
+  })
+
+  it('the LLM triple applies as one unit (pinned default)', () => {
+    const out = applyFolderDefaults(
+      basePayload(),
+      folderWith({
+        default_llm_provider: 'openai',
+        default_llm_model: 'gpt-4o',
+        default_llm_tier: null,
+      }),
+    )
+    expect(out.llm_provider).toBe('openai')
+    expect(out.llm_model).toBe('gpt-4o')
+    expect(out.llm_tier).toBeNull()
+  })
+})
+
+describe('saveFolderDefaults', () => {
+  it('updates the folder in place in the store', async () => {
+    const before = folderWith({ id: 5, name: 'Blog' })
+    const other = folderWith({ id: 6, name: 'Work' })
+    useStore.setState({ folders: [before, other] })
+    const after = folderWith({ id: 5, name: 'Blog', default_language: 'de' })
+    vi.mocked(putFolderDefaults).mockResolvedValue(after)
+    await saveFolderDefaults(5, after)
+    expect(useStore.getState().folders).toEqual([after, other])
+  })
+
+  it('rethrows failures without touching the store', async () => {
+    const folder = folderWith({ id: 5 })
+    useStore.setState({ folders: [folder] })
+    vi.mocked(putFolderDefaults).mockRejectedValue(new HttpError(404, 'gone'))
+    await expect(saveFolderDefaults(5, folder)).rejects.toThrow()
+    expect(useStore.getState().folders).toEqual([folder])
   })
 })
