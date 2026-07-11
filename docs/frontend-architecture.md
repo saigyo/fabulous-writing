@@ -361,11 +361,14 @@ snapshot, and header settings, backed by the `/api/documents` endpoints (see
   `store.folders`/`store.documents` in place; `createNewDocument(folderId?)` creates
   directly inside a folder.
 - `DocumentSidebar.tsx` — the collapsible sidebar UI (`.doc-sidebar`; new/rename/delete,
-  relative timestamps via `Intl.RelativeTimeFormat`). `groupDocuments(documents, folders)`
-  is an exported pure helper (unit-tested standalone) that buckets the flat,
-  recency-ordered document list by `folder_id` into a `Map<folderId, DocumentSummary[]>`
-  plus an `ungrouped` array; a document whose `folder_id` points at a folder that no
-  longer exists falls back to ungrouped rather than being hidden. `FolderGroup` renders
+  relative timestamps via `Intl.RelativeTimeFormat` — `relativeTime(doc.edited_at,
+  locale)`, **not** `updated_at`: the sidebar shows when the writer last actually edited
+  the document, not when its row was last written, so a background check-and-save never
+  changes the displayed time). `groupDocuments(documents, folders)` is an exported pure
+  helper (unit-tested standalone) that buckets the flat, `edited_at`-recency-ordered
+  document list by `folder_id` into a `Map<folderId, DocumentSummary[]>` plus an
+  `ungrouped` array; a document whose `folder_id` points at a folder that no longer
+  exists falls back to ungrouped rather than being hidden. `FolderGroup` renders
   each folder as a collapsible row (`docFoldersCollapsed`, persisted, toggled via
   `toggleFolderCollapsed`) with its own ⋯ menu (new document here / rename / delete —
   deleting keeps the documents and moves them to ungrouped, never destroys them).
@@ -374,6 +377,53 @@ snapshot, and header settings, backed by the `/api/documents` endpoints (see
   red border instead of dismissing it. Each document's own ⋯ menu gained a "Move to
   folder ▸" submenu (between Rename and Delete) listing "No folder" plus every folder,
   disabling whichever entry matches the document's current location.
+
+### Server-authoritative sidebar reordering: `patchDocumentSummary`
+
+`store.patchDocumentSummary(id, patch: Partial<DocumentSummary>)` (`state/store.ts`) is
+the one place the sidebar list is mutated after the initial load, and it replaces the
+older `touchDocument(id, name?)` helper. The old helper *assumed* every save meant "this
+document is now the most recent" and unconditionally spliced the touched entry to the
+front of the array with a freshly-minted client-side timestamp. That assumption broke
+once check-triggered saves stopped being edits (see the backend's `edited_at`/
+`checked_at` split in `docs/backend-architecture.md#documents`): a background
+check-and-save with no typing would still call the old `touchDocument` and reorder the
+sidebar, even though nothing the writer did changed.
+
+`patchDocumentSummary` fixes this by being purely reactive to whatever the server
+actually returned, never inventing a timestamp:
+
+1. Merge `patch` into the matching document by `id` (fields like `edited_at`,
+   `checked_at`, or `name`, taken verbatim from the API response that triggered the
+   call — never `new Date().toISOString()`).
+2. Re-sort the **entire** `documents` array by `edited_at` descending, tie-broken by
+   `id` descending — `b.edited_at.localeCompare(a.edited_at) || b.id - a.id` — the exact
+   same ordering the backend's `ORDER BY edited_at DESC, id DESC` produces, so the
+   client-side re-sort and a full server refetch are always consistent.
+3. No-op (returns the unchanged state) if `id` isn't found in `documents`.
+
+Because the merged `edited_at` only moves when the server actually bumped it, a
+document only jumps to the top of the sidebar when the writer genuinely edited text or
+renamed it — exactly mirroring the backend's bump rules. Call sites, each patching only
+the fields its own backend call actually returns/changes:
+
+- `autosave.ts`'s `push()` patches `{ edited_at, checked_at }` from the `PUT` response
+  after every save (whether or not `edited_at` moved that round) — this goes through
+  `update_document`, so both fields are always current.
+- `documents.ts`'s `renameDocument` (the sidebar's user-facing rename) also goes through
+  `update_document` (a `PUT` with a new `name`), which bumps `edited_at` server-side; it
+  patches `{ name, edited_at }` so a user rename both updates the label and re-sorts the
+  document to the top.
+- `maybeGenerateTitle` (auto-titling, `POST /generate-name`) goes through the backend's
+  `set_name`, which **never** bumps `edited_at` (see
+  `docs/backend-architecture.md#documents`); it patches only `{ name }`, deliberately
+  omitting `edited_at` — an auto-assigned title must relabel the sidebar entry without
+  moving it, since the writer didn't just edit the document.
+
+This is what makes the acceptance case hold end to end: a fast/LLM check that lands as
+an autosave with no text change patches `checked_at` (and bumps `revision`) but leaves
+`edited_at` — and therefore sidebar order — untouched, while a real edit reorders the
+sidebar the moment its save round-trips, without a page reload.
 
 ### The write-through buffer and autosave engine
 

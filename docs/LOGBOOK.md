@@ -2446,3 +2446,67 @@ pre-existing >500 kB chunk-size advisory, unrelated).
 
 Commit: `fix: handle move failures per spec, inline rename conflicts, submenu state reset`
 (not pushed).
+
+## 2026-07-11 — Recency semantics: `edited_at`/`checked_at` split (sidebar no longer reorders on checks)
+
+**Problem.** The sidebar's "most recent" ordering and relative-time label rode
+`updated_at`, which every document write bumped — including a background
+check-and-save that ran purely because the fast/LLM checker produced fresh
+findings, with the writer not having typed anything. A document sitting open
+and idle (auto-check firing, findings/scorecard persisted) would silently
+jump to the top of the sidebar and its timestamp would say "just now," even
+though nothing had actually been edited. `set_name`/`set_folder` already
+deliberately skipped `revision` for the same never-invalidate-an-autosave
+reason but still bumped `updated_at`, so renames and folder moves reordered
+the list too.
+
+**Fix — three-timestamp model** (`backend/app/services/documents.py`):
+
+| Column | Bumped by | Drives |
+|---|---|---|
+| `edited_at` | text or name actually changed | sidebar ordering + displayed relative time |
+| `checked_at` (nullable) | update carries `last_findings`/`scorecard` | check-state bookkeeping only |
+| `updated_at` | every write, unconditionally | technical row-write bookkeeping only |
+
+`list_documents()` now orders `edited_at DESC, id DESC` (was `updated_at DESC,
+id DESC`). Existing databases migrate idempotently (`PRAGMA table_info` +
+`ALTER TABLE ADD COLUMN`, backfilling both new columns from `updated_at` so
+pre-migration rows keep a sane starting order). `set_name`/`set_folder`
+bump neither new column — confirmed unchanged from before.
+
+Frontend (`frontend/src/state/store.ts`, `autosave.ts`, `documents.ts`):
+`touchDocument(id, name?)` (which spliced the touched doc to the front with a
+freshly-minted client timestamp) is replaced by `patchDocumentSummary(id,
+patch)`, which merges server-returned fields and re-sorts the whole list by
+`edited_at DESC, id DESC` — purely reactive, never inventing a timestamp.
+`autosave.ts`'s `push()` patches `{ edited_at, checked_at }` from every `PUT`
+response; `renameDocument` patches `{ name, edited_at }` (a user rename goes
+through `update_document`, which does bump `edited_at`); `maybeGenerateTitle`
+patches only `{ name }` (auto-titling goes through `set_name`, which does
+not). `DocumentSidebar.tsx`'s relative-time label now reads `doc.edited_at`
+instead of `doc.updated_at`.
+
+Commits: `ebf8dd8` (backend: column split, bump rules, migration, ordering),
+`f493b61` (frontend: `patchDocumentSummary`, call-site swap, `relativeTime`
+on `edited_at`).
+
+**E2E acceptance** on a scratch stack (backend `127.0.0.1:8001` against a
+throwaway DB, `vite preview --port 4199` against a scratch build with
+`VITE_API_URL` pointed at it; Playwright driving a pinned Chromium): created
+two documents A then B via the API (B created second → list `[B, A]`);
+loaded the app (sidebar `[B, A]`), opened A, and made **no** further input.
+Waited ~4 s for the fast auto-check and its autosave to land — the API
+confirmed A's `revision` advanced (a check-save did happen: `checked_at` was
+set) while A's `edited_at` stayed byte-identical and `GET /api/documents`
+order stayed `[B, A]`; reloaded the page and the sidebar was still `[B, A]`
+— **the bug's exact repro, now passing.** Then typed a word into A: within
+the 1.5 s autosave debounce the API reordered to `[A, B]`, A's `edited_at`
+advanced, and the sidebar re-sorted to `[A, B]` with no reload
+(`patchDocumentSummary`). All 10 assertions passed; final screenshot
+inspected and shows A on top, edited text applied, both documents' relative
+times reading correctly.
+
+**Verification.** `cd backend && uv run pytest -q` → 689 passed, zero
+warnings. `cd frontend && npx vitest run` → 213 passed (21 files);
+`npx tsc --noEmit` clean; `npm run lint` (oxlint) clean; `npm run build`
+clean (only the pre-existing >500 kB chunk-size advisory, unrelated).

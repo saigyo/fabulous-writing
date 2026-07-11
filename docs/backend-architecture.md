@@ -486,20 +486,69 @@ mode is a data migration, not a schema change — nothing today issues a differe
   per-document LLM settings the header exposes), `last_findings` (JSON list) and
   `scorecard` (JSON object or `NULL`) — the check-state snapshot travels with the text
   so a reload restores findings without re-checking — `revision`, `created_at`,
-  `updated_at`, and `folder_id` (nullable `INTEGER`, no `FOREIGN KEY` — see
-  [Folders](#folders) below).
+  `edited_at`, `checked_at` (nullable), `updated_at`, and `folder_id` (nullable
+  `INTEGER`, no `FOREIGN KEY` — see [Folders](#folders) below).
+
+- **The three-timestamp model.** `created_at` never changes after insert. The other two
+  split what used to be a single `updated_at`-drives-everything model into two distinct
+  questions, because a check-triggered save and an actual edit are not the same event
+  for recency purposes:
+
+  | Column | Bumped by | Meaning | Nullable |
+  |---|---|---|---|
+  | `edited_at` | `update_document` **only when** the `text` or `name` actually changed | "when did the writer last change this document" — **this is what sidebar ordering rides** | no |
+  | `checked_at` | `update_document` **only when** the update carries `last_findings` and/or `scorecard` | "when was this document's check state last written" — display/diagnostic only, not an ordering key | yes (`NULL` until the first check-save) |
+  | `updated_at` | every `update_document`/`set_name`/`set_folder` write, unconditionally | technical "last row write" bookkeeping timestamp; not used for ordering or display | no |
+
+  `update_document` computes both conditionally in one pass: `text_changed = "text" in
+  fields and fields["text"] != current.text`, `name_changed` likewise for `name`;
+  `edited_at` becomes `now` if either is true, else it carries the current value forward
+  unchanged. `checked_at` becomes `now` if the update includes `last_findings` and/or
+  `scorecard` (a "carries check state" write — this is what an autosave triggered purely
+  by the fast/LLM check-and-save cycle looks like when the user hasn't typed), else it
+  too carries forward unchanged. Both bumps can fire on the same `PUT` (a save that both
+  changed the text and carries fresh findings bumps both) — they are independent
+  conditions on the same write, not mutually exclusive branches. `set_name(id, name,
+  name_source)` and `set_folder(id, folder_id)` **never bump `edited_at` or
+  `checked_at`** — like their pre-existing `revision`-skipping behavior (below), a
+  server-side rename or a sidebar move is not the writer editing the document's content,
+  so neither should touch the timestamp that drives "most recently edited." They still
+  bump `updated_at` unconditionally, since a row write happened.
+
+  **Practical effect**: a background check-and-save (autosave firing after the fast
+  check's findings/scorecard land, with the writer not having typed anything else)
+  bumps `revision` and `checked_at` but leaves `edited_at` untouched — so it does **not**
+  reorder the sidebar and does **not** change the relative time shown next to the
+  document. Only the writer actually changing the text (or an explicit rename) moves a
+  document to the top.
+
 - **`DocumentStore`** (same module) is the optimistic-locking guard: `update_document(id,
   base_revision, **fields)` applies a `WHERE id = ? AND revision = ?` conditional update
-  that also bumps `revision` and `updated_at`; a `rowcount == 0` means the document either
-  moved past `base_revision` (raises `RevisionConflictError(current_revision)`, → HTTP
-  409) or no longer exists (`None`, → 404). `set_name(id, name, name_source)` is the one
-  deliberate exception: it updates `name`/`name_source`/`updated_at` **without** touching
-  `revision`, so a server-side rename (auto-titling, see below) can never invalidate a
-  client's in-flight autosave by moving the revision out from under it. `list_documents()`
-  returns the lighter `DocumentSummary` (`id`, `name`, `language`, `updated_at` — no
-  `revision`, no content) ordered most-recently-updated first, for the sidebar; the full
-  `Document` (content, settings, `revision`) is only fetched per-document via `GET
+  that also bumps `revision`, `updated_at`, and (conditionally, per the table above)
+  `edited_at`/`checked_at`; a `rowcount == 0` means the document either moved past
+  `base_revision` (raises `RevisionConflictError(current_revision)`, → HTTP 409) or no
+  longer exists (`None`, → 404). `set_name(id, name, name_source)` is the one deliberate
+  exception: it updates `name`/`name_source`/`updated_at` **without** touching
+  `revision` (and, per the three-timestamp model above, without touching `edited_at` or
+  `checked_at` either), so a server-side rename (auto-titling, see below) can never
+  invalidate a client's in-flight autosave by moving the revision out from under it.
+  `list_documents()` returns the lighter `DocumentSummary` (`id`, `name`, `language`,
+  `folder_id`, `created_at`, `edited_at`, `checked_at`, `updated_at` — no `revision`, no
+  content) ordered **`edited_at DESC, id DESC`** (most-recently-*edited* first, ties
+  broken by highest id first — id-descending as a stable, deterministic tiebreak when
+  two documents share a same-second `edited_at`), for the sidebar; the full `Document`
+  (content, settings, `revision`) is only fetched per-document via `GET
   /api/documents/{id}`.
+
+- **Migration seeding**: `edited_at`/`checked_at` are added to existing on-disk databases
+  the same idempotent way as other phased-in columns (`folder_id`, `profiles.packs_on`/
+  `llm_tier` — see [Checking profiles](#checking-profiles)): a startup `PRAGMA
+  table_info(documents)` check plus `ALTER TABLE ... ADD COLUMN` when missing. On first
+  add, existing rows are backfilled with `UPDATE documents SET edited_at = updated_at`
+  and `UPDATE documents SET checked_at = updated_at` — so pre-migration documents keep
+  their prior `updated_at`-based ordering as a reasonable starting point (a document that
+  hasn't been touched since the migration doesn't jump to "never checked"), and every
+  subsequent write then follows the new conditional-bump rules above.
 - **API** (`app/api/documents.py`, `/api/documents` prefix):
 
   | Endpoint | Purpose |
