@@ -2350,3 +2350,20 @@ the toggle is an icon-only ghost button using a new inline `PanelIcon` SVG
 (rounded rectangle with a vertical divider) instead of the ▸/◂ arrows.
 Verified visually on a scratch stack (expanded, hover, and collapsed
 screenshots). Gates: vitest 203, tsc, oxlint, build all clean.
+
+## 2026-07-11 — Sidebar folder groups (project-folders, final layer)
+
+Commit: `89f0ad0`
+
+Wired the folder lifecycle (Tasks 4–5) into the document sidebar UI,
+completing the project-folders feature. `groupDocuments` (TDD'd first, pure
+and unit-tested) buckets the flat recency-ordered document list by
+`folder_id`, with vanished-folder references falling back to ungrouped
+rather than being hidden. The sidebar now renders a folder-plus ghost button
+next to "+ New document" for inline folder creation (409-on-duplicate keeps
+the input open with a red border instead of closing it), collapsible
+`FolderGroup` rows with their own ⋯ menu (new document here / rename /
+delete-keeps-documents), and each document's ⋯ menu gained a "Move to
+folder ▸" submenu (disabled entry for the doc's current location). All new
+strings went through i18n (9 keys × 7 locales). Gates: vitest 210 passed
+(incl. i18n parity), tsc, oxlint (zero warnings), build all clean.
