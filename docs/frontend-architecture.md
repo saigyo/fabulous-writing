@@ -359,7 +359,8 @@ snapshot, and header settings, backed by the `/api/documents` endpoints (see
   owns folder lifecycle verbs (`addFolder`, `renameFolderById`, `removeFolder`,
   `moveDocumentToFolder`) that call the `/api/folders` endpoints and patch
   `store.folders`/`store.documents` in place; `createNewDocument(folderId?)` creates
-  directly inside a folder.
+  directly inside a folder and overlays that folder's defaults onto the create payload
+  (`applyFolderDefaults`, see [Per-folder defaults](#per-folder-defaults) below).
 - `DocumentSidebar.tsx` — the collapsible sidebar UI (`.doc-sidebar`; new/rename/delete,
   relative timestamps via `Intl.RelativeTimeFormat` — `relativeTime(doc.edited_at,
   locale)`, **not** `updated_at`: the sidebar shows when the writer last actually edited
@@ -597,6 +598,98 @@ from `documents` + `folders` on every render instead of maintaining a third sync
   patches state after the API call resolves. `renameFolderById`'s inline rename input
   mirrors `NewFolderInput`'s 409 handling: a duplicate name keeps the input open with
   `.conflict` styling instead of closing it into the generic error banner.
+
+### Per-folder defaults
+
+Phase 3 lets a folder carry optional defaults — language, profile, domains, LLM
+provider/model/tier, and the auto-flag — applied when a document is created inside it
+(the backend side: `docs/backend-architecture.md#per-folder-defaults`). `Folder` (`src/api/client.ts`)
+now extends a `FolderDefaults` interface with the same seven optional fields the backend
+stores; `store.folders` carries them with no separate fetch.
+
+- **`applyFolderDefaults(payload, folder)`** (`documents.ts`) is an exported pure helper —
+  unit-tested in isolation — that overlays a folder's set defaults onto a
+  `DocumentCreatePayload` already built from the current header state. It's a no-op if
+  `folder` is `undefined` (top-level "+ New document" never resolves a folder, so it's
+  unaffected — current header state, as always). Each field applies independently, only
+  if its default is non-`null`:
+  - `default_language` → `payload.language`, with one cross-language guard: if the
+    folder's language default differs from the header's language *and* the folder has no
+    `default_profile_id` of its own, `payload.profile_id` is forced to `null`. Without
+    this, a header profile selected for the *current* language would otherwise leak onto
+    a document created with a different default language, where that profile doesn't
+    even belong — the folder's own profile default (if set) always takes precedence and
+    is applied normally right after.
+  - `default_profile_id` → `payload.profile_id` directly (applied after the
+    cross-language guard above, so a folder that sets both a language and a profile
+    default always ends up with that exact pair, never cleared by the guard).
+  - `default_domain_ids` → `payload.domain_ids`, applied whenever the folder's value is
+    non-`null` — including `[]`, which is a real "default: no domains", distinct from
+    `null`'s "no default, keep the header's domains."
+  - The LLM provider/model/tier triple is treated as **one unit**: if *any* of the three
+    folder fields is set, all three overwrite the payload's provider/model/tier together
+    (mirroring the header's own pin-vs-tier selector, which never lets the three drift
+    independently).
+  - `default_llm_auto` → `payload.llm_auto` independently of the LLM triple (it's a
+    separate field on both `documents` and the folder defaults).
+- **`createNewDocument(folderId?)`** looks up the target folder in `state.folders` (only
+  when `folderId` is given — the plain "+ New document" path passes `undefined` and never
+  looks one up) and passes it through `applyFolderDefaults` before calling
+  `apiCreateDocument`. `POST /api/documents` itself is unchanged — this is pure
+  client-side payload construction against folder objects already in the store. After
+  creation, `hydrateFromDocument` loads the returned document as usual, so the header
+  immediately reflects the folder-defaulted values with no special-casing beyond the
+  overlay itself.
+- **`saveFolderDefaults(id, defaults)`** (`documents.ts`) calls
+  `PUT /api/folders/{id}/defaults` and splices the returned `Folder` into `store.folders`
+  in place (by `id`), the same in-place-patch pattern as `addFolder`/`renameFolderById`.
+  It rethrows on failure rather than swallowing — the dialog (below) needs the error to
+  show inline and keep itself open, not fall through to the generic `docListError` banner.
+- **`FolderDefaultsDialog.tsx`** (new component, opened from a "Folder defaults…" entry
+  in the folder's ⋯ menu in `DocumentSidebar.tsx`, alongside "New document here" /
+  rename / delete) reuses the header's selector building blocks against a local `draft:
+  FolderDefaults` state seeded from the folder's current values:
+  - **Profile-requires-language coupling**: the profile `<select>` is `disabled` whenever
+    `draft.default_language === null`, and its options come from `getProfiles(lang)` for
+    the currently-drafted language (re-fetched via an effect keyed on `lang`, cleared to
+    `[]` while `lang` is `null`). `withLanguageDefault(draft, language)` — a second
+    exported pure helper — is the one place a language change is applied: it always sets
+    `default_language`, and drops `default_profile_id` back to `null` unless the language
+    is unchanged from the draft's current one, so picking a *different* language (or
+    clearing it to "no default") always resets the profile choice rather than carrying a
+    now-mismatched profile forward. This mirrors the backend's enforced invariant (profile
+    default ⇒ language default) on the client side, before a save attempt can ever trip
+    the 422.
+  - **Domains**: a checkbox toggles between `null` ("no default", the list hidden) and
+    `[]` ("default: no domains", the list shown with everything unchecked) — the same
+    NULL-vs-empty-list distinction the backend preserves through pruning.
+  - **LLM selector**: mirrors the header's tier-vs-pinned model — `pinned` is derived as
+    `default_llm_tier === null && default_llm_provider !== null`, and the `<select>` shows
+    a synthesized "pinned" option (labelled via `m.tierPinnedOption`) only while pinned,
+    alongside the normal tier list and a "no default" option. Choosing a tier clears both
+    provider and model; choosing "no default" clears all three.
+  - **"Take from current document"** (`defaultsFromHeader`, a third exported pure helper)
+    snapshots the live header/store state into a `FolderDefaults` in one click: language,
+    profile id, and domain ids are copied as a concrete set list (never `null` — "take
+    from current" always produces *some* default, that's the point of the button), the
+    LLM triple follows the header's own pin-vs-tier shape, and the auto-flag becomes an
+    explicit `true`/`false`. **This button is the only way a pinned LLM selection (or any
+    concrete value) enters the draft "from scratch"** — the dialog's own controls only
+    ever move between the tier list and "no default"/"no domains"; a provider/model pin
+    can't be composed by hand in the dialog UI, matching the header's own pinning being an
+    Advanced-panel action, not a plain selector one.
+  - **Save/cancel**: Save calls `saveFolderDefaults`, closing the dialog on success;
+    Cancel discards the draft untouched. A save failure (network, or the 404 from the
+    folder having been deleted while the dialog was open) sets an inline error and leaves
+    the dialog open rather than closing or refreshing the folder list — the constrained
+    UI can't actually produce a 422 (the language/profile coupling above and the
+    domain/LLM controls only ever construct valid combinations), but the dialog shows any
+    error the same inline way regardless, as defense in depth.
+- **i18n**: nine new keys (`folderDefaults`, `folderDefaultsNone`,
+  `folderDefaultsTakeCurrent`, `folderDefaultsAuto`, `folderDefaultsAutoOn`,
+  `folderDefaultsAutoOff`, `folderDefaultsSave`, `folderDefaultsCancel`,
+  `folderDefaultsError`) across all seven locale catalogs, checked by the existing i18n
+  parity test alongside every other message key.
 
 ### Per-document header settings and persistence
 

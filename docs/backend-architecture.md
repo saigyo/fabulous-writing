@@ -582,15 +582,17 @@ mode is a data migration, not a schema change — nothing today issues a differe
 
 ## Folders
 
-Folders group documents for organization only — a folder carries no settings of its
-own (yet) and deleting one never deletes what it contains.
+Folders group documents for organization and, as of phase 3, carry optional per-folder
+defaults applied when a document is created inside them. Deleting a folder never
+deletes what it contains.
 
 - **Storage** (`app/services/folders.py`): a single `folders` table — `id`, `owner_id`
-  (defaults to `1`, same rationale as documents), `name` (`UNIQUE`), `created_at`.
-  `FolderStore` is deliberately simpler than `DocumentStore`: no revision, no optimistic
-  locking — a folder is just a named bucket, so the only invariant worth enforcing is
-  **unique names** (a `sqlite3.IntegrityError` from the `UNIQUE` constraint on `create_folder`/
-  `rename_folder` is caught and re-raised as `ValueError`, which the API layer maps to 409).
+  (defaults to `1`, same rationale as documents), `name` (`UNIQUE`), `created_at`, plus
+  seven nullable defaults columns added by phase 3 (below). `FolderStore` is deliberately
+  simpler than `DocumentStore`: no revision, no optimistic locking — a folder is just a
+  named bucket, so the only invariant worth enforcing is **unique names** (a
+  `sqlite3.IntegrityError` from the `UNIQUE` constraint on `create_folder`/`rename_folder`
+  is caught and re-raised as `ValueError`, which the API layer maps to 409).
   `list_folders()` orders case-insensitively by name (`COLLATE NOCASE`) then `id`, so the
   sidebar's alphabetical folder list needs no client-side sort for the initial fetch (the
   frontend still re-sorts locally after mutations — see `docs/frontend-architecture.md`).
@@ -604,13 +606,72 @@ own (yet) and deleting one never deletes what it contains.
 
   | Endpoint | Purpose |
   |---|---|
-  | `GET /api/folders` | list all folders, name-sorted |
-  | `POST /api/folders` | create (`name`); 422 on empty/oversized (>100 chars) name, 409 on a name collision |
+  | `GET /api/folders` | list all folders, name-sorted, defaults pruned at read time (below) |
+  | `POST /api/folders` | create (`name`); 422 on empty/oversized (>100 chars) name, 409 on a name collision; new folders start with all seven defaults `NULL` |
   | `PUT /api/folders/{id}` | rename; same 422/409 validation, 404 if the folder doesn't exist |
+  | `PUT /api/folders/{id}/defaults` | full-replace the seven defaults (below); 422 validation matrix, 404 if the folder doesn't exist |
   | `DELETE /api/folders/{id}` | delete (204); members drop to ungrouped in the same transaction; 404 if already gone |
 
   Name validation (`_validated_name`: strip, then reject empty or >100 chars) is shared
   by create and rename so both endpoints reject the same inputs the same way.
+
+### Per-folder defaults
+
+Phase 3 gives each folder optional default settings — language, profile, domains, LLM
+provider/model/tier, and the auto-flag — applied to documents created inside it, mirroring
+the same fields `documents` itself stores (typed nullable columns, not a JSON blob).
+
+- **Schema and migration**: `FolderStore._migrate()` is the idempotent hook phase 2
+  reserved for this — the same `PRAGMA table_info(folders)`-then-`ALTER TABLE ... ADD
+  COLUMN` guard used for `documents.folder_id` and `profiles.packs_on`/`llm_tier` (see
+  [Documents](#documents) and [Checking profiles](#checking-profiles)), so it's safe to
+  run against a pre-phase-3 database and a no-op on repeated startup. It adds
+  `default_language TEXT`, `default_profile_id INTEGER`, `default_domain_ids TEXT` (JSON
+  array or `NULL`), `default_llm_provider TEXT`, `default_llm_model TEXT`,
+  `default_llm_tier TEXT`, `default_llm_auto INTEGER` (tri-state: `NULL`/`0`/`1`). `NULL`
+  means "no default for this field" on every column; `default_domain_ids` additionally
+  distinguishes `NULL` (unset) from the JSON-encoded `[]` (a *set* default of "no
+  domains") — the same NULL-vs-empty-list distinction matters throughout the apply and
+  pruning logic below.
+- **Models**: `FolderDefaults` (a `BaseModel` with all seven fields, each optional) holds
+  just the defaults; `Folder(FolderDefaults)` inherits from it and adds `id`, `owner_id`,
+  `name`, `created_at` — so every `Folder` response already carries the defaults fields
+  with no separate nested object, and `set_defaults` can accept a bare `FolderDefaults`
+  without the row's identity fields.
+- **`set_defaults(folder_id, defaults)`** is a **full replace, not a merge**: the `UPDATE`
+  statement writes all seven columns from the given `FolderDefaults` unconditionally
+  (encoding the language as its `.value`, domain ids via `json.dumps`, the auto-flag via
+  `int()`/`None`), so clearing a single field means the caller must resend the rest of the
+  current state unchanged — same contract as `documents`' settings update, not a partial
+  PATCH. Returns `None` for an unknown `folder_id` (checked via `get_folder` first) so the
+  API can 404.
+- **`PUT /api/folders/{id}/defaults`** (`FolderDefaultsPayload`, mirroring
+  `FolderDefaults` field-for-field) validates before writing, 422 with a detail message
+  on any of:
+  - `default_profile_id` set while `default_language` is `None` — the invariant *profile
+    default ⇒ language default* is enforced here as well as by the UI (the dialog disables
+    the profile selector until a language is chosen, but the API doesn't trust that alone);
+  - `default_profile_id` set to an id that doesn't resolve via `profile_store.get_profile`;
+  - that profile resolving but belonging to a different language than `default_language`
+    (a profile default must be usable the moment the folder's language default is
+    applied);
+  - any id in `default_domain_ids` not present in `terminology_store.list_domains()`.
+
+  404 if the folder itself doesn't exist (checked by `set_defaults` returning `None`).
+  Folder create/rename/delete are otherwise untouched by phase 3 — `create_folder` still
+  starts every new folder with all seven defaults `NULL`.
+- **Read-time pruning** (`_pruned`, `app/api/folders.py`): `GET /api/folders` maps every
+  folder through the same dead-reference philosophy as the documents `GET` pruning (see
+  [Documents](#documents)) — if `default_profile_id` no longer resolves to an existing
+  profile, it's omitted from the *response* (`model_copy(update=...)`), while the language
+  default is left in place; any ids in `default_domain_ids` that no longer resolve to a
+  known domain are dropped from the returned list. Critically, **the database row is never
+  written** by pruning — only the read-time view changes, so a profile or domain restored
+  under the same id later would make the original default reappear (this is deliberate:
+  pruning is a display/apply-time filter, not a destructive edit the user never asked for).
+  Because pruning happens in `GET /api/folders`, the frontend's document-creation overlay
+  (`applyFolderDefaults`, see `docs/frontend-architecture.md#documents`) never has to
+  re-derive or duplicate this logic — it only ever sees already-pruned folder objects.
 
 ### Documents carry a folder
 
@@ -633,13 +694,13 @@ risk 409-ing an in-flight `PUT` from a client mid-edit over content that the mov
 never touched. Last move wins (no optimistic lock) — the same trade-off `set_name`
 already makes, since a folder assignment race is much lower-stakes than a lost edit.
 
-**Phase-3 note**: this phase keeps folders name-only by design. Per-folder defaults
-(e.g. a default profile or language for documents created inside a folder) are
-intentionally deferred — `FolderStore`'s docstring flags that a future phase adds
-columns via the same idempotent `_migrate`-on-startup pattern already used for
-`profiles.packs_on`/`llm_tier` and `documents.folder_id` itself, and the API would
-keep returning `Folder` objects (never bare dicts), so an additive column is a
-backward-compatible response, not a breaking one.
+**Phase 3**: the per-folder defaults described above land exactly the way this section
+predicted — additive nullable columns via `_migrate`, `Folder` still the same response
+shape (never a bare dict, never a nested sub-object beyond `FolderDefaults` inheritance).
+Applying those defaults on creation is entirely a frontend concern (`applyFolderDefaults`
+in `src/documents/documents.ts`, see `docs/frontend-architecture.md#documents`) —
+`POST /api/documents` itself is unchanged by phase 3; it still just accepts whatever
+settings the client sends in the create payload, same as before defaults existed.
 
 ## API surface
 
@@ -651,7 +712,8 @@ backward-compatible response, not a breaking one.
 | `GET/POST/PUT/DELETE /api/domains`, `/api/domains/{id}/terms`, `/api/terms/{id}` | terminology CRUD |
 | `GET/POST/PUT/DELETE /api/profiles`, `POST /api/profiles/{id}/reset` | profile CRUD |
 | `GET/POST/PUT/DELETE /api/documents`, `POST /api/documents/{id}/generate-name` | revision-guarded document CRUD + auto-titling (see [Documents](#documents)) |
-| `GET/POST/PUT/DELETE /api/folders` | folder CRUD, lossless delete (see [Folders](#folders)) |
+| `GET/POST/PUT/DELETE /api/folders` | folder CRUD, lossless delete, read-time defaults pruning (see [Folders](#folders)) |
+| `PUT /api/folders/{id}/defaults` | full-replace a folder's per-folder defaults; 422 matrix + 404 (see [Per-folder defaults](#per-folder-defaults)) |
 | `POST /api/documents/{id}/move` | revision-free move of a document into/out of a folder |
 | `GET /api/providers` | provider availability + model discovery |
 | `GET /api/routing` | tier routing table with per-tier availability + reason |
