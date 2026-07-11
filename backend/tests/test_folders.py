@@ -5,7 +5,7 @@ import pytest
 
 from app.core.models import Language
 from app.services.documents import DocumentStore
-from app.services.folders import FolderStore
+from app.services.folders import FolderStore, FolderDefaults
 
 
 @pytest.fixture()
@@ -74,3 +74,77 @@ def test_connection_is_closed_after_use(db):
         conn.execute("SELECT 1")
     with pytest.raises(sqlite3.ProgrammingError):
         conn.execute("SELECT 1")
+
+
+def test_defaults_migration_idempotent(db):
+    # A pre-phase-3 DB has only the four original columns.
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE folders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id INTEGER NOT NULL DEFAULT 1,
+            name TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL
+        );
+        INSERT INTO folders (name, created_at)
+        VALUES ('Old', '2026-01-01T00:00:00+00:00');
+        """
+    )
+    conn.commit()
+    conn.close()
+    FolderStore(db)  # migrates
+    folder = FolderStore(db).list_folders()[0]  # opening twice is safe
+    assert folder.name == "Old"
+    assert folder.default_language is None
+    assert folder.default_profile_id is None
+    assert folder.default_domain_ids is None
+    assert folder.default_llm_provider is None
+    assert folder.default_llm_model is None
+    assert folder.default_llm_tier is None
+    assert folder.default_llm_auto is None
+
+
+def test_set_defaults_roundtrip(store):
+    f = store.create_folder("Blog")
+    updated = store.set_defaults(
+        f.id,
+        FolderDefaults(
+            default_language=Language.DE,
+            default_profile_id=3,
+            default_domain_ids=[1, 2],
+            default_llm_provider="ollama",
+            default_llm_model="llama3",
+            default_llm_tier="cheap",
+            default_llm_auto=False,
+        ),
+    )
+    assert updated.default_language is Language.DE
+    assert updated.default_profile_id == 3
+    assert updated.default_domain_ids == [1, 2]
+    assert updated.default_llm_provider == "ollama"
+    assert updated.default_llm_model == "llama3"
+    assert updated.default_llm_tier == "cheap"
+    assert updated.default_llm_auto is False
+    # Persisted, not just echoed back.
+    assert store.get_folder(f.id) == updated
+
+
+def test_set_defaults_is_full_replace(store):
+    f = store.create_folder("Blog")
+    store.set_defaults(
+        f.id,
+        FolderDefaults(default_language=Language.DE, default_llm_auto=True),
+    )
+    partial = store.set_defaults(f.id, FolderDefaults(default_language=Language.EN))
+    assert partial.default_language is Language.EN
+    assert partial.default_llm_auto is None  # replaced away, not merged
+
+
+def test_set_defaults_empty_domains_distinct_from_unset(store):
+    f = store.create_folder("Blog")
+    with_empty = store.set_defaults(f.id, FolderDefaults(default_domain_ids=[]))
+    assert with_empty.default_domain_ids == []  # a SET default: "no domains"
+    cleared = store.set_defaults(f.id, FolderDefaults())
+    assert cleared.default_domain_ids is None  # unset
+    assert store.set_defaults(9999, FolderDefaults()) is None
