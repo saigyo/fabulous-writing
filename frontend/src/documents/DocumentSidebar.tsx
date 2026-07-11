@@ -364,7 +364,10 @@ function DocumentItem({ doc }: { doc: DocumentSummary }) {
         <button
           className="doc-menu-button"
           aria-label={m.docMenu}
-          onClick={() => setMenuOpen((open) => !open)}
+          onClick={() => {
+            setMenuOpen((open) => !open)
+            setMoving(false)
+          }}
         >
           ⋯
         </button>

@@ -494,11 +494,11 @@ from `documents` + `folders` on every render instead of maintaining a third sync
     `store.folders` and re-sort client-side (`sortedByName`, locale-aware
     `localeCompare` — mirrors the backend's `COLLATE NOCASE` ordering but is applied
     again here since a rename can change sort position without a full refetch).
-  - `addFolder` deliberately **rethrows** its error instead of swallowing it: the only
-    caller, `NewFolderInput`'s `commit`, needs to distinguish a 409 (keep the input
-    open, show `.conflict`) from anything else (set `docListError`, close the input).
-    This is the one folder verb with caller-visible error branching; the rest funnel
-    failures into `docListError` themselves.
+  - `addFolder` and `renameFolderById` deliberately **rethrow** their errors instead
+    of swallowing them: their callers (`NewFolderInput`'s `commit` and `FolderGroup`'s
+    `commitRename`) need to distinguish a 409 (keep the input open, show `.conflict`)
+    from anything else (set `docListError`, close the input). The other folder verbs
+    funnel failures into `docListError` themselves.
   - `removeFolder` does not do in-place patching — deleting a folder changes which
     *documents* are grouped where (its members drop to ungrouped server-side), so it
     re-fetches both lists (`refreshFolders()` then `refreshDocuments()`) rather than
