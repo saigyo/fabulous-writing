@@ -26,6 +26,17 @@ export function relativeTime(iso: string, locale: string, now = Date.now()): str
   return rtf.format(Math.round(hours / 24), 'day')
 }
 
+/** Full localized date + time (tooltip complement to relativeTime). */
+// oxlint-disable-next-line react/only-export-components -- pure helper, unit-tested in isolation
+export function absoluteTime(iso: string, locale: string): string {
+  const stamp = Date.parse(iso)
+  if (Number.isNaN(stamp)) return ''
+  return new Intl.DateTimeFormat(locale, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(stamp)
+}
+
 /** Group the recency-ordered flat list by folder. Documents whose folder_id
  * references a vanished folder are shown as ungrouped rather than hidden. */
 // oxlint-disable-next-line react/only-export-components -- pure helper, unit-tested in isolation
@@ -352,6 +363,7 @@ function DocumentItem({ doc }: { doc: DocumentSummary }) {
       ) : (
         <button
           className="doc-open"
+          title={absoluteTime(doc.edited_at, locale)}
           onClick={() => {
             if (!isCurrent) void openDocument(doc.id)
           }}

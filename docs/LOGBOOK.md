@@ -2510,3 +2510,14 @@ times reading correctly.
 warnings. `cd frontend && npx vitest run` → 213 passed (21 files);
 `npx tsc --noEmit` clean; `npm run lint` (oxlint) clean; `npm run build`
 clean (only the pre-existing >500 kB chunk-size advisory, unrelated).
+
+## 2026-07-11 — Sidebar polish: guarded example button, edited-at tooltip
+
+Two small usability additions. The editor's "Load example text" button now
+renders only while the document is empty (`docWords === 0`): loading an
+example replaces the whole document, so it must never be able to erase the
+user's writing. And hovering a document in the sidebar now shows the full
+localized edited-at date and time (new `absoluteTime` helper —
+`Intl.DateTimeFormat` medium/short in the UI locale and local timezone — as
+the `title` of the document row, complementing the relative time shown
+inline). Gates: vitest 215, tsc, oxlint, build all clean.

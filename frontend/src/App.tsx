@@ -212,8 +212,12 @@ function LoadExampleButton() {
   const m = useMessages()
   const profiles = useStore((s) => s.profiles)
   const profileId = useStore((s) => s.profileId)
+  const docWords = useStore((s) => s.docWords)
   const exampleText =
     profiles.find((p) => p.id === profileId)?.example_text ?? ''
+  // Only offered while the editor is empty: loading the example replaces the
+  // whole document, which must never be able to erase the user's writing.
+  if (docWords > 0) return null
   return (
     <button
       className="load-example"

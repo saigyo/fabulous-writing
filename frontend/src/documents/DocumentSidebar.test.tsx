@@ -1,5 +1,23 @@
 import { describe, expect, it } from 'vitest'
-import { groupDocuments, relativeTime } from './DocumentSidebar'
+import { absoluteTime, groupDocuments, relativeTime } from './DocumentSidebar'
+
+describe('absoluteTime', () => {
+  it('renders a localized date and time', () => {
+    const iso = '2026-07-11T16:42:00+00:00'
+    const en = absoluteTime(iso, 'en')
+    const de = absoluteTime(iso, 'de')
+    // Locale-dependent rendering; assert the load-bearing parts only:
+    // en medium style is "Jul 11, 2026", de medium style is "11.07.2026".
+    expect(en).toContain('2026')
+    expect(en).toMatch(/Jul/)
+    expect(de).toContain('2026')
+    expect(de).toContain('11.07.')
+  })
+
+  it('returns an empty string for unparseable input', () => {
+    expect(absoluteTime('', 'en')).toBe('')
+  })
+})
 
 describe('relativeTime', () => {
   const now = Date.parse('2026-07-10T12:00:00+00:00')
