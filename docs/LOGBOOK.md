@@ -2367,3 +2367,46 @@ delete-keeps-documents), and each document's ⋯ menu gained a "Move to
 folder ▸" submenu (disabled entry for the doc's current location). All new
 strings went through i18n (9 keys × 7 locales). Gates: vitest 210 passed
 (incl. i18n parity), tsc, oxlint (zero warnings), build all clean.
+
+## 2026-07-11 — Project folders: full-stack feature capstone
+
+Commits: `bcf0d3b`, `5e1732a`, `068a3a9`, `40625ee`, `6b8b5d3`, `89f0ad0`
+(see `94d257c`/`16a9009` for the sidebar-UI-specific entry and doc commit
+directly above — this entry covers the whole branch, not just that layer)
+
+Project folders end to end: `documents.folder_id` (nullable, no revision
+bump on move — same rationale as `set_name`) plus a new `folders` table
+(`FolderStore`: unique names, lossless delete — members drop to ungrouped
+in the same transaction as the folder row's removal, never cascade-deleted);
+`/api/folders` CRUD (422/409/404), `POST /api/documents/{id}/move`, and
+`folder_id` on document creation; frontend folder state (`folders`,
+`docFoldersCollapsed` — persisted, additive to persist v2, no version
+bump) with lifecycle verbs (`addFolder`/`renameFolderById`/`removeFolder`/
+`moveDocumentToFolder`, plus `createNewDocument(folderId?)`) wired into
+`runInit`'s startup fetch; and the sidebar folder-groups UI (inline
+create with 409-conflict styling, collapsible groups, move submenu)
+already logged separately above.
+
+**End-to-end verification** on a scratch stack (backend `127.0.0.1:8001`
+against a throwaway DB, `vite preview --port 4199` against a scratch
+build with `VITE_API_URL` pointed at it; Playwright driving a pinned
+Chromium): fresh load shows one auto-created document and no folders;
+folder-plus → `.new-folder-input` → typed name + Enter renders a
+`.folder-group`; the folder's ⋯ menu "New document here" creates a
+document inside `.folder-docs` and switches the editor to it (empty);
+moving the other (ungrouped) document via its own ⋯ menu → move-to
+submenu → folder puts both documents in the group, empties the ungrouped
+list, and drops the divider; collapsing the folder hides `.folder-docs`
+and survives a reload (persisted); expanding and deleting the folder
+(confirm dialog accepted) removes the group and returns both documents to
+ungrouped with the total document count unchanged (`GET /api/documents`
+before/after both 2 — nothing lost); creating a second folder named "X"
+after a first "X" already exists 409s and keeps the input open with
+`.conflict`. All 19 assertions across the 8 steps passed; final
+screenshot inspected and renders sanely (one expanded, empty folder group
+plus two ungrouped documents, one marked current).
+
+**Verification.** `cd backend && uv run pytest -q` → 681 passed, zero
+warnings. `cd frontend && npx vitest run` → 210 passed (21 files);
+`npx tsc --noEmit` clean; `npm run lint` (oxlint) clean; `npm run build`
+clean (only the pre-existing >500 kB chunk-size advisory, unrelated).

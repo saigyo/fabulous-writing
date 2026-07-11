@@ -89,8 +89,11 @@ authoritative. `routing: RoutingTable | null` holds the `GET /api/routing` respo
 availability is only meaningful for the current process.
 
 The `persist` middleware (v2) saves a small cross-document slice to localStorage:
-`uiLocale`, `lastProfileByLanguage`, `rulesCollapsed`, `currentDocId`, and
-`docSidebarCollapsed`. Everything that used to live here in v1 — `language`,
+`uiLocale`, `lastProfileByLanguage`, `rulesCollapsed`, `currentDocId`,
+`docSidebarCollapsed`, and `docFoldersCollapsed` (the sidebar's per-folder collapsed
+state, added additively to v2 — a `number[]` of collapsed folder ids, no version bump
+needed since it's a new key on an existing persisted shape rather than a change to an
+existing one). Everything that used to live here in v1 — `language`,
 `domainIds`, `provider`, `model`, `tier`, `llmAuto` — moved into per-document storage
 (the backend's `settings` columns; see [Documents](#documents)) once multiple documents
 each needed their own header configuration. Results, caches, and `routing` stay
@@ -465,6 +468,60 @@ short-circuit for anything already titled or user-renamed.
   end to end — the guard stops the redundant write from happening in the common case,
   and this check stops a redundant write that *does* still race from spawning a
   duplicate.
+
+### Folder state, lifecycle, and error paths
+
+`store.folders: Folder[]` and `store.docFoldersCollapsed: number[]` are the two pieces
+of folder-related state; both are plain zustand fields with no derived/memoized layer —
+`groupDocuments` (above, in `DocumentSidebar.tsx`) recomputes the folder/ungrouped split
+from `documents` + `folders` on every render instead of maintaining a third synced copy.
+
+- **`refreshFolders()`** (`documents.ts`) is the folder analogue of `refreshDocuments()`:
+  `GET /api/folders` → `store.setFolders`, with a fetch failure setting the same
+  `docListError` flag the document list uses (there is one combined retry banner, not
+  a separate one per list) rather than a folder-specific error state. `runInit()` calls
+  it once, right after the document list fetch succeeds and before the empty-list/legacy-
+  migration branch — so folders are populated before the first render whether the
+  startup path ends up creating a document, migrating legacy text, or opening an
+  existing one. It is *not* called on the offline path (`listDocuments()` throwing):
+  an offline boot hydrates from the buffer only and skips folders entirely, so a
+  document opened while offline is never shown inside a folder group in that session,
+  even if the buffered document has a `folder_id`.
+- **Lifecycle verbs** (`addFolder`, `renameFolderById`, `removeFolder`,
+  `moveDocumentToFolder`, all in `documents.ts`) patch `store.folders`/`store.documents`
+  in place from each call's response rather than re-fetching:
+  - `addFolder`/`renameFolderById` splice the API's returned `Folder` into
+    `store.folders` and re-sort client-side (`sortedByName`, locale-aware
+    `localeCompare` — mirrors the backend's `COLLATE NOCASE` ordering but is applied
+    again here since a rename can change sort position without a full refetch).
+  - `addFolder` deliberately **rethrows** its error instead of swallowing it: the only
+    caller, `NewFolderInput`'s `commit`, needs to distinguish a 409 (keep the input
+    open, show `.conflict`) from anything else (set `docListError`, close the input).
+    This is the one folder verb with caller-visible error branching; the rest funnel
+    failures into `docListError` themselves.
+  - `removeFolder` does not do in-place patching — deleting a folder changes which
+    *documents* are grouped where (its members drop to ungrouped server-side), so it
+    re-fetches both lists (`refreshFolders()` then `refreshDocuments()`) rather than
+    trying to reconstruct the new grouping from the delete response alone.
+  - `moveDocumentToFolder` patches only the moved document's `folder_id` in
+    `store.documents` from the move response — cheaper than a full refetch since a
+    move never changes any other document or folder.
+  - `createNewDocument(folderId?)` passes `folder_id` straight through to
+    `POST /api/documents` when given, so "new document here" (the folder's ⋯ menu)
+    creates already-grouped instead of creating ungrouped and then moving.
+- **`folder_id` never rides the autosave payload.** `collectSnapshot()`/`flush()`
+  (`autosave.ts`) and `DocumentUpdate`'s `content`/`settings` shapes have no `folder_id`
+  field — organizing a document into a folder is exclusively a sidebar action through
+  `moveDocumentToFolder` → `POST /api/documents/{id}/move`, never a side effect of the
+  editor's save loop. This mirrors the backend split between `update_document` (revision-
+  guarded) and `set_folder` (revision-free, see `docs/backend-architecture.md#folders`):
+  the frontend simply never gives the autosave path a `folder_id` to send.
+- **Error paths**: a failed `moveDocumentToFolder`/`renameFolderById`/`removeFolder`
+  rejects out of its promise; each call site (`DocumentSidebar.tsx`) catches it and sets
+  `docListError`, surfacing the existing retry banner rather than a bespoke per-action
+  error UI. A failed move in particular leaves the document where it was — there is no
+  optimistic client-side move that would need rolling back, since `moveDocumentToFolder`
+  only patches state after the API call resolves.
 
 ### Per-document header settings and persistence
 

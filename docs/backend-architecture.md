@@ -486,7 +486,8 @@ mode is a data migration, not a schema change — nothing today issues a differe
   per-document LLM settings the header exposes), `last_findings` (JSON list) and
   `scorecard` (JSON object or `NULL`) — the check-state snapshot travels with the text
   so a reload restores findings without re-checking — `revision`, `created_at`,
-  `updated_at`.
+  `updated_at`, and `folder_id` (nullable `INTEGER`, no `FOREIGN KEY` — see
+  [Folders](#folders) below).
 - **`DocumentStore`** (same module) is the optimistic-locking guard: `update_document(id,
   base_revision, **fields)` applies a `WHERE id = ? AND revision = ?` conditional update
   that also bumps `revision` and `updated_at`; a `rowcount == 0` means the document either
@@ -530,6 +531,67 @@ mode is a data migration, not a schema change — nothing today issues a differe
   never `update_document`, so auto-titling never bumps `revision` or risks a 409 against a
   concurrent autosave.
 
+## Folders
+
+Folders group documents for organization only — a folder carries no settings of its
+own (yet) and deleting one never deletes what it contains.
+
+- **Storage** (`app/services/folders.py`): a single `folders` table — `id`, `owner_id`
+  (defaults to `1`, same rationale as documents), `name` (`UNIQUE`), `created_at`.
+  `FolderStore` is deliberately simpler than `DocumentStore`: no revision, no optimistic
+  locking — a folder is just a named bucket, so the only invariant worth enforcing is
+  **unique names** (a `sqlite3.IntegrityError` from the `UNIQUE` constraint on `create_folder`/
+  `rename_folder` is caught and re-raised as `ValueError`, which the API layer maps to 409).
+  `list_folders()` orders case-insensitively by name (`COLLATE NOCASE`) then `id`, so the
+  sidebar's alphabetical folder list needs no client-side sort for the initial fetch (the
+  frontend still re-sorts locally after mutations — see `docs/frontend-architecture.md`).
+- **Lossless delete** (`delete_folder`): removing a folder and detaching its documents
+  happen in the same transaction — `UPDATE documents SET folder_id = NULL WHERE folder_id
+  = ?` runs before the `DELETE FROM folders`, both under the store's single `_connect()`
+  context manager (commit-or-rollback as one unit). A folder's documents are never
+  cascade-deleted; they always survive as ungrouped. `delete_folder` returns whether a row
+  was actually removed, so the API can 404 a repeat delete of the same id.
+- **API** (`app/api/folders.py`, `/api/folders` prefix):
+
+  | Endpoint | Purpose |
+  |---|---|
+  | `GET /api/folders` | list all folders, name-sorted |
+  | `POST /api/folders` | create (`name`); 422 on empty/oversized (>100 chars) name, 409 on a name collision |
+  | `PUT /api/folders/{id}` | rename; same 422/409 validation, 404 if the folder doesn't exist |
+  | `DELETE /api/folders/{id}` | delete (204); members drop to ungrouped in the same transaction; 404 if already gone |
+
+  Name validation (`_validated_name`: strip, then reject empty or >100 chars) is shared
+  by create and rename so both endpoints reject the same inputs the same way.
+
+### Documents carry a folder
+
+`documents.folder_id` (nullable `INTEGER`, added via the same idempotent
+`ALTER TABLE ... ADD COLUMN` pattern used for other phased-in columns — see
+[Checking profiles](#checking-profiles) for the precedent) is the only schema change
+folders made to the documents table. `POST /api/documents` accepts an optional
+`folder_id`, validated against the folder store (422 `"Unknown folder"` if it doesn't
+resolve) before the document is created directly inside that folder — this is what
+lets the sidebar's "New document here" skip a separate move call.
+
+**`POST /api/documents/{id}/move`** (`MoveRequest{folder_id: int | None}`) is the
+one dedicated mutation: it re-validates the target folder (same 422 as create) and
+calls `DocumentStore.set_folder(id, folder_id)`, then 404s if the document itself
+doesn't exist. `set_folder` updates `folder_id` and `updated_at` only — **it never
+touches `revision`**, for exactly the reason `set_name` doesn't (see
+[Documents](#documents) above): moving a document between folders is a sidebar
+action wholly outside the editor's autosave lifecycle, and bumping `revision` would
+risk 409-ing an in-flight `PUT` from a client mid-edit over content that the move
+never touched. Last move wins (no optimistic lock) — the same trade-off `set_name`
+already makes, since a folder assignment race is much lower-stakes than a lost edit.
+
+**Phase-3 note**: this phase keeps folders name-only by design. Per-folder defaults
+(e.g. a default profile or language for documents created inside a folder) are
+intentionally deferred — `FolderStore`'s docstring flags that a future phase adds
+columns via the same idempotent `_migrate`-on-startup pattern already used for
+`profiles.packs_on`/`llm_tier` and `documents.folder_id` itself, and the API would
+keep returning `Folder` objects (never bare dicts), so an additive column is a
+backward-compatible response, not a breaking one.
+
 ## API surface
 
 | Endpoint | Purpose |
@@ -540,6 +602,8 @@ mode is a data migration, not a schema change — nothing today issues a differe
 | `GET/POST/PUT/DELETE /api/domains`, `/api/domains/{id}/terms`, `/api/terms/{id}` | terminology CRUD |
 | `GET/POST/PUT/DELETE /api/profiles`, `POST /api/profiles/{id}/reset` | profile CRUD |
 | `GET/POST/PUT/DELETE /api/documents`, `POST /api/documents/{id}/generate-name` | revision-guarded document CRUD + auto-titling (see [Documents](#documents)) |
+| `GET/POST/PUT/DELETE /api/folders` | folder CRUD, lossless delete (see [Folders](#folders)) |
+| `POST /api/documents/{id}/move` | revision-free move of a document into/out of a folder |
 | `GET /api/providers` | provider availability + model discovery |
 | `GET /api/routing` | tier routing table with per-tier availability + reason |
 | `GET /api/languages` | languages + NLP model status |
