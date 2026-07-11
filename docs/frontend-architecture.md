@@ -489,6 +489,19 @@ short-circuit for anything already titled or user-renamed.
   header's own profile-apply effect doesn't immediately overwrite the document's stored
   settings with the newly-selected-profile's defaults (`consumeProfileApplySuppression`,
   read once by `App.tsx`).
+- **`applyHeaderProfileSelection`** (called by `App.tsx`'s header language-switch effect
+  once it has picked a profile to show) branches on that suppression flag together with
+  the store's current `profileId`: if suppressed **and** `profileId === null` — the
+  opened document supplied no profile, e.g. its `profile_id` was pruned server-side
+  because the profile was deleted — it leaves the store untouched entirely and returns
+  early. A pruned document has no profile; adopting the header's remembered-or-standard
+  fallback into `profileId`/`lastProfileByLanguage`, even "for display only," would be
+  durable in memory and get silently persisted onto the document by the next autosave
+  (and inherited by the next document created from `currentSettings()`). Any other case
+  (suppressed with a real profile, or not suppressed at all) calls
+  `selectProfile(chosen, isSwitch && !suppressed)` as before. `ProfileSelector.tsx`
+  renders an explicit disabled `—` option when `profileId === null` so the controlled
+  `<select>` has a matching option to show.
 - **Orphan replay**: the buffer is a single slot for the current document only. If it
   still holds a *dirty* snapshot for a document other than the one about to be hydrated
   (the user switched documents while a previous save was failing),

@@ -2521,3 +2521,43 @@ localized edited-at date and time (new `absoluteTime` helper —
 `Intl.DateTimeFormat` medium/short in the UI locale and local timezone — as
 the `title` of the document row, complementing the relative time shown
 inline). Gates: vitest 215, tsc, oxlint, build all clean.
+
+## 2026-07-11 — Fix: pruned-profile documents no longer adopt the fallback profile
+
+Commit: `5d857d8`
+
+Real product bug found by the folder-defaults e2e (full repro and root-cause
+trace in `.superpowers/sdd/task-5-report.md`): opening a document whose
+`profile_id` had been pruned server-side (its profile was deleted; GET
+returns `profile_id: null`), on a language switch, silently adopted the
+header's fallback profile (remembered-or-standard) into the store — even
+though `applyHeaderProfileSelection`'s suppressed branch was documented as
+"display only." The `beginHydration`/`endHydration` gate only muted the
+synchronous settings-autosave subscription; `selectProfile` still
+unconditionally wrote `profileId`/`lastProfileByLanguage`
+(`state/store.ts`). That durable-in-memory adoption leaked two ways: the
+next autosave PUT silently rewrote the pruned document's profile to
+Standard server-side, and `currentSettings()` fed the adopted id into the
+next document created via `createNewDocument` — exactly the folder-defaults
+e2e's failing assertion ("pruned profile not applied").
+
+Fix: the suppressed branch, when the store's `profileId` is already `null`,
+now returns immediately without calling `selectProfile` at all — a pruned
+document has no profile, so the header state stays an explicit "no
+selection," never touching the store. `ProfileSelector.tsx`'s controlled
+`<select value={profileId ?? ''}>` gained an explicit disabled `—`
+placeholder option for that empty state (an unmatched controlled value
+otherwise renders browser-dependently).
+
+TDD: `documents.test.ts`'s `applyHeaderProfileSelection` suite had encoded
+the old buggy expectation (`profileId` becoming the fallback's id after the
+suppressed call) — rewrote it to assert `profileId` stays `null`,
+`lastProfileByLanguage` is unchanged, and no autosave fires; added a new
+case covering the still-correct "suppressed but the document already has
+its own profile" adoption path (adopts the id, doesn't reapply the
+profile's values onto the header). Confirmed the null-case assertion failed
+against the pre-fix code before applying the fix.
+
+**Verification.** `cd frontend && npx vitest run` → 230 passed (22 files);
+`npx tsc --noEmit` clean; `npm run lint` (oxlint) clean; `npm run build`
+clean (only the pre-existing >500 kB chunk-size advisory, unrelated).
