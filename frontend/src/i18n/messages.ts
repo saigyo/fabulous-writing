@@ -170,4 +170,13 @@ export interface Messages {
   docSidebarShow: string
   docSidebarHide: string
   docMenu: string
+  folderNew: string
+  folderNamePlaceholder: string
+  folderRename: string
+  folderDelete: string
+  folderDeleteConfirm: (name: string) => string
+  folderNewDocument: string
+  folderMoveTo: string
+  folderNone: string
+  folderMenu: string
 }

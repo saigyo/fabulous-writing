@@ -1628,3 +1628,80 @@ input {
   font-size: 0.78rem;
   color: #e5484d;
 }
+
+/* Folder groups in the document sidebar */
+.folder-group {
+  display: flex;
+  flex-direction: column;
+}
+.folder-head {
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+}
+.folder-head:hover {
+  background: var(--accent-soft);
+}
+.folder-head.has-current .folder-name {
+  color: var(--accent);
+  font-weight: 600;
+}
+.folder-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.4rem;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 0.85rem;
+}
+.folder-chevron-icon {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  transition: transform 0.12s ease;
+}
+.folder-chevron-icon:not(.collapsed) {
+  transform: rotate(90deg);
+}
+.folder-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.folder-docs {
+  padding-left: 0.9rem;
+}
+.folder-head .doc-menu-button {
+  visibility: hidden;
+}
+.folder-head:hover .doc-menu-button {
+  visibility: visible;
+}
+.doc-list-divider {
+  margin: 0.3rem 0.4rem;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+.new-folder-input {
+  margin: 0 0.2rem;
+  padding: 0.3rem 0.45rem;
+  font-size: 0.85rem;
+}
+.new-folder-input.conflict {
+  border-color: #e5484d;
+}
+.doc-submenu {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  max-height: 12rem;
+  overflow-y: auto;
+}
+.doc-submenu button:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}

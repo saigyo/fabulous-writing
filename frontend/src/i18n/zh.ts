@@ -178,4 +178,13 @@ export const zh: Messages = {
   docSidebarShow: '显示文档',
   docSidebarHide: '隐藏文档',
   docMenu: '文档操作',
+  folderNew: '新建文件夹',
+  folderNamePlaceholder: '文件夹名称',
+  folderRename: '重命名',
+  folderDelete: '删除文件夹',
+  folderDeleteConfirm: (name) => `删除文件夹“${name}”？其中的文档将被保留并移出文件夹。`,
+  folderNewDocument: '在此新建文档',
+  folderMoveTo: '移动到文件夹',
+  folderNone: '无文件夹',
+  folderMenu: '文件夹操作',
 }

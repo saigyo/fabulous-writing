@@ -189,4 +189,14 @@ export const fr: Messages = {
   docSidebarShow: 'Afficher les documents',
   docSidebarHide: 'Masquer les documents',
   docMenu: 'Actions du document',
+  folderNew: 'Nouveau dossier',
+  folderNamePlaceholder: 'Nom du dossier',
+  folderRename: 'Renommer',
+  folderDelete: 'Supprimer le dossier',
+  folderDeleteConfirm: (name) =>
+    `Supprimer le dossier « ${name} » ? Ses documents seront conservés et sortis du dossier.`,
+  folderNewDocument: 'Nouveau document ici',
+  folderMoveTo: 'Déplacer vers un dossier',
+  folderNone: 'Aucun dossier',
+  folderMenu: 'Actions du dossier',
 }

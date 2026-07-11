@@ -185,4 +185,14 @@ export const de: Messages = {
   docSidebarShow: 'Dokumente anzeigen',
   docSidebarHide: 'Dokumente ausblenden',
   docMenu: 'Dokumentaktionen',
+  folderNew: 'Neuer Ordner',
+  folderNamePlaceholder: 'Ordnername',
+  folderRename: 'Umbenennen',
+  folderDelete: 'Ordner löschen',
+  folderDeleteConfirm: (name) =>
+    `Ordner "${name}" löschen? Die enthaltenen Dokumente bleiben erhalten und werden aus dem Ordner verschoben.`,
+  folderNewDocument: 'Neues Dokument hier',
+  folderMoveTo: 'In Ordner verschieben',
+  folderNone: 'Kein Ordner',
+  folderMenu: 'Ordneraktionen',
 }

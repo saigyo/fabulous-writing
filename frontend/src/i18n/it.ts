@@ -185,4 +185,14 @@ export const it: Messages = {
   docSidebarShow: 'Mostra documenti',
   docSidebarHide: 'Nascondi documenti',
   docMenu: 'Azioni documento',
+  folderNew: 'Nuova cartella',
+  folderNamePlaceholder: 'Nome della cartella',
+  folderRename: 'Rinomina',
+  folderDelete: 'Elimina cartella',
+  folderDeleteConfirm: (name) =>
+    `Eliminare la cartella "${name}"? I documenti saranno conservati e spostati fuori dalla cartella.`,
+  folderNewDocument: 'Nuovo documento qui',
+  folderMoveTo: 'Sposta in cartella',
+  folderNone: 'Nessuna cartella',
+  folderMenu: 'Azioni cartella',
 }

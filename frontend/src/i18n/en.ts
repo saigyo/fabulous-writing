@@ -170,4 +170,14 @@ export const en: Messages = {
   docSidebarShow: 'Show documents',
   docSidebarHide: 'Hide documents',
   docMenu: 'Document actions',
+  folderNew: 'New folder',
+  folderNamePlaceholder: 'Folder name',
+  folderRename: 'Rename',
+  folderDelete: 'Delete folder',
+  folderDeleteConfirm: (name) =>
+    `Delete folder "${name}"? Its documents will be kept and moved out of the folder.`,
+  folderNewDocument: 'New document here',
+  folderMoveTo: 'Move to folder',
+  folderNone: 'No folder',
+  folderMenu: 'Folder actions',
 }

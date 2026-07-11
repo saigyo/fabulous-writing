@@ -189,4 +189,14 @@ export const es: Messages = {
   docSidebarShow: 'Mostrar documentos',
   docSidebarHide: 'Ocultar documentos',
   docMenu: 'Acciones del documento',
+  folderNew: 'Carpeta nueva',
+  folderNamePlaceholder: 'Nombre de la carpeta',
+  folderRename: 'Renombrar',
+  folderDelete: 'Eliminar carpeta',
+  folderDeleteConfirm: (name) =>
+    `¿Eliminar la carpeta «${name}»? Sus documentos se conservarán y saldrán de la carpeta.`,
+  folderNewDocument: 'Documento nuevo aquí',
+  folderMoveTo: 'Mover a carpeta',
+  folderNone: 'Sin carpeta',
+  folderMenu: 'Acciones de carpeta',
 }

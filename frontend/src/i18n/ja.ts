@@ -177,4 +177,14 @@ export const ja: Messages = {
   docSidebarShow: 'ドキュメントを表示',
   docSidebarHide: 'ドキュメントを非表示',
   docMenu: 'ドキュメント操作',
+  folderNew: '新規フォルダ',
+  folderNamePlaceholder: 'フォルダ名',
+  folderRename: '名前を変更',
+  folderDelete: 'フォルダを削除',
+  folderDeleteConfirm: (name) =>
+    `フォルダ「${name}」を削除しますか？中のドキュメントは保持され、フォルダの外に移動されます。`,
+  folderNewDocument: 'ここに新規ドキュメント',
+  folderMoveTo: 'フォルダに移動',
+  folderNone: 'フォルダなし',
+  folderMenu: 'フォルダ操作',
 }
