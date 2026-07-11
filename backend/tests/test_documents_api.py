@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 
 import pytest
@@ -215,3 +216,26 @@ def test_move_document_between_folders(client):
     assert client.post(
         "/api/documents/9999/move", json={"folder_id": None}
     ).status_code == 404
+
+
+def test_summaries_expose_timestamps_and_order_by_edited(client):
+    a = make_doc(client, name="A")
+    b = make_doc(client, name="B")
+    time.sleep(1.1)  # second-precision timestamps: the edit must be later
+    # A check-style save on B (same text, findings only)...
+    client.put(
+        f"/api/documents/{b['id']}",
+        json={
+            "revision": 0,
+            "content": {"text": "", "findings": [{"finding": {}, "from": 0, "to": 0}], "scorecard": None},
+        },
+    )
+    # ...then a real edit on A.
+    client.put(
+        f"/api/documents/{a['id']}",
+        json={"revision": 0, "content": {"text": "real edit", "findings": [], "scorecard": None}},
+    )
+    listing = client.get("/api/documents").json()
+    assert [d["id"] for d in listing] == [a["id"], b["id"]]
+    first = listing[0]
+    assert {"created_at", "edited_at", "checked_at", "updated_at"} <= set(first)

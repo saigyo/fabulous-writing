@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS documents (
     last_findings TEXT NOT NULL DEFAULT '[]',
     scorecard TEXT,
     folder_id INTEGER,
+    edited_at TEXT NOT NULL,
+    checked_at TEXT,
     revision INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -50,6 +52,8 @@ class Document(BaseModel):
     last_findings: list[dict[str, Any]] = Field(default_factory=list)
     scorecard: dict[str, Any] | None = None
     folder_id: int | None = None
+    edited_at: str
+    checked_at: str | None = None
     revision: int = 0
     created_at: str
     updated_at: str
@@ -60,6 +64,9 @@ class DocumentSummary(BaseModel):
     name: str
     language: Language
     folder_id: int | None = None
+    created_at: str
+    edited_at: str
+    checked_at: str | None = None
     updated_at: str
 
 
@@ -92,6 +99,8 @@ def _row_to_document(row: sqlite3.Row) -> Document:
         last_findings=json.loads(row["last_findings"]),
         scorecard=json.loads(row["scorecard"]) if row["scorecard"] else None,
         folder_id=row["folder_id"],
+        edited_at=row["edited_at"],
+        checked_at=row["checked_at"],
         revision=row["revision"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -127,6 +136,12 @@ class DocumentStore:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(documents)")}
         if "folder_id" not in columns:
             conn.execute("ALTER TABLE documents ADD COLUMN folder_id INTEGER")
+        if "edited_at" not in columns:
+            conn.execute("ALTER TABLE documents ADD COLUMN edited_at TEXT")
+            conn.execute("UPDATE documents SET edited_at = updated_at")
+        if "checked_at" not in columns:
+            conn.execute("ALTER TABLE documents ADD COLUMN checked_at TEXT")
+            conn.execute("UPDATE documents SET checked_at = updated_at")
 
     def create_document(
         self,
@@ -151,8 +166,8 @@ class DocumentStore:
                 """INSERT INTO documents
                    (name, name_source, text, language, profile_id, domain_ids,
                     llm_provider, llm_model, llm_tier, llm_auto, last_findings,
-                    scorecard, folder_id, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    scorecard, folder_id, edited_at, checked_at, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     name,
                     name_source,
@@ -168,6 +183,8 @@ class DocumentStore:
                     json.dumps(scorecard) if scorecard is not None else None,
                     folder_id,
                     now,
+                    now if (last_findings or scorecard is not None) else None,
+                    now,
                     now,
                 ),
             )
@@ -180,8 +197,8 @@ class DocumentStore:
     def list_documents(self) -> list[DocumentSummary]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT id, name, language, folder_id, updated_at FROM documents"
-                " ORDER BY updated_at DESC, id DESC"
+                "SELECT id, name, language, folder_id, created_at, edited_at, checked_at, updated_at FROM documents"
+                " ORDER BY edited_at DESC, id DESC"
             ).fetchall()
         return [
             DocumentSummary(
@@ -189,6 +206,9 @@ class DocumentStore:
                 name=row["name"],
                 language=Language(row["language"]),
                 folder_id=row["folder_id"],
+                created_at=row["created_at"],
+                edited_at=row["edited_at"],
+                checked_at=row["checked_at"],
                 updated_at=row["updated_at"],
             )
             for row in rows
@@ -231,12 +251,17 @@ class DocumentStore:
         assert not unknown, f"not updatable: {unknown}"
         merged = current.model_copy(update=fields)
         now = _utcnow()
+        text_changed = "text" in fields and fields["text"] != current.text
+        name_changed = "name" in fields and fields["name"] != current.name
+        edited_at = now if (text_changed or name_changed) else current.edited_at
+        carries_check_state = "last_findings" in fields or "scorecard" in fields
+        checked_at = now if carries_check_state else current.checked_at
         with self._connect() as conn:
             cursor = conn.execute(
                 """UPDATE documents SET name = ?, name_source = ?, text = ?,
                    language = ?, profile_id = ?, domain_ids = ?, llm_provider = ?,
                    llm_model = ?, llm_tier = ?, llm_auto = ?, last_findings = ?,
-                   scorecard = ?, revision = revision + 1, updated_at = ?
+                   scorecard = ?, edited_at = ?, checked_at = ?, revision = revision + 1, updated_at = ?
                    WHERE id = ? AND revision = ?""",
                 (
                     merged.name,
@@ -253,6 +278,8 @@ class DocumentStore:
                     json.dumps(merged.scorecard)
                     if merged.scorecard is not None
                     else None,
+                    edited_at,
+                    checked_at,
                     now,
                     document_id,
                     base_revision,
@@ -264,7 +291,12 @@ class DocumentStore:
                 return None
             raise RevisionConflictError(latest.revision)
         return merged.model_copy(
-            update={"revision": base_revision + 1, "updated_at": now}
+            update={
+                "revision": base_revision + 1,
+                "updated_at": now,
+                "edited_at": edited_at,
+                "checked_at": checked_at,
+            }
         )
 
     def set_name(

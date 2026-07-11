@@ -169,3 +169,111 @@ def test_folder_id_migration_adds_column(tmp_path: Path):
     assert old.folder_id is None
     # Opening twice must not fail on the ALTER TABLE guard.
     DocumentStore(db)
+
+
+def test_create_sets_edited_at_and_optional_checked_at(store):
+    plain = store.create_document("A", Language.EN)
+    assert plain.edited_at == plain.created_at
+    assert plain.checked_at is None
+    checked = store.create_document(
+        "B", Language.EN, last_findings=[{"finding": {}, "from": 0, "to": 1}]
+    )
+    assert checked.checked_at == checked.created_at
+
+
+def test_check_only_update_does_not_bump_edited_at(store):
+    doc = store.create_document("A", Language.EN, text="same text")
+    time.sleep(1.1)  # second-precision timestamps
+    updated = store.update_document(
+        doc.id,
+        0,
+        text="same text",
+        last_findings=[{"finding": {"id": "x"}, "from": 0, "to": 4}],
+        scorecard={"card": {"overall": 80}, "stale": False},
+    )
+    assert updated.edited_at == doc.edited_at  # unchanged
+    assert updated.checked_at is not None and updated.checked_at > doc.created_at
+    assert updated.updated_at > doc.updated_at
+    assert updated.revision == 1
+
+
+def test_text_change_bumps_edited_at(store):
+    doc = store.create_document("A", Language.EN, text="old")
+    time.sleep(1.1)
+    updated = store.update_document(
+        doc.id, 0, text="new", last_findings=[], scorecard=None
+    )
+    assert updated.edited_at > doc.edited_at
+    assert updated.checked_at is not None  # findings/scorecard were carried
+
+
+def test_rename_bumps_edited_at_but_settings_do_not(store):
+    doc = store.create_document("A", Language.EN)
+    time.sleep(1.1)
+    renamed = store.update_document(doc.id, 0, name="Better", name_source="user")
+    assert renamed.edited_at > doc.edited_at
+    assert renamed.checked_at is None  # no check state carried
+    time.sleep(1.1)
+    settings_only = store.update_document(renamed.id, 1, llm_tier="cheap")
+    assert settings_only.edited_at == renamed.edited_at
+
+
+def test_set_name_and_set_folder_never_bump_edited_at(store):
+    doc = store.create_document("A", Language.EN, text="enough words here")
+    time.sleep(1.1)
+    titled = store.set_name(doc.id, "Auto Title", "llm")
+    assert titled.edited_at == doc.edited_at
+    moved = store.set_folder(doc.id, 5)
+    assert moved.edited_at == doc.edited_at
+
+
+def test_list_orders_by_edited_at(store):
+    a = store.create_document("A", Language.EN, text="a")
+    b = store.create_document("B", Language.EN, text="b")
+    time.sleep(1.1)
+    # A check-only write on B must NOT move it above... it is already newest;
+    # instead: edit A (older) -> A moves to front despite B's later check.
+    store.update_document(
+        b.id, 0, text="b", last_findings=[{"finding": {}, "from": 0, "to": 1}]
+    )
+    store.update_document(a.id, 0, text="a changed")
+    listing = store.list_documents()
+    assert [d.id for d in listing] == [a.id, b.id]
+    assert listing[0].edited_at >= listing[1].edited_at
+    assert listing[1].checked_at is not None
+    assert listing[0].created_at == a.created_at
+
+
+def test_timestamp_migration_seeds_from_updated_at(tmp_path: Path):
+    # A database from before the edited_at/checked_at split gets both
+    # columns seeded from updated_at.
+    db = tmp_path / "old.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """CREATE TABLE documents (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               owner_id INTEGER NOT NULL DEFAULT 1,
+               name TEXT NOT NULL,
+               name_source TEXT NOT NULL DEFAULT 'fallback',
+               text TEXT NOT NULL DEFAULT '',
+               language TEXT NOT NULL,
+               profile_id INTEGER,
+               domain_ids TEXT NOT NULL DEFAULT '[]',
+               llm_provider TEXT, llm_model TEXT, llm_tier TEXT,
+               llm_auto INTEGER NOT NULL DEFAULT 1,
+               last_findings TEXT NOT NULL DEFAULT '[]',
+               scorecard TEXT,
+               revision INTEGER NOT NULL DEFAULT 0,
+               created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+               folder_id INTEGER);
+           INSERT INTO documents (name, language, created_at, updated_at)
+           VALUES ('Old', 'en', '2026-01-01T00:00:00+00:00',
+                   '2026-02-02T00:00:00+00:00');"""
+    )
+    conn.commit()
+    conn.close()
+    migrated = DocumentStore(db)
+    old = migrated.get_document(1)
+    assert old.edited_at == "2026-02-02T00:00:00+00:00"
+    assert old.checked_at == "2026-02-02T00:00:00+00:00"
+    DocumentStore(db)  # reopen-idempotent
