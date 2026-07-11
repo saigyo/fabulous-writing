@@ -6,12 +6,16 @@ import type { Profile } from '../types'
 import { clearSnapshot, readSnapshot, writeSnapshot } from './buffer'
 import { flush, noteChange, resetAutosaveForTests } from './autosave'
 import {
+  addFolder,
   applyHeaderProfileSelection,
   consumeProfileApplySuppression,
+  createNewDocument,
   fallbackName,
   initDocuments,
+  moveDocumentToFolder,
   openDocument,
   removeDocument,
+  removeFolder,
 } from './documents'
 
 vi.mock('../api/client', async (importOriginal) => ({
@@ -21,6 +25,11 @@ vi.mock('../api/client', async (importOriginal) => ({
   createDocument: vi.fn(),
   updateDocument: vi.fn(),
   deleteDocument: vi.fn(),
+  listFolders: vi.fn(),
+  createFolder: vi.fn(),
+  renameFolder: vi.fn(),
+  deleteFolder: vi.fn(),
+  moveDocument: vi.fn(),
 }))
 vi.mock('../editor/editorRef', () => ({
   getEditorView: () => fakeView,
@@ -28,9 +37,13 @@ vi.mock('../editor/editorRef', () => ({
 
 import {
   createDocument,
+  createFolder,
   deleteDocument,
+  deleteFolder,
   getDocument,
   listDocuments,
+  listFolders,
+  moveDocument,
   updateDocument,
 } from '../api/client'
 
@@ -500,5 +513,58 @@ describe('fallbackName', () => {
   it('mirrors the backend rule', () => {
     expect(fallbackName('a b c d e f g h')).toBe('a b c d e f')
     expect(fallbackName('   ')).toBeNull()
+  })
+})
+
+describe('folders', () => {
+  it('moveDocumentToFolder updates the summary in place', async () => {
+    useStore.getState().setDocuments([
+      { ...summaryOf(doc(1)), folder_id: null },
+      { ...summaryOf(doc(2)), folder_id: null },
+    ])
+    vi.mocked(moveDocument).mockResolvedValue(doc(2, { folder_id: 5 }))
+    await moveDocumentToFolder(2, 5)
+    const docs = useStore.getState().documents
+    expect(docs.find((d) => d.id === 2)?.folder_id).toBe(5)
+    expect(docs.find((d) => d.id === 1)?.folder_id).toBeNull()
+    // Order untouched — moves never reorder recency.
+    expect(docs.map((d) => d.id)).toEqual([1, 2])
+  })
+
+  it('removeFolder refreshes folders and documents', async () => {
+    vi.mocked(deleteFolder).mockResolvedValue(undefined)
+    vi.mocked(listFolders).mockResolvedValue([])
+    vi.mocked(listDocuments).mockResolvedValue([summaryOf(doc(1))])
+    await removeFolder(3)
+    expect(deleteFolder).toHaveBeenCalledWith(3)
+    expect(listFolders).toHaveBeenCalled()
+    expect(listDocuments).toHaveBeenCalled()
+  })
+
+  it('addFolder inserts keeping name order and rethrows conflicts', async () => {
+    useStore.getState().setFolders([
+      { id: 1, name: 'alpha', created_at: '' },
+      { id: 2, name: 'Zulu', created_at: '' },
+    ])
+    vi.mocked(createFolder).mockResolvedValue({ id: 3, name: 'Mango', created_at: '' })
+    await addFolder('  Mango  ')
+    expect(createFolder).toHaveBeenCalledWith('Mango')
+    expect(useStore.getState().folders.map((f) => f.name)).toEqual([
+      'alpha',
+      'Mango',
+      'Zulu',
+    ])
+    vi.mocked(createFolder).mockRejectedValue(new HttpError(409, 'dup'))
+    await expect(addFolder('Mango')).rejects.toThrow('dup')
+  })
+
+  it('createNewDocument places the document in the given folder', async () => {
+    useStore.getState().setDocMeta(null)
+    vi.mocked(createDocument).mockResolvedValue(doc(9, { folder_id: 4 }))
+    await createNewDocument(4)
+    expect(createDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ folder_id: 4 }),
+    )
+    expect(useStore.getState().documents[0].folder_id).toBe(4)
   })
 })

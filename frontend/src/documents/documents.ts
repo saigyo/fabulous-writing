@@ -1,12 +1,18 @@
 import {
   createDocument as apiCreateDocument,
+  createFolder as apiCreateFolder,
   deleteDocument as apiDeleteDocument,
+  deleteFolder as apiDeleteFolder,
+  renameFolder as apiRenameFolder,
   getDocument,
   HttpError,
   listDocuments,
+  listFolders,
+  moveDocument as apiMoveDocument,
   updateDocument,
   type DocumentFull,
   type DocumentSummary,
+  type Folder,
 } from '../api/client'
 import { getEditorView } from '../editor/editorRef'
 import { setFindingsEffect } from '../editor/findings'
@@ -234,19 +240,69 @@ export async function refreshDocuments(): Promise<void> {
   }
 }
 
+export async function refreshFolders(): Promise<void> {
+  try {
+    useStore.getState().setFolders(await listFolders())
+  } catch {
+    useStore.getState().setDocListError(true)
+  }
+}
+
+function sortedByName(folders: Folder[]): Folder[] {
+  return [...folders].sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
+  )
+}
+
+/** Create a folder. Errors are rethrown: the sidebar shows a 409 inline. */
+export async function addFolder(name: string): Promise<void> {
+  const folder = await apiCreateFolder(name.trim())
+  const store = useStore.getState()
+  store.setFolders(sortedByName([...store.folders, folder]))
+}
+
+export async function renameFolderById(id: number, name: string): Promise<void> {
+  const renamed = await apiRenameFolder(id, name.trim())
+  const store = useStore.getState()
+  store.setFolders(
+    sortedByName(store.folders.map((f) => (f.id === id ? renamed : f))),
+  )
+}
+
+export async function removeFolder(id: number): Promise<void> {
+  await apiDeleteFolder(id)
+  // Members moved to ungrouped server-side; refresh both lists.
+  await refreshFolders()
+  await refreshDocuments()
+}
+
+export async function moveDocumentToFolder(
+  id: number,
+  folderId: number | null,
+): Promise<void> {
+  const moved = await apiMoveDocument(id, folderId)
+  const store = useStore.getState()
+  store.setDocuments(
+    store.documents.map((d) =>
+      d.id === id ? { ...d, folder_id: moved.folder_id } : d,
+    ),
+  )
+}
+
 export async function openDocument(id: number): Promise<void> {
   await flush()
   const doc = await getDocument(id)
   await hydrateFromDocument(doc)
 }
 
-export async function createNewDocument(): Promise<void> {
+export async function createNewDocument(folderId?: number): Promise<void> {
   await flush()
   const state = useStore.getState()
   const doc = await apiCreateDocument({
     name: currentMessages().docUntitled,
     language: state.language,
     ...currentSettings(),
+    ...(folderId !== undefined ? { folder_id: folderId } : {}),
   })
   useStore.getState().setDocuments([summaryOf(doc), ...state.documents])
   await hydrateFromDocument(doc)
@@ -400,6 +456,7 @@ async function runInit(): Promise<void> {
     return
   }
   useStore.getState().setDocListError(false)
+  await refreshFolders()
 
   if (documents.length === 0) {
     const legacy = localStorage.getItem(LEGACY_TEXT_KEY)
