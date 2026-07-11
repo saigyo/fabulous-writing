@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { DocumentSummary, HeldBackSuggestion, NameSource } from '../api/client'
+import type { DocumentSummary, Folder, HeldBackSuggestion, NameSource } from '../api/client'
 import type { TrackedFinding } from '../editor/findings'
 import { mapEquivalentIds } from '../findings/equivalence'
 import type { SourceGroup } from '../findings/source'
@@ -83,6 +83,9 @@ interface AppState {
   currentDocId: number | null
   docSidebarCollapsed: boolean
   docListError: boolean
+  folders: Folder[]
+  // Collapsed folder groups in the document sidebar (folder ids).
+  docFoldersCollapsed: number[]
 
   setLanguage: (language: Language) => void
   setUiLocale: (uiLocale: Locale) => void
@@ -127,6 +130,8 @@ interface AppState {
   touchDocument: (id: number, name?: string) => void
   toggleDocSidebar: () => void
   setDocListError: (docListError: boolean) => void
+  setFolders: (folders: Folder[]) => void
+  toggleFolderCollapsed: (id: number) => void
 }
 
 export interface Rewrite {
@@ -211,6 +216,8 @@ export const useStore = create<AppState>()(
       currentDocId: null,
       docSidebarCollapsed: false,
       docListError: false,
+      folders: [],
+      docFoldersCollapsed: [],
 
       setLanguage: (language) => set({ language }),
       setUiLocale: (uiLocale) => set({ uiLocale }),
@@ -325,6 +332,13 @@ export const useStore = create<AppState>()(
       toggleDocSidebar: () =>
         set((state) => ({ docSidebarCollapsed: !state.docSidebarCollapsed })),
       setDocListError: (docListError) => set({ docListError }),
+      setFolders: (folders) => set({ folders }),
+      toggleFolderCollapsed: (id) =>
+        set((state) => ({
+          docFoldersCollapsed: state.docFoldersCollapsed.includes(id)
+            ? state.docFoldersCollapsed.filter((f) => f !== id)
+            : [...state.docFoldersCollapsed, id],
+        })),
     }),
     {
       name: 'fabulous-writing-settings',
@@ -344,6 +358,7 @@ export const useStore = create<AppState>()(
         rulesCollapsed: state.rulesCollapsed,
         currentDocId: state.currentDocId,
         docSidebarCollapsed: state.docSidebarCollapsed,
+        docFoldersCollapsed: state.docFoldersCollapsed,
       }),
     },
   ),

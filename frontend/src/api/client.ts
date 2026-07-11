@@ -197,6 +197,7 @@ export interface DocumentSummary {
   id: number
   name: string
   language: Language
+  folder_id: number | null
   updated_at: string
 }
 
@@ -228,6 +229,7 @@ export interface DocumentFull {
   llm_auto: boolean
   last_findings: SavedFinding[]
   scorecard: ScorecardSnapshot | null
+  folder_id: number | null
   revision: number
   created_at: string
   updated_at: string
@@ -252,6 +254,7 @@ export interface DocumentContentPayload {
 export interface DocumentCreatePayload extends Partial<DocumentSettingsPayload> {
   name: string
   language: Language
+  folder_id?: number | null
   name_source?: 'fallback' | 'user'
   text?: string
   findings?: SavedFinding[]
@@ -282,3 +285,28 @@ export const deleteDocument = (id: number) =>
   request<void>(`/api/documents/${id}`, { method: 'DELETE' })
 export const generateDocumentName = (id: number) =>
   request<DocumentFull>(`/api/documents/${id}/generate-name`, { method: 'POST' })
+
+export interface Folder {
+  id: number
+  name: string
+  created_at: string
+}
+
+export const listFolders = () => request<Folder[]>('/api/folders')
+export const createFolder = (name: string) =>
+  request<Folder>('/api/folders', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  })
+export const renameFolder = (id: number, name: string) =>
+  request<Folder>(`/api/folders/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ name }),
+  })
+export const deleteFolder = (id: number) =>
+  request<void>(`/api/folders/${id}`, { method: 'DELETE' })
+export const moveDocument = (id: number, folderId: number | null) =>
+  request<DocumentFull>(`/api/documents/${id}/move`, {
+    method: 'POST',
+    body: JSON.stringify({ folder_id: folderId }),
+  })

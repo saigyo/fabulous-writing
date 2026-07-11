@@ -56,6 +56,7 @@ function doc(id: number, over: Partial<DocumentFull> = {}): DocumentFull {
     llm_auto: true,
     last_findings: [],
     scorecard: { card: { overall: 70 } as never, stale: true },
+    folder_id: null,
     revision: 5,
     created_at: '2026-07-10T00:00:00+00:00',
     updated_at: '2026-07-10T00:00:00+00:00',
@@ -64,7 +65,7 @@ function doc(id: number, over: Partial<DocumentFull> = {}): DocumentFull {
 }
 
 function summaryOf(d: DocumentFull) {
-  return { id: d.id, name: d.name, language: d.language, updated_at: d.updated_at }
+  return { id: d.id, name: d.name, language: d.language, folder_id: d.folder_id, updated_at: d.updated_at }
 }
 
 beforeEach(() => {

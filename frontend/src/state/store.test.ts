@@ -134,6 +134,21 @@ describe('advice notes', () => {
   })
 })
 
+describe('folder state', () => {
+  it('setFolders stores and toggleFolderCollapsed round-trips', () => {
+    useStore.getState().setFolders([
+      { id: 1, name: 'Blog', created_at: '2026-07-11T00:00:00+00:00' },
+    ])
+    expect(useStore.getState().folders[0].name).toBe('Blog')
+    useStore.getState().toggleFolderCollapsed(1)
+    expect(useStore.getState().docFoldersCollapsed).toEqual([1])
+    useStore.getState().toggleFolderCollapsed(2)
+    expect(useStore.getState().docFoldersCollapsed).toEqual([1, 2])
+    useStore.getState().toggleFolderCollapsed(1)
+    expect(useStore.getState().docFoldersCollapsed).toEqual([2])
+  })
+})
+
 describe('document state', () => {
   it('setDocMeta mirrors currentDocId and patchDocMeta merges', () => {
     useStore.getState().setDocMeta({ id: 7, name: 'A', nameSource: 'fallback', revision: 0 })
@@ -146,8 +161,8 @@ describe('document state', () => {
 
   it('touchDocument moves the entry to the front and renames it', () => {
     useStore.getState().setDocuments([
-      { id: 1, name: 'One', language: 'en', updated_at: '2026-07-10T00:00:00+00:00' },
-      { id: 2, name: 'Two', language: 'en', updated_at: '2026-07-10T00:00:00+00:00' },
+      { id: 1, name: 'One', language: 'en', folder_id: null, updated_at: '2026-07-10T00:00:00+00:00' },
+      { id: 2, name: 'Two', language: 'en', folder_id: null, updated_at: '2026-07-10T00:00:00+00:00' },
     ])
     useStore.getState().touchDocument(2, 'Renamed')
     const docs = useStore.getState().documents

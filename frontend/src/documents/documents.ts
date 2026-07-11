@@ -80,6 +80,7 @@ function summaryOf(doc: DocumentFull): DocumentSummary {
     id: doc.id,
     name: doc.name,
     language: doc.language,
+    folder_id: doc.folder_id,
     updated_at: doc.updated_at,
   }
 }
@@ -214,6 +215,7 @@ async function hydrateFromBuffer(snapshot: DocSnapshot): Promise<void> {
     llm_auto: snapshot.settings.llm_auto,
     last_findings: snapshot.findings,
     scorecard: snapshot.scorecard,
+    folder_id: null,
     revision: snapshot.revision,
     created_at: '',
     updated_at: '',
