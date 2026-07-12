@@ -43,3 +43,33 @@ def test_whitespace_normalization() -> None:
     assert span is not None
     assert span.start == text.index("ends")
     assert span.end == text.index("next") + len("next")
+
+
+def test_three_way_ambiguity_prefers_context_match() -> None:
+    text = "It was very cold. He felt very tired. She was very sad indeed."
+    span = anchor(text, "very", context_before="He felt ")
+    assert span is not None
+    assert span.start == text.index("very", text.index("He"))  # the middle one
+
+
+def test_whitespace_tolerant_with_multiple_occurrences() -> None:
+    text = "the quick\nbrown fox ran. Later the quick brown fox slept."
+    span = anchor(text, "quick brown fox", context_before="Later the ")
+    assert span is not None
+    assert span.start == text.index("quick", 20)
+
+
+def test_fuzzy_near_miss_below_threshold_returns_none() -> None:
+    # Shares many characters but stays under the 0.8 ratio for every window.
+    text = "The committee approved the annual budget yesterday."
+    assert anchor(text, "The komitee rejekted the anual budgit tomorow??") is None
+
+
+def test_fuzzy_refine_window_trims_to_quote() -> None:
+    text = "xxA colour-ful paintingzz hangs there."
+    span = anchor(text, "A colorful painting")
+    assert span is not None
+    # The refined window must start at (or within 2 chars of) the real phrase,
+    # not at the raw window position.
+    assert abs(span.start - text.index("A colour")) <= 2
+    assert "painting" in span.text
