@@ -2,7 +2,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -25,10 +25,10 @@ class RawFinding(BaseModel):
     suggestions: list[str] = Field(default_factory=list)
 
 
-def extract_json_array(response: str) -> list | None:
-    """Extract a JSON array from an LLM response, tolerating fences and prose."""
+def _extract_json(response: str, open_ch: str, close_ch: str, expected: type) -> Any:
+    """Extract a JSON value from an LLM response, tolerating fences and prose."""
     candidates = [response, _CODE_FENCE.sub("", response).strip()]
-    start, end = response.find("["), response.rfind("]")
+    start, end = response.find(open_ch), response.rfind(close_ch)
     if start != -1 and end > start:
         candidates.append(response[start : end + 1])
     for candidate in candidates:
@@ -36,25 +36,17 @@ def extract_json_array(response: str) -> list | None:
             data = json.loads(candidate)
         except json.JSONDecodeError:
             continue
-        if isinstance(data, list):
+        if isinstance(data, expected):
             return data
     return None
+
+
+def extract_json_array(response: str) -> list | None:
+    return _extract_json(response, "[", "]", list)
 
 
 def extract_json_object(response: str) -> dict | None:
-    """Extract a top-level JSON object, tolerating fences and prose."""
-    candidates = [response, _CODE_FENCE.sub("", response).strip()]
-    start, end = response.find("{"), response.rfind("}")
-    if start != -1 and end > start:
-        candidates.append(response[start : end + 1])
-    for candidate in candidates:
-        try:
-            data = json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(data, dict):
-            return data
-    return None
+    return _extract_json(response, "{", "}", dict)
 
 
 class ParsedResponse(NamedTuple):
