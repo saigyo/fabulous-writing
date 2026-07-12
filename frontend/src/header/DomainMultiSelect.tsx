@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
+import { useDismissOnOutsideClick } from '../hooks/useDismissOnOutsideClick'
 import { useMessages } from '../i18n'
 import { useStore } from '../state/store'
 
@@ -11,14 +12,7 @@ export function DomainMultiSelect() {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (!open) return
-    function onClickOutside(event: MouseEvent) {
-      if (!ref.current?.contains(event.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', onClickOutside)
-    return () => document.removeEventListener('mousedown', onClickOutside)
-  }, [open])
+  useDismissOnOutsideClick(ref, open, () => setOpen(false))
 
   const selected = domains.filter((d) => domainIds.includes(d.id))
   const label =

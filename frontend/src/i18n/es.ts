@@ -134,6 +134,7 @@ export const es: Messages = {
   saveEditTitle: 'Guardar cambios',
   cancelEditTitle: 'Descartar cambios',
   renameDomainTitle: 'Renombrar dominio',
+  changeFailed: (error) => `No se pudo aplicar el cambio: ${error}`,
 
   profilesTitle: 'Perfiles de comprobación',
   newProfilePlaceholder: 'Nuevo perfil…',

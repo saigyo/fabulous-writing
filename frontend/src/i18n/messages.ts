@@ -116,6 +116,7 @@ export interface Messages {
   saveEditTitle: string
   cancelEditTitle: string
   renameDomainTitle: string
+  changeFailed: (error: string) => string
 
   // Profiles view
   profilesTitle: string

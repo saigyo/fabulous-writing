@@ -799,8 +799,14 @@ span.score-badge {
 
 .terminology {
   display: flex;
+  flex-wrap: wrap;
   flex: 1;
   min-height: 0;
+}
+
+.crud-error {
+  flex-basis: 100%;
+  color: #e5484d;
 }
 
 .domain-list {

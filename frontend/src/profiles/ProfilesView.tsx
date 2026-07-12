@@ -7,6 +7,7 @@ import {
   updateProfile,
 } from '../api/client'
 import { PinIcon } from '../header/LlmSelector'
+import { useCrudError } from '../hooks/useCrudError'
 import { useMessages } from '../i18n'
 import { useStore } from '../state/store'
 import { TIERS, type Profile, type Tier } from '../types'
@@ -18,7 +19,7 @@ export function ProfilesView() {
   const language = useStore((s) => s.language)
   const m = useMessages()
   const [newName, setNewName] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const { error, run } = useCrudError(m.profileChangeFailed)
   const [packs, setPacks] = useState<string[]>([])
 
   useEffect(() => {
@@ -35,15 +36,11 @@ export function ProfilesView() {
     if (select) store.selectProfile(select, true)
   }
 
-  function reportError(e: unknown) {
-    setError(m.profileChangeFailed(e instanceof Error ? e.message : String(e)))
-  }
-
   async function create() {
     if (!newName.trim()) return
     const state = useStore.getState()
     const base = selected
-    try {
+    await run(async () => {
       const created = await createProfile({
         language,
         name: newName.trim(),
@@ -58,16 +55,13 @@ export function ProfilesView() {
         example_text: base?.example_text ?? '',
       })
       setNewName('')
-      setError(null)
       refresh([...profiles, created], created)
-    } catch (e) {
-      reportError(e)
-    }
+    })
   }
 
   async function save(profile: Profile, patch: Partial<Profile>) {
     const merged = { ...profile, ...patch }
-    try {
+    await run(async () => {
       const saved = await updateProfile(profile.id, {
         name: merged.name,
         categories_off: merged.categories_off,
@@ -80,39 +74,30 @@ export function ProfilesView() {
         llm_instructions: merged.llm_instructions,
         example_text: merged.example_text,
       })
-      setError(null)
       refresh(
         profiles.map((p) => (p.id === saved.id ? saved : p)),
         saved.id === profileId ? saved : undefined,
       )
-    } catch (e) {
-      reportError(e)
-    }
+    })
   }
 
   async function remove(profile: Profile) {
-    try {
+    await run(async () => {
       await deleteProfile(profile.id)
       const rest = profiles.filter((p) => p.id !== profile.id)
       const fallback = rest.find((p) => p.is_standard) ?? rest[0]
-      setError(null)
       refresh(rest, profile.id === profileId ? fallback : undefined)
-    } catch (e) {
-      reportError(e)
-    }
+    })
   }
 
   async function reset(profile: Profile) {
-    try {
+    await run(async () => {
       const restored = await resetProfile(profile.id)
-      setError(null)
       refresh(
         profiles.map((p) => (p.id === restored.id ? restored : p)),
         restored.id === profileId ? restored : undefined,
       )
-    } catch (e) {
-      reportError(e)
-    }
+    })
   }
 
   return (

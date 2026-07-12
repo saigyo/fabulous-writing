@@ -130,6 +130,7 @@ export const it: Messages = {
   saveEditTitle: 'Salva le modifiche',
   cancelEditTitle: 'Annulla le modifiche',
   renameDomainTitle: 'Rinomina dominio',
+  changeFailed: (error) => `Modifica non riuscita: ${error}`,
 
   profilesTitle: 'Profili di controllo',
   newProfilePlaceholder: 'Nuovo profilo…',
