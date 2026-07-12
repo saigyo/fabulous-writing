@@ -7,9 +7,6 @@ from pathlib import Path
 from app.core.models import Language
 from app.services.profiles import ProfileStore
 
-EXAMPLE_LANGUAGES = set(Language)
-BLOG_LANGUAGES = set(Language)
-
 _MARKETING_INSTRUCTIONS = {
     Language.EN: (
         "Audience: prospective customers. Favor energetic, benefit-led, concrete "
@@ -169,11 +166,7 @@ def seed_profiles(
                 is_standard=True,
                 **standard_defaults(language, demos_dir),
             )
-        if (
-            seed_examples
-            and language in EXAMPLE_LANGUAGES
-            and not store.is_example_seeded(language)
-        ):
+        if seed_examples and not store.is_example_seeded(language):
             _create_ignoring_collision(
                 store,
                 language,
@@ -195,16 +188,15 @@ def seed_profiles(
                     demos_dir, f"{language.value}-technical-documentation.txt"
                 ),
             )
-            if language in BLOG_LANGUAGES:
-                _create_ignoring_collision(
-                    store,
-                    language,
-                    "Blog",
-                    packs_on=["blog"],
-                    llm_tier="balanced",
-                    llm_instructions=_BLOG_INSTRUCTIONS[language],
-                    example_text=_demo(demos_dir, f"{language.value}-blog.txt"),
-                )
+            _create_ignoring_collision(
+                store,
+                language,
+                "Blog",
+                packs_on=["blog"],
+                llm_tier="balanced",
+                llm_instructions=_BLOG_INSTRUCTIONS[language],
+                example_text=_demo(demos_dir, f"{language.value}-blog.txt"),
+            )
             # Marker is set even if an insert collided with a user profile —
             # this prevents a retry loop on every subsequent run.
             store.mark_example_seeded(language)

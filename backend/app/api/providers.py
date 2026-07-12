@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from typing import Any
 
@@ -8,9 +9,11 @@ from app.checkers.llm import bedrock
 from app.checkers.llm.claude import ClaudeProvider
 from app.checkers.llm.ollama import OllamaProvider
 from app.checkers.llm.openai_compat import OpenAICompatProvider
-from app.core.config import ProviderSettings
+from app.core.config import BUILTIN_ENV_KEYS, ProviderSettings
 
 router = APIRouter(prefix="/api", tags=["providers"])
+
+logger = logging.getLogger(__name__)
 
 # Model ids the OpenAI /models listing returns that are not chat models.
 OPENAI_EXCLUDED_MODEL_FRAGMENTS = (
@@ -53,7 +56,8 @@ async def _ollama_entry(settings: ProviderSettings) -> dict[str, Any]:
         async with asyncio.timeout(_DISCOVERY_TIMEOUT):
             models = await provider.list_models()
         return _entry("ollama", True, models, settings.ollama_model)
-    except Exception:
+    except Exception as exc:
+        logger.info("ollama discovery failed: %s", exc)
         return _entry("ollama", False, [], settings.ollama_model)
 
 
@@ -77,14 +81,15 @@ async def _openai_compat_entry(
     try:
         async with asyncio.timeout(_DISCOVERY_TIMEOUT):
             models = await provider.list_models()
-    except Exception:
+    except Exception as exc:
+        logger.info("%s discovery failed: %s", name, exc)
         # Key is set but discovery failed — still usable with the default.
         models = [default_model]
     return _entry(name, True, models, default_model)
 
 
 async def _claude_entry(settings: ProviderSettings) -> dict[str, Any]:
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    if not os.environ.get(BUILTIN_ENV_KEYS["claude"]):
         return _entry(
             "claude", False, [settings.anthropic_model], settings.anthropic_model
         )
@@ -92,7 +97,8 @@ async def _claude_entry(settings: ProviderSettings) -> dict[str, Any]:
     try:
         async with asyncio.timeout(_DISCOVERY_TIMEOUT):
             models = await provider.list_models()
-    except Exception:
+    except Exception as exc:
+        logger.info("claude discovery failed: %s", exc)
         # Key is set but discovery failed — still usable with the default.
         models = [settings.anthropic_model]
     return _entry("claude", True, models, settings.anthropic_model)
@@ -109,7 +115,8 @@ async def _bedrock_entry(settings: ProviderSettings) -> dict[str, Any]:
                 models = await asyncio.to_thread(
                     bedrock.discover_models, settings.bedrock_region
                 )
-        except Exception:
+        except Exception as exc:
+            logger.info("bedrock discovery failed: %s", exc)
             models = [settings.bedrock_model]
     return _entry("bedrock", True, models, settings.bedrock_model)
 
@@ -122,14 +129,14 @@ async def list_providers(request: Request) -> list[dict[str, Any]]:
         _claude_entry(settings),
         _openai_compat_entry(
             "openai",
-            "OPENAI_API_KEY",
+            BUILTIN_ENV_KEYS["openai"],
             settings.openai_base_url,
             settings.openai_model,
             OPENAI_EXCLUDED_MODEL_FRAGMENTS,
         ),
         _openai_compat_entry(
             "mistral",
-            "MISTRAL_API_KEY",
+            BUILTIN_ENV_KEYS["mistral"],
             settings.mistral_base_url,
             settings.mistral_model,
         ),

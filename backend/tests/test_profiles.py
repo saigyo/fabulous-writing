@@ -77,7 +77,6 @@ def test_llm_tier_column_migration_is_idempotent(tmp_path: Path) -> None:
 
 from app.core.models import Language as L  # noqa: E402
 from app.services.seed_profiles import (  # noqa: E402
-    EXAMPLE_LANGUAGES,
     seed_profiles,
     standard_defaults,
 )
@@ -104,9 +103,8 @@ def test_seed_is_idempotent(store):
     for lang in Language:
         names = [p.name for p in store.list_profiles(lang)]
         assert names.count("Standard") == 1
-        if lang in EXAMPLE_LANGUAGES:
-            assert names.count("Marketing") == 1
-            assert names.count("Technical Documentation") == 1
+        assert names.count("Marketing") == 1
+        assert names.count("Technical Documentation") == 1
 
 
 def test_example_seeding_and_deletion_sticks(store):

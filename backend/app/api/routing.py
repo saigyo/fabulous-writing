@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from typing import Any
 
@@ -6,18 +7,13 @@ from fastapi import APIRouter, Request
 
 from app.checkers.llm import bedrock
 from app.checkers.llm.ollama import OllamaProvider
-from app.core.config import TIERS, ProviderSettings
+from app.core.config import BUILTIN_ENV_KEYS, TIERS, ProviderSettings
 
 router = APIRouter(prefix="/api", tags=["routing"])
 
-_PING_TIMEOUT = 3.0
+logger = logging.getLogger(__name__)
 
-# Env variable per built-in API provider (extras derive theirs by name).
-_BUILTIN_ENV_KEYS = {
-    "claude": "ANTHROPIC_API_KEY",
-    "openai": "OPENAI_API_KEY",
-    "mistral": "MISTRAL_API_KEY",
-}
+_PING_TIMEOUT = 3.0
 
 
 async def _provider_status(
@@ -32,7 +28,8 @@ async def _provider_status(
             async with asyncio.timeout(_PING_TIMEOUT):
                 await provider.list_models()
             return True, None
-        except Exception:
+        except Exception as exc:
+            logger.info("ollama ping failed: %s", exc)
             return False, "Ollama not running"
     if name == "bedrock":
         try:
@@ -41,7 +38,7 @@ async def _provider_status(
         except TimeoutError:
             available = False
         return (True, None) if available else (False, "AWS credentials not available")
-    env_key = _BUILTIN_ENV_KEYS.get(name)
+    env_key = BUILTIN_ENV_KEYS.get(name)
     if env_key is None and name in settings.extra_providers:
         env_key = f"{name.upper()}_API_KEY"
     if env_key is None:

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
@@ -15,6 +16,8 @@ from app.core.models import Finding, Language, Scorecard
 from app.services.jobs import CheckJob
 
 router = APIRouter(prefix="/api", tags=["checks"])
+
+logger = logging.getLogger(__name__)
 
 CheckerName = Literal["rules", "terminology", "llm"]
 
@@ -120,6 +123,7 @@ async def _run_llm(
             job.set_scorecard(result.scorecard)
     except Exception as exc:
         error = str(exc) or type(exc).__name__
+        logger.warning("llm check failed (provider %s): %s", provider.name, error)
         job.emit("checker_error", {"checker": "llm", "error": error})
     finally:
         job.finish()
