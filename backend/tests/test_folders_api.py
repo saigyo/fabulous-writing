@@ -168,3 +168,36 @@ def test_defaults_pruning_is_read_time_only(tmp_path: Path):
     raw = FolderStore(settings.db_path).get_folder(folder["id"])
     assert raw.default_profile_id == profile["id"]
     assert raw.default_domain_ids == [d1["id"], d2["id"]]
+
+
+def test_rename_response_prunes_dangling_profile_default(client):
+    # rename_folder never touches the defaults columns, so its response used
+    # to echo the raw row verbatim -- including a profile id that no longer
+    # resolves to anything once the profile is deleted.
+    folder = make_folder(client)
+    profile = make_profile(client, "en", "Fleeting")
+    client.put(
+        f"/api/folders/{folder['id']}/defaults",
+        json={"default_language": "en", "default_profile_id": profile["id"]},
+    )
+    assert client.delete(f"/api/profiles/{profile['id']}").status_code == 204
+    renamed = client.put(f"/api/folders/{folder['id']}", json={"name": "Renamed"})
+    assert renamed.status_code == 200
+    assert renamed.json()["name"] == "Renamed"
+    assert renamed.json()["default_profile_id"] is None
+
+
+def test_rename_response_prunes_dangling_domain_default(client):
+    # Same bug, other field: a domain id dangling in default_domain_ids must
+    # not survive into the rename response either.
+    folder = make_folder(client)
+    kept = make_domain(client, "Keep")
+    stale = make_domain(client, "Fleeting")
+    client.put(
+        f"/api/folders/{folder['id']}/defaults",
+        json={"default_domain_ids": [kept["id"], stale["id"]]},
+    )
+    assert client.delete(f"/api/domains/{stale['id']}").status_code == 204
+    renamed = client.put(f"/api/folders/{folder['id']}", json={"name": "Renamed"})
+    assert renamed.status_code == 200
+    assert renamed.json()["default_domain_ids"] == [kept["id"]]
