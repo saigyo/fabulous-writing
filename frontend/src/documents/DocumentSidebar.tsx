@@ -4,6 +4,7 @@ import { HttpError } from '../api/client'
 import { useDismissOnOutsideClick } from '../hooks/useDismissOnOutsideClick'
 import { useLocale, useMessages } from '../i18n'
 import { useStore } from '../state/store'
+import { absoluteTime, relativeTime } from './documentTime'
 import {
   createNewDocument,
   initDocuments,
@@ -15,47 +16,7 @@ import {
 } from './documents'
 import { addFolder, renameFolderById } from './folders'
 import { FolderDefaultsDialog } from './FolderDefaultsDialog'
-
-/** "2 hours ago" in the UI locale; future stamps clamp to now. */
-// oxlint-disable-next-line react/only-export-components -- pure helper, unit-tested in isolation
-export function relativeTime(iso: string, locale: string, now = Date.now()): string {
-  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' })
-  const minutes = Math.min(0, Math.round((Date.parse(iso) - now) / 60000))
-  if (minutes > -60) return rtf.format(minutes, 'minute')
-  const hours = Math.round(minutes / 60)
-  if (hours > -24) return rtf.format(hours, 'hour')
-  return rtf.format(Math.round(hours / 24), 'day')
-}
-
-/** Full localized date + time (tooltip complement to relativeTime). */
-// oxlint-disable-next-line react/only-export-components -- pure helper, unit-tested in isolation
-export function absoluteTime(iso: string, locale: string): string {
-  const stamp = Date.parse(iso)
-  if (Number.isNaN(stamp)) return ''
-  return new Intl.DateTimeFormat(locale, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(stamp)
-}
-
-/** Group the recency-ordered flat list by folder. Documents whose folder_id
- * references a vanished folder are shown as ungrouped rather than hidden. */
-// oxlint-disable-next-line react/only-export-components -- pure helper, unit-tested in isolation
-export function groupDocuments(
-  documents: DocumentSummary[],
-  folders: Folder[],
-): { byFolder: Map<number, DocumentSummary[]>; ungrouped: DocumentSummary[] } {
-  const byFolder = new Map<number, DocumentSummary[]>(
-    folders.map((f) => [f.id, []]),
-  )
-  const ungrouped: DocumentSummary[] = []
-  for (const doc of documents) {
-    const bucket = doc.folder_id !== null ? byFolder.get(doc.folder_id) : undefined
-    if (bucket) bucket.push(doc)
-    else ungrouped.push(doc)
-  }
-  return { byFolder, ungrouped }
-}
+import { groupDocuments } from './grouping'
 
 function PanelIcon() {
   return (

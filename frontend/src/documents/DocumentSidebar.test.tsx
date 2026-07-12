@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { absoluteTime, groupDocuments, relativeTime } from './DocumentSidebar'
+import { absoluteTime, relativeTime } from './documentTime'
+import { groupDocuments } from './grouping'
 
 describe('absoluteTime', () => {
   it('renders a localized date and time', () => {
