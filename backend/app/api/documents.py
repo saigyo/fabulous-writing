@@ -4,6 +4,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from app.api.validation import validate_name
 from app.checkers.llm.prompts import build_title_prompt
 from app.core.models import Language
 from app.services.documents import (
@@ -78,13 +79,12 @@ def list_documents(request: Request) -> list[DocumentSummary]:
 
 @router.post("/documents", status_code=201)
 def create_document(request: Request, body: DocumentCreate) -> Document:
-    if not body.name.strip():
-        raise HTTPException(422, "Document name must not be empty")
+    name = validate_name(body.name, message="Document name must not be empty")
     if body.folder_id is not None:
         if request.app.state.folder_store.get_folder(body.folder_id) is None:
             raise HTTPException(422, "Unknown folder")
     return _store(request).create_document(
-        body.name.strip(),
+        name,
         body.language,
         name_source=body.name_source,
         text=body.text,
@@ -121,9 +121,9 @@ def update_document(
 ) -> Document:
     fields: dict[str, object] = {}
     if body.name is not None:
-        if not body.name.strip():
-            raise HTTPException(422, "Document name must not be empty")
-        fields["name"] = body.name.strip()
+        fields["name"] = validate_name(
+            body.name, message="Document name must not be empty"
+        )
         fields["name_source"] = "user"
     if body.content is not None:
         fields["text"] = body.content.text

@@ -3,6 +3,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from app.api.validation import validate_name
 from app.core.models import Language
 from app.services.profiles import Profile, ProfileStore
 from app.services.seed_profiles import standard_defaults
@@ -62,15 +63,14 @@ def list_profiles(request: Request, language: Language) -> list[Profile]:
 
 @router.post("/profiles", status_code=201)
 def create_profile(request: Request, body: ProfileCreate) -> Profile:
-    if not body.name.strip():
-        raise HTTPException(422, "Profile name must not be empty")
+    name = validate_name(body.name, message="Profile name must not be empty")
     exceptions, domains = _pruned(
         request, body.language, body.rule_exceptions, body.domain_ids
     )
     try:
         return _store(request).create_profile(
             body.language,
-            body.name.strip(),
+            name,
             categories_off=body.categories_off,
             rule_exceptions=exceptions,
             packs_on=body.packs_on,
@@ -91,9 +91,8 @@ def update_profile(request: Request, profile_id: int, body: ProfileUpdate) -> Pr
     current = store.get_profile(profile_id)
     if current is None:
         raise HTTPException(404, "Profile not found")
-    if not body.name.strip():
-        raise HTTPException(422, "Profile name must not be empty")
-    if current.is_standard and body.name.strip() != current.name:
+    name = validate_name(body.name, message="Profile name must not be empty")
+    if current.is_standard and name != current.name:
         raise HTTPException(409, "The Standard profile cannot be renamed")
     exceptions, domains = _pruned(
         request, current.language, body.rule_exceptions, body.domain_ids
@@ -101,7 +100,7 @@ def update_profile(request: Request, profile_id: int, body: ProfileUpdate) -> Pr
     try:
         updated = store.update_profile(
             profile_id,
-            name=body.name.strip(),
+            name=name,
             categories_off=body.categories_off,
             rule_exceptions=exceptions,
             packs_on=body.packs_on,
