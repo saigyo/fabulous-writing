@@ -242,8 +242,10 @@ def test_legacy_case_duplicates_skip_index_with_warning(db, caplog):
     assert "case-duplicate" in caplog.text
     names = sorted(f.name for f in store.list_folders())
     assert names == ["Blog", "blog"]
-    index_row = sqlite3.connect(db).execute(
+    conn = sqlite3.connect(db)
+    index_row = conn.execute(
         "SELECT name FROM sqlite_master WHERE type = 'index'"
         " AND name = 'idx_folders_name_nocase'"
     ).fetchone()
+    conn.close()
     assert index_row is None
