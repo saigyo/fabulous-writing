@@ -11,6 +11,15 @@ import { resolveModel } from './routing'
 let currentCheckId: string | null = null
 let unsubscribe: (() => void) | null = null
 
+/** Drop any in-flight check: closes the SSE subscription so late results
+ * cannot land on a different document (they would be autosaved onto it). */
+export function cancelCheck(): void {
+  unsubscribe?.()
+  unsubscribe = null
+  currentCheckId = null
+  useStore.setState({ checkPhase: 'idle', llmStartedAt: null, llmTokens: null })
+}
+
 /**
  * Run a check on the current editor text. Fast findings (rules/terminology)
  * are applied from the POST response; LLM findings arrive via SSE and are

@@ -17,6 +17,7 @@ import {
   type Folder,
   type FolderDefaults,
 } from '../api/client'
+import { cancelCheck } from '../checking/controller'
 import { getEditorView } from '../editor/editorRef'
 import { setFindingsEffect } from '../editor/findings'
 import { currentMessages } from '../i18n'
@@ -154,6 +155,7 @@ async function replayOrphanedSnapshot(targetDocId: number): Promise<void> {
 /** Load a document into store + editor. The editor change and the restored
  * findings ride ONE transaction, so spans apply to the new text. */
 async function hydrateFromDocument(doc: DocumentFull): Promise<void> {
+  cancelCheck() // any in-flight check belongs to the outgoing document
   await replayOrphanedSnapshot(doc.id)
   beginHydration()
   try {
