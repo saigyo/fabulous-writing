@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -14,6 +15,8 @@ from app.services.documents import (
 from app.services.naming import clean_title, fallback_name
 
 router = APIRouter(prefix="/api", tags=["documents"])
+
+logger = logging.getLogger(__name__)
 
 Tier = Literal["quality", "balanced", "cheap", "local"]
 
@@ -190,6 +193,11 @@ async def generate_name(request: Request, document_id: int) -> Document:
             system, user = build_title_prompt(document.text, document.language)
             title = clean_title(await provider.generate(system, user))
         except Exception:
+            logger.warning(
+                "auto-title generation failed for document %s",
+                document_id,
+                exc_info=True,
+            )
             title = None  # silent per spec; the fallback below still applies
 
     if title:

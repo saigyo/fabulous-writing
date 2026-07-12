@@ -10,6 +10,14 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 # names must not shadow them.
 BUILTIN_PROVIDERS = ("ollama", "claude", "openai", "mistral", "bedrock")
 
+# Env variable per built-in API provider (extras derive theirs by name:
+# <NAME>_API_KEY). Shared by the providers and routing routers.
+BUILTIN_ENV_KEYS = {
+    "claude": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "mistral": "MISTRAL_API_KEY",
+}
+
 # Extra provider names derive their env variable (<NAME>_API_KEY), so they
 # must be safe identifiers.
 _EXTRA_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
