@@ -1,11 +1,12 @@
 import json
+from collections.abc import Iterable
 
 import httpx
 
-from .provider import ProgressCallback
+from ._http_chat import HttpChatProvider, StreamEvent
 
 
-class OpenAICompatProvider:
+class OpenAICompatProvider(HttpChatProvider):
     """LLM provider for OpenAI-compatible chat-completions APIs.
 
     Covers OpenAI and Mistral (and any other endpoint speaking the same
@@ -43,53 +44,30 @@ class OpenAICompatProvider:
             timeout=300.0,
         )
 
-    async def generate(
-        self, system: str, user: str, on_progress: ProgressCallback | None = None
-    ) -> str:
-        payload = {
-            "model": self.model,
-            "stream": on_progress is not None,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        }
-        if on_progress is not None:
-            return await self._generate_streaming(payload, on_progress)
-        async with self._client() as client:
-            response = await client.post("/chat/completions", json=payload)
-            response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
+    _chat_path = "/chat/completions"
 
-    async def _generate_streaming(
-        self, payload: dict, on_progress: ProgressCallback
-    ) -> str:
-        # SSE: one `data: {json}` line per chunk, terminated by `data: [DONE]`.
-        # Progress is chunk-counted (≈ tokens); a final usage chunk, when the
-        # server sends one, corrects it to the exact output-token count.
-        parts: list[str] = []
-        async with self._client() as client:
-            async with client.stream(
-                "POST", "/chat/completions", json=payload
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    data = line[len("data: ") :]
-                    if data.strip() == "[DONE]":
-                        break
-                    chunk = json.loads(data)
-                    usage = chunk.get("usage")
-                    if usage and usage.get("completion_tokens") is not None:
-                        on_progress(usage["completion_tokens"])
-                        continue
-                    choices = chunk.get("choices") or []
-                    content = choices[0].get("delta", {}).get("content") if choices else None
-                    if content:
-                        parts.append(content)
-                        on_progress(len(parts))
-        return "".join(parts)
+    def _response_text(self, data: dict) -> str:
+        return data["choices"][0]["message"]["content"]
+
+    def _stream_events(self, line: str) -> Iterable[StreamEvent]:
+        # SSE: one `data: {json}` line per chunk, `data: [DONE]` terminates.
+        # Progress is chunk-counted (≈ tokens); a final usage chunk, when
+        # present, corrects it to the exact output-token count.
+        if not line.startswith("data: "):
+            return
+        data = line[len("data: ") :]
+        if data.strip() == "[DONE]":
+            yield ("done", "")
+            return
+        chunk = json.loads(data)
+        usage = chunk.get("usage")
+        if usage and usage.get("completion_tokens") is not None:
+            yield ("tokens", usage["completion_tokens"])
+            return
+        choices = chunk.get("choices") or []
+        content = choices[0].get("delta", {}).get("content") if choices else None
+        if content:
+            yield ("content", content)
 
     async def list_models(self) -> list[str]:
         async with self._client() as client:
