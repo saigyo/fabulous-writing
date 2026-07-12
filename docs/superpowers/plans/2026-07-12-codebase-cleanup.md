@@ -14,7 +14,7 @@
 - The owner's live DB `backend/data/fabulous.db` must NEVER be touched; migrations are rehearsed only against a COPY. The owner's dev servers (:5173, :8000) must never be killed or restarted.
 - Backend gate (run from `backend/`): `uv run pytest -q` — all pass, zero warnings.
 - Frontend gate (run from `frontend/`): `npx vitest run && npx tsc --noEmit && npm run lint && npm run build` — all pass (the >500kB chunk advisory in build is pre-existing and acceptable).
-- Every task commits directly on `main`; commit messages end with `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- This iteration works on the dedicated branch `codebase-cleanup` (NOT directly on main — owner-mandated deviation for this major undertaking); at the end the branch is pushed and a PR opened for an independent Copilot review. Commit messages end with `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
 - Rule YAML / config file formats are frozen. API keys from environment only.
 - HTTP error messages/status codes currently asserted by tests must stay byte-identical unless a task says otherwise.
 - Controller note (not for implementers): dispatch agents sequentially, never more than one implementation agent at a time; ≤5 agents total; implementers/reviewers on sonnet (haiku for pure transcription), final review on fable.
@@ -820,4 +820,4 @@ def test_fuzzy_refine_window_trims_to_quote() -> None:
 - [ ] **Step 2:** append the LOGBOOK entry.
 - [ ] **Step 3:** re-run BOTH full gates one final time.
 - [ ] **Step 4 (controller-level):** re-run the Phase-0 e2e baseline (`.superpowers/sdd/baseline/`, per its README) against a fresh scratch stack — all checks must pass as before the refactor (E2's menu-dismissal change may require updating the baseline script IF it drives menus via hover-out; check the script and adjust in the same commit as documented in the baseline README).
-- [ ] **Step 5:** commit docs — `docs: architecture + logbook for cleanup iteration` — then final whole-branch review (fable), push, report CI.
+- [ ] **Step 5:** commit docs — `docs: architecture + logbook for cleanup iteration` — then final whole-branch review (fable), push the `codebase-cleanup` branch, open a PR against main for the independent Copilot review, and report CI.
