@@ -2743,3 +2743,12 @@ backend `uv run pytest -q` → 709 passed. Both suites green on
 docs) commit on top, then the final whole-branch review and PR against
 `main` for independent review, per this iteration's deviation from the
 usual commits-on-main convention.
+
+**Merged** as PR #10 via rebase merge — main head `7a75e2c`. Note for
+hash archaeology: the rebase rewrote all 20 branch commit hashes, so
+the per-commit pointers cited above refer to the original branch
+commits, preserved in PR #10's history
+(https://github.com/saigyo/fabulous-writing/pull/10). Copilot review:
+two minors — the sqlite-handle one fixed on the branch, the zh-colon
+one declined with rationale (matches the catalog's convention). CI on
+merged main: green.
