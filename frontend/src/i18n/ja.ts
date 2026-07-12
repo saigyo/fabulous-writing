@@ -123,6 +123,7 @@ export const ja: Messages = {
   saveEditTitle: '変更を保存',
   cancelEditTitle: '変更を破棄',
   renameDomainTitle: 'ドメイン名を変更',
+  changeFailed: (error) => `変更に失敗しました: ${error}`,
 
   profilesTitle: 'チェックプロファイル',
   newProfilePlaceholder: '新しいプロファイル…',

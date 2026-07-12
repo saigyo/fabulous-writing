@@ -122,6 +122,7 @@ export const zh: Messages = {
   saveEditTitle: '保存更改',
   cancelEditTitle: '放弃更改',
   renameDomainTitle: '重命名领域',
+  changeFailed: (error) => `更改失败:${error}`,
 
   profilesTitle: '检查配置',
   newProfilePlaceholder: '新配置…',

@@ -9,6 +9,7 @@ import {
   updateDomain,
   updateTerm,
 } from '../api/client'
+import { useCrudError } from '../hooks/useCrudError'
 import { useMessages } from '../i18n'
 import { languageName } from '../languages'
 import { useStore } from '../state/store'
@@ -31,6 +32,7 @@ export function TerminologyView() {
   const [terms, setTerms] = useState<Term[]>([])
   const [newDomain, setNewDomain] = useState('')
   const m = useMessages()
+  const { error, run } = useCrudError(m.changeFailed)
 
   const refreshDomains = useCallback(() => getDomains().then(setDomains), [setDomains])
 
@@ -54,16 +56,20 @@ export function TerminologyView() {
 
   async function addDomain() {
     if (!newDomain.trim()) return
-    const domain = await createDomain(newDomain.trim())
-    setNewDomain('')
-    await refreshDomains()
-    setActiveDomainId(domain.id)
+    await run(async () => {
+      const domain = await createDomain(newDomain.trim())
+      setNewDomain('')
+      await refreshDomains()
+      setActiveDomainId(domain.id)
+    })
   }
 
   async function removeDomain(id: number) {
-    await deleteDomain(id)
-    if (activeDomainId === id) setActiveDomainId(null)
-    await refreshDomains()
+    await run(async () => {
+      await deleteDomain(id)
+      if (activeDomainId === id) setActiveDomainId(null)
+      await refreshDomains()
+    })
   }
 
   const [renamingId, setRenamingId] = useState<number | null>(null)
@@ -77,13 +83,16 @@ export function TerminologyView() {
   async function saveRename() {
     const name = renameValue.trim()
     if (renamingId === null || !name) return // empty: stay open until corrected or cancelled
-    await updateDomain(renamingId, name)
-    setRenamingId(null)
-    await refreshDomains()
+    await run(async () => {
+      await updateDomain(renamingId, name)
+      setRenamingId(null)
+      await refreshDomains()
+    })
   }
 
   return (
     <div className="terminology">
+      {error && <p className="crud-error">{error}</p>}
       <aside className="domain-list">
         <h2>{m.domains}</h2>
         {domains.map((domain) => (
@@ -144,6 +153,7 @@ export function TerminologyView() {
           domainId={activeDomainId}
           terms={terms}
           onChanged={() => getTerms(activeDomainId).then(setTerms)}
+          run={run}
         />
       )}
     </div>
@@ -154,9 +164,10 @@ interface TermTableProps {
   domainId: number
   terms: Term[]
   onChanged: () => void
+  run: (action: () => Promise<void>) => Promise<void>
 }
 
-function TermTable({ domainId, terms, onChanged }: TermTableProps) {
+function TermTable({ domainId, terms, onChanged, run }: TermTableProps) {
   const languages = useStore((s) => s.languages)
   const m = useMessages()
   const [addDraft, setAddDraft] = useState<TermDraft>({
@@ -181,9 +192,11 @@ function TermTable({ domainId, terms, onChanged }: TermTableProps) {
   async function addTerm() {
     const payload = draftToTermPayload(addDraft)
     if (!payload) return
-    await createTerm(domainId, payload)
-    setAddDraft((d) => ({ ...d, preferred: '', variants: '', definition: '' }))
-    onChanged()
+    await run(async () => {
+      await createTerm(domainId, payload)
+      setAddDraft((d) => ({ ...d, preferred: '', variants: '', definition: '' }))
+      onChanged()
+    })
   }
 
   function startEdit(term: Term) {
@@ -200,9 +213,11 @@ function TermTable({ domainId, terms, onChanged }: TermTableProps) {
     if (editingId === null || editDraft === null) return
     const payload = draftToTermPayload(editDraft)
     if (!payload) return
-    await updateTerm(editingId, payload)
-    cancelEdit()
-    onChanged()
+    await run(async () => {
+      await updateTerm(editingId, payload)
+      cancelEdit()
+      onChanged()
+    })
   }
 
   return (
@@ -301,7 +316,12 @@ function TermTable({ domainId, terms, onChanged }: TermTableProps) {
                   <button
                     className="icon-button"
                     title={m.deleteTermTitle}
-                    onClick={() => deleteTerm(term.id).then(onChanged)}
+                    onClick={() =>
+                      void run(async () => {
+                        await deleteTerm(term.id)
+                        onChanged()
+                      })
+                    }
                   >
                     ✕
                   </button>

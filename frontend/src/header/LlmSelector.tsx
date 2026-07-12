@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { resolveModel } from '../checking/routing'
+import { useDismissOnOutsideClick } from '../hooks/useDismissOnOutsideClick'
 import { useMessages } from '../i18n'
 import { useStore } from '../state/store'
 import { TIERS, type Tier } from '../types'
@@ -19,14 +20,7 @@ export function LlmSelector() {
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (!advancedOpen) return
-    function onClickOutside(event: MouseEvent) {
-      if (!ref.current?.contains(event.target as Node)) setAdvancedOpen(false)
-    }
-    document.addEventListener('mousedown', onClickOutside)
-    return () => document.removeEventListener('mousedown', onClickOutside)
-  }, [advancedOpen])
+  useDismissOnOutsideClick(ref, advancedOpen, () => setAdvancedOpen(false))
 
   const entryFor = (tier: Tier) => store.routing?.languages[store.language]?.[tier]
   const resolution = resolveModel(store)

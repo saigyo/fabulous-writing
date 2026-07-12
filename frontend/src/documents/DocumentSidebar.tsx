@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import type { DocumentSummary, Folder } from '../api/client'
 import { HttpError } from '../api/client'
+import { useDismissOnOutsideClick } from '../hooks/useDismissOnOutsideClick'
 import { useLocale, useMessages } from '../i18n'
 import { useStore } from '../state/store'
 import {
@@ -225,6 +226,9 @@ function FolderGroup({
   const [renaming, setRenaming] = useState(false)
   const [conflict, setConflict] = useState(false)
   const [defaultsOpen, setDefaultsOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const closeMenu = useCallback(() => setMenuOpen(false), [])
+  useDismissOnOutsideClick(menuRef, menuOpen, closeMenu)
 
   const commitRename = async (value: string) => {
     const name = value.trim()
@@ -277,7 +281,7 @@ function FolderGroup({
             <span className="folder-name">{folder.name}</span>
           </button>
         )}
-        <div className="doc-actions">
+        <div className="doc-actions" ref={menuRef}>
           <button
             className="doc-menu-button"
             aria-label={m.folderMenu}
@@ -286,7 +290,7 @@ function FolderGroup({
             ⋯
           </button>
           {menuOpen && (
-            <div className="doc-menu" onMouseLeave={() => setMenuOpen(false)}>
+            <div className="doc-menu">
               <button
                 onClick={() => {
                   setMenuOpen(false)
@@ -353,6 +357,12 @@ function DocumentItem({ doc }: { doc: DocumentSummary }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [moving, setMoving] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const closeMenu = useCallback(() => {
+    setMenuOpen(false)
+    setMoving(false)
+  }, [])
+  useDismissOnOutsideClick(menuRef, menuOpen, closeMenu)
 
   const commitRename = (value: string) => {
     setRenaming(false)
@@ -387,7 +397,7 @@ function DocumentItem({ doc }: { doc: DocumentSummary }) {
           <span className="doc-time">{relativeTime(doc.edited_at, locale)}</span>
         </button>
       )}
-      <div className="doc-actions">
+      <div className="doc-actions" ref={menuRef}>
         <button
           className="doc-menu-button"
           aria-label={m.docMenu}
@@ -399,13 +409,7 @@ function DocumentItem({ doc }: { doc: DocumentSummary }) {
           ⋯
         </button>
         {menuOpen && (
-          <div
-            className="doc-menu"
-            onMouseLeave={() => {
-              setMenuOpen(false)
-              setMoving(false)
-            }}
-          >
+          <div className="doc-menu">
             <button
               onClick={() => {
                 setMenuOpen(false)

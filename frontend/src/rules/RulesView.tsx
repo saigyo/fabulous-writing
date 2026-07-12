@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from 'react'
 import { getRules, updateProfile, type RulesResponse } from '../api/client'
+import { useCrudError } from '../hooks/useCrudError'
 import { interpolate, useMessages } from '../i18n'
 import { isRuleActive } from '../profiles/profile'
 import { useStore } from '../state/store'
@@ -14,7 +15,9 @@ export function RulesView() {
   const profile = profiles.find((p) => p.id === profileId) ?? null
   const m = useMessages()
   const [response, setResponse] = useState<RulesResponse | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const { error: saveError, run } = useCrudError(m.profileChangeFailed)
+  const error = loadError ?? saveError
   const rulesCollapsed = useStore((s) => s.rulesCollapsed)
   const toggleCollapsed = useStore((s) => s.toggleRuleSection)
   const setRulesCollapsed = useStore((s) => s.setRulesCollapsed)
@@ -22,12 +25,12 @@ export function RulesView() {
 
   useEffect(() => {
     setResponse(null)
-    setError(null)
+    setLoadError(null)
     getRules(language)
       .then(setResponse)
       // `error` holds an already-formatted message (this path and
       // saveRuleSelection use different wordings), so format at set-time.
-      .catch((e: Error) => setError(m.couldNotLoadRules(e.message)))
+      .catch((e: Error) => setLoadError(m.couldNotLoadRules(e.message)))
     // `m` is the per-locale catalog (stable identity): this refires only on a
     // real locale switch, which also re-formats the error in the new language.
   }, [language, m])
@@ -41,7 +44,7 @@ export function RulesView() {
     packs_on?: string[]
   }) {
     if (!profile) return
-    try {
+    await run(async () => {
       const saved = await updateProfile(profile.id, {
         name: profile.name,
         categories_off: patch.categories_off ?? profile.categories_off,
@@ -57,10 +60,7 @@ export function RulesView() {
       useStore.getState().setProfiles(
         useStore.getState().profiles.map((p) => (p.id === saved.id ? saved : p)),
       )
-      setError(null)
-    } catch (e) {
-      setError(m.profileChangeFailed(e instanceof Error ? e.message : String(e)))
-    }
+    })
   }
 
   function toggleCategory(category: Category, rulesInCategory: RuleInfo[]) {

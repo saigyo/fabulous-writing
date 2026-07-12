@@ -118,6 +118,7 @@ export const en: Messages = {
   saveEditTitle: 'Save changes',
   cancelEditTitle: 'Discard changes',
   renameDomainTitle: 'Rename domain',
+  changeFailed: (error) => `Change failed: ${error}`,
 
   profilesTitle: 'Checking profiles',
   newProfilePlaceholder: 'New profile…',
