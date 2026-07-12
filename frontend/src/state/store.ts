@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { persist, type PersistOptions } from 'zustand/middleware'
+import { persist } from 'zustand/middleware'
 import type { DocumentSummary, Folder, HeldBackSuggestion, NameSource } from '../api/client'
 import type { TrackedFinding } from '../editor/findings'
 import { mapEquivalentIds } from '../findings/equivalence'
@@ -173,10 +173,7 @@ function migrateByFinding<T>(
 
 // Persist options shared with tests: zustand v5 gives tests no handle on the
 // inline options, so the SAME object is exported (never a copy — a copy can
-// silently drift from what the store actually runs). `migrate`'s return type
-// is deliberately loose (`unknown`, matching persisted blobs of any prior
-// shape); the cast below is where that gets reconciled with zustand's
-// `PersistOptions`, without duplicating the object for a narrower type.
+// silently drift from what the store actually runs).
 export const persistConfig = {
   name: 'fabulous-writing-settings',
   version: 2,
@@ -369,6 +366,6 @@ export const useStore = create<AppState>()(
             : [...state.docFoldersCollapsed, id],
         })),
     }),
-    persistConfig as PersistOptions<AppState, ReturnType<typeof persistConfig.partialize>>,
+    persistConfig,
   ),
 )
