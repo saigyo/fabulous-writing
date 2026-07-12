@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   getProfiles,
+  HttpError,
   type Folder,
   type FolderDefaults,
 } from '../api/client'
@@ -8,7 +9,7 @@ import { useMessages } from '../i18n'
 import { languageLabel } from '../languages'
 import { useStore } from '../state/store'
 import { TIERS, type Language, type Profile, type Tier } from '../types'
-import { saveFolderDefaults } from './documents'
+import { refreshFolders, saveFolderDefaults } from './documents'
 
 /** New draft with the language default changed; a language change always
  * drops the profile default (profiles are per-language). */
@@ -71,6 +72,7 @@ export function FolderDefaultsDialog({
   const domains = useStore((s) => s.domains)
   const [draft, setDraft] = useState<FolderDefaults>(() => defaultsOf(folder))
   const [profiles, setProfiles] = useState<Profile[]>([])
+  const [profilesLoading, setProfilesLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(false)
 
@@ -81,12 +83,19 @@ export function FolderDefaultsDialog({
       return
     }
     let cancelled = false
+    setProfilesLoading(true)
     getProfiles(lang)
       .then((list) => {
-        if (!cancelled) setProfiles(list)
+        if (!cancelled) {
+          setProfiles(list)
+          setProfilesLoading(false)
+        }
       })
       .catch(() => {
-        if (!cancelled) setProfiles([])
+        if (!cancelled) {
+          setProfiles([])
+          setProfilesLoading(false)
+        }
       })
     return () => {
       cancelled = true
@@ -116,7 +125,11 @@ export function FolderDefaultsDialog({
     try {
       await saveFolderDefaults(folder.id, draft)
       onClose()
-    } catch {
+    } catch (e) {
+      if (e instanceof HttpError && e.status === 404) {
+        // Folder vanished meanwhile: the list is stale; drop it from view.
+        void refreshFolders()
+      }
       setError(true)
       setSaving(false)
     }
@@ -161,7 +174,7 @@ export function FolderDefaultsDialog({
           {m.profile}
           <select
             className="fd-profile"
-            disabled={lang === null}
+            disabled={lang === null || profilesLoading}
             value={draft.default_profile_id ?? 'none'}
             onChange={(e) =>
               setDraft({

@@ -77,7 +77,7 @@ def rename_folder(request: Request, folder_id: int, body: FolderPayload) -> Fold
         raise HTTPException(409, str(exc)) from exc
     if renamed is None:
         raise HTTPException(404, "Folder not found")
-    return renamed
+    return _pruned(request, renamed)
 
 
 @router.put("/folders/{folder_id}/defaults")
@@ -108,7 +108,7 @@ def set_folder_defaults(
     )
     if updated is None:
         raise HTTPException(404, "Folder not found")
-    return updated
+    return _pruned(request, updated)
 
 
 @router.delete("/folders/{folder_id}", status_code=204)
