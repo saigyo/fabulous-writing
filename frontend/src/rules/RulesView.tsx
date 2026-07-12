@@ -15,9 +15,7 @@ export function RulesView() {
   const profile = profiles.find((p) => p.id === profileId) ?? null
   const m = useMessages()
   const [response, setResponse] = useState<RulesResponse | null>(null)
-  const [loadError, setLoadError] = useState<string | null>(null)
-  const { error: saveError, run } = useCrudError(m.profileChangeFailed)
-  const error = loadError ?? saveError
+  const { error, run, fail, clear } = useCrudError(m.profileChangeFailed)
   const rulesCollapsed = useStore((s) => s.rulesCollapsed)
   const toggleCollapsed = useStore((s) => s.toggleRuleSection)
   const setRulesCollapsed = useStore((s) => s.setRulesCollapsed)
@@ -25,15 +23,16 @@ export function RulesView() {
 
   useEffect(() => {
     setResponse(null)
-    setLoadError(null)
+    clear()
     getRules(language)
       .then(setResponse)
       // `error` holds an already-formatted message (this path and
       // saveRuleSelection use different wordings), so format at set-time.
-      .catch((e: Error) => setLoadError(m.couldNotLoadRules(e.message)))
+      .catch((e: Error) => fail(m.couldNotLoadRules(e.message)))
     // `m` is the per-locale catalog (stable identity): this refires only on a
     // real locale switch, which also re-formats the error in the new language.
-  }, [language, m])
+    // `fail`/`clear` are stable (useCallback in useCrudError).
+  }, [language, m, fail, clear])
 
   const languageName =
     languages.find((info) => info.code === language)?.name ?? language
