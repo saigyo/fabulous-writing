@@ -7,6 +7,53 @@ import pytest
 from app.core.models import Language
 from app.services.documents import DocumentStore, RevisionConflictError
 
+# Schema as it existed before the folder_id column was added.
+_SCHEMA_BEFORE_FOLDERS = """
+CREATE TABLE documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id INTEGER NOT NULL DEFAULT 1,
+    name TEXT NOT NULL,
+    name_source TEXT NOT NULL DEFAULT 'fallback',
+    text TEXT NOT NULL DEFAULT '',
+    language TEXT NOT NULL,
+    profile_id INTEGER,
+    domain_ids TEXT NOT NULL DEFAULT '[]',
+    llm_provider TEXT, llm_model TEXT, llm_tier TEXT,
+    llm_auto INTEGER NOT NULL DEFAULT 1,
+    last_findings TEXT NOT NULL DEFAULT '[]',
+    scorecard TEXT,
+    revision INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+INSERT INTO documents (name, language, created_at, updated_at)
+VALUES ('Old', 'en', '2026-01-01T00:00:00+00:00',
+        '2026-01-01T00:00:00+00:00');
+"""
+
+# Schema as it existed after folder_id but before the edited_at/checked_at split.
+_SCHEMA_BEFORE_TIMESTAMPS = """
+CREATE TABLE documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id INTEGER NOT NULL DEFAULT 1,
+    name TEXT NOT NULL,
+    name_source TEXT NOT NULL DEFAULT 'fallback',
+    text TEXT NOT NULL DEFAULT '',
+    language TEXT NOT NULL,
+    profile_id INTEGER,
+    domain_ids TEXT NOT NULL DEFAULT '[]',
+    llm_provider TEXT, llm_model TEXT, llm_tier TEXT,
+    llm_auto INTEGER NOT NULL DEFAULT 1,
+    last_findings TEXT NOT NULL DEFAULT '[]',
+    scorecard TEXT,
+    revision INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    folder_id INTEGER
+);
+INSERT INTO documents (name, language, created_at, updated_at)
+VALUES ('Old', 'en', '2026-01-01T00:00:00+00:00',
+        '2026-02-02T00:00:00+00:00');
+"""
+
 
 @pytest.fixture()
 def store(tmp_path: Path) -> DocumentStore:
@@ -142,26 +189,7 @@ def test_folder_id_migration_adds_column(tmp_path: Path):
     # A database created before the column existed gets it via _migrate.
     db = tmp_path / "old.db"
     conn = sqlite3.connect(db)
-    conn.executescript(
-        """CREATE TABLE documents (
-               id INTEGER PRIMARY KEY AUTOINCREMENT,
-               owner_id INTEGER NOT NULL DEFAULT 1,
-               name TEXT NOT NULL,
-               name_source TEXT NOT NULL DEFAULT 'fallback',
-               text TEXT NOT NULL DEFAULT '',
-               language TEXT NOT NULL,
-               profile_id INTEGER,
-               domain_ids TEXT NOT NULL DEFAULT '[]',
-               llm_provider TEXT, llm_model TEXT, llm_tier TEXT,
-               llm_auto INTEGER NOT NULL DEFAULT 1,
-               last_findings TEXT NOT NULL DEFAULT '[]',
-               scorecard TEXT,
-               revision INTEGER NOT NULL DEFAULT 0,
-               created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-           INSERT INTO documents (name, language, created_at, updated_at)
-           VALUES ('Old', 'en', '2026-01-01T00:00:00+00:00',
-                   '2026-01-01T00:00:00+00:00');"""
-    )
+    conn.executescript(_SCHEMA_BEFORE_FOLDERS)
     conn.commit()
     conn.close()
     migrated = DocumentStore(db)
@@ -249,27 +277,7 @@ def test_timestamp_migration_seeds_from_updated_at(tmp_path: Path):
     # columns seeded from updated_at.
     db = tmp_path / "old.db"
     conn = sqlite3.connect(db)
-    conn.executescript(
-        """CREATE TABLE documents (
-               id INTEGER PRIMARY KEY AUTOINCREMENT,
-               owner_id INTEGER NOT NULL DEFAULT 1,
-               name TEXT NOT NULL,
-               name_source TEXT NOT NULL DEFAULT 'fallback',
-               text TEXT NOT NULL DEFAULT '',
-               language TEXT NOT NULL,
-               profile_id INTEGER,
-               domain_ids TEXT NOT NULL DEFAULT '[]',
-               llm_provider TEXT, llm_model TEXT, llm_tier TEXT,
-               llm_auto INTEGER NOT NULL DEFAULT 1,
-               last_findings TEXT NOT NULL DEFAULT '[]',
-               scorecard TEXT,
-               revision INTEGER NOT NULL DEFAULT 0,
-               created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-               folder_id INTEGER);
-           INSERT INTO documents (name, language, created_at, updated_at)
-           VALUES ('Old', 'en', '2026-01-01T00:00:00+00:00',
-                   '2026-02-02T00:00:00+00:00');"""
-    )
+    conn.executescript(_SCHEMA_BEFORE_TIMESTAMPS)
     conn.commit()
     conn.close()
     migrated = DocumentStore(db)

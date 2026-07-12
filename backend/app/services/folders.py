@@ -1,13 +1,15 @@
 import json
+import logging
 import sqlite3
-from collections.abc import Iterator
-from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import BaseModel
 
 from app.core.models import Language
+from app.services._sqlite import connect, migrate_columns
+
+logger = logging.getLogger(__name__)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS folders (
@@ -92,34 +94,42 @@ class FolderStore:
             conn.executescript(_SCHEMA)
             self._migrate(conn)
 
-    @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
-        # sqlite3's own context manager only wraps a transaction (commit or
-        # rollback); this wrapper also closes the connection afterwards, so
-        # `with self._connect() as conn:` cannot leak connections.
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        try:
-            with conn:
-                yield conn
-        finally:
-            conn.close()
+    def _connect(self):  # thin delegate; the shared helper carries the docs
+        return connect(self.db_path)
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
         # Pre-existing databases lack columns added later; guard by name.
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(folders)")}
-        for name, decl in (
-            ("default_language", "TEXT"),
-            ("default_profile_id", "INTEGER"),
-            ("default_domain_ids", "TEXT"),
-            ("default_llm_provider", "TEXT"),
-            ("default_llm_model", "TEXT"),
-            ("default_llm_tier", "TEXT"),
-            ("default_llm_auto", "INTEGER"),
-        ):
-            if name not in columns:
-                conn.execute(f"ALTER TABLE folders ADD COLUMN {name} {decl}")
+        migrate_columns(
+            conn,
+            "folders",
+            [
+                ("default_language", "TEXT"),
+                ("default_profile_id", "INTEGER"),
+                ("default_domain_ids", "TEXT"),
+                ("default_llm_provider", "TEXT"),
+                ("default_llm_model", "TEXT"),
+                ("default_llm_tier", "TEXT"),
+                ("default_llm_auto", "INTEGER"),
+            ],
+        )
+        # Names are ordered case-insensitively but were historically UNIQUE
+        # case-sensitively; enforce NOCASE uniqueness via an index (an inline
+        # constraint can't be altered without a table rebuild). Skipped —
+        # with a warning — if legacy data already holds case-duplicates.
+        duplicates = conn.execute(
+            "SELECT name FROM folders GROUP BY lower(name) HAVING count(*) > 1"
+        ).fetchall()
+        if duplicates:
+            logger.warning(
+                "folders table has case-duplicate names %s; "
+                "skipping NOCASE unique index",
+                [row[0] for row in duplicates],
+            )
+        else:
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_folders_name_nocase "
+                "ON folders(name COLLATE NOCASE)"
+            )
 
     def set_defaults(
         self, folder_id: int, defaults: FolderDefaults

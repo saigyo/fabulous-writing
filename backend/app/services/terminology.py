@@ -1,12 +1,11 @@
 import json
 import sqlite3
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from app.core.models import Language
+from app.services._sqlite import connect
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS domains (
@@ -61,19 +60,8 @@ class TerminologyStore:
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
 
-    @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
-        # sqlite3's own context manager only wraps a transaction (commit or
-        # rollback); this wrapper also closes the connection afterwards, so
-        # `with self._connect() as conn:` cannot leak connections.
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        try:
-            with conn:
-                yield conn
-        finally:
-            conn.close()
+    def _connect(self):  # thin delegate; the shared helper carries the docs
+        return connect(self.db_path)
 
     # -- domains ---------------------------------------------------------
 
