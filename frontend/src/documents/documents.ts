@@ -152,9 +152,16 @@ async function replayOrphanedSnapshot(targetDocId: number): Promise<void> {
   }
 }
 
+/** The fields hydration actually consumes — the offline path must not have
+ * to fabricate owner ids or timestamps it doesn't have. */
+export type HydrateSource = Omit<
+  DocumentFull,
+  'owner_id' | 'created_at' | 'updated_at' | 'edited_at' | 'checked_at' | 'folder_id'
+>
+
 /** Load a document into store + editor. The editor change and the restored
  * findings ride ONE transaction, so spans apply to the new text. */
-async function hydrateFromDocument(doc: DocumentFull): Promise<void> {
+async function hydrateFromDocument(doc: HydrateSource): Promise<void> {
   cancelCheck() // any in-flight check belongs to the outgoing document
   await replayOrphanedSnapshot(doc.id)
   beginHydration()
@@ -212,7 +219,6 @@ async function hydrateFromDocument(doc: DocumentFull): Promise<void> {
 async function hydrateFromBuffer(snapshot: DocSnapshot): Promise<void> {
   await hydrateFromDocument({
     id: snapshot.docId,
-    owner_id: 1,
     name: snapshot.name,
     name_source: 'user', // conservative: no auto-titling while offline
     text: snapshot.text,
@@ -225,12 +231,7 @@ async function hydrateFromBuffer(snapshot: DocSnapshot): Promise<void> {
     llm_auto: snapshot.settings.llm_auto,
     last_findings: snapshot.findings,
     scorecard: snapshot.scorecard,
-    folder_id: null,
     revision: snapshot.revision,
-    created_at: '',
-    updated_at: '',
-    edited_at: '',
-    checked_at: null,
   })
   // hydrate marked the buffer clean; restore the dirty truth so the retry
   // loop keeps pushing it.

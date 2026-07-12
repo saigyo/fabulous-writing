@@ -3,7 +3,11 @@ import './App.css'
 import { getDomains, getLanguages, getProfiles, getProviders, getRouting } from './api/client'
 import { runCheck } from './checking/controller'
 import { flush, noteChange } from './documents/autosave'
-import { applyHeaderProfileSelection, initDocuments } from './documents/documents'
+import {
+  applyHeaderProfileSelection,
+  consumeProfileApplySuppression,
+  initDocuments,
+} from './documents/documents'
 import { DocumentSidebar } from './documents/DocumentSidebar'
 import { Editor } from './editor/Editor'
 import { setEditorText } from './editor/editorRef'
@@ -107,7 +111,11 @@ function Header() {
           remembered ?? profiles.find((p) => p.is_standard) ?? profiles[0]
         if (chosen) applyHeaderProfileSelection(s.selectProfile, chosen, isSwitch)
       })
-      .catch(() => {})
+      .catch(() => {
+        // A failed fetch must still consume the one-shot suppression, or it
+        // would strand and wrongly suppress the NEXT legitimate apply.
+        consumeProfileApplySuppression()
+      })
   }, [store.language])
 
   return (
