@@ -9,7 +9,8 @@ import { useMessages } from '../i18n'
 import { languageLabel } from '../languages'
 import { useStore } from '../state/store'
 import { TIERS, type Language, type Profile, type Tier } from '../types'
-import { refreshFolders, saveFolderDefaults } from './documents'
+import { saveFolderDefaults } from './folders'
+import { refreshFolders } from './list'
 
 /** New draft with the language default changed; a language change always
  * drops the profile default (profiles are per-language). */

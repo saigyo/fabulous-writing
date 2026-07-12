@@ -3,11 +3,11 @@ import './App.css'
 import { getDomains, getLanguages, getProfiles, getProviders, getRouting } from './api/client'
 import { runCheck } from './checking/controller'
 import { flush, noteChange } from './documents/autosave'
+import { initDocuments } from './documents/documents'
 import {
   applyHeaderProfileSelection,
   consumeProfileApplySuppression,
-  initDocuments,
-} from './documents/documents'
+} from './documents/profileApply'
 import { DocumentSidebar } from './documents/DocumentSidebar'
 import { Editor } from './editor/Editor'
 import { setEditorText } from './editor/editorRef'

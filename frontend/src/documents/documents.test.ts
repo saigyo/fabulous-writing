@@ -11,10 +11,6 @@ import type { Profile } from '../types'
 import { clearSnapshot, readSnapshot, writeSnapshot } from './buffer'
 import { flush, noteChange, resetAutosaveForTests } from './autosave'
 import {
-  addFolder,
-  applyFolderDefaults,
-  applyHeaderProfileSelection,
-  consumeProfileApplySuppression,
   createNewDocument,
   fallbackName,
   initDocuments,
@@ -22,8 +18,12 @@ import {
   openDocument,
   removeDocument,
   removeFolder,
-  saveFolderDefaults,
 } from './documents'
+import { addFolder, applyFolderDefaults, saveFolderDefaults } from './folders'
+import {
+  applyHeaderProfileSelection,
+  consumeProfileApplySuppression,
+} from './profileApply'
 
 vi.mock('../api/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api/client')>()),

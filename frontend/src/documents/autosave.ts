@@ -7,6 +7,7 @@ import { getEditorView } from '../editor/editorRef'
 import { wordCount } from '../scoring/score'
 import { useStore } from '../state/store'
 import { readSnapshot, writeSnapshot, type DocSnapshot } from './buffer'
+import { settingsPayload } from './settings'
 
 const DEBOUNCE_MS = 1500
 const RETRY_BASE_MS = 2000
@@ -78,15 +79,7 @@ export function collectSnapshot(): DocSnapshot | null {
     scorecard: state.scorecard
       ? { card: state.scorecard, stale: state.scorecardStale }
       : null,
-    settings: {
-      language: state.language,
-      profile_id: state.profileId,
-      domain_ids: state.domainIds,
-      llm_provider: state.tier === null ? state.provider : null,
-      llm_model: state.tier === null ? state.model : null,
-      llm_tier: state.tier,
-      llm_auto: state.llmAuto,
-    },
+    settings: settingsPayload(state),
   }
 }
 
