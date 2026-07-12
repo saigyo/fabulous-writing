@@ -53,10 +53,14 @@ def test_three_way_ambiguity_prefers_context_match() -> None:
 
 
 def test_whitespace_tolerant_with_multiple_occurrences() -> None:
-    text = "the quick\nbrown fox ran. Later the quick brown fox slept."
+    # Neither occurrence is an exact match: the first spans a newline, the
+    # second has a double space. This forces the whitespace-tolerant tier
+    # (never the exact tier) and requires context to disambiguate.
+    text = "the quick\nbrown fox ran. Later the quick  brown fox slept."
     span = anchor(text, "quick brown fox", context_before="Later the ")
     assert span is not None
     assert span.start == text.index("quick", 20)
+    assert span.text == "quick  brown fox"
 
 
 def test_fuzzy_near_miss_below_threshold_returns_none() -> None:
