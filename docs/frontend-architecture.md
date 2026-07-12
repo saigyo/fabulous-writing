@@ -451,8 +451,10 @@ snapshot, and header settings, backed by the `/api/documents` endpoints (see
   in the app — the document ⋯ menu and folder ⋯ menu (`DocumentSidebar.tsx`), the domain
   multi-select (`DomainMultiSelect.tsx`), and the LLM selector's advanced panel
   (`LlmSelector.tsx`) — now dismisses on any `mousedown` outside itself via the shared
-  `hooks/useDismissOnOutsideClick.ts` (`ref`, `open`, `onDismiss`), replacing three
-  previously separate, slightly-inconsistent ad hoc listeners with one tested behavior.
+  `hooks/useDismissOnOutsideClick.ts` (`ref`, `open`, `onDismiss`), replacing two
+  duplicated outside-click listeners and two mouse-leave handlers with one shared
+  behavior (exercised indirectly through the e2e baseline; no direct unit test, per
+  the no-component-test convention).
 
 ### Server-authoritative sidebar reordering: `patchDocumentSummary`
 
