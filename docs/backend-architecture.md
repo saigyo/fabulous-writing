@@ -24,6 +24,9 @@ backend/
 │   │   ├── rules.py             # rule catalog + reload
 │   │   ├── terminology.py       # domain/term CRUD
 │   │   ├── profiles.py          # checking-profile CRUD + reset
+│   │   ├── documents.py         # document CRUD + auto-titling
+│   │   ├── folders.py           # folder CRUD + per-folder defaults
+│   │   ├── validation.py        # shared validate_name() name guard
 │   │   ├── providers.py         # provider availability + live model discovery
 │   │   ├── routing.py           # tier routing table + per-tier availability
 │   │   └── languages.py         # supported languages + NLP model status
@@ -38,9 +41,10 @@ backend/
 │   │   │   └── context.py       # CheckContext passed to check functions
 │   │   └── llm/
 │   │       ├── provider.py      # LLMProvider protocol + FakeProvider
-│   │       ├── ollama.py        # local Ollama (HTTP API, streaming)
+│   │       ├── _http_chat.py    # shared HTTP chat-completion skeleton
+│   │       ├── ollama.py        # local Ollama (HTTP API, streaming) — on _http_chat
 │   │       ├── claude.py        # Anthropic SDK
-│   │       ├── openai_compat.py # OpenAI + Mistral (shared /v1 dialect)
+│   │       ├── openai_compat.py # OpenAI + Mistral (shared /v1 dialect) — on _http_chat
 │   │       ├── bedrock.py       # AWS Bedrock (boto3, credential chain)
 │   │       ├── prompts.py       # per-language prompts + profile instructions
 │   │       ├── checker.py       # response parsing → anchored Findings
@@ -48,9 +52,12 @@ backend/
 │   │       └── vetting.py       # deterministic vetting of LLM fixes
 │   ├── nlp/registry.py          # lazy per-language spaCy pipelines
 │   └── services/
+│       ├── _sqlite.py           # shared connect()/migrate_columns() for all four stores
 │       ├── jobs.py              # in-memory check jobs + event streams
 │       ├── terminology.py       # SQLite store: domains, terms
 │       ├── profiles.py          # SQLite store: checking profiles
+│       ├── documents.py         # SQLite store: documents
+│       ├── folders.py           # SQLite store: folders + per-folder defaults
 │       ├── seed.py              # example terminology domain
 │       └── seed_profiles.py     # Standard + example profiles per language
 ├── rules/<lang>/<category>/*.yml  # the shipped rule catalog
@@ -116,7 +123,12 @@ built-ins, `extra_providers` entries from config (OpenAI-compatible endpoints su
 DeepSeek, Qwen, or OpenRouter) are constructed generically. API keys are read from the
 environment at construction time (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
 `MISTRAL_API_KEY`, `<NAME>_API_KEY` for extras; Bedrock uses the standard AWS
-credential chain) — they are never stored in config or the database.
+credential chain) — they are never stored in config or the database. `main.py`'s
+factory looks up the built-in keys via `BUILTIN_ENV_KEYS` (`app/core/config.py`), a
+`{"claude": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "mistral":
+"MISTRAL_API_KEY"}` map — the single place these three env-var names are spelled out in
+code; every other reference to them is a docstring/config-example string, not a literal
+the factory re-derives.
 
 Startup also seeds the database idempotently: an example terminology domain
 (`seed_terminology`) and per-language checking profiles (`seed_profiles`, see
@@ -186,6 +198,15 @@ Details worth knowing:
   resolves a selected quality tier into concrete `llm_provider`/`llm_model` via the
   routing table before the request. The backend never needs to join a check against
   the profiles table.
+- **Logging at swallowed-failure sites.** Failures that are intentionally not surfaced
+  to the client as errors are still logged via a module-level `logger =
+  logging.getLogger(__name__)`, so an operator can see them without instrumenting a
+  debugger: `checks.py` logs a failed LLM check (`"llm check failed (provider %s): %s"`)
+  before the job still finishes with a `checker_error` event; `documents.py` logs a
+  failed auto-title generation (`exc_info=True`) before falling through to the fallback
+  name; `providers.py` logs each provider's failed model-discovery call at `info` level;
+  `routing.py` logs a failed Ollama availability ping at `info` level. None of these
+  change client-visible behavior — they were previously silent `except` blocks.
 
 ## The rule engine
 
@@ -312,6 +333,10 @@ definition, case_sensitive)`, with `ON DELETE CASCADE` from domain to terms. CRU
 exposed under `/api/domains` and `/api/terms`; deleting a domain also prunes it from
 every profile (`ProfileStore.remove_domain_everywhere`).
 
+Term names go through the same shared `validate_name()` guard documents/profiles/folders
+use (below): `POST`/`PUT /api/terms` reject an empty (whitespace-only) `preferred` term
+with a 422, closing a gap where an empty preferred term could previously be stored.
+
 The checker (`app/checkers/terminology.py`) produces two kinds of findings, both
 `terminology`/`error` with the preferred term as the suggestion:
 
@@ -334,6 +359,20 @@ The checker (`app/checkers/terminology.py`) produces two kinds of findings, both
 `async generate(system, user, on_progress) -> str`. When `on_progress` is passed,
 providers stream and report cumulative output tokens (that is what feeds the
 `llm_progress` SSE events and the UI's token counter). Implementations:
+
+`ollama.py` and `openai_compat.py` both speak the same shape of HTTP chat API — "POST a
+`{model, stream, messages}` payload; non-streaming returns one JSON body, streaming
+yields lines" — so both are rebased onto a shared abstract skeleton,
+`HttpChatProvider` (`app/checkers/llm/_http_chat.py`). The skeleton owns `generate()` and
+the streaming loop (accumulating parts, calling `on_progress`, detecting `"done"`);
+each subclass supplies only what's actually provider-specific: `_client()` (the
+configured `httpx.AsyncClient`, e.g. Ollama's plain client vs. OpenAI-compat's
+`Authorization: Bearer` header), `_chat_path` (`/api/chat` vs. `/chat/completions`),
+`_response_text(data)` (extracting the message from a non-streaming body), and
+`_stream_events(line)` (parsing one streamed line into `("content", text)` /
+`("tokens", n)` / `("done", "")` events). Behavior is unchanged from before the
+extraction — both providers' existing test suites (15 tests) passed unmodified against
+the rebased implementations.
 
 | Provider | Module | Auth |
 |---|---|---|
@@ -480,6 +519,19 @@ per-document settings — the multi-document upgrade from the earlier single-buf
 There is one owner (`owner_id` defaults to `1`; the column exists so a future multi-user
 mode is a data migration, not a schema change — nothing today issues a different value).
 
+All four SQLite-backed stores (`terminology.py`, `profiles.py`, `documents.py`,
+`folders.py` under `app/services/`) share two small helpers from
+`app/services/_sqlite.py` instead of each hand-rolling the same plumbing:
+`connect(db_path)` is a context manager that wraps `sqlite3.connect` with
+`row_factory = sqlite3.Row`, `PRAGMA foreign_keys = ON`, and — unlike sqlite3's own
+context manager, which only commits/rolls back — also guarantees the connection itself
+is closed afterward; `migrate_columns(conn, table, columns)` adds any missing
+`(name, declaration)` columns via `PRAGMA table_info` + `ALTER TABLE ... ADD COLUMN`,
+the same idempotent phased-in-column pattern every store already used for things like
+`documents.folder_id` and `profiles.packs_on`/`llm_tier`, now with one implementation
+instead of four copies. Each store keeps a thin `_connect()` delegate for its own
+docstring/type-hint purposes but forwards straight to the shared `connect()`.
+
 - **Storage** (`app/services/documents.py`): a single `documents` table — `id`, `owner_id`,
   `name`, `name_source` (`fallback|llm|user`), `text`, `language`, `profile_id`,
   `domain_ids` (JSON list), `llm_provider`/`llm_model`/`llm_tier`/`llm_auto` (the same
@@ -596,6 +648,19 @@ deletes what it contains.
   `list_folders()` orders case-insensitively by name (`COLLATE NOCASE`) then `id`, so the
   sidebar's alphabetical folder list needs no client-side sort for the initial fetch (the
   frontend still re-sorts locally after mutations — see `docs/frontend-architecture.md`).
+  Uniqueness itself was case-sensitive despite the case-insensitive ordering — `"Blog"`
+  and `"blog"` could coexist as two folders — so `_migrate()` additionally creates
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_folders_name_nocase ON folders(name COLLATE
+  NOCASE)`, making name uniqueness itself case-insensitive (the same `IntegrityError`→
+  `ValueError`→409 path already handles a violation of this index, no new error
+  handling needed). Since an inline column constraint can't be added to an existing
+  table without a full rebuild, this is a migration-time index creation instead; on a
+  pre-existing database that already holds case-duplicate names (e.g. both `"Blog"` and
+  `"blog"`), creating the unique index would fail outright, so `_migrate()` first checks
+  for any `lower(name)` collision and, if found, **skips** creating the index and logs a
+  warning (`"folders table has case-duplicate names %s; skipping NOCASE unique index"`)
+  instead of crashing startup — a live-DB scan during this iteration found zero
+  case-duplicates in practice, so the index is created on every database seen so far.
 - **Lossless delete** (`delete_folder`): removing a folder and detaching its documents
   happen in the same transaction — `UPDATE documents SET folder_id = NULL WHERE folder_id
   = ?` runs before the `DELETE FROM folders`, both under the store's single `_connect()`
@@ -614,6 +679,22 @@ deletes what it contains.
 
   Name validation (`_validated_name`: strip, then reject empty or >100 chars) is shared
   by create and rename so both endpoints reject the same inputs the same way.
+  `rename_folder` and `set_folder_defaults` now route their responses through the same
+  `_pruned` read-time helper `list_folders` already used (below), so a renamed folder or
+  a folder whose defaults were just updated never echoes back a dangling
+  `default_profile_id`/`default_domain_ids` reference either — the three folder-mutating
+  endpoints and the list endpoint all show the identical pruned view.
+
+`app/api/validation.py`'s `validate_name(raw, *, message, max_len=None)` is the one
+shared name guard behind all of this: strip, reject empty with the caller-supplied
+per-entity message (so existing 422 texts like "Document name must not be empty" /
+"Profile name must not be empty" / "Folder name must not be empty" /
+"Preferred term must not be empty" stay byte-identical), and optionally enforce a max
+length (folders' 100-char cap; documents and profiles pass no `max_len`). It backs name
+validation in `app/api/documents.py`, `app/api/profiles.py`, `app/api/folders.py`
+(`_validated_name`, above), and `app/api/terminology.py` (the empty-`preferred` guard
+noted in [Terminology](#terminology)) — one validator instead of four near-duplicate
+strip-and-check blocks.
 
 ### Per-folder defaults
 
