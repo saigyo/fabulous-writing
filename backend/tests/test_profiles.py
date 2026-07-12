@@ -6,6 +6,24 @@ import pytest
 from app.core.models import Language
 from app.services.profiles import ProfileStore
 
+# Schema as it existed before the packs_on column was added.
+_SCHEMA_BEFORE_PACKS_ON = """
+CREATE TABLE profiles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    language TEXT NOT NULL, name TEXT NOT NULL,
+    is_standard INTEGER NOT NULL DEFAULT 0,
+    categories_off TEXT NOT NULL DEFAULT '[]',
+    rule_exceptions TEXT NOT NULL DEFAULT '[]',
+    domain_ids TEXT NOT NULL DEFAULT '[]',
+    llm_provider TEXT, llm_model TEXT, llm_tier TEXT,
+    llm_instructions TEXT NOT NULL DEFAULT '',
+    example_text TEXT NOT NULL DEFAULT '',
+    UNIQUE(language, name)
+);
+CREATE TABLE profile_seed_markers (language TEXT PRIMARY KEY);
+INSERT INTO profiles (language, name) VALUES ('en', 'Old');
+"""
+
 
 @pytest.fixture()
 def store(tmp_path):
@@ -207,21 +225,7 @@ def test_packs_on_migration_defaults_empty(tmp_path) -> None:
     # A database created before the column existed gets it via _migrate.
     db = tmp_path / "old.sqlite"
     conn = sqlite3.connect(db)
-    conn.executescript(
-        """CREATE TABLE profiles (
-               id INTEGER PRIMARY KEY AUTOINCREMENT,
-               language TEXT NOT NULL, name TEXT NOT NULL,
-               is_standard INTEGER NOT NULL DEFAULT 0,
-               categories_off TEXT NOT NULL DEFAULT '[]',
-               rule_exceptions TEXT NOT NULL DEFAULT '[]',
-               domain_ids TEXT NOT NULL DEFAULT '[]',
-               llm_provider TEXT, llm_model TEXT, llm_tier TEXT,
-               llm_instructions TEXT NOT NULL DEFAULT '',
-               example_text TEXT NOT NULL DEFAULT '',
-               UNIQUE(language, name));
-           CREATE TABLE profile_seed_markers (language TEXT PRIMARY KEY);
-           INSERT INTO profiles (language, name) VALUES ('en', 'Old');"""
-    )
+    conn.executescript(_SCHEMA_BEFORE_PACKS_ON)
     conn.commit()
     conn.close()
     store = ProfileStore(db)

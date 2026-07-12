@@ -7,6 +7,18 @@ from app.core.models import Language
 from app.services.documents import DocumentStore
 from app.services.folders import FolderStore, FolderDefaults
 
+# Schema as it existed before the phase-3 per-folder defaults columns.
+_SCHEMA_BEFORE_DEFAULTS = """
+CREATE TABLE folders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id INTEGER NOT NULL DEFAULT 1,
+    name TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+);
+INSERT INTO folders (name, created_at)
+VALUES ('Old', '2026-01-01T00:00:00+00:00');
+"""
+
 
 @pytest.fixture()
 def db(tmp_path: Path) -> Path:
@@ -79,18 +91,7 @@ def test_connection_is_closed_after_use(db):
 def test_defaults_migration_idempotent(db):
     # A pre-phase-3 DB has only the four original columns.
     conn = sqlite3.connect(db)
-    conn.executescript(
-        """
-        CREATE TABLE folders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            owner_id INTEGER NOT NULL DEFAULT 1,
-            name TEXT NOT NULL UNIQUE,
-            created_at TEXT NOT NULL
-        );
-        INSERT INTO folders (name, created_at)
-        VALUES ('Old', '2026-01-01T00:00:00+00:00');
-        """
-    )
+    conn.executescript(_SCHEMA_BEFORE_DEFAULTS)
     conn.commit()
     conn.close()
     FolderStore(db)  # migrates
@@ -148,3 +149,101 @@ def test_set_defaults_empty_domains_distinct_from_unset(store):
     cleared = store.set_defaults(f.id, FolderDefaults())
     assert cleared.default_domain_ids is None  # unset
     assert store.set_defaults(9999, FolderDefaults()) is None
+
+
+# -- A7: case-insensitive name uniqueness -----------------------------------
+
+_SCHEMA_CURRENT_FOLDERS = """
+CREATE TABLE folders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id INTEGER NOT NULL DEFAULT 1,
+    name TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    default_language TEXT,
+    default_profile_id INTEGER,
+    default_domain_ids TEXT,
+    default_llm_provider TEXT,
+    default_llm_model TEXT,
+    default_llm_tier TEXT,
+    default_llm_auto INTEGER
+);
+"""
+
+
+def test_nocase_index_rejects_case_duplicate_on_create(db):
+    conn = sqlite3.connect(db)
+    conn.executescript(_SCHEMA_CURRENT_FOLDERS)
+    conn.execute(
+        "INSERT INTO folders (name, created_at) VALUES (?, ?)",
+        ("Blog", "2026-01-01T00:00:00+00:00"),
+    )
+    conn.execute(
+        "INSERT INTO folders (name, created_at) VALUES (?, ?)",
+        ("Notes", "2026-01-01T00:00:00+00:00"),
+    )
+    conn.commit()
+    conn.close()
+    store = FolderStore(db)
+    with pytest.raises(ValueError, match="exists"):
+        store.create_folder("blog")
+
+
+def test_nocase_index_rejects_case_duplicate_on_rename(db):
+    conn = sqlite3.connect(db)
+    conn.executescript(_SCHEMA_CURRENT_FOLDERS)
+    conn.execute(
+        "INSERT INTO folders (name, created_at) VALUES (?, ?)",
+        ("Blog", "2026-01-01T00:00:00+00:00"),
+    )
+    conn.execute(
+        "INSERT INTO folders (name, created_at) VALUES (?, ?)",
+        ("Notes", "2026-01-01T00:00:00+00:00"),
+    )
+    conn.commit()
+    conn.close()
+    store = FolderStore(db)
+    blog = [f for f in store.list_folders() if f.name == "Blog"][0]
+    with pytest.raises(ValueError, match="exists"):
+        store.rename_folder(blog.id, "NOTES")
+
+
+def test_nocase_index_migration_is_idempotent(db):
+    conn = sqlite3.connect(db)
+    conn.executescript(_SCHEMA_CURRENT_FOLDERS)
+    conn.execute(
+        "INSERT INTO folders (name, created_at) VALUES (?, ?)",
+        ("Blog", "2026-01-01T00:00:00+00:00"),
+    )
+    conn.commit()
+    conn.close()
+    FolderStore(db)
+    store = FolderStore(db)  # opening twice must not fail on IF NOT EXISTS
+    assert [f.name for f in store.list_folders()] == ["Blog"]
+
+
+def test_legacy_case_duplicates_skip_index_with_warning(db, caplog):
+    # A hand-built DB with pre-existing case-duplicates (created before the
+    # NOCASE index existed) must still open; the index is skipped rather
+    # than raising on creation, and both rows remain visible.
+    conn = sqlite3.connect(db)
+    conn.executescript(_SCHEMA_CURRENT_FOLDERS)
+    conn.execute(
+        "INSERT INTO folders (name, created_at) VALUES (?, ?)",
+        ("Blog", "2026-01-01T00:00:00+00:00"),
+    )
+    conn.execute(
+        "INSERT INTO folders (name, created_at) VALUES (?, ?)",
+        ("blog", "2026-01-01T00:00:00+00:00"),
+    )
+    conn.commit()
+    conn.close()
+    with caplog.at_level("WARNING"):
+        store = FolderStore(db)
+    assert "case-duplicate" in caplog.text
+    names = sorted(f.name for f in store.list_folders())
+    assert names == ["Blog", "blog"]
+    index_row = sqlite3.connect(db).execute(
+        "SELECT name FROM sqlite_master WHERE type = 'index'"
+        " AND name = 'idx_folders_name_nocase'"
+    ).fetchone()
+    assert index_row is None

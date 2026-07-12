@@ -1,7 +1,5 @@
 import json
 import sqlite3
-from collections.abc import Iterator
-from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -9,6 +7,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.core.models import Language
+from app.services._sqlite import connect, migrate_columns
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS documents (
@@ -117,30 +116,25 @@ class DocumentStore:
             conn.executescript(_SCHEMA)
             self._migrate(conn)
 
-    @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
-        # sqlite3's own context manager only wraps a transaction (commit or
-        # rollback); this wrapper also closes the connection afterwards, so
-        # `with self._connect() as conn:` cannot leak connections.
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        try:
-            with conn:
-                yield conn
-        finally:
-            conn.close()
+    def _connect(self):  # thin delegate; the shared helper carries the docs
+        return connect(self.db_path)
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
         # Pre-existing databases lack columns added later; guard by name.
         columns = {row[1] for row in conn.execute("PRAGMA table_info(documents)")}
-        if "folder_id" not in columns:
-            conn.execute("ALTER TABLE documents ADD COLUMN folder_id INTEGER")
-        if "edited_at" not in columns:
-            conn.execute("ALTER TABLE documents ADD COLUMN edited_at TEXT")
+        missing = {"folder_id", "edited_at", "checked_at"} - columns
+        migrate_columns(
+            conn,
+            "documents",
+            [
+                ("folder_id", "INTEGER"),
+                ("edited_at", "TEXT"),
+                ("checked_at", "TEXT"),
+            ],
+        )
+        if "edited_at" in missing:
             conn.execute("UPDATE documents SET edited_at = updated_at")
-        if "checked_at" not in columns:
-            conn.execute("ALTER TABLE documents ADD COLUMN checked_at TEXT")
+        if "checked_at" in missing:
             conn.execute("UPDATE documents SET checked_at = updated_at")
 
     def create_document(
