@@ -3,6 +3,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
+from app.api.validation import validate_name
 from app.core.models import Language
 from app.services.folders import Folder, FolderDefaults, FolderStore
 
@@ -32,12 +33,7 @@ def _store(request: Request) -> FolderStore:
 
 
 def _validated_name(raw: str) -> str:
-    name = raw.strip()
-    if not name:
-        raise HTTPException(422, "Folder name must not be empty")
-    if len(name) > _MAX_NAME:
-        raise HTTPException(422, f"Folder name must be at most {_MAX_NAME} characters")
-    return name
+    return validate_name(raw, message="Folder name must not be empty", max_len=_MAX_NAME)
 
 
 def _pruned(request: Request, folder: Folder) -> Folder:

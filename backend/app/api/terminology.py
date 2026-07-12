@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from app.api.validation import validate_name
 from app.core.models import Language
 from app.services.terminology import Domain, Term, TerminologyStore
 
@@ -75,10 +76,11 @@ def create_term(request: Request, domain_id: int, body: TermCreate) -> Term:
     store = _store(request)
     if store.get_domain(domain_id) is None:
         raise HTTPException(404, "Domain not found")
+    preferred = validate_name(body.preferred, message="Preferred term must not be empty")
     return store.create_term(
         domain_id,
         language=body.language,
-        preferred=body.preferred,
+        preferred=preferred,
         forbidden_variants=body.forbidden_variants,
         definition=body.definition,
         case_sensitive=body.case_sensitive,
@@ -87,10 +89,13 @@ def create_term(request: Request, domain_id: int, body: TermCreate) -> Term:
 
 @router.put("/terms/{term_id}")
 def update_term(request: Request, term_id: int, body: TermUpdate) -> Term:
+    preferred = body.preferred
+    if preferred is not None:
+        preferred = validate_name(preferred, message="Preferred term must not be empty")
     term = _store(request).update_term(
         term_id,
         language=body.language,
-        preferred=body.preferred,
+        preferred=preferred,
         forbidden_variants=body.forbidden_variants,
         definition=body.definition,
         case_sensitive=body.case_sensitive,

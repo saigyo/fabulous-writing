@@ -72,3 +72,41 @@ def test_create_term_in_missing_domain_is_404(client: TestClient) -> None:
         "/api/domains/999/terms", json={"language": "en", "preferred": "x"}
     )
     assert response.status_code == 404
+
+
+def test_create_term_with_blank_preferred_is_422(client: TestClient) -> None:
+    domain_id = client.post("/api/domains", json={"name": "Cloud"}).json()["id"]
+
+    response = client.post(
+        f"/api/domains/{domain_id}/terms",
+        json={"language": "en", "preferred": "   "},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Preferred term must not be empty"
+
+
+def test_update_term_with_empty_preferred_is_422(client: TestClient) -> None:
+    domain_id = client.post("/api/domains", json={"name": "Cloud"}).json()["id"]
+    term = client.post(
+        f"/api/domains/{domain_id}/terms",
+        json={"language": "en", "preferred": "sign in"},
+    ).json()
+
+    response = client.put(f"/api/terms/{term['id']}", json={"preferred": ""})
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Preferred term must not be empty"
+
+
+def test_update_term_with_preferred_none_still_succeeds(client: TestClient) -> None:
+    domain_id = client.post("/api/domains", json={"name": "Cloud"}).json()["id"]
+    term = client.post(
+        f"/api/domains/{domain_id}/terms",
+        json={"language": "en", "preferred": "sign in"},
+    ).json()
+
+    response = client.put(
+        f"/api/terms/{term['id']}", json={"definition": "Updated definition."}
+    )
+    assert response.status_code == 200
+    assert response.json()["preferred"] == "sign in"
+    assert response.json()["definition"] == "Updated definition."
