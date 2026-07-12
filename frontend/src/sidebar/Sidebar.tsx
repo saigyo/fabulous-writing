@@ -4,7 +4,6 @@ import { llmStatusLabel } from '../checking/status'
 import { fetchRewrite, fetchSuggestions } from '../checking/suggest'
 import { heldBackReason } from '../checking/vetMessage'
 import { applyRewrite, applySuggestion, selectFinding } from '../editor/editorRef'
-import type { TrackedFinding } from '../editor/findings'
 import { groupByCategory } from '../findings/group'
 import { countBySeverity, filterBySeverity, SEVERITIES } from '../findings/severity'
 import {
@@ -18,6 +17,7 @@ import { useMessages } from '../i18n'
 import { ScoreBadge, ScorePanel } from './Score'
 import { useStore } from '../state/store'
 import type { Category, Finding } from '../types'
+import { truncate, withCurrentSpans } from './findingList'
 
 const NO_HELD_BACK: never[] = []
 const NO_ADVICE: string[] = []
@@ -423,15 +423,4 @@ function RewriteArea({ finding }: { finding: Finding }) {
       <AdviceNotes notes={advice} />
     </div>
   )
-}
-
-function withCurrentSpans(tracked: TrackedFinding[]): Finding[] {
-  return tracked.map((item) => ({
-    ...item.finding,
-    span: { ...item.finding.span, start: item.from, end: item.to },
-  }))
-}
-
-function truncate(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max)}…` : text
 }
