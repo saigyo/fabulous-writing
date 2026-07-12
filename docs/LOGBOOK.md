@@ -2625,3 +2625,121 @@ re-captured against a scratch stack (fresh seeded DB on :8001 + built
 preview on :4199), now supported via `SHOTS_API`/`SHOTS_APP` env overrides
 and documented in the script header and README. All seven images verified
 visually; scratch stack torn down and the production dist rebuilt.
+
+## 2026-07-12 — Codebase cleanup iteration: audit-driven correctness fix, dedup, structural splits
+
+Commits: `a3d0b9f`…`ead8c89` (branch `codebase-cleanup`)
+
+A dedicated cleanup pass, driven by an up-front audit rather than a
+feature spec: five independent audit slices
+(`.superpowers/sdd/audit/s{1..5}-*.md`, backend services/API, LLM
+providers, frontend core, frontend views, and rules/anchoring) were
+dispatched over the existing codebase, consolidated into one triage
+(`.superpowers/sdd/audit/consolidated-triage.md`), and the owner
+approved essentially every recommended fix — including two
+behavior-visible UX deviations from the usual "no product changes in a
+cleanup" freeze, sanctioned explicitly because they were clear bugs an
+audit happened to surface. Fourteen tasks executed sequentially on the
+`codebase-cleanup` branch (not `main`, this iteration only), each with
+its own implementer + independent reviewer pass; full ledger in
+`.superpowers/sdd/progress.md`.
+
+**Critical fix first (`ae2d9da`).** The audit's one Critical finding: an
+in-flight LLM check was never cancelled when the user switched documents
+mid-check. Its scorecard (and `llmError`/`llmTokens`/`checkPhase`) would
+land on whatever document was now open and then get **autosaved onto
+it** — a cross-document scorecard leak. Fixed by `cancelCheck()`
+(`checking/controller.ts`), called first thing in
+`hydrateFromDocument`: it unsubscribes the SSE stream, clears the
+module-level check id, and resets phase/timer/token state to idle
+before the new document's own state is loaded. Landed together with the
+audit's other correctness-adjacent recommendation: `controller.ts` and
+`suggest.ts` had **zero** direct tests despite carrying the
+supersession/staleness/veto logic that makes checks safe across rapid
+document switches and re-checks. `controller.test.ts` (late-scorecard
+targeting, staleness marking, `cancelCheck()` blocking all late SSE
+writes, supersession, stale-text discard) and `suggest.test.ts`
+(clean-result population, vetoed-result error+held-back, advice stored
+independent of veto outcome, pending-gate) now cover both modules
+directly (`969c0fc`).
+
+**Structural splits.** `documents.ts` (570 lines, six responsibilities)
+split into `profileApply.ts`, `list.ts`, `folders.ts`, `hydration.ts`,
+and `settings.ts`, with `documents.ts` itself narrowed to the document
+lifecycle verbs and `initDocuments`/startup replay (`44888cd`) — a
+mechanical, verbatim extraction, independently verified byte-identical
+at every call site. `DocumentSidebar.tsx`/`Sidebar.tsx`'s pure helpers
+moved to sibling modules — `documents/documentTime.ts`,
+`documents/grouping.ts`, `sidebar/findingList.ts` (`c7f8b55`) — same
+verbatim-move discipline. On the backend, all four SQLite stores
+(`documents.py`, `folders.py`, `profiles.py`, `terminology.py`) now
+share `app/services/_sqlite.py`'s `connect()` (context-managed
+connection + `PRAGMA foreign_keys`) and `migrate_columns()` (idempotent
+`ALTER TABLE ... ADD COLUMN` guard), replacing four near-identical copies
+(`a363cbd`). The Ollama and OpenAI-compat LLM providers were rebased
+onto a shared `HttpChatProvider` skeleton (`app/checkers/llm/_http_chat.py`)
+that owns the "POST payload, stream lines, accumulate progress" shape
+common to both, leaving each provider only its endpoint path and
+response/line parsers (`7a5b75c`); their 15 existing tests passed
+unmodified against the rebased implementations.
+
+**Dedup.** A new `app/api/validation.py#validate_name` replaces four
+near-duplicate strip-and-reject-empty blocks across
+documents/profiles/folders/terminology, and closes a real gap: an empty
+`preferred` term could previously be stored via the API (`3093eb7`).
+Backend logging: every provider/LLM/auto-title failure site that used to
+fail silently now logs via a module logger — LLM check failures, failed
+auto-title generation, provider model-discovery failures, the Ollama
+availability ping — additive only, no client-visible behavior changed
+(`34bd032`). `BUILTIN_ENV_KEYS` (`core/config.py`) is now the single
+`{provider: ENV_VAR_NAME}` map for the three built-ins with dedicated
+env keys, consumed by `main.py`'s provider factory instead of repeating
+the literals (`fe1dafe`). Frontend: `persistConfig` is now one object
+the store and its tests both import (no more a hand-copied literal that
+could drift from the real `persist()` options); a stray `PersistOptions`
+cast was dropped; a stranded profile-apply suppression flag on the
+`getProfiles().catch()` path is now consumed; the dead `scheduler.checkNow()`
+was removed with its only caller (a test) (`028f93f`, `24387ca`).
+
+**Sanctioned UX fixes** (owner-approved deviations from the usual
+cleanup-only freeze, package E of the triage): `TerminologyView` gained
+an error surface (`useCrudError`) where none existed before — a failed
+domain/term create/rename/delete previously failed silently
+(`ef355c9`). Every menu/popover in the app (document ⋯ menu, folder ⋯
+menu, domain multi-select, LLM selector's advanced panel) now dismisses
+on outside-click via one shared `hooks/useDismissOnOutsideClick.ts`,
+replacing three slightly-inconsistent ad hoc listeners, some of which
+previously closed on mouse-leave instead (`ef355c9`). `RulesView`'s
+single error slot was accidentally split into two independently-set
+slots by the `useCrudError` extraction, breaking its original
+cross-clearing semantics (a stale load error could survive a successful
+save); caught by review and fixed same-day by extending `useCrudError`
+additively with `fail`/`clear` and routing both the load and save paths
+through one instance (`12747b8`). `FolderDefaultsDialog` now refreshes
+the folder list on a 404 save failure and disables the profile select
+while its options are being refetched after a language change
+(`468be1e`), which also routes `rename_folder`/`set_folder_defaults`
+responses through the existing `_pruned` helper so they never echo a
+dangling profile/domain reference, matching `list_folders`.
+
+**Folder names, case-insensitively unique.** Folder name ordering was
+already `COLLATE NOCASE`, but the `UNIQUE` constraint backing it was
+case-sensitive, so `"Blog"` and `"blog"` could coexist. `FolderStore._migrate()`
+now also creates `idx_folders_name_nocase`, a `UNIQUE INDEX ... COLLATE
+NOCASE` — skipped with a logged warning if a pre-existing database
+already has case-duplicate names, so the migration can never crash
+startup (`a363cbd`). A rehearsal against a copy of the live database
+found zero case-duplicates, so the index is created in practice.
+
+**Anchoring test hardening** (`50491a7`, fix `ead8c89`): additional
+pinning tests for ambiguity, whitespace-tolerant matching, and fuzzy
+boundary behavior in `anchoring.py`'s quote-resolution tiers; a review
+finding that one test wasn't actually reaching its intended tier was
+fixed so the assertion is mutation-killable.
+
+**Gates at close**: frontend `npx vitest run` → 238 passed (24 files);
+backend `uv run pytest -q` → 709 passed. Both suites green on
+`codebase-cleanup` at `ead8c89`; docs (this entry + the two architecture
+docs) commit on top, then the final whole-branch review and PR against
+`main` for independent review, per this iteration's deviation from the
+usual commits-on-main convention.

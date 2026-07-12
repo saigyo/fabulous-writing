@@ -52,16 +52,27 @@ frontend/src/
 ├── documents/
 │   ├── buffer.ts              # write-through DocSnapshot cache (localStorage)
 │   ├── autosave.ts            # debounced save, retry backoff, no-op suppression, auto-title
-│   ├── documents.ts           # lifecycle: open/create/rename/delete, replay, recovery
-│   └── DocumentSidebar.tsx    # sidebar UI: list, new, rename, delete
+│   ├── documents.ts           # lifecycle verbs: open/create/rename/delete/init + startup replay
+│   ├── profileApply.ts        # profile-apply suppression flag + applyHeaderProfileSelection
+│   ├── list.ts                # summaryOf, refreshDocuments/refreshFolders, sortedByName
+│   ├── folders.ts             # applyFolderDefaults, saveFolderDefaults, addFolder, renameFolderById
+│   ├── hydration.ts           # hydrateFromDocument/hydrateFromBuffer, orphan replay, recoverSnapshot
+│   ├── settings.ts            # settingsPayload: header state → DocumentSettingsPayload
+│   ├── documentTime.ts        # relativeTime/absoluteTime (pure, Intl-based)
+│   ├── grouping.ts            # groupDocuments: flat list → byFolder map + ungrouped
+│   └── DocumentSidebar.tsx    # sidebar UI: list, new, rename, delete, folders
 ├── header/
 │   ├── ProfileSelector.tsx    # profile dropdown + dirty marker + save/reset
 │   ├── LlmSelector.tsx        # tier dropdown + resolved caption + advanced pin panel
 │   └── DomainMultiSelect.tsx  # checkbox-dropdown for terminology domains
 ├── sidebar/
 │   ├── Sidebar.tsx             # counters, filters, finding list, detail card
+│   ├── findingList.ts          # withCurrentSpans, truncate (pure helpers)
 │   └── Score.tsx               # ScoreBadge + ScorePanel (overall/mechanics/craft,
 │                                # six dimension bars, staleness note)
+├── hooks/
+│   ├── useCrudError.ts             # shared { error, run, fail, clear } mutation-error wrapper
+│   └── useDismissOnOutsideClick.ts # close a popover/menu on mousedown outside its ref
 ├── rules/                     # rule catalog view + per-profile toggles
 ├── terminology/               # domain/term management view; terms edit in place
 │                              # (row edit mode shares TermFieldCells with the add
@@ -88,7 +99,12 @@ authoritative. `routing: RoutingTable | null` holds the `GET /api/routing` respo
 (fetched at startup alongside providers) and is **ephemeral** — never persisted, since
 availability is only meaningful for the current process.
 
-The `persist` middleware (v2) saves a small cross-document slice to localStorage:
+The `persist` middleware is configured from one exported object, `persistConfig`
+(`name`, `version`, `migrate`, `partialize`) — the store passes this same object (not a
+copy) to `persist(...)`, and tests import the identical `persistConfig` rather than
+re-declaring their own literal, so the persisted-shape contract used by the running
+store and the one exercised by tests can never silently drift apart. `persistConfig`
+(v2) saves a small cross-document slice to localStorage:
 `uiLocale`, `lastProfileByLanguage`, `rulesCollapsed`, `currentDocId`,
 `docSidebarCollapsed`, and `docFoldersCollapsed` (the sidebar's per-folder collapsed
 state, added additively to v2 — a `number[]` of collapsed folder ids, no version bump
@@ -205,13 +221,29 @@ wired in `Editor.tsx`.
    replace source `llm` on arrival; `llm_progress` events drive the token counter;
    `checker_error` surfaces in the status line; `done` returns the phase to idle.
 
-Two guards keep results consistent:
+Three guards keep results consistent:
 
 - **Staleness**: before merging, the controller compares the current editor text with
   the checked snapshot; if the user typed in between, the results are discarded (the
   next debounced check is already scheduled anyway).
 - **Supersede**: a module-level `currentCheckId` ignores SSE events from any check that
   is no longer the latest, and a new `runCheck` unsubscribes the previous stream.
+- **Cross-document cancellation**: `cancelCheck()` closes the current SSE subscription,
+  clears `currentCheckId`, and resets `checkPhase`/`llmStartedAt`/`llmTokens` to idle.
+  `hydration.ts`'s `hydrateFromDocument` calls it first, before doing anything else, so
+  switching documents while a check is in flight can never let that check's late
+  findings or scorecard land on — and be autosaved onto — the document the user
+  switched to. This closed a real cross-document scorecard leak; `controller.test.ts`
+  pins it directly (`cancelCheck() unsubscribes and blocks all late SSE writes`).
+
+`checking/controller.test.ts` covers the controller directly: a late scorecard applying
+to the right document, staleness marking a scorecard stale when the text moved on,
+`cancelCheck()` blocking all late SSE writes, a newer check superseding an older one's
+late findings, and stale-text discard. `checking/suggest.test.ts` covers
+`fetchSuggestions`'s gating logic: a clean result populating suggestions and clearing
+held-back, a vetoed result setting the error and held-back list without populating
+suggestions, advice being stored independently of the veto outcome, and a second call
+being skipped while one is already pending.
 
 `checking/suggest.ts` implements the two on-demand LLM actions (drop-in suggestions,
 whole-sentence rewrites) against `POST /api/suggestions`, using the finding's *current*
@@ -342,6 +374,22 @@ gets a readable label without an i18n change. `RulesView.tsx` shows the
 per-profile banner, category checkboxes, and per-rule switches that write through to
 `PUT /api/profiles/{id}`.
 
+**Shared CRUD-error handling.** `RulesView.tsx`, `ProfilesView.tsx`, and
+`TerminologyView.tsx` (each a view whose actions are plain fetch-and-mutate calls, not
+the document autosave path) share one error-surfacing hook,
+`hooks/useCrudError.ts`: `useCrudError(format)` returns `{ error, run, fail, clear }`,
+where `run(action)` wraps an async mutation, formatting any thrown error via `format`
+and clearing it on success, while `fail(message)`/`clear()` let a caller with its own
+try/catch (e.g. a load path that uses a different message formatter than the save path)
+drive the same error state directly. `RulesView.tsx` routes **both** its load effect and
+its save path through one `useCrudError` instance (`fail` on load failure, `clear` on
+load start and on save success) so the single error slot cross-clears exactly as before
+the views were split apart — a stale load error doesn't survive a successful save, and a
+stale save error doesn't survive a language switch that starts a new load. `TerminologyView.tsx`
+gained the same `{ error, run }` surface (previously it had none, so a failed
+create/rename/delete of a domain or term failed silently); `ProfilesView.tsx` was
+already error-surfaced and now shares the same hook rather than its own copy.
+
 ## Documents
 
 `src/documents/` gives each piece of writing its own persisted text, check-state
@@ -354,22 +402,44 @@ snapshot, and header settings, backed by the `/api/documents` endpoints (see
   **write-through cache**, never the source of truth — it only bridges network
   failures and tab closes until the backend confirms the write (`dirty: false`).
 - `autosave.ts` — the save engine.
-- `documents.ts` — document lifecycle: open/create/rename/delete, startup replay,
-  legacy-text migration, orphan replay on document switch, and 409/404 recovery. Also
-  owns folder lifecycle verbs (`addFolder`, `renameFolderById`, `removeFolder`,
-  `moveDocumentToFolder`) that call the `/api/folders` endpoints and patch
+- `documents.ts` — document lifecycle verbs only: `openDocument`/`createNewDocument`/
+  `renameDocument`/`removeDocument`/`initDocuments` (startup replay, legacy-text
+  migration), plus the folder-membership verbs `removeFolder`/`moveDocumentToFolder`
+  that call the `/api/folders`/`/api/documents/{id}/move` endpoints and patch
   `store.folders`/`store.documents` in place; `createNewDocument(folderId?)` creates
   directly inside a folder and overlays that folder's defaults onto the create payload
-  (`applyFolderDefaults`, see [Per-folder defaults](#per-folder-defaults) below).
+  (`applyFolderDefaults`, see [Per-folder defaults](#per-folder-defaults) below). What
+  used to be one large module is now split by concern into sibling files, each imported
+  by `documents.ts` and by whichever other module needs it directly (no re-export
+  layer):
+  - `list.ts` — `summaryOf` (Document → DocumentSummary), `refreshDocuments`/
+    `refreshFolders` (fetch + `docListError` on failure), `sortedByName`.
+  - `folders.ts` — `applyFolderDefaults`, `saveFolderDefaults`, `addFolder`,
+    `renameFolderById` (the folder CRUD/defaults verbs that patch `store.folders`
+    in place and rethrow on failure so the sidebar's inline 409 handling works).
+  - `hydration.ts` — `hydrateFromDocument`/`hydrateFromBuffer`, orphan-snapshot replay
+    (`replayOrphanedSnapshot`), and 409/404 recovery (`recoverSnapshot`); see
+    [Document lifecycle and self-write-aware recovery](#document-lifecycle-and-self-write-aware-recovery)
+    below, unchanged in behavior by the split.
+  - `profileApply.ts` — the one-shot profile-apply suppression flag
+    (`consumeProfileApplySuppression`/`setProfileApplySuppressed`) and
+    `applyHeaderProfileSelection`.
+  - `settings.ts` — `settingsPayload(state)`, the single mapping from header state to
+    the `DocumentSettingsPayload` shape, used by both autosave snapshots and document
+    creation.
+  This was a mechanical, behavior-preserving extraction (verified verbatim/byte-identical
+  at every call site); it exists purely to keep each file's concern legible as the
+  document/folder feature set grew.
 - `DocumentSidebar.tsx` — the collapsible sidebar UI (`.doc-sidebar`; new/rename/delete,
-  relative timestamps via `Intl.RelativeTimeFormat` — `relativeTime(doc.edited_at,
-  locale)`, **not** `updated_at`: the sidebar shows when the writer last actually edited
-  the document, not when its row was last written, so a background check-and-save never
-  changes the displayed time). `groupDocuments(documents, folders)` is an exported pure
-  helper (unit-tested standalone) that buckets the flat, `edited_at`-recency-ordered
-  document list by `folder_id` into a `Map<folderId, DocumentSummary[]>` plus an
-  `ungrouped` array; a document whose `folder_id` points at a folder that no longer
-  exists falls back to ungrouped rather than being hidden. `FolderGroup` renders
+  relative timestamps via `Intl.RelativeTimeFormat` — `documentTime.ts`'s
+  `relativeTime(doc.edited_at, locale)`, **not** `updated_at`: the sidebar shows when the
+  writer last actually edited the document, not when its row was last written, so a
+  background check-and-save never changes the displayed time; `absoluteTime` renders the
+  tooltip complement). `grouping.ts`'s `groupDocuments(documents, folders)` is an
+  exported pure helper (unit-tested standalone) that buckets the flat, `edited_at`-
+  recency-ordered document list by `folder_id` into a `Map<folderId, DocumentSummary[]>`
+  plus an `ungrouped` array; a document whose `folder_id` points at a folder that no
+  longer exists falls back to ungrouped rather than being hidden. `FolderGroup` renders
   each folder as a collapsible row (`docFoldersCollapsed`, persisted, toggled via
   `toggleFolderCollapsed`) with its own ⋯ menu (new document here / rename / delete —
   deleting keeps the documents and moves them to ungrouped, never destroys them).
@@ -377,7 +447,12 @@ snapshot, and header settings, backed by the `/api/documents` endpoints (see
   next to "+ New document"; a 409 (duplicate name) keeps the input open with a `.conflict`
   red border instead of dismissing it. Each document's own ⋯ menu gained a "Move to
   folder ▸" submenu (between Rename and Delete) listing "No folder" plus every folder,
-  disabling whichever entry matches the document's current location.
+  disabling whichever entry matches the document's current location. Every menu/popover
+  in the app — the document ⋯ menu and folder ⋯ menu (`DocumentSidebar.tsx`), the domain
+  multi-select (`DomainMultiSelect.tsx`), and the LLM selector's advanced panel
+  (`LlmSelector.tsx`) — now dismisses on any `mousedown` outside itself via the shared
+  `hooks/useDismissOnOutsideClick.ts` (`ref`, `open`, `onDismiss`), replacing three
+  previously separate, slightly-inconsistent ad hoc listeners with one tested behavior.
 
 ### Server-authoritative sidebar reordering: `patchDocumentSummary`
 
