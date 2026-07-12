@@ -20,7 +20,7 @@ from app.checkers.llm.ollama import OllamaProvider
 from app.checkers.llm.openai_compat import OpenAICompatProvider
 from app.checkers.llm.provider import LLMProvider
 from app.checkers.rules.engine import RuleEngine
-from app.core.config import Settings, load_settings
+from app.core.config import BUILTIN_ENV_KEYS, Settings, load_settings
 from app.nlp.registry import NlpRegistry
 from app.services.documents import DocumentStore
 from app.services.folders import FolderStore
@@ -48,7 +48,7 @@ def make_provider_factory(settings: Settings):
             return OpenAICompatProvider(
                 name="openai",
                 base_url=providers.openai_base_url,
-                api_key=os.environ.get("OPENAI_API_KEY"),
+                api_key=os.environ.get(BUILTIN_ENV_KEYS["openai"]),
                 model=model or providers.openai_model,
                 exclude_models=OPENAI_EXCLUDED_MODEL_FRAGMENTS,
             )
@@ -56,7 +56,7 @@ def make_provider_factory(settings: Settings):
             return OpenAICompatProvider(
                 name="mistral",
                 base_url=providers.mistral_base_url,
-                api_key=os.environ.get("MISTRAL_API_KEY"),
+                api_key=os.environ.get(BUILTIN_ENV_KEYS["mistral"]),
                 model=model or providers.mistral_model,
             )
         if chosen == "bedrock":
