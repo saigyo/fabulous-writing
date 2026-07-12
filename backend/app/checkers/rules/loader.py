@@ -49,7 +49,9 @@ class RuleSpec(BaseModel):
     raw: list[str] = Field(default_factory=list)
     # substitution
     swap: dict[str, str] = Field(default_factory=dict)
-    # occurrence
+    # occurrence — `scope` is reserved: "sentence" is today's only value and
+    # the engine always sentence-splits; widening it (paragraph/document)
+    # would go here.
     scope: Literal["sentence"] = "sentence"
     token: str | None = None
     count: Literal["matches", "tokens"] = "matches"
