@@ -113,3 +113,44 @@ architecture docs updated.
 - New features of any kind (including UX polish that changes behavior).
 - Dependency upgrades (handled separately via dependabot).
 - Performance optimization, unless a finding shows an outright defect.
+
+---
+
+## Addendum: Phase 2 triage outcome (2026-07-12)
+
+Audit wave complete (5 slices; reports in `.superpowers/sdd/audit/`, consolidated
+in `consolidated-triage.md` there). Owner triage decisions:
+
+**Approved for the plan (work packages):**
+
+- **A — Correctness:** A1 cancel in-flight check on document switch (Critical:
+  scorecard leaks onto the next document and is autosaved); A2 folder
+  rename/set-defaults responses must go through `_pruned()`; A3 harden the
+  profile-apply suppression flag (error path never consumes it); A4 add backend
+  logging at all swallow sites; A5 defaults-dialog 404-close refreshes folders;
+  A6 reset the doc-menu "moving" submenu state on close; A7 folders.name
+  UNIQUE COLLATE NOCASE migration (rehearse on a live-DB copy; escalate if the
+  owner's data holds real case-duplicates).
+- **B — Tests:** B1 controller.test.ts + suggest.test.ts (zero coverage on the
+  supersession/veto logic); B2 anchoring boundary cases; B3 dedupe old-schema
+  DDL fixtures. B4 decision: KEEP the no-component-test convention (pure-logic
+  extraction + e2e baseline remain the .tsx safety net).
+- **C — Structure:** C1 split documents.ts (folders / hydration / doc CRUD +
+  init; suppression flag moves next to its consumer); C2 shared SQLite
+  connect + migrate-columns helpers across the four stores; C3 shared
+  request/streaming skeleton for the LLM providers; C4 extract pure helpers
+  from DocumentSidebar.tsx / Sidebar.tsx (helpers only, no component split).
+- **D — Dedup/dead code:** D1 shared `validate_name()` + backend non-empty
+  check for term `preferred`; D2 delete always-true seeding conditionals;
+  D3 merge the JSON-extractor twins; D4 remove dead `scheduler.checkNow()`;
+  D5 single persist/migrate config object; D6 narrow `hydrateFromBuffer`'s
+  synthetic document; D7 comment `RuleSpec.scope` as reserved; D9 shared
+  provider env-key map. **D8 (Finding-constructor helper ×7 check types):
+  dropped.**
+- **E — Sanctioned behavior-visible fixes (owner-approved freeze deviations):**
+  E1 shared CRUD-error hook incl. adding the missing error surface to
+  TerminologyView; E2 unify menu dismissal on outside-click; E3 disable the
+  defaults-dialog profile select during the post-language-change refetch.
+
+All other ledger minors remain keep-accepted; audit clean areas are recorded
+in the slice reports.
