@@ -8,7 +8,6 @@ export interface CheckSchedulerOptions {
 
 export interface CheckScheduler {
   onInput: () => void
-  checkNow: () => void
   dispose: () => void
 }
 
@@ -34,10 +33,6 @@ export function createCheckScheduler(options: CheckSchedulerOptions): CheckSched
       if (options.llmEnabled()) {
         llmTimer = setTimeout(options.onFull, options.llmDelayMs)
       }
-    },
-    checkNow() {
-      clearTimers()
-      options.onFull()
     },
     dispose: clearTimers,
   }

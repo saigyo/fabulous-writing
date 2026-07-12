@@ -45,16 +45,6 @@ describe('createCheckScheduler', () => {
     expect(onFull).not.toHaveBeenCalled()
   })
 
-  it('checkNow triggers the full check immediately and cancels pending timers', () => {
-    const { scheduler, onFast, onFull } = setup()
-    scheduler.onInput()
-    scheduler.checkNow()
-    expect(onFull).toHaveBeenCalledTimes(1)
-    vi.advanceTimersByTime(10000)
-    expect(onFull).toHaveBeenCalledTimes(1)
-    expect(onFast).not.toHaveBeenCalled()
-  })
-
   it('dispose cancels all pending checks', () => {
     const { scheduler, onFast, onFull } = setup()
     scheduler.onInput()

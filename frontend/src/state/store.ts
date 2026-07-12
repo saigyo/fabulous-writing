@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, type PersistOptions } from 'zustand/middleware'
 import type { DocumentSummary, Folder, HeldBackSuggestion, NameSource } from '../api/client'
 import type { TrackedFinding } from '../editor/findings'
 import { mapEquivalentIds } from '../findings/equivalence'
@@ -169,6 +169,34 @@ function migrateByFinding<T>(
       .filter(([id]) => id in idMap)
       .map(([id, value]) => [idMap[id], value]),
   )
+}
+
+// Persist options shared with tests: zustand v5 gives tests no handle on the
+// inline options, so the SAME object is exported (never a copy — a copy can
+// silently drift from what the store actually runs). `migrate`'s return type
+// is deliberately loose (`unknown`, matching persisted blobs of any prior
+// shape); the cast below is where that gets reconciled with zustand's
+// `PersistOptions`, without duplicating the object for a narrower type.
+export const persistConfig = {
+  name: 'fabulous-writing-settings',
+  version: 2,
+  // v0 predates tiers: those users had explicitly chosen provider/model,
+  // so they stay pinned rather than silently switching models.
+  // v1 -> v2: header settings moved into per-document storage; stale keys
+  // in old blobs are harmless extras and rehydrate transiently (the
+  // legacy-document migration in documents.ts still reads them once).
+  migrate: (persisted: unknown, version: number): unknown =>
+    version === 0
+      ? { ...(persisted as object), tier: null }
+      : (persisted as object),
+  partialize: (state: AppState) => ({
+    uiLocale: state.uiLocale,
+    lastProfileByLanguage: state.lastProfileByLanguage,
+    rulesCollapsed: state.rulesCollapsed,
+    currentDocId: state.currentDocId,
+    docSidebarCollapsed: state.docSidebarCollapsed,
+    docFoldersCollapsed: state.docFoldersCollapsed,
+  }),
 }
 
 export const useStore = create<AppState>()(
@@ -341,33 +369,6 @@ export const useStore = create<AppState>()(
             : [...state.docFoldersCollapsed, id],
         })),
     }),
-    {
-      name: 'fabulous-writing-settings',
-      version: 2,
-      // v0 predates tiers: those users had explicitly chosen provider/model,
-      // so they stay pinned rather than silently switching models.
-      // v1 -> v2: header settings moved into per-document storage; stale keys
-      // in old blobs are harmless extras and rehydrate transiently (the
-      // legacy-document migration in documents.ts still reads them once).
-      migrate: (persisted, version) =>
-        version === 0
-          ? { ...(persisted as object), tier: null }
-          : (persisted as object),
-      partialize: (state) => ({
-        uiLocale: state.uiLocale,
-        lastProfileByLanguage: state.lastProfileByLanguage,
-        rulesCollapsed: state.rulesCollapsed,
-        currentDocId: state.currentDocId,
-        docSidebarCollapsed: state.docSidebarCollapsed,
-        docFoldersCollapsed: state.docFoldersCollapsed,
-      }),
-    },
+    persistConfig as PersistOptions<AppState, ReturnType<typeof persistConfig.partialize>>,
   ),
 )
-
-// Exported for testing persist migration (workaround for zustand v5 limitations)
-export const persistConfig = {
-  version: 2,
-  migrate: (persisted: unknown, version: number): unknown =>
-    version === 0 ? { ...(persisted as object), tier: null } : (persisted as object),
-}
