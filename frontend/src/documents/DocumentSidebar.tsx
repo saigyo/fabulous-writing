@@ -4,7 +4,6 @@ import { HttpError } from '../api/client'
 import { useLocale, useMessages } from '../i18n'
 import { useStore } from '../state/store'
 import {
-  addFolder,
   createNewDocument,
   initDocuments,
   moveDocumentToFolder,
@@ -12,8 +11,8 @@ import {
   removeDocument,
   removeFolder,
   renameDocument,
-  renameFolderById,
 } from './documents'
+import { addFolder, renameFolderById } from './folders'
 import { FolderDefaultsDialog } from './FolderDefaultsDialog'
 
 /** "2 hours ago" in the UI locale; future stamps clamp to now. */
