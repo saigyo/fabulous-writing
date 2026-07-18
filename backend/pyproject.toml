@@ -5,11 +5,11 @@ description = "Checking backend for Fabulous Writing"
 license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
-    "anthropic>=0.116.0",
-    "boto3>=1.43.46",
-    "fastapi>=0.139.0",
+    "anthropic>=0.117.0",
+    "boto3>=1.43.51",
+    "fastapi>=0.139.2",
     "httpx>=0.28.1",
-    "httpx2>=2.5.0",
+    "httpx2>=2.7.0",
     "pydantic>=2.13.4",
     "pyspellchecker>=0.9.0",
     "pyyaml>=6.0.3",
