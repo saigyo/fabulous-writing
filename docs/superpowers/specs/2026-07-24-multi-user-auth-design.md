@@ -7,7 +7,7 @@
 
 Make Fabulous Writing usable by a limited number of users: user accounts, a
 tier/permission system, ownership isolation of user data, and a local
-username/password authentication that exercises the same code path a later
+email/password authentication that exercises the same code path a later
 Supabase Auth integration will use. Deployment (Fly.io) and the Supabase
 integration itself are separate follow-up projects.
 
@@ -29,7 +29,7 @@ spec → plan → implementation cycle:
 |---|---|
 | Database | Stays SQLite (single file, later on a Fly volume). Supabase is auth-only. |
 | Auth architecture | Pluggable token verifier behind one FastAPI dependency; Bearer JWT everywhere. |
-| Local auth | Username/password against local `users` table; backend-issued HS256 JWT. |
+| Local auth | Email/password against local `users` table; backend-issued HS256 JWT. There is no separate username — email is the login identifier. |
 | Tier ladder | Two tiers: `basic`, `premium`. Admin is a separate boolean flag, not a tier. |
 | Tiers control | LLM access (quality tiers / providers / models), usage quotas, feature gating. |
 | Enforcement style | Graceful degradation for LLM selection and quotas; hard errors only for forbidden actions. |
@@ -69,12 +69,17 @@ Implementations:
   in sub-project 2): RS256 via Supabase JWKS; maps the Supabase `sub` UUID
   to `users.external_id`.
 
-**Algorithm pinning (binding):** each verifier decodes with an explicit
-single-element `algorithms` list (`["HS256"]` resp. `["RS256"]`) and
-rejects everything else — never `none`, never a foreign algorithm — and
-validates `exp`/`iat`. A unit test asserts that a token signed with a
-different algorithm is rejected (the classic `alg: none` / RS256→HS256
-confusion bugs).
+**Algorithm and claim pinning (binding):** each verifier decodes with an
+explicit single-element `algorithms` list (`["HS256"]` resp. `["RS256"]`)
+and rejects everything else — never `none`, never a foreign algorithm —
+and validates `exp`/`iat` **and** `iss`/`aud`. Local tokens are issued
+with `iss: "fabulous-writing"` and `aud: "fabulous-writing"` and the
+local verifier requires exactly those; the Supabase verifier must require
+the project's issuer URL and Supabase's `aud` (`authenticated`), so a
+token minted for a different project or environment is never accepted. A
+unit test asserts that tokens with a different algorithm, issuer, or
+audience are rejected (the classic `alg: none` / RS256→HS256 confusion
+bugs, plus cross-environment token reuse).
 
 **Secret handling:** the HS256 secret comes from `FW_AUTH_SECRET` and must
 be ≥ 32 characters (startup error otherwise). If unset, startup **fails**
@@ -129,7 +134,7 @@ CREATE TABLE users (
     tier          TEXT NOT NULL DEFAULT 'basic',   -- 'basic' | 'premium'
     is_admin      INTEGER NOT NULL DEFAULT 0,
     is_active     INTEGER NOT NULL DEFAULT 1,
-    created_at    TEXT NOT NULL
+    created_at    TEXT NOT NULL          -- ISO 8601 UTC ('…T…+00:00'), as in existing tables
 );
 ```
 
@@ -227,8 +232,10 @@ tiers:
 models` (first entry = preferred substitute for degradation). A provider
 absent from the mapping, but present in `providers`, allows all its models.
 Numbers above are starting defaults, tunable in config without code changes.
-Validation at load time: unknown LLM tier names, unknown feature names, and
-non-positive limits are config errors.
+Validation at load time: unknown LLM tier names, unknown feature names,
+non-positive limits, and **empty per-provider model allowlists** (an empty
+list would leave the degradation substitute in §6.2 undefined; "no models"
+is expressed by omitting the provider from `providers`) are config errors.
 
 Admins bypass all tier restrictions and limits (global
 `max_document_chars` still applies).
@@ -261,7 +268,11 @@ resolve_llm_selection(policy, requested, language) -> EffectiveSelection
 2. P allowed, M not on P's allowlist → degrade to the first model on P's
    allowlist.
 3. P not allowed → fall back to tier routing at the user's best allowed
-   quality tier for the document's language.
+   quality tier for the document's language. If `llm.tiers` is empty
+   (a direct-only policy), degrade instead to the first provider in
+   `llm.providers` with its first allowlisted model — or, under
+   `models: all`, that provider's configured default model. If
+   `llm.providers` is also empty, the floor case below applies.
 
 **Floor:** if a tier's `llm.tiers` and `llm.providers` are both empty, that
 user tier has no LLM checking: the UI hides the LLM phase, the backend
