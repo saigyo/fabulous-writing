@@ -959,8 +959,21 @@ sub-project 2, under the no-auto-adopt-by-email constraint in §11.
   carries the status so these cases stay distinguishable rather than
   collapsing into one anonymous failure.
 - **Login view**: email/password form, error states, i18n ×7 like all UI.
-- **Admin view** (visible only when `is_admin`): user table — list,
-  create, edit tier/role/active, reset password.
+  It is **not** a fifth entry in the view switch but a full-screen gate
+  that replaces the entire app shell while unauthenticated — an
+  unauthenticated user must not see the editor chrome, document sidebar,
+  or nav at all.
+- **Account control in the header**: the signed-in user's email with a
+  small menu offering "Change password" (§7.1) and "Log out". Without it
+  those two endpoints would have no entry point; the header is where the
+  other global selectors already live.
+- **Admin view**: a fifth `activeView` alongside `editor` / `rules` /
+  `terminology` / `profiles`, following that existing pattern exactly
+  (store-held `activeView`, a button in `view-switch`, workspace hidden
+  rather than unmounted). Its nav button renders **only when
+  `is_admin`** — cosmetic defense in depth, since `/api/admin/*` enforces
+  the boundary regardless. Contents: a user table — list, create, edit
+  tier/role/active, reset password.
 - **Gating**: selectors grey out disallowed quality tiers / providers /
   models using the `/me` policy and the `allowed` flags, with a "requires
   Premium"-style hint, visually distinct from "not configured". The check
