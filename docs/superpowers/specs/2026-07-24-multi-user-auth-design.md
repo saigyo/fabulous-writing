@@ -96,9 +96,9 @@ unit test asserts that tokens with a different algorithm, issuer, or
 audience are rejected (the classic `alg: none` / RS256→HS256 confusion
 bugs, plus cross-environment token reuse).
 
-**Secret handling (local mode only** — a `supabase`-mode instance neither
-needs nor reads an HS256 secret, and must not fail over its absence**):**
-the HS256 secret comes from `FW_AUTH_SECRET`, must be
+**Secret handling — local mode only.** A `supabase`-mode instance neither
+needs nor reads an HS256 secret, and must not fail over its absence.
+The HS256 secret comes from `FW_AUTH_SECRET`, must be
 ≥ 32 characters (startup error otherwise), and must be generated randomly
 — e.g. `openssl rand -base64 32` (length is the mechanical gate; the
 random-generation requirement is documented in `config.example.yaml` and
