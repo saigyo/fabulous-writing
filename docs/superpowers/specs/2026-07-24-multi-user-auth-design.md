@@ -32,7 +32,7 @@ spec → plan → implementation cycle:
 | Local auth | Email/password against local `users` table; backend-issued HS256 JWT. There is no separate username — email is the login identifier. |
 | Tier ladder | Two tiers: `basic`, `premium`. Admin is a separate boolean flag, not a tier. |
 | Tiers control | LLM access (quality tiers / providers / models), usage quotas, feature gating. |
-| Enforcement style | Graceful degradation for LLM selection and quotas; hard errors only for forbidden actions and the global size cap (413, §6.5). |
+| Enforcement style | Graceful degradation for LLM selection and quotas; hard errors only for forbidden actions, the global size cap (413, §6.5) and the transient concurrency caps (429, §6.6). |
 | Ownership | `documents`/`folders` strictly per-user. `profiles`/`domains` global built-ins (owner NULL, read-only for non-admins) + per-user private items. Rule YAMLs and provider config stay server-global. |
 | Admin surface | Small admin UI page (list/create/edit users) + admin API. |
 | SSE auth | Bearer header via fetch-based streaming. No tokens in URLs, ever. |
@@ -197,8 +197,8 @@ Per table:
   forgotten scope is a call-site error rather than a cross-tenant read.
   Honest caveat: both columns carry a legacy `DEFAULT 1`, so SQL alone
   would not catch a missing owner on INSERT — the `folders` rebuild in
-  §9.5 drops that default; `documents` needs no rebuild and keeps it, so
-  its guarantee rests on the store API signature.
+  §9 step 5 drops that default; `documents` needs no rebuild and keeps
+  it, so its guarantee rests on the store API signature.
 - `profiles`, `domains`: gain a *nullable* `owner_id` column (NULL is the
   deliberate global marker here). List endpoints return global rows plus
   the caller's rows; create always as the caller (feature-gated, see
@@ -244,12 +244,23 @@ CREATE TABLE llm_usage (
     input_tokens       INTEGER,            -- NULL when the provider reports nothing
     output_tokens      INTEGER,
     source             TEXT NOT NULL,      -- 'check' | 'suggestion' | 'name'
-    run_id             TEXT NOT NULL       -- correlation id: the natural id where one exists
+    run_id             TEXT NOT NULL,      -- correlation id: the natural id where one exists
                                            -- (check id); callers without one (name generation)
                                            -- mint a UUID
+    CHECK (status IN ('started','completed','failed','cancelled','abandoned'))
 );
 CREATE INDEX idx_llm_usage_user_day ON llm_usage(user_id, day);
+-- The server-wide in-flight count (§6.6) has no user_id predicate, so the
+-- index above cannot serve it; without this one it degrades to a full scan
+-- of an ever-growing table, inside the transaction that serializes every
+-- user's reservation.
+CREATE INDEX idx_llm_usage_inflight ON llm_usage(status, created_at)
+    WHERE status = 'started';
 ```
+
+The `CHECK` is not decoration: a typo'd terminal status would silently
+leak a concurrency slot for `llm_run_max_age` (§6.6), so it must fail
+loudly instead.
 
 **Why these columns exist from run one.** Adding a *table* later is cheap;
 adding a *column* to a table already accumulating rows leaves a permanent
@@ -270,7 +281,13 @@ so future per-feature limits or cost analysis need no schema change.
 
 A row is inserted with `status = 'started'` when an LLM run starts
 (effective and requested selection plus `text_chars` recorded); the token
-counts and the terminal `status` are written when the run ends. **Failed
+counts and the terminal `status` are written when the run ends. **That
+terminal write must be exception-safe by construction** — in a
+`finally` block or task done-callback covering the success, exception and
+`CancelledError` paths alike. It is no longer mere bookkeeping: under
+§6.6 it is the mechanism that releases a concurrency slot, so a run that
+can exit without writing it strands that slot until the staleness sweep
+reclaims it. **Failed
 or cancelled runs keep their ledger row** (`status = 'failed'` /
 `'cancelled'`, token columns holding whatever was reported before the
 end) — failures still spend quota, so cancel-and-retry loops cannot hit
@@ -300,6 +317,14 @@ activity rows into that table would make rate limiting scan noise.
 `config.yaml` gains:
 
 ```yaml
+auth:                          # §4.1, §7.1 — startup-only, never API-mutable
+  mode: local                  # later: supabase
+  ephemeral_secret: false      # true only in the git-ignored dev config
+  allow_additional_admins: false
+
+cors:
+  origins: ["http://localhost:5173"]   # §7.4
+
 limits:                        # global, server-level (all users incl. admin)
   max_document_chars: 200000
   max_concurrent_llm_runs: 20  # server-wide, protects the machine
@@ -341,10 +366,18 @@ Validation at load time: unknown LLM tier names, unknown feature names,
 unknown provider names (in `llm.providers` and as `models` keys — a typo
 must not silently narrow a policy), `models` keys not listed in
 `providers`, non-positive limits (including a missing, null, or
-non-positive `limits.admin.llm_checks_per_day` or any
-`concurrent_llm_runs` / `max_concurrent_llm_runs` — there is no way to
-express "no admin ceiling" or "unbounded concurrency"), and **empty
-per-provider model allowlists** (an empty list would leave the degradation substitute in
+non-positive value in any tier's `limits:` block, in the **complete**
+`limits.admin` block — all of `llm_checks_per_day`,
+`max_llm_document_chars` and `concurrent_llm_runs` are required, since a
+missing one would fail *open* on the single account that carries an
+explicit "not unlimited" guarantee — or in `max_concurrent_llm_runs` /
+`llm_run_max_age`; there is no way to express "no admin ceiling" or
+"unbounded concurrency"), a `concurrency_reject_delay` outside `[0, 2]`
+seconds (a `25` typed for `0.25` would build the very amplification
+vector §6.6 argues against), any tier or admin `concurrent_llm_runs`
+exceeding `max_concurrent_llm_runs` (the one configuration in which a
+single user could starve every other user of the shared pool), and
+**empty per-provider model allowlists** (an empty list would leave the degradation substitute in
 §6.2 undefined; "no models" is expressed by omitting the provider from
 `providers`) are config errors.
 
@@ -423,7 +456,8 @@ therefore never errors, regardless of what its LLM settings reference.
 
 With degradation, 403 disappears from the normal LLM flow. 403 remains
 only for genuinely forbidden *actions*: admin endpoints, feature-gated
-creates.
+creates, mutating a global profile/domain as a non-admin (§7.2), and the
+two admin-switch denials (§7.1).
 
 ### 6.3 Feature gating
 
@@ -441,16 +475,33 @@ flag is later removed from the tier — the gate is on creation.
 ### 6.4 Quotas
 
 v1 enforces exactly one rule, in one function —
-`reserve_llm_run(user, limits, requested, effective, text_chars, source,
-run_id) -> QuotaDecision` (everything the reservation row records is a
-parameter; §5.3's NOT NULL columns are unreachable from `(user, limits)`
-alone) — inside **one SQLite transaction** so
-concurrent starts cannot both slip under the limit (TOCTOU). Stated
+`reserve_llm_run(user, limits, server_limits, requested, effective,
+text_chars, source, run_id) -> QuotaDecision` (everything the reservation
+row records is a parameter; §5.3's NOT NULL columns are unreachable from
+`(user, limits)` alone. `limits` is the caller's per-user block — their
+tier's, or `limits.admin`; `server_limits` carries the global
+`max_concurrent_llm_runs`, `llm_run_max_age` and
+`concurrency_reject_delay`) — inside **one SQLite transaction** so
+concurrent starts cannot both slip under the limit (TOCTOU). The
+insert-first ordering is what makes this safe on a plain (non-WAL) SQLite
+file: the `INSERT` takes the write lock before any count runs, so
+concurrent reservations serialize instead of racing — it must not be
+"optimized" into count-then-insert. Stated
 precisely to avoid an off-by-one: insert the reservation row, then count
 this user's rows for today-UTC *including the one just inserted*;
 **commit iff `count <= llm_checks_per_day`, else roll back** (the run is
 denied). A user with a limit of 20 therefore gets exactly 20 runs per UTC
-day.
+day. The count is over **all** of the user's rows for the day regardless
+of `status` — `'completed'`, `'failed'`, `'cancelled'` and `'abandoned'`
+alike, not only those still `'started'`.
+
+`QuotaDecision` is one of `admitted`, `quota_exhausted`, or
+`concurrency_rejected(retry_after)`, **evaluated in that order**: the
+daily quota is decided before the concurrency caps (§6.6), because an
+exhausted allowance is not retryable and must never be reported as a
+transient 429 — that would tell a client to retry something that cannot
+succeed until tomorrow, producing exactly the tight retry loop the
+concurrency caps exist to break.
 
 **Admins take exactly the same path**, with `limits.admin` (§6.1)
 supplying the numbers instead of their tier's block — same transaction,
@@ -458,6 +509,13 @@ same commit condition, same ledger row. §5.3's "every LLM run" includes
 admins, so the highest-privilege account is exempt from neither cost
 visibility nor a spend ceiling. `/api/auth/me` reports the admin ceiling
 as `limit`, so the UI shows the same indicator.
+
+Note that the admin ceiling **replaces** the tier's block rather than
+raising it: an admin whose tier is premium (200/day) but whose
+`limits.admin.llm_checks_per_day` is set to 100 gets 100. That is
+deliberate and consistent with `revoke-admin` dropping them back to their
+tier's limits (§7.5), but it means the ceiling should be configured above
+the tiers, not below them.
 
 An admin reaching the ceiling is **logged at WARNING** (with user id and
 the day's count): for a normal user, exhaustion is routine; for an
@@ -497,7 +555,9 @@ Two limits, two behaviors:
    cannot bypass the cap. Middleware order: `CORSMiddleware` sits
    outermost, so a 413 still carries CORS headers and is readable by the
    browser instead of surfacing as an opaque network error.
-2. **Per-tier LLM cap** (`max_llm_document_chars`): exceeding it skips
+2. **Per-tier LLM cap** (`max_llm_document_chars` from the caller's tier
+   block, or `limits.admin.max_llm_document_chars` for an admin —
+   admins are not exempt here either, §6.1): exceeding it skips
    only the LLM phase — rules/terminology still run — and the scorecard/
    SSE reports `document_too_large` with the tier's limit, analogous to
    `quota_exhausted`. Characters are the pre-spend proxy for tokens:
@@ -520,8 +580,13 @@ at roughly one concurrent run per user, occasionally two or three with a
 suggestion or rewrite alongside. That gap between human and bot behavior
 is exactly what a concurrency cap turns into a defense.
 
-Two caps, both enforced inside the same reservation transaction as the
-quota (§6.4), evaluated before it commits:
+Two caps, both decided inside the same reservation transaction as the
+quota (§6.4). As in §6.4, the counts **include the just-inserted row**
+(it carries `status = 'started'`), so the transaction commits iff
+`day_count <= llm_checks_per_day` **and**
+`user_in_flight <= concurrent_llm_runs` **and**
+`server_in_flight <= max_concurrent_llm_runs`; otherwise it rolls back
+and no row survives:
 
 - **Per user** (`concurrent_llm_runs` in each tier's `limits:` block, and
   in `limits.admin` — default 3 basic / 5 premium / 5 admin).
@@ -533,43 +598,78 @@ quota (§6.4), evaluated before it commits:
 **In-flight is already recorded:** a run's ledger row (§5.3) carries
 `status = 'started'` from reservation until it ends, so the in-flight
 count is a `COUNT(*)` over exactly those rows — no separate in-memory
-registry that could drift from the DB or reset on restart.
+registry that could drift from the DB or reset on restart. Both in-flight
+counts filter on `status` and `created_at` only and are **never scoped by
+`day`**: day-scoping would release every in-flight slot at UTC midnight
+and let a run started at 23:59 escape its cap. The server-wide count has
+no `user_id` predicate, so it needs its own partial index (§5.3) — the
+`(user_id, day)` index does not serve it.
 
 This makes the previously-accepted stranded-row case load-bearing, so it
 is no longer merely accepted: a row left at `'started'` by a crash would
 otherwise consume a concurrency slot forever. Two mechanisms clear them:
 
-1. **Startup sweep:** on boot, every row still at `'started'` is moved to
-   `'abandoned'` — in a single-process deployment no such run can still be
-   alive, since the process that owned it is gone. (This also makes the
-   ledger's history honest rather than leaving perpetual `'started'`
-   rows.)
-2. **Staleness fallback:** rows older than `limits.llm_run_max_age`
-   (default 15 minutes — comfortably beyond any provider timeout) are
-   excluded from the in-flight count and swept to `'abandoned'`, covering
-   a task that hangs without the process dying.
+1. **Startup sweep:** on boot (after migrations, §9), every row still at
+   `'started'` is moved to `'abandoned'` — in a single-process deployment
+   no such run can still be alive, since the process that owned it is
+   gone. (This also makes the ledger's history honest rather than leaving
+   perpetual `'started'` rows.) **This is a correctness dependency on
+   single-process deployment**, not a convenience — see the binding
+   constraint in §11.
+2. **Staleness fallback:** covers a task that hangs without the process
+   dying. Concretely, the reservation transaction *begins* with
+   `UPDATE llm_usage SET status='abandoned' WHERE status='started' AND
+   created_at < :cutoff` (`cutoff = now − limits.llm_run_max_age`,
+   default 15 minutes — comfortably beyond any provider timeout), so the
+   counts that follow are already clean and no separate scheduler is
+   needed. Staleness is measured on `created_at`, never `day`.
+
+Because a sweep can release a slot while its run is still alive,
+**terminal-status writes are conditional**: `… SET status = :terminal
+WHERE run_id = :id AND status = 'started'`. A run whose row was already
+swept logs a warning and does not resurrect it — the slot is gone
+already, which is the deliberate tradeoff of the staleness window.
 
 Abandoned runs keep counting toward the daily quota: they consumed a
 reservation, and treating them as free would reopen the cancel-and-retry
 loophole §5.3 closes.
 
 **Behavior when a cap is hit:** unlike quota exhaustion, this is transient
-and retryable, so it is the one place the API returns **429** — with a
-`Retry-After` header — rather than degrading. Degrading would be wrong
-here: nothing about the request is over its entitlement, the server is
-simply busy right now. Legitimate UI flows effectively never see it.
+and retryable, so it is the one place the API returns **429** — with
+`Retry-After: 5` (small and fixed, for the same non-escalation reason as
+the delay below) — rather than degrading. Degrading would be wrong here:
+nothing about the request is over its entitlement, the server is simply
+busy right now. Legitimate UI flows effectively never see the per-user
+cap.
 
-**Backpressure delay:** the 429 is returned after a small fixed pause
-(`limits.concurrency_reject_delay`, default 250 ms), so an over-eager
-client is slowed in the loop rather than merely told "no" — the same
-spirit as the failed-login backoff (§4.2). Two constraints keep it from
-backfiring, and both are binding:
+The server-wide pool is first-come-first-served, so it is worth being
+honest about its shape: with the defaults a single premium user or admin
+can hold 5 of the 20 slots, and "legitimate flows never see it" holds
+only while active users × their typical ~1 concurrent run stays well
+under 20. At this deployment's scale that is comfortable; it is the
+number to raise first if real users start seeing 429s.
 
-1. **The pause happens after the reservation transaction has rolled back,
+**Backpressure delay:** a **per-user** cap rejection returns its 429 after
+a small fixed pause (`limits.concurrency_reject_delay`, default 250 ms),
+so an over-eager client is slowed in the loop rather than merely told
+"no" — the same spirit as the failed-login backoff (§4.2). Three
+constraints keep it from backfiring, and all three are binding:
+
+1. **The pause is a non-blocking `await asyncio.sleep(...)` on an
+   `async def` path — never `time.sleep`, and never on a route dispatched
+   to the threadpool.** This is the single most dangerous way to get this
+   feature wrong: the backend is one asyncio process, so a blocking sleep
+   on the reject path stalls the *entire event loop* — every other
+   user's check, SSE stream and request — for the duration. A user
+   entitled to 3 concurrent runs could then take the whole service down
+   with a few dozen rejected requests per second, converting the cap into
+   an outage lever. A test must assert that many simultaneous rejections
+   do not delay an unrelated request.
+2. **The pause happens after the reservation transaction has rolled back,
    never inside it.** Sleeping while holding the transaction would block
    every other user's reservation for the duration — turning a
    politeness measure into a self-inflicted global stall.
-2. **It stays small and fixed — it never escalates with repeated hits**,
+3. **It stays small and fixed — it never escalates with repeated hits**,
    unlike the login backoff. The two cases are not symmetric: a login
    delay directly reduces an attacker's guess *rate*, because they need
    many sequential attempts to succeed. Here the caller is already
@@ -578,6 +678,11 @@ backfiring, and both are binding:
    connection longer, adding to exactly the resource pressure the cap
    exists to relieve. A quarter second is enough to break a tight retry
    loop without becoming an amplification vector.
+
+**Server-wide rejections skip the pause entirely** and answer
+immediately. When the machine is already saturated, holding a connection
+open longer adds to precisely the pressure that cap exists to relieve —
+the opposite of what backpressure should achieve there.
 
 If bot traffic ever justifies more than this, the right escalation is a
 per-user request-rate throttle (token bucket, rejecting immediately and
@@ -591,7 +696,7 @@ pause.
 | Endpoint | Auth | Behavior |
 |---|---|---|
 | `POST /api/auth/login` | none | §4.2. 401 (generic) on any failure. |
-| `GET /api/auth/me` | user | User + tier + `is_admin` + effective LLM policy + feature flags + quota status (`used_today`, `limit`; for admins the `limits.admin` ceiling, §6.1/§6.4) + size limits (global and tier, or the admin ceiling's). `used_today` is defined identically to `reserve_llm_run`'s count: *started* ledger rows for the UTC day, regardless of run completion (§5.3/§6.4) — no UI/backend drift. The frontend's single source of truth for gating. |
+| `GET /api/auth/me` | user | User + tier + `is_admin` + effective LLM policy + feature flags + quota status (`used_today`, `limit`; for admins the `limits.admin` ceiling, §6.1/§6.4) + size limits (global and tier, or the admin ceiling's) + the effective `concurrent_llm_runs` + a read-only `allow_additional_admins` (so the admin view can disable an admin checkbox that would only 403; reporting it does not weaken the config-only guarantee, since no endpoint accepts it as input). `used_today` is defined identically to `reserve_llm_run`'s count: **all** the user's ledger rows for the UTC day regardless of `status` — completed, failed, cancelled and abandoned included, not just those still `'started'` (§5.3/§6.4) — no UI/backend drift. The frontend's single source of truth for gating. |
 | `POST /api/auth/password` | user | Change own password; re-verifies current one. |
 | `GET /api/admin/users` | admin | List users (no password hashes in responses — a dedicated response model, never the row). |
 | `POST /api/admin/users` | admin | Create user: email, display name, initial password, tier, admin flag (subject to the admin-creation switch below). 422 on duplicate email/invalid input. |
@@ -712,9 +817,9 @@ CREATE TABLE admin_audit (
   caps of §6.6 apply to every LLM-invoking endpoint alike).
 - Error semantics overall: **401** unauthenticated / bad token, **403**
   forbidden action, **404** not yours / nonexistent, **413** over the
-  global size cap, **422** validation (unchanged), **429** concurrency
-  cap reached (§6.6, with `Retry-After`; never for daily quota, which
-  degrades instead).
+  global size cap, **409** self-lockout prevented (§7.1), **422**
+  validation (unchanged), **429** concurrency cap reached (§6.6, with
+  `Retry-After`; never for daily quota, which degrades instead).
 
 ### 7.3 SSE authentication
 
@@ -757,7 +862,7 @@ the recovery paths:
 | `set-password <email>` | Set a new password (bcrypt), same strength rules as §4.2. Local mode only — see below. |
 | `make-admin <email>` | Grant admin, and reactivate the account if it was deactivated. |
 | `revoke-admin <email>` | Drop admin privilege, keeping the account usable as a normal user. |
-| `deactivate <email>` | Kill all access for the account: the next request 401s (§4.1 step 3). |
+| `deactivate <email>` | Kill all access for the account: the next request 401s (§4.1 step 3). Warns, like `revoke-admin`, if it leaves no usable admin. |
 | `activate <email>` | Undo a deactivation. |
 
 **Incident response: the CLI is the only path, by construction.** If the
@@ -808,18 +913,24 @@ Rules that make it safe and honest:
 - **Every mutation writes an `admin_audit` row** with `actor_id NULL`,
   meaning "out-of-band operator action" — an admin password that changes
   without any admin session is exactly the event the audit trail should
-  not be blind to.
+  not be blind to. **One row per changed field**, here and in the admin
+  API alike: `make-admin` on a deactivated account writes two (`is_admin`
+  and `is_active`).
 - **The CLI is deliberately not bound by `auth.allow_additional_admins`**
   (§7.1). That switch exists to stop a *remote, stolen session* from
   minting a persistent second admin; an operator at the machine's shell
   is on the other side of that boundary and is precisely who must be able
   to restore access.
 - It operates on the configured database directly and requires no running
-  server, so it also works when the app will not start.
+  server, so it also works when the app will not start. Because the
+  database is a plain (non-WAL) SQLite file, CLI writes contend with a
+  live server's transactions; the CLI therefore uses `BEGIN IMMEDIATE`
+  with an explicit busy timeout so a collision fails predictably rather
+  than after an arbitrary default wait.
 
-**Applicability once Supabase Auth arrives (sub-project 2).** The three
-commands do not age alike, because authentication moves out while
-authorization stays:
+**Applicability once Supabase Auth arrives (sub-project 2).** The commands
+do not age alike, because authentication moves out while authorization
+stays:
 
 - `list-users`, `make-admin`, `revoke-admin`, `deactivate` and `activate`
   **remain the recovery and incident-response tools in both modes**:
@@ -843,13 +954,19 @@ sub-project 2, under the no-auto-adopt-by-email constraint in §11.
   request; any 401 response clears auth state and shows the login view —
   **except** from `POST /api/auth/login` itself, whose 401 is the
   bad-credentials signal the login form handles inline (otherwise a wrong
-  password would trigger a state-clearing loop).
+  password would trigger a state-clearing loop). A **429** (§6.6) must
+  *not* clear auth state: it is transient. The client's error type
+  carries the status so these cases stay distinguishable rather than
+  collapsing into one anonymous failure.
 - **Login view**: email/password form, error states, i18n ×7 like all UI.
 - **Admin view** (visible only when `is_admin`): user table — list,
   create, edit tier/role/active, reset password.
 - **Gating**: selectors grey out disallowed quality tiers / providers /
   models using the `/me` policy and the `allowed` flags, with a "requires
   Premium"-style hint, visually distinct from "not configured". The check
+  status area shows a transient "server busy, retry shortly" note for a
+  429 alongside the skip notices, the admin view disables the admin
+  checkbox when `allow_additional_admins` is false, and the check
   status area shows degradation notes from `effective_llm`, and
   `quota_exhausted` / `document_too_large` skip notices. A modest
   used/limit quota indicator sits near the LLM controls. The editor's
@@ -947,6 +1064,11 @@ uniqueness here.
    and may legally hold duplicates today. Rebuilds are guarded (run only
    when the old shape is detected) to stay idempotent.
 
+Startup order overall: migrations (the steps above) → admin seeding →
+the `'started'` → `'abandoned'` sweep (§6.6, a per-boot runtime action
+rather than a migration, but it belongs in this ordering) → the global
+seeders (§5.2).
+
 ## 10. Testing
 
 - **Backend**: login/token unit tests (success, wrong password, unknown
@@ -960,11 +1082,16 @@ uniqueness here.
   no admin endpoint can raise it — the value comes only from config);
   concurrency caps (a user at `concurrent_llm_runs` gets 429 with
   `Retry-After` while a second user is unaffected; the server-wide cap
-  binds across users; a finished run frees its slot; the backpressure
-  pause delays only the rejection and does not block a concurrent
-  reservation by another user — i.e. it happens outside the transaction; the startup sweep
-  and the staleness rule move stale `'started'` rows to `'abandoned'` so
-  slots cannot leak, while those rows still count against the day); ledger completeness (a reserved row
+  binds across users; a finished run frees its slot, **and so does a run
+  that raises mid-flight or is cancelled** — immediately, not only after
+  the staleness window; quota exhaustion outranks a concurrency rejection
+  when both apply; the backpressure pause is non-blocking (many
+  simultaneous rejections must not delay an unrelated request), happens
+  outside the transaction, and is skipped for server-wide rejections; the
+  startup sweep and the staleness rule move stale `'started'` rows to
+  `'abandoned'` so slots cannot leak, while those rows still count
+  against the day; a terminal write onto an already-swept row does not
+  resurrect it); ledger completeness (a reserved row
   carries `created_at`, `text_chars`, `status = 'started'` and both the
   requested and effective selection; the terminal status and token counts
   land on completion, failure, and cancellation alike); the suggestions/name-generation
@@ -981,6 +1108,10 @@ uniqueness here.
   admin ceiling in place of their tier's limits, still writing ledger
   rows; startup seeders
   create only `owner_id IS NULL` rows on a fresh multi-user DB; admin
+  config validation (a startup error for an incomplete `limits.admin`
+  block, a `concurrent_llm_runs` above `max_concurrent_llm_runs`, an
+  out-of-range `concurrency_reject_delay`, and a non-positive
+  `llm_run_max_age`); admin
   endpoint tests incl. self-lockout prevention, audit rows written, and
   the admin-creation switch (with `allow_additional_admins: false`,
   creating an admin and promoting a user both give 403 with a WARNING
@@ -1018,9 +1149,16 @@ uniqueness here.
   (email-match linking would allow privilege takeover via a
   attacker-registered Supabase account). And in `auth.mode: supabase`,
   local login and `LocalTokenVerifier` are disabled entirely (§4.1).
-- Fly.io deployment (sub-project 3). Binding precondition: the instance
+- Fly.io deployment (sub-project 3). Binding preconditions: the instance
   must not be publicly reachable before the deployment sub-project has
-  addressed HTTPS, CORS reconfiguration, and production secrets.
+  addressed HTTPS, CORS reconfiguration, and production secrets — **and
+  the deployment must run exactly one application process** (one machine,
+  one uvicorn worker). The startup sweep (§6.6) and the login throttle
+  (§4.2) are correct only under that assumption: a second process booting
+  would mark the first process's live runs `'abandoned'`, freeing
+  concurrency slots and corrupting the ledger. Horizontal scaling
+  requires replacing both mechanisms with shared-state equivalents
+  first.
 - Email flows of any kind (password reset is admin-driven).
 - Refresh tokens and token revocation (a captured token lives ≤ 24 h;
   Supabase brings refresh semantics). v1 *does* include the lightweight
