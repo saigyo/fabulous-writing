@@ -49,17 +49,25 @@ One FastAPI dependency resolves identity:
 ```
 get_current_user(request) -> CurrentUser
   1. extract Bearer token (401 if missing/malformed)
-  2. claims = TokenVerifier.verify(token)        # 401 on invalid/expired
-  3. user = UserStore lookup (by claims subject) # 401 if unknown or inactive
+  2. user_id = TokenVerifier.verify(token)       # 401 on invalid/expired
+  3. user = UserStore lookup (by local user id)  # 401 if unknown or inactive
   4. return CurrentUser(id, email, display_name, tier, is_admin)
 ```
 
-`TokenVerifier` is a small protocol:
+`TokenVerifier` is a small protocol whose contract is mode-independent:
+**`verify` returns the local `users.id`** in every mode, so
+`get_current_user` never changes lookup keys when the auth mode switches:
 
 ```python
 class TokenVerifier(Protocol):
-    def verify(self, token: str) -> TokenClaims: ...   # raises InvalidToken
+    def verify(self, token: str) -> int: ...
+    # returns the LOCAL users.id; raises InvalidToken on any failure
 ```
+
+The local verifier parses its own `sub` (the local id it issued). The
+Supabase verifier performs the `sub`-UUID → `users.external_id` resolution
+internally and **fails closed** (InvalidToken → 401) for a valid Supabase
+token whose identity is not linked to a local user row.
 
 Implementations:
 
@@ -348,11 +356,14 @@ Two limits, two behaviors:
 1. **Global cap** (`limits.max_document_chars`, applies to everyone):
    enforced wherever text enters — document create/save and check creation
    return **413** with a clear message when text exceeds it. A request-size
-   middleware caps request bodies at 5 MB (comfortably above any legal
-   payload under the char cap): oversized `Content-Length` is rejected
-   before parsing, **and** the byte budget is enforced on the bytes
-   actually read, so chunked/streamed requests without a `Content-Length`
-   header cannot bypass the cap.
+   middleware caps request bodies at a byte budget **derived from the char
+   cap** — `max(5 MB, 4 × max_document_chars + 1 MB)` (UTF-8 worst case
+   plus JSON overhead) — so tuning `max_document_chars` upward can never
+   silently create a state where legal payloads are rejected by a stale
+   fixed byte limit. Oversized `Content-Length` is rejected before
+   parsing, **and** the byte budget is enforced on the bytes actually
+   read, so chunked/streamed requests without a `Content-Length` header
+   cannot bypass the cap.
 2. **Per-tier LLM cap** (`max_llm_document_chars`): exceeding it skips
    only the LLM phase — rules/terminology still run — and the scorecard/
    SSE reports `document_too_large` with the tier's limit, analogous to
@@ -466,13 +477,19 @@ route returns the CORS preflight response, not 401.)
   by user id or purged on login/logout — a stale `currentDocId` or any
   future content-bearing persisted field must not survive into another
   user's session on a shared browser.
-- **XSS constraint (binding)**: no user-supplied or LLM-generated content
-  is ever rendered as raw HTML — no `dangerouslySetInnerHTML` on
-  findings, suggestions, messages, or names, anywhere. With a bearer
-  token in localStorage (matching Supabase Auth's own default), an XSS
-  sink is the one thing that turns into account theft; this constraint is
-  what keeps the storage choice sound. Logout clears client state only —
-  a captured token stays valid until `exp` (24 h); accepted as a
+- **XSS defense-in-depth (binding)**: with a bearer token in localStorage
+  (matching Supabase Auth's own default), any successful XSS is account
+  theft — so the defense is layered, not a single rule. (1) No
+  user-supplied or LLM-generated content is ever rendered as raw HTML —
+  no `dangerouslySetInnerHTML` on findings, suggestions, messages, or
+  names, anywhere. (2) No dynamic `href`/`src` from user or LLM content
+  without scheme validation (no `javascript:` URLs). (3) The production
+  deployment (sub-project 3) must serve the frontend with a strict
+  Content-Security-Policy (`default-src 'self'`, no inline scripts,
+  `connect-src` limited to the API origin) — recorded here as a binding
+  requirement on that sub-project. (4) Dependency hygiene stays covered
+  by the existing dependabot + CI setup. Logout clears client state only
+  — a captured token stays valid until `exp` (24 h); accepted as a
   conscious tradeoff of the stateless design at this user scale.
 
 ## 9. Migration & rollout
@@ -490,7 +507,7 @@ in tests.
    variables are unset (an unauthenticatable instance is useless).
 3. Add `owner_id` to `profiles` and `domains`. Backfill: profile rows
    carrying a seed marker → NULL (global); domains whose names match the
-   seed set defined in `app/services/seed.py` → NULL (domains have no seed
+   seed set defined in `backend/app/services/seed.py` → NULL (domains have no seed
    markers, so name-match is the identifying rule — a renamed seed domain
    stays private to the admin, which is acceptable); all other existing
    rows → 1. The name-match backfill runs **exactly once** — only in the
