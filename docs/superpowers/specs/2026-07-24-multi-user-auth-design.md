@@ -419,8 +419,12 @@ once there is more than one admin.
   "not configured on the server".
 - Check jobs (`POST /api/checks`, `GET /api/checks/{id}`, SSE events)
   remember their owner; polling or subscribing to another user's check is
-  404. LLM phase start applies, in order: size cap (§6.5) → quota (§6.4)
-  → `resolve_llm_selection` (§6.2), then records to the ledger.
+  404. LLM phase start applies, in order: size cap (§6.5) →
+  `resolve_llm_selection` (§6.2) → quota reservation (§6.4). Resolution
+  runs first because the quota check *is* the transactional insert of the
+  reservation ledger row (§5.3), and that row records the effective
+  provider/model — so the order preserves both TOCTOU safety and the
+  ledger's NOT NULL columns.
 - **Every LLM-invoking endpoint goes through the same gate** — not just
   checks. `POST /api/suggestions` and document name generation also
   accept provider/model parameters and call the provider factory today;
