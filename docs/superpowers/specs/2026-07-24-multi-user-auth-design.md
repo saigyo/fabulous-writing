@@ -63,16 +63,30 @@ class TokenVerifier(Protocol):
 
 Implementations:
 
-- **`LocalTokenVerifier`** (built now): HS256. Secret from `FW_AUTH_SECRET`
-  env var; if unset, a random secret is generated at startup with a logged
-  warning (dev convenience; tokens die on restart, and production must set
-  the variable explicitly). Claims: `sub` (user id as string), `exp`
-  (24 h from issue), `iat`.
+- **`LocalTokenVerifier`** (built now): HS256. Claims: `sub` (user id as
+  string), `exp` (24 h from issue), `iat`.
 - **`SupabaseTokenVerifier`** (interface + config slot now, implementation
   in sub-project 2): RS256 via Supabase JWKS; maps the Supabase `sub` UUID
   to `users.external_id`.
 
-Config selects the verifier: `auth.mode: local` (later: `supabase`).
+**Algorithm pinning (binding):** each verifier decodes with an explicit
+single-element `algorithms` list (`["HS256"]` resp. `["RS256"]`) and
+rejects everything else — never `none`, never a foreign algorithm — and
+validates `exp`/`iat`. A unit test asserts that a token signed with a
+different algorithm is rejected (the classic `alg: none` / RS256→HS256
+confusion bugs).
+
+**Secret handling:** the HS256 secret comes from `FW_AUTH_SECRET` and must
+be ≥ 32 characters (startup error otherwise). If unset, startup **fails**
+— unless config sets `auth.ephemeral_secret: true` (the checked-in dev
+`config.yaml` sets it; deployment configs must not), in which case a
+random per-start secret is generated with a logged warning (tokens die on
+restart — deliberately self-sabotaging outside dev).
+
+Config selects the verifier: `auth.mode: local` (later: `supabase`). In
+`supabase` mode, `POST /api/auth/login` and the `LocalTokenVerifier` are
+fully disabled — a leaked `FW_AUTH_SECRET` must not forge tokens against a
+Supabase-mode instance.
 
 An admin-only dependency (`require_admin`) wraps `get_current_user` and
 returns 403 for non-admins.
@@ -82,11 +96,20 @@ returns 403 for non-admins.
 `POST /api/auth/login {email, password}`:
 bcrypt-verify against `users.password_hash`; reject unknown email, wrong
 password, or `is_active = 0` uniformly with 401 and a generic message (no
-account enumeration). On success: `{token, user}` where `user` is the same
-shape `/api/auth/me` returns.
+account enumeration). For unknown or inactive accounts, a bcrypt
+comparison against a fixed dummy hash still runs so response timing does
+not leak account existence. On success: `{token, user}` where `user` is
+the same shape `/api/auth/me` returns.
 
-Passwords: bcrypt (via the `bcrypt` package), minimum length 8, initial
-passwords set by the admin. `POST /api/auth/password {current, new}`
+**Throttling:** a lightweight in-process throttle on failed logins per
+(email, client IP) — exponential backoff after N consecutive failures
+(e.g. 5), decaying over minutes; throttled attempts get the same generic
+401. In-memory is acceptable (single-process deployment); documented as
+non-distributed. Supabase replaces this in sub-project 2.
+
+Passwords: bcrypt (via the `bcrypt` package). Minimum length 8 for
+self-chosen passwords; 12 for admin-set ones (initial passwords, resets,
+and `FW_ADMIN_PASSWORD`). `POST /api/auth/password {current, new}`
 changes one's own password (re-verifies `current`).
 
 No refresh tokens in v1: with 24 h expiry and a small user base, re-login
@@ -122,12 +145,22 @@ external auth provider.
 
 Per table:
 
-- `documents`, `folders`: already have `owner_id` (currently constant 1).
-  Always private — never NULL. All queries gain `WHERE owner_id = ?`.
-- `profiles`, `domains`: gain an `owner_id` column. List endpoints return
-  global rows plus the caller's rows; create always as the caller
-  (feature-gated, see §6.3); update/delete of a global row requires admin.
-- `terms`: inherit ownership through their domain (no own column).
+- `documents`, `folders`: already have `owner_id INTEGER NOT NULL`
+  (currently constant 1) — "never global" is a database invariant, not a
+  convention. All queries gain `WHERE owner_id = ?`, and every store
+  method touching these tables takes `owner_id` as a **required,
+  non-defaulted** parameter, so a forgotten scope is a call-site error
+  rather than a cross-tenant read.
+- `profiles`, `domains`: gain a *nullable* `owner_id` column (NULL is the
+  deliberate global marker here). List endpoints return global rows plus
+  the caller's rows; create always as the caller (feature-gated, see
+  §6.3); update/delete of a global row requires admin.
+- `terms`: inherit ownership through their domain (no own column). The
+  term endpoints take a bare term id, so **every term read/mutation must
+  resolve the parent domain and check its ownership** — a term under
+  another user's domain is 404, a term under a global domain is
+  admin-mutable only. This check is part of the store API, not left to
+  the router.
 - Rule YAML files and LLM provider configuration: server-global, unchanged.
 
 The folders NOCASE unique index becomes per-owner in effect: uniqueness
@@ -152,9 +185,12 @@ CREATE INDEX idx_llm_usage_user_day ON llm_usage(user_id, day);
 
 A row is inserted when an LLM run starts (effective selection recorded);
 token counts are filled in when the run completes, from the token usage the
-providers already report. Record richly, limit simply: v1 enforces only one
-rule (§6.4), but every future limit dimension (per LLM tier, per model,
-token-based) is computable from this ledger without schema changes.
+providers already report. **Failed or cancelled runs keep their ledger
+row** (their token columns record whatever was reported before the end) —
+failures still spend quota, so cancel-and-retry loops cannot hit providers
+for free. Record richly, limit simply: v1 enforces only one rule (§6.4),
+but every future limit dimension (per LLM tier, per model, token-based) is
+computable from this ledger without schema changes.
 
 ## 6. Tiers & permissions
 
@@ -258,7 +294,10 @@ flag is later removed from the tier — the gate is on creation.
 
 v1 enforces exactly one rule, in one function
 (`check_quota(user, limits) -> QuotaDecision`): the count of `llm_usage`
-rows for (user, today-UTC) must be below `llm_checks_per_day`.
+rows for (user, today-UTC) must be below `llm_checks_per_day`. The check
+and the ledger insert happen in **one SQLite transaction**
+(insert-then-count-and-roll-back-if-over), so concurrent check starts
+cannot both slip under the limit (TOCTOU).
 
 Quota exhaustion degrades, it does not fail: rules and terminology checkers
 still run; the LLM phase is skipped and the scorecard/SSE reports
@@ -277,9 +316,11 @@ Two limits, two behaviors:
 1. **Global cap** (`limits.max_document_chars`, applies to everyone):
    enforced wherever text enters — document create/save and check creation
    return **413** with a clear message when text exceeds it. A request-size
-   middleware rejects bodies with `Content-Length` above 5 MB before JSON
-   parsing (cheap protection against pathological payloads; comfortably
-   above any legal document payload under the char cap).
+   middleware caps request bodies at 5 MB (comfortably above any legal
+   payload under the char cap): oversized `Content-Length` is rejected
+   before parsing, **and** the byte budget is enforced on the bytes
+   actually read, so chunked/streamed requests without a `Content-Length`
+   header cannot bypass the cap.
 2. **Per-tier LLM cap** (`max_llm_document_chars`): exceeding it skips
    only the LLM phase — rules/terminology still run — and the scorecard/
    SSE reports `document_too_large` with the tier's limit, analogous to
@@ -306,6 +347,12 @@ data.
 No hard user delete in v1: deactivation preserves `owner_id` referential
 integrity.
 
+**Admin audit trail:** every admin mutation (create user, tier/role/active
+change, password reset) appends a row to a small `admin_audit` table
+(actor user id, target user id, field, old → new value where sensible —
+never password material — and timestamp). Cheap now, painful to retrofit
+once there is more than one admin.
+
 ### 7.2 Changes to existing endpoints
 
 - All existing `/api/*` endpoints require authentication.
@@ -320,6 +367,16 @@ integrity.
   remember their owner; polling or subscribing to another user's check is
   404. LLM phase start applies, in order: size cap (§6.5) → quota (§6.4)
   → `resolve_llm_selection` (§6.2), then records to the ledger.
+- **Every LLM-invoking endpoint goes through the same gate** — not just
+  checks. `POST /api/suggestions` and document name generation also
+  accept provider/model parameters and call the provider factory today;
+  un-gated they would bypass tier policy and quota entirely. Provider
+  acquisition is therefore centralized behind one function
+  (`get_effective_provider(user, requested, language)`) that applies
+  quota + `resolve_llm_selection` and writes the ledger row; no route
+  reaches `provider_factory` directly. (Suggestion/name-generation runs
+  count toward the same `llm_checks_per_day` in v1 — one quota, no
+  separate bucket.)
 - Error semantics overall: **401** unauthenticated / bad token, **403**
   forbidden action, **404** not yours / nonexistent, **413** over the
   global size cap, **422** validation (unchanged), **429** unused.
@@ -361,9 +418,19 @@ default `["http://localhost:5173"]` (config: `cors.origins`).
   used/limit quota indicator sits near the LLM controls. The editor's
   character count marks the tier LLM threshold and the global cap
   distinctly.
-- **User-switch hygiene**: the persisted editor state is keyed by user id;
-  logging in as a different user resets local state before hydrating from
-  the server. Logout clears the persisted auth state.
+- **User-switch hygiene**: the *entire* persisted store (the existing
+  `fabulous-writing-settings` blob, not only the auth slice) is namespaced
+  by user id or purged on login/logout — a stale `currentDocId` or any
+  future content-bearing persisted field must not survive into another
+  user's session on a shared browser.
+- **XSS constraint (binding)**: no user-supplied or LLM-generated content
+  is ever rendered as raw HTML — no `dangerouslySetInnerHTML` on
+  findings, suggestions, messages, or names, anywhere. With a bearer
+  token in localStorage (matching Supabase Auth's own default), an XSS
+  sink is the one thing that turns into account theft; this constraint is
+  what keeps the storage choice sound. Logout clears client state only —
+  a captured token stays valid until `exp` (24 h); accepted as a
+  conscious tradeoff of the stateless design at this user scale.
 
 ## 9. Migration & rollout
 
@@ -383,7 +450,11 @@ in tests.
    seed set defined in `app/services/seed.py` → NULL (domains have no seed
    markers, so name-match is the identifying rule — a renamed seed domain
    stays private to the admin, which is acceptable); all other existing
-   rows → 1.
+   rows → 1. The name-match backfill runs **exactly once** — only in the
+   migration step that adds the `owner_id` column, against the pre-auth
+   single-owner DB — never as a recurring rule that could misclassify a
+   future user's domain sharing a seed name.
+3a. Create `admin_audit` (§7.1).
 4. Folder name uniqueness becomes per-owner: replace the global NOCASE
    unique index with `UNIQUE (owner_id, name COLLATE NOCASE)` semantics
    (partial index for non-NULL owners; same duplicate pre-scan +
@@ -394,14 +465,20 @@ in tests.
 ## 10. Testing
 
 - **Backend**: login/token unit tests (success, wrong password, unknown
-  email, inactive user, expired/garbage token); `resolve_llm_selection`
-  exhaustive table tests (every tier×policy path incl. floor and walk-up);
-  quota tests incl. UTC day rollover; size-limit tests (413 path and LLM
-  skip path); ownership isolation (user A cannot read/mutate B's items;
-  non-admin cannot mutate globals; cross-user check polling is 404); admin
-  endpoint tests incl. self-lockout prevention; migration tests against a
-  pre-auth schema fixture (admin seeding, owner backfill, per-owner
-  uniqueness).
+  email, inactive user, expired/garbage token, wrong-algorithm token
+  rejected, login throttle kicks in); `resolve_llm_selection` exhaustive
+  table tests (every tier×policy path incl. floor and walk-up); quota
+  tests incl. UTC day rollover, transactional concurrency (two
+  simultaneous starts at limit−1 admit exactly one), and
+  cancelled-run-keeps-ledger-row; the suggestions/name-generation
+  endpoints hit the same gate (a basic user cannot obtain a premium
+  provider through them); size-limit tests (413 path, LLM skip path, and
+  a chunked body without Content-Length is capped); ownership isolation
+  (user A cannot read/mutate B's items; non-admin cannot mutate globals;
+  term mutation checks the parent domain's owner; cross-user check
+  polling is 404); admin endpoint tests incl. self-lockout prevention and
+  audit rows written; migration tests against a pre-auth schema fixture
+  (admin seeding, owner backfill, per-owner uniqueness).
 - **Frontend**: vitest for the auth slice, 401-clears-auth behavior, and
   the fetch-based SSE reader; the usual `tsc`/lint/build gates.
 - **E2E**: the scratch-stack script gains a login step; a two-user
@@ -413,10 +490,21 @@ in tests.
 
 - Supabase verifier implementation, user provisioning, invite flows
   (sub-project 2; only the `TokenVerifier` interface and `auth.mode`
-  config slot land now).
-- Fly.io deployment (sub-project 3).
+  config slot land now). **Binding constraints on that future work,
+  because the interface is defined here:** linking a Supabase identity to
+  a local user row is an explicit admin action (or an admin-approved
+  first-login confirmation) — a Supabase-supplied email must **never**
+  auto-adopt an existing local row, especially not an admin one
+  (email-match linking would allow privilege takeover via a
+  attacker-registered Supabase account). And in `auth.mode: supabase`,
+  local login and `LocalTokenVerifier` are disabled entirely (§4.1).
+- Fly.io deployment (sub-project 3). Binding precondition: the instance
+  must not be publicly reachable before the deployment sub-project has
+  addressed HTTPS, CORS reconfiguration, and production secrets.
 - Email flows of any kind (password reset is admin-driven).
-- Refresh tokens; login rate limiting / lockouts (revisit with Supabase,
-  which provides both).
+- Refresh tokens and token revocation (a captured token lives ≤ 24 h;
+  Supabase brings refresh semantics). v1 *does* include the lightweight
+  login throttle (§4.2); distributed/robust rate limiting comes with
+  Supabase.
 - Per-user API keys for LLM providers.
 - Hard user deletion / data export.
