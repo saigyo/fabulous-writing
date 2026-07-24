@@ -613,10 +613,8 @@ worth stating here, where the endpoints live:
   exists the variables are ignored entirely, so they can never act as a
   standing password-reset backdoor. Changing the admin password
   afterwards goes through `POST /api/auth/password` like anyone else's.
-- Losing the admin password means editing the database directly on the
-  server (or clearing `users` and re-seeding). That is acceptable at this
-  scale and is the intended recovery story — there is no email reset
-  flow (§11).
+- Losing the admin password is recovered with the operator CLI (§7.5),
+  not by re-running the bootstrap — there is no email reset flow (§11).
 
 **Admin-creation switch (`auth.allow_additional_admins`, default
 `false`).** One admin account is all this deployment needs; every further
@@ -653,7 +651,8 @@ painful to retrofit once there is more than one admin:
 ```sql
 CREATE TABLE admin_audit (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    actor_id   INTEGER NOT NULL,       -- admin performing the action
+    actor_id   INTEGER,                -- admin performing the action;
+                                       -- NULL = out-of-band operator CLI (§7.5)
     target_id  INTEGER NOT NULL,       -- user acted upon
     field      TEXT NOT NULL,          -- 'created'|'tier'|'is_admin'|'is_active'|'display_name'|'password'
     old_value  TEXT,                   -- NULL for 'created' and 'password' (never password material)
@@ -743,6 +742,47 @@ routing, so browser `OPTIONS` preflight requests are answered by the
 middleware before any auth dependency runs — preflight requires no token.
 (A test asserts that an unauthenticated `OPTIONS` to an authenticated
 route returns the CORS preflight response, not 401.)
+
+### 7.5 Operator CLI (out-of-band recovery)
+
+A forgotten admin password must not be a dead end, and it must not be
+recovered by leaving a reset backdoor in the running application. A small
+management CLI — `uv run python -m app.manage <command>`, executed on the
+server (locally, or via `fly ssh console` after deployment) — provides
+the recovery paths:
+
+| Command | Purpose |
+|---|---|
+| `list-users` | id, email, tier, admin flag, active flag — to find the account to fix. |
+| `set-password <email>` | Set a new password (bcrypt), same strength rules as §4.2. |
+| `make-admin <email>` | Grant admin, and reactivate the account if it was deactivated. |
+
+**Why a CLI rather than an env-var reset or a recovery endpoint.** Both
+alternatives leave a standing hole: an env var that resets a password on
+boot is a permanent backdoor for anyone who ever reads the environment,
+and it silently re-resets on every restart if left in place; an
+unauthenticated recovery endpoint is exposed to the whole internet for
+the sake of a once-a-year need. The CLI requires shell access to the
+machine, which is a strictly higher privilege than any web session and
+one that already implies full control of the database — so it adds **no
+new attack surface** while removing the temptation to build one.
+
+Rules that make it safe and honest:
+
+- **Passwords are never taken from argv** (they would land in shell
+  history and in `ps` output for every other process on the box): the CLI
+  prompts, or reads a single line from stdin.
+- **Every mutation writes an `admin_audit` row** with `actor_id NULL`,
+  meaning "out-of-band operator action" — an admin password that changes
+  without any admin session is exactly the event the audit trail should
+  not be blind to.
+- **The CLI is deliberately not bound by `auth.allow_additional_admins`**
+  (§7.1). That switch exists to stop a *remote, stolen session* from
+  minting a persistent second admin; an operator at the machine's shell
+  is on the other side of that boundary and is precisely who must be able
+  to restore access.
+- It operates on the configured database directly and requires no running
+  server, so it also works when the app will not start.
 
 ## 8. Frontend
 
@@ -893,7 +933,11 @@ uniqueness here.
   the admin-creation switch (with `allow_additional_admins: false`,
   creating an admin and promoting a user both give 403 with a WARNING
   logged, while demotion still succeeds; with it `true`, both are
-  permitted — and no endpoint can change the switch itself);
+  permitted — and no endpoint can change the switch itself); operator CLI
+  (`set-password` lets the account log in again and writes an audit row
+  with `actor_id NULL`; `make-admin` reactivates a deactivated account
+  and works even with `allow_additional_admins: false`; no command
+  accepts a password as an argv argument);
   migration tests against a pre-auth schema fixture (admin seeding, owner
   backfill incl. the profiles name-match rule, the guarded
   `folders`/`profiles` rebuilds preserving every row and dropping the old
