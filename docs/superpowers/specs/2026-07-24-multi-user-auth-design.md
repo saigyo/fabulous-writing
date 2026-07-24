@@ -80,7 +80,11 @@ Implementations:
 **Algorithm and claim pinning (binding):** each verifier decodes with an
 explicit single-element `algorithms` list (`["HS256"]` resp. `["RS256"]`)
 and rejects everything else — never `none`, never a foreign algorithm —
-and validates `exp`/`iat` **and** `iss`/`aud`. Local tokens are issued
+and validates `exp`/`iat` **and** `iss`/`aud`. `exp`, `iss`, and `aud`
+are strict; `iat` is required but rejected only when it lies more than a
+60-second leeway window in the future — otherwise minor clock drift
+between the API server and the token issuer (notably Supabase's signing
+service later) would cause intermittent 401s. Local tokens are issued
 with `iss: "fabulous-writing"` and `aud: "fabulous-writing"` and the
 local verifier requires exactly those; the Supabase verifier must require
 the project's issuer URL and Supabase's `aud` (`authenticated`), so a
