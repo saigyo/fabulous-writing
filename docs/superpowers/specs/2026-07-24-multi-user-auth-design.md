@@ -300,6 +300,7 @@ limits:                        # global, server-level (all users incl. admin)
   max_document_chars: 200000
   max_concurrent_llm_runs: 20  # server-wide, protects the machine
   llm_run_max_age: 900         # seconds; older 'started' rows are swept (§6.6)
+  concurrency_reject_delay: 0.25   # seconds of backpressure before a 429 (§6.6)
   admin:                       # blast-radius ceiling for admins, config-only
     llm_checks_per_day: 500
     max_llm_document_chars: 200000
@@ -554,6 +555,31 @@ and retryable, so it is the one place the API returns **429** — with a
 here: nothing about the request is over its entitlement, the server is
 simply busy right now. Legitimate UI flows effectively never see it.
 
+**Backpressure delay:** the 429 is returned after a small fixed pause
+(`limits.concurrency_reject_delay`, default 250 ms), so an over-eager
+client is slowed in the loop rather than merely told "no" — the same
+spirit as the failed-login backoff (§4.2). Two constraints keep it from
+backfiring, and both are binding:
+
+1. **The pause happens after the reservation transaction has rolled back,
+   never inside it.** Sleeping while holding the transaction would block
+   every other user's reservation for the duration — turning a
+   politeness measure into a self-inflicted global stall.
+2. **It stays small and fixed — it never escalates with repeated hits**,
+   unlike the login backoff. The two cases are not symmetric: a login
+   delay directly reduces an attacker's guess *rate*, because they need
+   many sequential attempts to succeed. Here the caller is already
+   rejected and no LLM run is started, so a longer delay does not reduce
+   their success rate at all — it only makes them hold a server
+   connection longer, adding to exactly the resource pressure the cap
+   exists to relieve. A quarter second is enough to break a tight retry
+   loop without becoming an amplification vector.
+
+If bot traffic ever justifies more than this, the right escalation is a
+per-user request-rate throttle (token bucket, rejecting immediately and
+cheaply) or an edge rate limit at the deployment layer — not a longer
+pause.
+
 ## 7. API surface
 
 ### 7.1 New endpoints
@@ -792,7 +818,9 @@ uniqueness here.
   no admin endpoint can raise it — the value comes only from config);
   concurrency caps (a user at `concurrent_llm_runs` gets 429 with
   `Retry-After` while a second user is unaffected; the server-wide cap
-  binds across users; a finished run frees its slot; the startup sweep
+  binds across users; a finished run frees its slot; the backpressure
+  pause delays only the rejection and does not block a concurrent
+  reservation by another user — i.e. it happens outside the transaction; the startup sweep
   and the staleness rule move stale `'started'` rows to `'abandoned'` so
   slots cannot leak, while those rows still count against the day); ledger completeness (a reserved row
   carries `created_at`, `text_chars`, `status = 'started'` and both the
