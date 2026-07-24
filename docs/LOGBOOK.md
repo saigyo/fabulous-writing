@@ -2792,5 +2792,21 @@ pinned as non-blocking, since a `time.sleep` on the reject path would
 stall this single-process asyncio backend for every user. All 23 Copilot
 findings and both review rounds were addressed on the branch.
 
-**Next**: implementation plan on a fresh branch/PR, with per-milestone
-branches thereafter.
+**Planning** (same branch, PR #15): a milestone roadmap
+(`docs/superpowers/plans/2026-07-25-multi-user-roadmap.md`) fixing six
+milestone boundaries — auth core, enforcement + frontend auth, ownership
+isolation, tiers, metering, admin UI — ordered by one constraint: after
+every merge `main` must be a working application, which is why
+authentication is built before it is enforced and why enforcement ships
+together with the frontend that satisfies it. Each milestone gets its own
+branch, PR and detailed plan, the latter written just before that
+milestone starts so it can use what the previous one revealed. The first
+of those, `2026-07-25-multi-user-m1-auth-core.md`, is included here: ten
+TDD tasks with complete code for the users/audit tables, bcrypt hashing,
+pinned HS256 tokens, per-request identity, login with backoff, the admin
+API, the fail-closed bootstrap, and the operator CLI. Writing it caught
+two defects before implementation: an HS512 test token signed with a
+40-byte key would have tripped the zero-warnings pytest gate, and the
+login throttle's table was unbounded against attacker-supplied keys.
+
+**Next**: M1 implementation on branch `multi-user-auth-core`.
