@@ -756,6 +756,39 @@ the recovery paths:
 | `list-users` | id, email, tier, admin flag, active flag — to find the account to fix. |
 | `set-password <email>` | Set a new password (bcrypt), same strength rules as §4.2. Local mode only — see below. |
 | `make-admin <email>` | Grant admin, and reactivate the account if it was deactivated. |
+| `revoke-admin <email>` | Drop admin privilege, keeping the account usable as a normal user. |
+| `deactivate <email>` | Kill all access for the account: the next request 401s (§4.1 step 3). |
+| `activate <email>` | Undo a deactivation. |
+
+**Incident response: the CLI is the only path, by construction.** If the
+admin account itself is compromised, the admin API cannot save you — the
+self-lockout rule (§7.1) forbids an admin from de-adminning or
+deactivating *themselves*, and with `allow_additional_admins: false`
+there is no second admin to do it for them. That rule is right for the
+API (it prevents an ordinary mistake from bricking the deployment) but it
+means the escape hatch has to live outside the request path. Hence
+`revoke-admin` / `deactivate` here.
+
+Escalating levers, in order:
+
+1. `revoke-admin` — drops privilege on the **next request**, because
+   `get_current_user` re-reads the user row every time rather than
+   trusting token claims (§4.1). The account survives as a normal user,
+   and its spend falls back from `limits.admin` to its tier's limits.
+2. `deactivate` — the attacker's token stops working entirely at the next
+   request, even though it has not expired.
+3. Rotate `FW_AUTH_SECRET` and restart — invalidates **every** outstanding
+   token at once, for all users. The blunt instrument for "I don't know
+   which sessions are compromised"; everyone simply logs in again. (In
+   `supabase` mode the equivalent lever is Supabase's session
+   revocation, not this variable.)
+
+Deliberately, `revoke-admin` does **not** refuse when it would leave zero
+admins — it warns instead. An incident may well call for freezing all
+admin access and then minting a fresh account with `make-admin`; a CLI
+that enforced the API's safety rails would block exactly the emergency it
+exists for. Both commands write `admin_audit` rows like every other CLI
+mutation, so the response itself is on the record.
 
 **Why a CLI rather than an env-var reset or a recovery endpoint.** Both
 alternatives leave a standing hole: an env var that resets a password on
@@ -788,10 +821,11 @@ Rules that make it safe and honest:
 commands do not age alike, because authentication moves out while
 authorization stays:
 
-- `list-users` and `make-admin` **remain the recovery tools in both
-  modes**: tier, `is_admin` and `is_active` live in our `users` table
-  regardless of who verifies the token, so "I locked myself out of admin"
-  is still fixed here and nowhere else.
+- `list-users`, `make-admin`, `revoke-admin`, `deactivate` and `activate`
+  **remain the recovery and incident-response tools in both modes**:
+  tier, `is_admin` and `is_active` live in our `users` table regardless
+  of who verifies the token, so both "I locked myself out of admin" and
+  "revoke this account now" are still handled here and nowhere else.
 - `set-password` is **local-mode-only and refuses to run in
   `supabase` mode**, pointing at Supabase's own reset flow instead. The
   refusal is deliberate rather than a silent no-op: in `supabase` mode
@@ -956,7 +990,10 @@ uniqueness here.
   with `actor_id NULL`; `make-admin` reactivates a deactivated account
   and works even with `allow_additional_admins: false`; no command
   accepts a password as an argv argument; `set-password` refuses under
-  `auth.mode: supabase` and leaves `password_hash` untouched);
+  `auth.mode: supabase` and leaves `password_hash` untouched;
+  `revoke-admin` takes effect on the very next request of an existing
+  token and warns rather than refusing when it leaves zero admins;
+  `deactivate` makes an unexpired token 401);
   migration tests against a pre-auth schema fixture (admin seeding, owner
   backfill incl. the profiles name-match rule, the guarded
   `folders`/`profiles` rebuilds preserving every row and dropping the old
