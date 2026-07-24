@@ -81,12 +81,16 @@ unit test asserts that tokens with a different algorithm, issuer, or
 audience are rejected (the classic `alg: none` / RS256→HS256 confusion
 bugs, plus cross-environment token reuse).
 
-**Secret handling:** the HS256 secret comes from `FW_AUTH_SECRET` and must
-be ≥ 32 characters (startup error otherwise). If unset, startup **fails**
-— unless config sets `auth.ephemeral_secret: true` (the checked-in dev
-`config.yaml` sets it; deployment configs must not), in which case a
-random per-start secret is generated with a logged warning (tokens die on
-restart — deliberately self-sabotaging outside dev).
+**Secret handling:** the HS256 secret comes from `FW_AUTH_SECRET`, must be
+≥ 32 characters (startup error otherwise), and must be generated randomly
+— e.g. `openssl rand -base64 32` (length is the mechanical gate; the
+random-generation requirement is documented in `config.example.yaml` and
+the README, since entropy cannot be verified programmatically). If unset,
+startup **fails** — unless config sets `auth.ephemeral_secret: true` (set
+in the git-ignored local dev `config.yaml`, documented in the tracked
+`config.example.yaml`; deployment configs must not set it), in which case
+a random per-start secret is generated with a logged warning (tokens die
+on restart — deliberately self-sabotaging outside dev).
 
 Config selects the verifier: `auth.mode: local` (later: `supabase`). In
 `supabase` mode, `POST /api/auth/login` and the `LocalTokenVerifier` are
@@ -183,10 +187,15 @@ CREATE TABLE llm_usage (
     model          TEXT NOT NULL,          -- effective model
     input_tokens   INTEGER,                -- NULL when the provider reports nothing
     output_tokens  INTEGER,
-    check_id       TEXT NOT NULL
+    source         TEXT NOT NULL,          -- 'check' | 'suggestion' | 'name'
+    run_id         TEXT NOT NULL           -- correlation id of the LLM run (check id, suggestion id, …)
 );
 CREATE INDEX idx_llm_usage_user_day ON llm_usage(user_id, day);
 ```
+
+The ledger covers **every** LLM-invoking endpoint (§7.2), not only checks —
+hence the source-agnostic `run_id` (not `check_id`) plus a `source` column
+so future per-feature limits or cost analysis need no schema change.
 
 A row is inserted when an LLM run starts (effective selection recorded);
 token counts are filled in when the run completes, from the token usage the
@@ -349,7 +358,7 @@ data.
 | Endpoint | Auth | Behavior |
 |---|---|---|
 | `POST /api/auth/login` | none | §4.2. 401 (generic) on any failure. |
-| `GET /api/auth/me` | user | User + tier + `is_admin` + effective LLM policy + feature flags + quota status (`used_today`, `limit`) + size limits (global and tier). The frontend's single source of truth for gating. |
+| `GET /api/auth/me` | user | User + tier + `is_admin` + effective LLM policy + feature flags + quota status (`used_today`, `limit`) + size limits (global and tier). `used_today` is defined identically to `check_quota`'s input: the count of *started* ledger rows for the UTC day, regardless of run completion (§5.3/§6.4) — no UI/backend drift. The frontend's single source of truth for gating. |
 | `POST /api/auth/password` | user | Change own password; re-verifies current one. |
 | `GET /api/admin/users` | admin | List users (no password hashes in responses — a dedicated response model, never the row). |
 | `POST /api/admin/users` | admin | Create user: email, display name, initial password, tier, admin flag. 422 on duplicate email/invalid input. |
@@ -370,6 +379,11 @@ once there is more than one admin.
 - Store queries are owner-scoped. Requesting another user's resource
   returns **404** (indistinguishable from nonexistent — no existence
   leak). Mutating a global (owner NULL) profile/domain as non-admin: 403.
+- Profile and domain responses include an `is_global: bool` field (derived
+  from `owner_id IS NULL`) so the client can distinguish a user's private
+  item from a global built-in — including when they share a `name`
+  (per-owner uniqueness does not span the global set) — and render
+  read-only vs. edit/delete affordances correctly.
 - `/api/routing` and `/api/providers` responses gain a per-entry
   `allowed: bool` computed for the caller, alongside the existing
   `available`/`reason` — the UI distinguishes "not on your plan" from
@@ -412,6 +426,12 @@ single-use, seconds-lived ticket — never the session token.
 
 `allow_origins` tightens from `*` to a configured list,
 default `["http://localhost:5173"]` (config: `cors.origins`).
+
+Auth never breaks preflight: `CORSMiddleware` wraps the app ahead of
+routing, so browser `OPTIONS` preflight requests are answered by the
+middleware before any auth dependency runs — preflight requires no token.
+(A test asserts that an unauthenticated `OPTIONS` to an authenticated
+route returns the CORS preflight response, not 401.)
 
 ## 8. Frontend
 
