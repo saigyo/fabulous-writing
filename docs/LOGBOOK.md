@@ -2752,3 +2752,61 @@ commits, preserved in PR #10's history
 two minors — the sqlite-handle one fixed on the branch, the zh-colon
 one declined with rationale (matches the catalog's convention). CI on
 merged main: green.
+
+## 2026-07-25 — Multi-user capability & authentication: design spec
+
+**Goal**: prepare the app for a limited set of real users, ahead of a
+Fly.io deployment with Supabase Auth. This iteration produced a design
+spec only — no code.
+
+**Spec**: `docs/superpowers/specs/2026-07-24-multi-user-auth-design.md`,
+merged as PR #14 (squash, main head `7ea93ba`; the branch's 20 commits
+and the full review history stay in the PR). Sub-project 1 of three:
+this covers the multi-user foundation plus local email/password auth;
+Supabase Auth integration and the Fly.io deployment each get their own
+spec → plan → implementation cycle.
+
+**Shape of the design**: users with basic/premium tiers and a separate
+admin flag; the permission model layers onto the *existing* two-
+dimensional LLM selection (quality tiers × provider/model) and
+**degrades gracefully** rather than erroring, so the global built-in
+profiles stay usable by every tier; daily quotas plus a config-only
+admin spend ceiling; per-user and server-wide concurrency caps; document
+size limits; an append-only `llm_usage` ledger recording the dimensions
+that cannot be backfilled later; ownership isolation with `owner_id
+NULL` marking global built-ins; local auth behind a pluggable
+`TokenVerifier` that Supabase later replaces without touching the
+request path; an admin view in the existing view-switch and an operator
+CLI for recovery and incident response.
+
+**Review**: two full security/coherence passes by an opus subagent and
+eleven Copilot rounds. The first opus pass found seven Important
+security items (notably that `/api/suggestions` and name generation
+would have bypassed tier policy and quota entirely); the second returned
+NOT READY on three schema-grounded Criticals — inline `UNIQUE`
+constraints on `folders.name` and `profiles(language, name)` make
+per-owner uniqueness impossible without table rebuilds, and the proposed
+partial index would have failed on the seeded `Standard` × 7 languages —
+plus a Critical of its own making: the backpressure delay had to be
+pinned as non-blocking, since a `time.sleep` on the reject path would
+stall this single-process asyncio backend for every user. All 23 Copilot
+findings and both review rounds were addressed on the branch.
+
+**Planning** (same branch, PR #15): a milestone roadmap
+(`docs/superpowers/plans/2026-07-25-multi-user-roadmap.md`) fixing six
+milestone boundaries — auth core, enforcement + frontend auth, ownership
+isolation, tiers, metering, admin UI — ordered by one constraint: after
+every merge `main` must be a working application, which is why
+authentication is built before it is enforced and why enforcement ships
+together with the frontend that satisfies it. Each milestone gets its own
+branch, PR and detailed plan, the latter written just before that
+milestone starts so it can use what the previous one revealed. The first
+of those, `2026-07-25-multi-user-m1-auth-core.md`, is included here: ten
+TDD tasks with complete code for the users/audit tables, bcrypt hashing,
+pinned HS256 tokens, per-request identity, login with backoff, the admin
+API, the fail-closed bootstrap, and the operator CLI. Writing it caught
+two defects before implementation: an HS512 test token signed with a
+40-byte key would have tripped the zero-warnings pytest gate, and the
+login throttle's table was unbounded against attacker-supplied keys.
+
+**Next**: M1 implementation on branch `multi-user-auth-core`.
