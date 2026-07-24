@@ -116,6 +116,18 @@ the same shape `/api/auth/me` returns.
 401. In-memory is acceptable (single-process deployment); documented as
 non-distributed. Supabase replaces this in sub-project 2.
 
+**Client IP derivation (binding):** in v1 (no proxy in front) the client
+IP is `request.client.host` — forwarded headers are **ignored**.
+`X-Forwarded-For`/`Forwarded` must only ever be honored when the direct
+peer is on an explicitly configured trusted-proxy list (uvicorn
+`--forwarded-allow-ips` / ProxyHeadersMiddleware with the proxy's
+address), which the Fly.io deployment (sub-project 3) will configure.
+Trusting forwarded headers unconditionally would let an attacker mint
+fresh spoofed IPs per request and bypass the throttle entirely; ignoring
+them behind a proxy would collapse all clients to the proxy IP (the email
+dimension keeps that failure contained to per-account backoff, but the
+deployment must still set the trusted list).
+
 Passwords: bcrypt (via the `bcrypt` package). Minimum length 8 for
 self-chosen passwords; 12 for admin-set ones (initial passwords, resets,
 and `FW_ADMIN_PASSWORD`). `POST /api/auth/password {current, new}`
@@ -488,10 +500,15 @@ in tests.
 3a. Create `admin_audit` (§7.1).
 4. Folder name uniqueness becomes per-owner: replace the global NOCASE
    unique index with `UNIQUE (owner_id, name COLLATE NOCASE)` semantics
-   (partial index for non-NULL owners; same duplicate pre-scan +
-   skip-with-warning pattern as the original NOCASE migration). Same
-   pattern for any other per-user name-unique resources (profiles,
-   domains).
+   (same duplicate pre-scan + skip-with-warning pattern as the original
+   NOCASE migration). For tables with a *nullable* `owner_id` (`profiles`,
+   `domains`) a single composite unique index is **not** enough: SQLite
+   treats NULLs as distinct in unique indexes, so duplicate global names
+   would pass. Those tables get **two partial unique indexes**:
+   `(owner_id, name COLLATE NOCASE) WHERE owner_id IS NOT NULL` for
+   per-user uniqueness, and `(name COLLATE NOCASE) WHERE owner_id IS NULL`
+   for uniqueness among the global built-ins. (`folders.owner_id` is
+   NOT NULL, so the composite index alone suffices there.)
 
 ## 10. Testing
 
