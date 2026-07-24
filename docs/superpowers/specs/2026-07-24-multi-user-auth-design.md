@@ -333,11 +333,13 @@ flag is later removed from the tier — the gate is on creation.
 ### 6.4 Quotas
 
 v1 enforces exactly one rule, in one function
-(`check_quota(user, limits) -> QuotaDecision`): the count of `llm_usage`
-rows for (user, today-UTC) must be below `llm_checks_per_day`. The check
-and the ledger insert happen in **one SQLite transaction**
-(insert-then-count-and-roll-back-if-over), so concurrent check starts
-cannot both slip under the limit (TOCTOU).
+(`check_quota(user, limits) -> QuotaDecision`), inside **one SQLite
+transaction** so concurrent starts cannot both slip under the limit
+(TOCTOU). Stated precisely to avoid an off-by-one: insert the reservation
+row, then count this user's rows for today-UTC *including the one just
+inserted*; **commit iff `count <= llm_checks_per_day`, else roll back**
+(the run is denied). A user with a limit of 20 therefore gets exactly 20
+runs per UTC day.
 
 Quota exhaustion degrades, it does not fail: rules and terminology checkers
 still run; the LLM phase is skipped and the scorecard/SSE reports
@@ -514,8 +516,8 @@ in tests.
    migration step that adds the `owner_id` column, against the pre-auth
    single-owner DB — never as a recurring rule that could misclassify a
    future user's domain sharing a seed name.
-3a. Create `admin_audit` (§7.1).
-4. Folder name uniqueness becomes per-owner: replace the global NOCASE
+4. Create `admin_audit` (§7.1).
+5. Folder name uniqueness becomes per-owner: replace the global NOCASE
    unique index with `UNIQUE (owner_id, name COLLATE NOCASE)` semantics
    (same duplicate pre-scan + skip-with-warning pattern as the original
    NOCASE migration). For tables with a *nullable* `owner_id` (`profiles`,
