@@ -101,8 +101,10 @@ the README, since entropy cannot be verified programmatically). If unset,
 startup **fails** — unless config sets `auth.ephemeral_secret: true` (set
 in the git-ignored local dev `config.yaml`, documented in the tracked
 `config.example.yaml`; deployment configs must not set it), in which case
-a random per-start secret is generated with a logged warning (tokens die
-on restart — deliberately self-sabotaging outside dev).
+a random per-start secret is generated with a logged warning — which
+states the fact, never the secret value (a credential must not land in
+logs) — and tokens die on restart, deliberately self-sabotaging outside
+dev.
 
 Config selects the verifier: `auth.mode: local` (later: `supabase`). In
 `supabase` mode, `POST /api/auth/login` and the `LocalTokenVerifier` are
