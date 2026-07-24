@@ -226,6 +226,7 @@ CREATE TABLE llm_usage (
     day                TEXT NOT NULL,      -- 'YYYY-MM-DD', UTC; the indexed quota key
     created_at         TEXT NOT NULL,      -- ISO 8601 UTC, reservation time
     status             TEXT NOT NULL,      -- 'started' → 'completed' | 'failed' | 'cancelled'
+                                           -- | 'abandoned' (swept, §6.6)
     llm_tier           TEXT,               -- effective quality tier whenever the effective
                                            -- selection came via tier routing (incl. the
                                            -- direct-request fallback in §6.2); NULL only for
@@ -269,10 +270,11 @@ counts and the terminal `status` are written when the run ends. **Failed
 or cancelled runs keep their ledger row** (`status = 'failed'` /
 `'cancelled'`, token columns holding whatever was reported before the
 end) — failures still spend quota, so cancel-and-retry loops cannot hit
-providers for free. A process crash can leave a row at `'started'`
-forever; that is accepted (it still counted against quota, which is the
-conservative direction) and such rows are simply reported as `started` in
-any analysis.
+providers for free. A crash or a hung task can leave a row at
+`'started'`; because the in-flight count for the concurrency caps is
+derived from exactly those rows, such rows are not left to linger but
+swept to `'abandoned'` by the startup sweep and staleness rule in §6.6.
+They still count against the daily quota — they consumed a reservation.
 
 Record richly, limit simply: v1 enforces only one rule (§6.4), but every
 future limit dimension (per LLM tier, per model, token-based) is
@@ -296,9 +298,12 @@ activity rows into that table would make rate limiting scan noise.
 ```yaml
 limits:                        # global, server-level (all users incl. admin)
   max_document_chars: 200000
+  max_concurrent_llm_runs: 20  # server-wide, protects the machine
+  llm_run_max_age: 900         # seconds; older 'started' rows are swept (§6.6)
   admin:                       # blast-radius ceiling for admins, config-only
     llm_checks_per_day: 500
     max_llm_document_chars: 200000
+    concurrent_llm_runs: 5
 
 tiers:
   basic:
@@ -309,6 +314,7 @@ tiers:
     limits:
       llm_checks_per_day: 20
       max_llm_document_chars: 20000
+      concurrent_llm_runs: 3
     features: []
   premium:
     llm:
@@ -318,6 +324,7 @@ tiers:
     limits:
       llm_checks_per_day: 200
       max_llm_document_chars: 100000
+      concurrent_llm_runs: 5
     features: [custom_profiles, custom_domains]
 ```
 
@@ -329,8 +336,10 @@ Validation at load time: unknown LLM tier names, unknown feature names,
 unknown provider names (in `llm.providers` and as `models` keys — a typo
 must not silently narrow a policy), `models` keys not listed in
 `providers`, non-positive limits (including a missing, null, or
-non-positive `limits.admin.llm_checks_per_day` — there is no way to
-express "no admin ceiling"), and **empty per-provider model allowlists** (an empty list would leave the degradation substitute in
+non-positive `limits.admin.llm_checks_per_day` or any
+`concurrent_llm_runs` / `max_concurrent_llm_runs` — there is no way to
+express "no admin ceiling" or "unbounded concurrency"), and **empty
+per-provider model allowlists** (an empty list would leave the degradation substitute in
 §6.2 undefined; "no models" is expressed by omitting the provider from
 `providers`) are config errors.
 
@@ -453,7 +462,10 @@ silently degrading.
 
 Quota exhaustion degrades, it does not fail: rules and terminology checkers
 still run; the LLM phase is skipped and the scorecard/SSE reports
-`quota_exhausted` (with limit and reset day). HTTP 429 is not used.
+`quota_exhausted` (with limit and reset day). HTTP 429 is not used for
+quota — an exhausted allowance is not retryable until tomorrow, so
+degrading is the honest response. (429 *is* used for the transient
+concurrency caps, §6.6.)
 (Endpoints whose entire product is LLM output degrade differently — see
 §7.2.)
 
@@ -489,6 +501,58 @@ Two limits, two behaviors:
 Existing documents larger than a later-tightened cap stay loadable and
 rule-checkable; the caps gate new saves and the LLM phase, never access to
 data.
+
+### 6.6 Concurrency limits
+
+Daily quotas bound a user's total spend; they do **not** bound how fast it
+is spent. A scripted client holding a valid token could fire its whole
+day's allowance in parallel in one second — concentrating cost before
+anyone can react, saturating the provider's rate limits so *other* users'
+checks start failing, and pinning server memory with simultaneous jobs and
+SSE queues. A human cannot click that fast: the editor supersedes an
+in-flight check when a new one starts (`cancelCheck`), so real usage sits
+at roughly one concurrent run per user, occasionally two or three with a
+suggestion or rewrite alongside. That gap between human and bot behavior
+is exactly what a concurrency cap turns into a defense.
+
+Two caps, both enforced inside the same reservation transaction as the
+quota (§6.4), evaluated before it commits:
+
+- **Per user** (`concurrent_llm_runs` in each tier's `limits:` block, and
+  in `limits.admin` — default 3 basic / 5 premium / 5 admin).
+- **Server-wide** (`limits.max_concurrent_llm_runs`, default 20):
+  protects the machine no matter how the load is spread across users. On
+  a small Fly instance this, not the per-user cap, is the binding
+  constraint once a handful of users are active.
+
+**In-flight is already recorded:** a run's ledger row (§5.3) carries
+`status = 'started'` from reservation until it ends, so the in-flight
+count is a `COUNT(*)` over exactly those rows — no separate in-memory
+registry that could drift from the DB or reset on restart.
+
+This makes the previously-accepted stranded-row case load-bearing, so it
+is no longer merely accepted: a row left at `'started'` by a crash would
+otherwise consume a concurrency slot forever. Two mechanisms clear them:
+
+1. **Startup sweep:** on boot, every row still at `'started'` is moved to
+   `'abandoned'` — in a single-process deployment no such run can still be
+   alive, since the process that owned it is gone. (This also makes the
+   ledger's history honest rather than leaving perpetual `'started'`
+   rows.)
+2. **Staleness fallback:** rows older than `limits.llm_run_max_age`
+   (default 15 minutes — comfortably beyond any provider timeout) are
+   excluded from the in-flight count and swept to `'abandoned'`, covering
+   a task that hangs without the process dying.
+
+Abandoned runs keep counting toward the daily quota: they consumed a
+reservation, and treating them as free would reopen the cancel-and-retry
+loophole §5.3 closes.
+
+**Behavior when a cap is hit:** unlike quota exhaustion, this is transient
+and retryable, so it is the one place the API returns **429** — with a
+`Retry-After` header — rather than degrading. Degrading would be wrong
+here: nothing about the request is over its entitlement, the server is
+simply busy right now. Legitimate UI flows effectively never see it.
 
 ## 7. API surface
 
@@ -544,7 +608,8 @@ CREATE TABLE admin_audit (
 - Check jobs (`POST /api/checks`, `GET /api/checks/{id}`, SSE events)
   remember their owner; polling or subscribing to another user's check is
   404. LLM phase start applies, in order: size cap (§6.5) →
-  `resolve_llm_selection` (§6.2) → quota reservation (§6.4). Resolution
+  `resolve_llm_selection` (§6.2) → reservation, which decides quota
+  (§6.4) and the concurrency caps (§6.6) in one transaction. Resolution
   runs first because the quota check *is* the transactional insert of the
   reservation ledger row (§5.3), and that row records the effective
   provider/model — so the order preserves both TOCTOU safety and the
@@ -568,10 +633,13 @@ CREATE TABLE admin_audit (
   codes as the scorecard (`quota_exhausted`, `document_too_large`,
   `llm_unavailable`), which the UI surfaces like the check-status notes;
   name generation silently uses its existing local fallback naming. 403
-  and 429 remain unused on these paths.
+  remains unused on these paths (429 can still occur — the concurrency
+  caps of §6.6 apply to every LLM-invoking endpoint alike).
 - Error semantics overall: **401** unauthenticated / bad token, **403**
   forbidden action, **404** not yours / nonexistent, **413** over the
-  global size cap, **422** validation (unchanged), **429** unused.
+  global size cap, **422** validation (unchanged), **429** concurrency
+  cap reached (§6.6, with `Retry-After`; never for daily quota, which
+  degrades instead).
 
 ### 7.3 SSE authentication
 
@@ -721,7 +789,12 @@ uniqueness here.
   simultaneous starts at limit−1 admit exactly one),
   cancelled-run-keeps-ledger-row, and the admin ceiling (an admin is
   denied at `limits.admin.llm_checks_per_day` with a WARNING logged, and
-  no admin endpoint can raise it — the value comes only from config); ledger completeness (a reserved row
+  no admin endpoint can raise it — the value comes only from config);
+  concurrency caps (a user at `concurrent_llm_runs` gets 429 with
+  `Retry-After` while a second user is unaffected; the server-wide cap
+  binds across users; a finished run frees its slot; the startup sweep
+  and the staleness rule move stale `'started'` rows to `'abandoned'` so
+  slots cannot leak, while those rows still count against the day); ledger completeness (a reserved row
   carries `created_at`, `text_chars`, `status = 'started'` and both the
   requested and effective selection; the terminal status and token counts
   land on completion, failure, and cancellation alike); the suggestions/name-generation
@@ -733,7 +806,8 @@ uniqueness here.
   polling is 404); the `resolve_llm_selection` table includes the
   direct-only-policy cell (tier-based request under `llm.tiers: []`, §6.2
   rule 4); suggestions degradation (denied gate returns 200 with a
-  `skipped` reason, never 403/429); admin runs are admitted with the
+  `skipped` reason for quota/size/floor denials, never 403 — a 429 from
+  the concurrency cap is a separate, legitimate outcome); admin runs are admitted with the
   admin ceiling in place of their tier's limits, still writing ledger
   rows; startup seeders
   create only `owner_id IS NULL` rows on a fresh multi-user DB; admin
