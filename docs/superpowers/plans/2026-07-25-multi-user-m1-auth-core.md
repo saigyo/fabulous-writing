@@ -353,6 +353,10 @@ def _dummy_hash() -> str:
 
 
 def hash_password(password: str) -> str:
+    # gensalt() is the salting step: bcrypt generates a fresh random salt
+    # per call and stores it inside the resulting hash string
+    # ($2b$<cost>$<22-char salt><hash>), so two identical passwords never
+    # produce the same hash. No separate salt column is needed — or wanted.
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
