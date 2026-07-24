@@ -221,37 +221,71 @@ checks are scoped to the owner (see migration §9 for the index change).
 
 ```sql
 CREATE TABLE llm_usage (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id        INTEGER NOT NULL,
-    day            TEXT NOT NULL,          -- 'YYYY-MM-DD', UTC
-    llm_tier       TEXT,                   -- effective quality tier whenever the effective
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id            INTEGER NOT NULL,
+    day                TEXT NOT NULL,      -- 'YYYY-MM-DD', UTC; the indexed quota key
+    created_at         TEXT NOT NULL,      -- ISO 8601 UTC, reservation time
+    status             TEXT NOT NULL,      -- 'started' → 'completed' | 'failed' | 'cancelled'
+    llm_tier           TEXT,               -- effective quality tier whenever the effective
                                            -- selection came via tier routing (incl. the
                                            -- direct-request fallback in §6.2); NULL only for
                                            -- a genuinely direct effective selection
-    provider       TEXT NOT NULL,          -- effective provider
-    model          TEXT NOT NULL,          -- effective model
-    input_tokens   INTEGER,                -- NULL when the provider reports nothing
-    output_tokens  INTEGER,
-    source         TEXT NOT NULL,          -- 'check' | 'suggestion' | 'name'
-    run_id         TEXT NOT NULL           -- correlation id: the natural id where one exists
+    provider           TEXT NOT NULL,      -- effective provider
+    model              TEXT NOT NULL,      -- effective model
+    requested_tier     TEXT,               -- what the profile/folder/request asked for;
+    requested_provider TEXT,               -- NULL where that dimension was not requested.
+    requested_model    TEXT,               -- Degradation = requested_* ≠ effective (§6.2)
+    text_chars         INTEGER NOT NULL,   -- pre-run size proxy, known at reservation
+    input_tokens       INTEGER,            -- NULL when the provider reports nothing
+    output_tokens      INTEGER,
+    source             TEXT NOT NULL,      -- 'check' | 'suggestion' | 'name'
+    run_id             TEXT NOT NULL       -- correlation id: the natural id where one exists
                                            -- (check id); callers without one (name generation)
                                            -- mint a UUID
 );
 CREATE INDEX idx_llm_usage_user_day ON llm_usage(user_id, day);
 ```
 
+**Why these columns exist from run one.** Adding a *table* later is cheap;
+adding a *column* to a table already accumulating rows leaves a permanent
+hole in the history, because nothing can backfill what was never written.
+The four beyond bare metering each answer a question that only has an
+answer if recorded from the start: `created_at` (time-of-day patterns and
+correlating a cost spike with an incident — `day` alone cannot);
+`status` (the spec deliberately keeps failed and cancelled rows, so
+without it a burned-tokens failure is indistinguishable from a clean run);
+`requested_*` (how often a user tier hits its ceiling — the tier-tuning
+and upsell signal; the value is already computed for the `effective_llm`
+UI block and would otherwise be discarded); `text_chars` (the only cost
+proxy for a run that dies before any provider reports tokens).
+
 The ledger covers **every** LLM-invoking endpoint (§7.2), not only checks —
 hence the source-agnostic `run_id` (not `check_id`) plus a `source` column
 so future per-feature limits or cost analysis need no schema change.
 
-A row is inserted when an LLM run starts (effective selection recorded);
-token counts are filled in when the run completes, from the token usage the
-providers already report. **Failed or cancelled runs keep their ledger
-row** (their token columns record whatever was reported before the end) —
-failures still spend quota, so cancel-and-retry loops cannot hit providers
-for free. Record richly, limit simply: v1 enforces only one rule (§6.4),
-but every future limit dimension (per LLM tier, per model, token-based) is
+A row is inserted with `status = 'started'` when an LLM run starts
+(effective and requested selection plus `text_chars` recorded); the token
+counts and the terminal `status` are written when the run ends. **Failed
+or cancelled runs keep their ledger row** (`status = 'failed'` /
+`'cancelled'`, token columns holding whatever was reported before the
+end) — failures still spend quota, so cancel-and-retry loops cannot hit
+providers for free. A process crash can leave a row at `'started'`
+forever; that is accepted (it still counted against quota, which is the
+conservative direction) and such rows are simply reported as `started` in
+any analysis.
+
+Record richly, limit simply: v1 enforces only one rule (§6.4), but every
+future limit dimension (per LLM tier, per model, token-based) is
 computable from this ledger without schema changes.
+
+**Deliberately deferred:** a general user-activity audit (logins,
+document/profile/domain CRUD). That is a *new table* — trivially added
+later, with only unwritten history lost, which is worth little at this
+user scale where the server log and `updated_at` fields cover the
+practical questions. It is also kept **separate** from `llm_usage` when it
+does arrive: the ledger sits on the quota hot path (an indexed count
+inside the reservation transaction), and mixing high-volume, low-value
+activity rows into that table would make rate limiting scan noise.
 
 ## 6. Tiers & permissions
 
@@ -369,10 +403,10 @@ flag is later removed from the tier — the gate is on creation.
 ### 6.4 Quotas
 
 v1 enforces exactly one rule, in one function —
-`reserve_llm_run(user, limits, effective, source, run_id) -> QuotaDecision`
-(the effective selection, source, and run id are parameters because the
-reservation row records them; §5.3's NOT NULL columns are unreachable
-from `(user, limits)` alone) — inside **one SQLite transaction** so
+`reserve_llm_run(user, limits, requested, effective, text_chars, source,
+run_id) -> QuotaDecision` (everything the reservation row records is a
+parameter; §5.3's NOT NULL columns are unreachable from `(user, limits)`
+alone) — inside **one SQLite transaction** so
 concurrent starts cannot both slip under the limit (TOCTOU). Stated
 precisely to avoid an off-by-one: insert the reservation row, then count
 this user's rows for today-UTC *including the one just inserted*;
@@ -654,7 +688,10 @@ uniqueness here.
   table tests (every tier×policy path incl. floor and walk-up); quota
   tests incl. UTC day rollover, transactional concurrency (two
   simultaneous starts at limit−1 admit exactly one), and
-  cancelled-run-keeps-ledger-row; the suggestions/name-generation
+  cancelled-run-keeps-ledger-row; ledger completeness (a reserved row
+  carries `created_at`, `text_chars`, `status = 'started'` and both the
+  requested and effective selection; the terminal status and token counts
+  land on completion, failure, and cancellation alike); the suggestions/name-generation
   endpoints hit the same gate (a basic user cannot obtain a premium
   provider through them); size-limit tests (413 path, LLM skip path, and
   a chunked body without Content-Length is capped); ownership isolation
@@ -701,3 +738,7 @@ uniqueness here.
   Supabase.
 - Per-user API keys for LLM providers.
 - Hard user deletion / data export.
+- A general user-activity audit log (logins, CRUD) and any ledger
+  retention/pruning policy — both are additive later; the rationale for
+  deferring them, and for keeping such a log separate from `llm_usage`,
+  is in §5.3.
