@@ -296,6 +296,9 @@ activity rows into that table would make rate limiting scan noise.
 ```yaml
 limits:                        # global, server-level (all users incl. admin)
   max_document_chars: 200000
+  admin:                       # blast-radius ceiling for admins, config-only
+    llm_checks_per_day: 500
+    max_llm_document_chars: 200000
 
 tiers:
   basic:
@@ -325,13 +328,34 @@ Numbers above are starting defaults, tunable in config without code changes.
 Validation at load time: unknown LLM tier names, unknown feature names,
 unknown provider names (in `llm.providers` and as `models` keys — a typo
 must not silently narrow a policy), `models` keys not listed in
-`providers`, non-positive limits, and **empty per-provider model
-allowlists** (an empty list would leave the degradation substitute in
+`providers`, non-positive limits (including a missing, null, or
+non-positive `limits.admin.llm_checks_per_day` — there is no way to
+express "no admin ceiling"), and **empty per-provider model allowlists** (an empty list would leave the degradation substitute in
 §6.2 undefined; "no models" is expressed by omitting the provider from
 `providers`) are config errors.
 
-Admins bypass all tier restrictions and limits (global
-`max_document_chars` still applies).
+Admins bypass tier **policy** — LLM selection restrictions and feature
+gates — but are **not unlimited**. They are subject to the global
+`max_document_chars` and to a separate, deliberately generous
+`limits.admin` ceiling with the same shape as a tier's `limits:` block.
+
+**Why an admin ceiling exists, and why it lives only in config.** An
+admin account is the highest-value target in the system: with unlimited
+LLM spend, a stolen 24 h token could drain the provider budget long
+before anyone notices. The ceiling bounds that blast radius. It is
+therefore **config-only** — read from `config.yaml`/env at startup and
+mutable through no API surface whatsoever, including the admin
+endpoints. An attacker holding an admin session can raise a tier's limits
+for other users but cannot lift their own ceiling without filesystem
+access to the server, which is a different and much higher privilege.
+This asymmetry is the whole point; any future "edit limits in the admin
+UI" feature must keep `limits.admin` out of scope.
+
+There is no "unlimited" value: `limits.admin.llm_checks_per_day` must be
+a positive integer (config validation, §6.1) — an operator can raise it,
+never disable it. When the deferred `tokens_per_day` dimension (§6.4)
+lands, it applies to this ceiling too and bounds cost more tightly than
+a run count can.
 
 ### 6.2 LLM selection policy — graceful degradation
 
@@ -414,11 +438,18 @@ this user's rows for today-UTC *including the one just inserted*;
 denied). A user with a limit of 20 therefore gets exactly 20 runs per UTC
 day.
 
-**Admins take the same insert path with the commit condition skipped**:
-their runs are always admitted but still recorded — §5.3's "every LLM
-run" includes admins, so the highest-privilege account is not exempt from
-cost visibility. `/api/auth/me` reports `limit: null` for admins and the
-UI hides the quota indicator.
+**Admins take exactly the same path**, with `limits.admin` (§6.1)
+supplying the numbers instead of their tier's block — same transaction,
+same commit condition, same ledger row. §5.3's "every LLM run" includes
+admins, so the highest-privilege account is exempt from neither cost
+visibility nor a spend ceiling. `/api/auth/me` reports the admin ceiling
+as `limit`, so the UI shows the same indicator.
+
+An admin reaching the ceiling is **logged at WARNING** (with user id and
+the day's count): for a normal user, exhaustion is routine; for an
+admin at a deliberately generous ceiling, it means a runaway loop or a
+compromised account, and it should be visible in the logs rather than
+silently degrading.
 
 Quota exhaustion degrades, it does not fail: rules and terminology checkers
 still run; the LLM phase is skipped and the scorecard/SSE reports
@@ -466,7 +497,7 @@ data.
 | Endpoint | Auth | Behavior |
 |---|---|---|
 | `POST /api/auth/login` | none | §4.2. 401 (generic) on any failure. |
-| `GET /api/auth/me` | user | User + tier + `is_admin` + effective LLM policy + feature flags + quota status (`used_today`, `limit`; `limit: null` for admins, §6.4) + size limits (global and tier). `used_today` is defined identically to `reserve_llm_run`'s count: *started* ledger rows for the UTC day, regardless of run completion (§5.3/§6.4) — no UI/backend drift. The frontend's single source of truth for gating. |
+| `GET /api/auth/me` | user | User + tier + `is_admin` + effective LLM policy + feature flags + quota status (`used_today`, `limit`; for admins the `limits.admin` ceiling, §6.1/§6.4) + size limits (global and tier, or the admin ceiling's). `used_today` is defined identically to `reserve_llm_run`'s count: *started* ledger rows for the UTC day, regardless of run completion (§5.3/§6.4) — no UI/backend drift. The frontend's single source of truth for gating. |
 | `POST /api/auth/password` | user | Change own password; re-verifies current one. |
 | `GET /api/admin/users` | admin | List users (no password hashes in responses — a dedicated response model, never the row). |
 | `POST /api/admin/users` | admin | Create user: email, display name, initial password, tier, admin flag. 422 on duplicate email/invalid input. |
@@ -687,8 +718,10 @@ uniqueness here.
   rejected, login throttle kicks in); `resolve_llm_selection` exhaustive
   table tests (every tier×policy path incl. floor and walk-up); quota
   tests incl. UTC day rollover, transactional concurrency (two
-  simultaneous starts at limit−1 admit exactly one), and
-  cancelled-run-keeps-ledger-row; ledger completeness (a reserved row
+  simultaneous starts at limit−1 admit exactly one),
+  cancelled-run-keeps-ledger-row, and the admin ceiling (an admin is
+  denied at `limits.admin.llm_checks_per_day` with a WARNING logged, and
+  no admin endpoint can raise it — the value comes only from config); ledger completeness (a reserved row
   carries `created_at`, `text_chars`, `status = 'started'` and both the
   requested and effective selection; the terminal status and token counts
   land on completion, failure, and cancellation alike); the suggestions/name-generation
@@ -701,7 +734,8 @@ uniqueness here.
   direct-only-policy cell (tier-based request under `llm.tiers: []`, §6.2
   rule 4); suggestions degradation (denied gate returns 200 with a
   `skipped` reason, never 403/429); admin runs are admitted with the
-  commit condition skipped but still write ledger rows; startup seeders
+  admin ceiling in place of their tier's limits, still writing ledger
+  rows; startup seeders
   create only `owner_id IS NULL` rows on a fresh multi-user DB; admin
   endpoint tests incl. self-lockout prevention and audit rows written;
   migration tests against a pre-auth schema fixture (admin seeding, owner
