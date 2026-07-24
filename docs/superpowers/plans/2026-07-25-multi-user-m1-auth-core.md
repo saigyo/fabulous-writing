@@ -721,6 +721,11 @@ CREATE TABLE IF NOT EXISTS users (
     email TEXT NOT NULL UNIQUE COLLATE NOCASE,
     display_name TEXT,
     password_hash TEXT,
+    -- No CHECK on tier on purpose: tier names are policy data that M4 moves
+    -- into config.yaml, and SQLite cannot alter a CHECK without rebuilding
+    -- the table, so a constraint here would turn "add a tier" into a
+    -- migration. The API validates against the known names instead
+    -- (app/api/admin.py), which is where invalid input actually arrives.
     tier TEXT NOT NULL DEFAULT 'basic',
     is_admin INTEGER NOT NULL DEFAULT 0,
     is_active INTEGER NOT NULL DEFAULT 1,
@@ -1145,7 +1150,9 @@ git commit -m "feat(auth): per-request identity and admin dependencies"
   `validate_password`, `SELF_MIN_PASSWORD_LENGTH` (Tasks 2–3); `UserStore`
   (Task 4).
 - Produces: `router` (prefix `/api`, no router-level auth — `login` must be
-  reachable unauthenticated); `LoginThrottle`;
+  reachable unauthenticated); `LoginThrottle` (fields `threshold`,
+  `base_delay`, `max_delay`, `entry_ttl`, `max_entries`, `clock`; methods
+  `blocked_for`, `record_failure`, `record_success`, `entry_count`);
   `MeResponse` (M4 and M5 extend this same model).
   App state consumed: `settings`, `user_store`, `auth_secret`,
   `login_throttle`.
@@ -1265,6 +1272,29 @@ def test_throttle_backoff_grows_and_success_clears_it():
     assert throttle.blocked_for(key) == 0
 
 
+def test_throttle_expires_stale_entries():
+    # Keys come from unauthenticated input, so the table must not keep an
+    # entry alive forever on the strength of one ancient failure.
+    now = [0.0]
+    throttle = LoginThrottle(threshold=1, entry_ttl=100.0, clock=lambda: now[0])
+    stale = ("ada@example.com", "127.0.0.1")
+    throttle.record_failure(stale)
+    now[0] += 500.0
+    throttle.record_failure(("other@example.com", "127.0.0.1"))
+    assert throttle.entry_count() == 1
+    assert throttle.blocked_for(stale) == 0
+
+
+def test_throttle_table_is_bounded():
+    # An attacker spraying distinct addresses must not be able to grow the
+    # table without limit — that would trade a brute-force defense for a
+    # memory-exhaustion vector.
+    throttle = LoginThrottle(threshold=1, max_entries=8, clock=lambda: 0.0)
+    for index in range(100):
+        throttle.record_failure((f"user{index}@example.com", "127.0.0.1"))
+    assert throttle.entry_count() <= 8
+
+
 def test_throttled_login_is_rejected_even_with_the_right_password(app_client):
     for _ in range(5):
         login(app_client, "root@example.com", "wrong password")
@@ -1286,6 +1316,7 @@ Create `backend/app/api/auth.py`:
 """Local authentication endpoints (auth.mode: local)."""
 
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -1307,6 +1338,7 @@ _INVALID_LOGIN = "Invalid email or password"
 class _Attempts:
     failures: int = 0
     blocked_until: float = 0.0
+    last_seen: float = 0.0
 
 
 @dataclass
@@ -1316,13 +1348,39 @@ class LoginThrottle:
     In-process state, which is correct for the single-process deployment the
     spec requires; it is not shared across processes. Supabase's own rate
     limiting replaces this in sub-project 2.
+
+    The table is deliberately bounded. Its keys come from unauthenticated
+    input, so an attacker who sends one failed login each for a million
+    distinct addresses would otherwise grow it without limit — turning a
+    brute-force defense into a memory-exhaustion vector. Entries also expire:
+    a failure from an hour ago says nothing about the current attempt.
     """
 
     threshold: int = 5
     base_delay: float = 1.0
     max_delay: float = 60.0
+    entry_ttl: float = 900.0
+    max_entries: int = 4096
     clock: Callable[[], float] = time.monotonic
-    _state: dict[tuple[str, str], _Attempts] = field(default_factory=dict)
+    _state: "OrderedDict[tuple[str, str], _Attempts]" = field(default_factory=OrderedDict)
+
+    def entry_count(self) -> int:
+        return len(self._state)
+
+    def _prune(self, now: float) -> None:
+        cutoff = now - self.entry_ttl
+        # Insertion order is maintained as last-seen order (record_failure
+        # moves an entry to the end), so expired entries are a prefix.
+        while self._state:
+            key, entry = next(iter(self._state.items()))
+            if entry.last_seen >= cutoff:
+                break
+            del self._state[key]
+        # Hard cap regardless of age: eviction favours the least recently
+        # seen, which is the attacker's spray rather than a real user's
+        # repeated attempts.
+        while len(self._state) > self.max_entries:
+            self._state.popitem(last=False)
 
     def blocked_for(self, key: tuple[str, str]) -> float:
         entry = self._state.get(key)
@@ -1331,11 +1389,19 @@ class LoginThrottle:
         return max(0.0, entry.blocked_until - self.clock())
 
     def record_failure(self, key: tuple[str, str]) -> None:
-        entry = self._state.setdefault(key, _Attempts())
+        now = self.clock()
+        entry = self._state.get(key)
+        if entry is None:
+            entry = _Attempts()
+            self._state[key] = entry
+        else:
+            self._state.move_to_end(key)
         entry.failures += 1
+        entry.last_seen = now
         if entry.failures >= self.threshold:
             delay = min(self.max_delay, self.base_delay * 2 ** (entry.failures - self.threshold))
-            entry.blocked_until = self.clock() + delay
+            entry.blocked_until = now + delay
+        self._prune(now)
 
     def record_success(self, key: tuple[str, str]) -> None:
         self._state.pop(key, None)
@@ -1778,6 +1844,24 @@ def test_create_rejects_duplicates_and_weak_passwords(client):
     assert "at least 12" in weak.json()["detail"]
 
 
+def test_unknown_tier_is_rejected(client):
+    # An unrecognised tier would be an authorization state no policy covers,
+    # so it must never reach the database.
+    headers = admin_headers(client)
+    created = client.post(
+        "/api/admin/users",
+        json={"email": "new@example.com", "password": "an initial password",
+              "tier": "premum"},
+        headers=headers,
+    )
+    assert created.status_code == 422
+    user = make_user(client)
+    patched = client.patch(
+        f"/api/admin/users/{user['id']}", json={"tier": "gold"}, headers=headers
+    )
+    assert patched.status_code == 422
+
+
 def test_patch_updates_fields_and_writes_one_audit_row_per_field(client):
     user = make_user(client)
     response = client.patch(
@@ -1886,6 +1970,7 @@ be shipped without it.
 """
 
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -1899,17 +1984,25 @@ router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(re
 logger = logging.getLogger(__name__)
 
 
+# Validated here rather than with a DB CHECK constraint: tiers are policy
+# data (M4 moves their definition into config.yaml), and SQLite cannot alter
+# a CHECK without a full table rebuild — so a constraint would make adding a
+# tier a migration. M4 replaces this Literal with validation against the
+# configured tier names.
+TierName = Literal["basic", "premium"]
+
+
 class UserCreate(BaseModel):
     email: str
     password: str
     display_name: str | None = None
-    tier: str = "basic"
+    tier: TierName = "basic"
     is_admin: bool = False
 
 
 class UserPatch(BaseModel):
     display_name: str | None = None
-    tier: str | None = None
+    tier: TierName | None = None
     is_admin: bool | None = None
     is_active: bool | None = None
     password: str | None = None
