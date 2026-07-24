@@ -208,7 +208,10 @@ CREATE TABLE llm_usage (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id        INTEGER NOT NULL,
     day            TEXT NOT NULL,          -- 'YYYY-MM-DD', UTC
-    llm_tier       TEXT,                   -- effective tier; NULL for direct selection
+    llm_tier       TEXT,                   -- effective quality tier whenever the effective
+                                           -- selection came via tier routing (incl. the
+                                           -- direct-request fallback in §6.2); NULL only for
+                                           -- a genuinely direct effective selection
     provider       TEXT NOT NULL,          -- effective provider
     model          TEXT NOT NULL,          -- effective model
     input_tokens   INTEGER,                -- NULL when the provider reports nothing
