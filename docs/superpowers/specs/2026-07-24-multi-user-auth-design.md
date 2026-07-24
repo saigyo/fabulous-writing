@@ -32,7 +32,7 @@ spec → plan → implementation cycle:
 | Local auth | Email/password against local `users` table; backend-issued HS256 JWT. There is no separate username — email is the login identifier. |
 | Tier ladder | Two tiers: `basic`, `premium`. Admin is a separate boolean flag, not a tier. |
 | Tiers control | LLM access (quality tiers / providers / models), usage quotas, feature gating. |
-| Enforcement style | Graceful degradation for LLM selection and quotas; hard errors only for forbidden actions. |
+| Enforcement style | Graceful degradation for LLM selection and quotas; hard errors only for forbidden actions and the global size cap (413, §6.5). |
 | Ownership | `documents`/`folders` strictly per-user. `profiles`/`domains` global built-ins (owner NULL, read-only for non-admins) + per-user private items. Rule YAMLs and provider config stay server-global. |
 | Admin surface | Small admin UI page (list/create/edit users) + admin API. |
 | SSE auth | Bearer header via fetch-based streaming. No tokens in URLs, ever. |
@@ -42,7 +42,9 @@ spec → plan → implementation cycle:
 ### 4.1 Request authentication
 
 Every `/api/*` request except `/api/health` and `POST /api/auth/login`
-requires `Authorization: Bearer <JWT>`.
+requires `Authorization: Bearer <JWT>`. (FastAPI's `/docs` and
+`/openapi.json` live outside `/api/*` and remain public — they expose the
+API schema only, no data; acceptable and deliberate.)
 
 One FastAPI dependency resolves identity:
 
@@ -72,7 +74,8 @@ token whose identity is not linked to a local user row.
 Implementations:
 
 - **`LocalTokenVerifier`** (built now): HS256. Claims: `sub` (user id as
-  string), `exp` (24 h from issue), `iat`.
+  string), `exp` (24 h from issue), `iat`, `iss` and `aud` (both
+  `"fabulous-writing"`, per the pinning rules below).
 - **`SupabaseTokenVerifier`** (interface + config slot now, implementation
   in sub-project 2): RS256 via Supabase JWKS; maps the Supabase `sub` UUID
   to `users.external_id`.
@@ -93,7 +96,9 @@ unit test asserts that tokens with a different algorithm, issuer, or
 audience are rejected (the classic `alg: none` / RS256→HS256 confusion
 bugs, plus cross-environment token reuse).
 
-**Secret handling:** the HS256 secret comes from `FW_AUTH_SECRET`, must be
+**Secret handling (local mode only** — a `supabase`-mode instance neither
+needs nor reads an HS256 secret, and must not fail over its absence**):**
+the HS256 secret comes from `FW_AUTH_SECRET`, must be
 ≥ 32 characters (startup error otherwise), and must be generated randomly
 — e.g. `openssl rand -base64 32` (length is the mechanical gate; the
 random-generation requirement is documented in `config.example.yaml` and
@@ -184,12 +189,23 @@ Per table:
   (currently constant 1) — "never global" is a database invariant, not a
   convention. All queries gain `WHERE owner_id = ?`, and every store
   method touching these tables takes `owner_id` as a **required,
-  non-defaulted** parameter, so a forgotten scope is a call-site error
-  rather than a cross-tenant read.
+  non-defaulted** parameter (a Python-signature guarantee), so a
+  forgotten scope is a call-site error rather than a cross-tenant read.
+  Honest caveat: both columns carry a legacy `DEFAULT 1`, so SQL alone
+  would not catch a missing owner on INSERT — the `folders` rebuild in
+  §9.5 drops that default; `documents` needs no rebuild and keeps it, so
+  its guarantee rests on the store API signature.
 - `profiles`, `domains`: gain a *nullable* `owner_id` column (NULL is the
   deliberate global marker here). List endpoints return global rows plus
   the caller's rows; create always as the caller (feature-gated, see
-  §6.3); update/delete of a global row requires admin.
+  §6.3); update/delete of a global row requires admin. The **startup
+  seeders** (`seed_profiles`, `seed_terminology`, which run on every app
+  start) are the one exception to create-as-the-caller: they maintain the
+  global set exclusively — their presence checks (e.g. "does this
+  language have a Standard profile?", "are there any domains?") query
+  only `owner_id IS NULL` rows, and everything they create is written
+  with `owner_id NULL`. A fresh multi-user install therefore gets its
+  built-ins global, not owned by user 1.
 - `terms`: inherit ownership through their domain (no own column). The
   term endpoints take a bare term id, so **every term read/mutation must
   resolve the parent domain and check its ownership** — a term under
@@ -217,7 +233,9 @@ CREATE TABLE llm_usage (
     input_tokens   INTEGER,                -- NULL when the provider reports nothing
     output_tokens  INTEGER,
     source         TEXT NOT NULL,          -- 'check' | 'suggestion' | 'name'
-    run_id         TEXT NOT NULL           -- correlation id of the LLM run (check id, suggestion id, …)
+    run_id         TEXT NOT NULL           -- correlation id: the natural id where one exists
+                                           -- (check id); callers without one (name generation)
+                                           -- mint a UUID
 );
 CREATE INDEX idx_llm_usage_user_day ON llm_usage(user_id, day);
 ```
@@ -271,9 +289,12 @@ models` (first entry = preferred substitute for degradation). A provider
 absent from the mapping, but present in `providers`, allows all its models.
 Numbers above are starting defaults, tunable in config without code changes.
 Validation at load time: unknown LLM tier names, unknown feature names,
-non-positive limits, and **empty per-provider model allowlists** (an empty
-list would leave the degradation substitute in §6.2 undefined; "no models"
-is expressed by omitting the provider from `providers`) are config errors.
+unknown provider names (in `llm.providers` and as `models` keys — a typo
+must not silently narrow a policy), `models` keys not listed in
+`providers`, non-positive limits, and **empty per-provider model
+allowlists** (an empty list would leave the degradation substitute in
+§6.2 undefined; "no models" is expressed by omitting the provider from
+`providers`) are config errors.
 
 Admins bypass all tier restrictions and limits (global
 `max_document_chars` still applies).
@@ -296,10 +317,16 @@ resolve_llm_selection(policy, requested, language) -> EffectiveSelection
    from T; first allowed tier wins (Balanced degrades to Cheap for a
    basic user allowed `[cheap, local]`).
 3. Nothing allowed below → walk *up*; nearest allowed tier above wins.
-4. The effective tier resolves through the routing table as today. A
-   granted quality tier implies its routed provider/model (the routing
-   table is server-curated); the provider/model lists are not additionally
-   consulted on this path.
+4. If `llm.tiers` is empty but `llm.providers` is not (a direct-only
+   policy), a tier-based request degrades exactly like rule 3 of the
+   direct path below: first provider in `llm.providers` with its first
+   allowlisted model — or, under `models: all`, that provider's
+   configured default model. (Without this rule the case would be
+   undefined: it is not the floor, which requires *both* lists empty.)
+5. The effective tier (when one was selected) resolves through the
+   routing table as today. A granted quality tier implies its routed
+   provider/model (the routing table is server-curated); the
+   provider/model lists are not additionally consulted on this path.
 
 **Direct request** (provider P, model M):
 1. P allowed and M permitted → unchanged.
@@ -341,21 +368,32 @@ flag is later removed from the tier — the gate is on creation.
 
 ### 6.4 Quotas
 
-v1 enforces exactly one rule, in one function
-(`check_quota(user, limits) -> QuotaDecision`), inside **one SQLite
-transaction** so concurrent starts cannot both slip under the limit
-(TOCTOU). Stated precisely to avoid an off-by-one: insert the reservation
-row, then count this user's rows for today-UTC *including the one just
-inserted*; **commit iff `count <= llm_checks_per_day`, else roll back**
-(the run is denied). A user with a limit of 20 therefore gets exactly 20
-runs per UTC day.
+v1 enforces exactly one rule, in one function —
+`reserve_llm_run(user, limits, effective, source, run_id) -> QuotaDecision`
+(the effective selection, source, and run id are parameters because the
+reservation row records them; §5.3's NOT NULL columns are unreachable
+from `(user, limits)` alone) — inside **one SQLite transaction** so
+concurrent starts cannot both slip under the limit (TOCTOU). Stated
+precisely to avoid an off-by-one: insert the reservation row, then count
+this user's rows for today-UTC *including the one just inserted*;
+**commit iff `count <= llm_checks_per_day`, else roll back** (the run is
+denied). A user with a limit of 20 therefore gets exactly 20 runs per UTC
+day.
+
+**Admins take the same insert path with the commit condition skipped**:
+their runs are always admitted but still recorded — §5.3's "every LLM
+run" includes admins, so the highest-privilege account is not exempt from
+cost visibility. `/api/auth/me` reports `limit: null` for admins and the
+UI hides the quota indicator.
 
 Quota exhaustion degrades, it does not fail: rules and terminology checkers
 still run; the LLM phase is skipped and the scorecard/SSE reports
 `quota_exhausted` (with limit and reset day). HTTP 429 is not used.
+(Endpoints whose entire product is LLM output degrade differently — see
+§7.2.)
 
 Future limit shapes (per LLM tier, per model, `tokens_per_day`) extend
-`check_quota` and the config schema only; the ledger already records every
+`reserve_llm_run` and the config schema only; the ledger already records every
 needed dimension. Stated constraint: token-based limits are enforced
 *between* runs ("no further runs once exceeded"), never as mid-run cutoffs
 — token cost is only known when a run finishes.
@@ -374,7 +412,9 @@ Two limits, two behaviors:
    fixed byte limit. Oversized `Content-Length` is rejected before
    parsing, **and** the byte budget is enforced on the bytes actually
    read, so chunked/streamed requests without a `Content-Length` header
-   cannot bypass the cap.
+   cannot bypass the cap. Middleware order: `CORSMiddleware` sits
+   outermost, so a 413 still carries CORS headers and is readable by the
+   browser instead of surfacing as an opaque network error.
 2. **Per-tier LLM cap** (`max_llm_document_chars`): exceeding it skips
    only the LLM phase — rules/terminology still run — and the scorecard/
    SSE reports `document_too_large` with the tier's limit, analogous to
@@ -392,7 +432,7 @@ data.
 | Endpoint | Auth | Behavior |
 |---|---|---|
 | `POST /api/auth/login` | none | §4.2. 401 (generic) on any failure. |
-| `GET /api/auth/me` | user | User + tier + `is_admin` + effective LLM policy + feature flags + quota status (`used_today`, `limit`) + size limits (global and tier). `used_today` is defined identically to `check_quota`'s input: the count of *started* ledger rows for the UTC day, regardless of run completion (§5.3/§6.4) — no UI/backend drift. The frontend's single source of truth for gating. |
+| `GET /api/auth/me` | user | User + tier + `is_admin` + effective LLM policy + feature flags + quota status (`used_today`, `limit`; `limit: null` for admins, §6.4) + size limits (global and tier). `used_today` is defined identically to `reserve_llm_run`'s count: *started* ledger rows for the UTC day, regardless of run completion (§5.3/§6.4) — no UI/backend drift. The frontend's single source of truth for gating. |
 | `POST /api/auth/password` | user | Change own password; re-verifies current one. |
 | `GET /api/admin/users` | admin | List users (no password hashes in responses — a dedicated response model, never the row). |
 | `POST /api/admin/users` | admin | Create user: email, display name, initial password, tier, admin flag. 422 on duplicate email/invalid input. |
@@ -402,10 +442,20 @@ No hard user delete in v1: deactivation preserves `owner_id` referential
 integrity.
 
 **Admin audit trail:** every admin mutation (create user, tier/role/active
-change, password reset) appends a row to a small `admin_audit` table
-(actor user id, target user id, field, old → new value where sensible —
-never password material — and timestamp). Cheap now, painful to retrofit
-once there is more than one admin.
+change, password reset) appends a row to `admin_audit`. Cheap now,
+painful to retrofit once there is more than one admin:
+
+```sql
+CREATE TABLE admin_audit (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    actor_id   INTEGER NOT NULL,       -- admin performing the action
+    target_id  INTEGER NOT NULL,       -- user acted upon
+    field      TEXT NOT NULL,          -- 'created'|'tier'|'is_admin'|'is_active'|'display_name'|'password'
+    old_value  TEXT,                   -- NULL for 'created' and 'password' (never password material)
+    new_value  TEXT,                   -- NULL for 'password'
+    created_at TEXT NOT NULL           -- ISO 8601 UTC
+);
+```
 
 ### 7.2 Changes to existing endpoints
 
@@ -421,7 +471,11 @@ once there is more than one admin.
 - `/api/routing` and `/api/providers` responses gain a per-entry
   `allowed: bool` computed for the caller, alongside the existing
   `available`/`reason` — the UI distinguishes "not on your plan" from
-  "not configured on the server".
+  "not configured on the server". Semantics: on `/api/providers`,
+  `allowed` means *allowed for direct selection* (`llm.providers`) — a
+  provider outside that list can still legitimately serve a routed
+  quality-tier run (§6.2 rule 5); on `/api/routing`, each quality tier's
+  `allowed` comes from `llm.tiers`.
 - Check jobs (`POST /api/checks`, `GET /api/checks/{id}`, SSE events)
   remember their owner; polling or subscribing to another user's check is
   404. LLM phase start applies, in order: size cap (§6.5) →
@@ -431,15 +485,25 @@ once there is more than one admin.
   provider/model — so the order preserves both TOCTOU safety and the
   ledger's NOT NULL columns.
 - **Every LLM-invoking endpoint goes through the same gate** — not just
-  checks. `POST /api/suggestions` and document name generation also
-  accept provider/model parameters and call the provider factory today;
-  un-gated they would bypass tier policy and quota entirely. Provider
-  acquisition is therefore centralized behind one function
-  (`get_effective_provider(user, requested, language)`) that applies
-  quota + `resolve_llm_selection` and writes the ledger row; no route
-  reaches `provider_factory` directly. (Suggestion/name-generation runs
-  count toward the same `llm_checks_per_day` in v1 — one quota, no
-  separate bucket.)
+  checks. `POST /api/suggestions` (which accepts provider/model
+  parameters) and document name generation (which accepts none — it
+  hard-selects the cheap route) both reach the provider factory directly
+  today; un-gated they would bypass tier policy and quota entirely.
+  Provider acquisition is therefore centralized behind one function
+  (`get_effective_provider(user, requested, language, text)`) applying
+  the same order as checks — size cap (§6.5) → `resolve_llm_selection`
+  (§6.2) → quota reservation (§6.4) — and no route reaches
+  `provider_factory` directly. All runs count toward the same
+  `llm_checks_per_day` (one quota, no separate bucket).
+- **Degradation for LLM-only endpoints:** "skip the LLM phase, rules
+  still run" is meaningless where the LLM output *is* the product. When
+  the gate denies (quota exhausted, text over the tier cap, no-LLM
+  floor), `POST /api/suggestions` returns **200** with an empty
+  suggestion list and a machine-readable `skipped` reason using the same
+  codes as the scorecard (`quota_exhausted`, `document_too_large`,
+  `llm_unavailable`), which the UI surfaces like the check-status notes;
+  name generation silently uses its existing local fallback naming. 403
+  and 429 remain unused on these paths.
 - Error semantics overall: **401** unauthenticated / bad token, **403**
   forbidden action, **404** not yours / nonexistent, **413** over the
   global size cap, **422** validation (unchanged), **429** unused.
@@ -475,7 +539,10 @@ route returns the CORS preflight response, not 401.)
 
 - **Auth slice** (zustand, persisted): token, user, policy from
   `/api/auth/me`. The API client attaches the Bearer header to every
-  request; any 401 response clears auth state and shows the login view.
+  request; any 401 response clears auth state and shows the login view —
+  **except** from `POST /api/auth/login` itself, whose 401 is the
+  bad-credentials signal the login form handles inline (otherwise a wrong
+  password would trigger a state-clearing loop).
 - **Login view**: email/password form, error states, i18n ×7 like all UI.
 - **Admin view** (visible only when `is_admin`): user table — list,
   create, edit tier/role/active, reset password.
@@ -505,14 +572,24 @@ route returns the CORS preflight response, not 401.)
   requirement on that sub-project. (4) Dependency hygiene stays covered
   by the existing dependabot + CI setup. Logout clears client state only
   — a captured token stays valid until `exp` (24 h); accepted as a
-  conscious tradeoff of the stateless design at this user scale.
+  conscious tradeoff of the stateless design at this user scale. The
+  emergency lever for a compromised account is **admin deactivation**,
+  which bites on the very next request because `get_current_user`
+  re-reads the user row per request (§4.1) — effectively immediate
+  revocation without token state.
 
 ## 9. Migration & rollout
 
-All migrations follow the house rules: additive, idempotent
-(`IF NOT EXISTS` / guarded backfills), rehearsed on a copy of the live DB
-before ever touching it; the live `backend/data/fabulous.db` is never used
-in tests.
+All migrations follow the house rules: idempotent (`IF NOT EXISTS` /
+guarded backfills / rebuild-only-if-old-shape), rehearsed on a copy of
+the live DB before ever touching it; the live `backend/data/fabulous.db`
+is never used in tests. Additive where possible — but this iteration
+**necessarily includes guarded table rebuilds** (step 5): `folders.name`
+carries an *inline* `UNIQUE` and `profiles` a table-level
+`UNIQUE(language, name)`, both enforcing global cross-owner uniqueness,
+and SQLite cannot drop such constraints without the documented 12-step
+table rebuild. Purely index-level changes cannot deliver per-owner
+uniqueness here.
 
 1. Create `users` (§5.1) and `llm_usage` (§5.3).
 2. Seed the admin account from `FW_ADMIN_EMAIL` / `FW_ADMIN_PASSWORD` env
@@ -524,27 +601,50 @@ in tests.
    local`); in `supabase` mode local login is disabled and bootstrapping
    an empty instance is handled by sub-project 2's provisioning/linking
    design.
-3. Add `owner_id` to `profiles` and `domains`. Backfill: profile rows
-   carrying a seed marker → NULL (global); domains whose names match the
-   seed set defined in `backend/app/services/seed.py` → NULL (domains have no seed
-   markers, so name-match is the identifying rule — a renamed seed domain
-   stays private to the admin, which is acceptable); all other existing
-   rows → 1. The name-match backfill runs **exactly once** — only in the
-   migration step that adds the `owner_id` column, against the pre-auth
-   single-owner DB — never as a recurring rule that could misclassify a
-   future user's domain sharing a seed name.
+3. Add `owner_id` to `profiles` and `domains`. Backfill to NULL (global)
+   by **name-match against the seed sets** — for *both* tables, because
+   neither has per-row seed markers (`profile_seed_markers` records only
+   *that a language was seeded*, keyed by language — not which rows are
+   seeds):
+   - profiles: rows with `is_standard = 1`, plus rows whose
+     `(language, name)` matches the seed set of
+     `backend/app/services/seed_profiles.py` for a language present in
+     `profile_seed_markers`;
+   - domains: rows whose names match the seed set defined in
+     `backend/app/services/seed.py`.
+   All other existing rows → 1. Acknowledged risk for both tables alike:
+   a pre-existing user item occupying a seed name becomes global — at
+   migration time every row belongs to the admin, so the misclassification
+   is confined to the admin's own items and is acceptable. The name-match
+   backfill runs **exactly once** — only in the migration step that adds
+   the `owner_id` column, against the pre-auth single-owner DB — never as
+   a recurring rule.
 4. Create `admin_audit` (§7.1).
-5. Folder name uniqueness becomes per-owner: replace the global NOCASE
-   unique index with `UNIQUE (owner_id, name COLLATE NOCASE)` semantics
-   (same duplicate pre-scan + skip-with-warning pattern as the original
-   NOCASE migration). For tables with a *nullable* `owner_id` (`profiles`,
-   `domains`) a single composite unique index is **not** enough: SQLite
-   treats NULLs as distinct in unique indexes, so duplicate global names
-   would pass. Those tables get **two partial unique indexes**:
-   `(owner_id, name COLLATE NOCASE) WHERE owner_id IS NOT NULL` for
-   per-user uniqueness, and `(name COLLATE NOCASE) WHERE owner_id IS NULL`
-   for uniqueness among the global built-ins. (`folders.owner_id` is
-   NOT NULL, so the composite index alone suffices there.)
+5. Name uniqueness becomes per-owner. Table by table:
+   - **`folders`** (rebuild required — inline `UNIQUE` on `name`): 12-step
+     rebuild to a schema without the inline constraint and without the
+     legacy `DEFAULT 1` on `owner_id`; uniqueness then comes from one
+     unique index `(owner_id, name COLLATE NOCASE)` (`owner_id` is
+     NOT NULL here, so no partial form is needed).
+   - **`profiles`** (rebuild required — table-level
+     `UNIQUE(language, name)`): 12-step rebuild dropping that constraint;
+     then **two partial unique indexes** that keep the `language`
+     dimension — it is load-bearing, since the global built-ins repeat
+     names per language (`Standard` × 7) and a user may hold the same
+     profile name in several languages:
+     `(owner_id, language, name COLLATE NOCASE) WHERE owner_id IS NOT NULL`
+     and `(language, name COLLATE NOCASE) WHERE owner_id IS NULL`.
+   - **`domains`** (no rebuild — no existing unique constraint): **two
+     partial unique indexes**, `(owner_id, name COLLATE NOCASE) WHERE
+     owner_id IS NOT NULL` and `(name COLLATE NOCASE) WHERE owner_id IS
+     NULL`. Two are needed because SQLite treats NULLs as distinct in
+     unique indexes — a single composite index would let duplicate global
+     names pass.
+   Every index creation is preceded by the duplicate pre-scan +
+   skip-with-warning pattern from the original NOCASE migration —
+   explicitly including `domains`, which never had a uniqueness guarantee
+   and may legally hold duplicates today. Rebuilds are guarded (run only
+   when the old shape is detected) to stay idempotent.
 
 ## 10. Testing
 
@@ -560,9 +660,18 @@ in tests.
   a chunked body without Content-Length is capped); ownership isolation
   (user A cannot read/mutate B's items; non-admin cannot mutate globals;
   term mutation checks the parent domain's owner; cross-user check
-  polling is 404); admin endpoint tests incl. self-lockout prevention and
-  audit rows written; migration tests against a pre-auth schema fixture
-  (admin seeding, owner backfill, per-owner uniqueness).
+  polling is 404); the `resolve_llm_selection` table includes the
+  direct-only-policy cell (tier-based request under `llm.tiers: []`, §6.2
+  rule 4); suggestions degradation (denied gate returns 200 with a
+  `skipped` reason, never 403/429); admin runs are admitted with the
+  commit condition skipped but still write ledger rows; startup seeders
+  create only `owner_id IS NULL` rows on a fresh multi-user DB; admin
+  endpoint tests incl. self-lockout prevention and audit rows written;
+  migration tests against a pre-auth schema fixture (admin seeding, owner
+  backfill incl. the profiles name-match rule, the guarded
+  `folders`/`profiles` rebuilds preserving every row and dropping the old
+  constraints, per-owner uniqueness incl. the global-set partial
+  indexes).
 - **Frontend**: vitest for the auth slice, 401-clears-auth behavior, and
   the fetch-based SSE reader; the usual `tsc`/lint/build gates.
 - **E2E**: the scratch-stack script gains a login step; a two-user
