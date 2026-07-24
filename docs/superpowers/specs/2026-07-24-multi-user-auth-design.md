@@ -121,7 +121,12 @@ fully disabled — a leaked `FW_AUTH_SECRET` must not forge tokens against a
 Supabase-mode instance.
 
 An admin-only dependency (`require_admin`) wraps `get_current_user` and
-returns 403 for non-admins.
+returns 403 for non-admins. It is attached **to the `/api/admin` router
+itself, not to individual endpoints**, so an admin endpoint added later
+inherits the check by construction and cannot be shipped without it —
+the failure mode this forecloses is a future maintainer reasoning that
+"the admin UI is already hidden" and omitting a per-endpoint guard
+(§8).
 
 ### 4.2 Token issuing (local mode only)
 
@@ -973,7 +978,24 @@ sub-project 2, under the no-auto-adopt-by-email constraint in §11.
   rather than unmounted). Its nav button renders **only when
   `is_admin`** — cosmetic defense in depth, since `/api/admin/*` enforces
   the boundary regardless. Contents: a user table — list, create, edit
-  tier/role/active, reset password.
+  tier/role/active, reset password. Non-admins must also never *fetch*
+  admin data: the view's queries run only when it is active, so a
+  non-admin session issues no `/api/admin/*` request at all rather than
+  generating 403 noise.
+
+  **Why the admin UI ships in the same bundle** (rather than as a
+  separate, admin-only page): the view contains code, never data — all
+  user data arrives from `/api/admin/*`, which `require_admin` enforces
+  at the router (§4.1). A hidden bundle would add no protection here:
+  the API surface it would conceal is already public via `/openapi.json`
+  (§4.1), and an XSS can call the admin endpoints directly with the
+  victim's token whether or not the code is present. The separate-page
+  pattern earns its keep when the admin app also sits behind a *network*
+  boundary — its own hostname, VPN or IP allowlist — which a
+  single-origin, single-machine deployment cannot provide. If the admin
+  surface ever warrants that, the escalation is to restrict
+  `/api/admin/*` at the network layer (Fly private networking or an IP
+  allowlist), not to relocate the JavaScript.
 - **Gating**: selectors grey out disallowed quality tiers / providers /
   models using the `/me` policy and the `allowed` flags, with a "requires
   Premium"-style hint, visually distinct from "not configured". The check
