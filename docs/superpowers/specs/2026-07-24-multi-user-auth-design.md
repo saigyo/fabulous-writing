@@ -754,7 +754,7 @@ the recovery paths:
 | Command | Purpose |
 |---|---|
 | `list-users` | id, email, tier, admin flag, active flag — to find the account to fix. |
-| `set-password <email>` | Set a new password (bcrypt), same strength rules as §4.2. |
+| `set-password <email>` | Set a new password (bcrypt), same strength rules as §4.2. Local mode only — see below. |
 | `make-admin <email>` | Grant admin, and reactivate the account if it was deactivated. |
 
 **Why a CLI rather than an env-var reset or a recovery endpoint.** Both
@@ -783,6 +783,24 @@ Rules that make it safe and honest:
   to restore access.
 - It operates on the configured database directly and requires no running
   server, so it also works when the app will not start.
+
+**Applicability once Supabase Auth arrives (sub-project 2).** The three
+commands do not age alike, because authentication moves out while
+authorization stays:
+
+- `list-users` and `make-admin` **remain the recovery tools in both
+  modes**: tier, `is_admin` and `is_active` live in our `users` table
+  regardless of who verifies the token, so "I locked myself out of admin"
+  is still fixed here and nowhere else.
+- `set-password` is **local-mode-only and refuses to run in
+  `supabase` mode**, pointing at Supabase's own reset flow instead. The
+  refusal is deliberate rather than a silent no-op: in `supabase` mode
+  nothing reads `password_hash`, so writing one would appear to succeed
+  while changing nothing — and worse, it would plant a dormant credential
+  that becomes live the moment someone sets `auth.mode: local` again.
+
+Commands for linking a Supabase identity to a local row belong to
+sub-project 2, under the no-auto-adopt-by-email constraint in §11.
 
 ## 8. Frontend
 
@@ -937,7 +955,8 @@ uniqueness here.
   (`set-password` lets the account log in again and writes an audit row
   with `actor_id NULL`; `make-admin` reactivates a deactivated account
   and works even with `allow_additional_admins: false`; no command
-  accepts a password as an argv argument);
+  accepts a password as an argv argument; `set-password` refuses under
+  `auth.mode: supabase` and leaves `password_hash` untouched);
   migration tests against a pre-auth schema fixture (admin seeding, owner
   backfill incl. the profiles name-match rule, the guarded
   `folders`/`profiles` rebuilds preserving every row and dropping the old
