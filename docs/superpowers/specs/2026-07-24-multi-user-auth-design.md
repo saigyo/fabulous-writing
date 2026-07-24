@@ -514,7 +514,11 @@ in tests.
    vars — only when `users` is empty. The admin gets id 1, so existing
    `documents`/`folders` rows (`owner_id = 1`) already belong to it.
    Startup fails with a clear error if the table is empty and the
-   variables are unset (an unauthenticatable instance is useless).
+   variables are unset (an unauthenticatable instance is useless). This
+   seeding-and-failure behavior is **local-mode-only** (`auth.mode:
+   local`); in `supabase` mode local login is disabled and bootstrapping
+   an empty instance is handled by sub-project 2's provisioning/linking
+   design.
 3. Add `owner_id` to `profiles` and `domains`. Backfill: profile rows
    carrying a seed marker → NULL (global); domains whose names match the
    seed set defined in `backend/app/services/seed.py` → NULL (domains have no seed
