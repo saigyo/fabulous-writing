@@ -111,6 +111,10 @@ states the fact, never the secret value (a credential must not land in
 logs) — and tokens die on restart, deliberately self-sabotaging outside
 dev.
 
+The `auth:` config section holds `mode`, `ephemeral_secret`, and
+`allow_additional_admins` (§7.1) — all read at startup and changeable
+only on disk, never through the API.
+
 Config selects the verifier: `auth.mode: local` (later: `supabase`). In
 `supabase` mode, `POST /api/auth/login` and the `LocalTokenVerifier` are
 fully disabled — a leaked `FW_AUTH_SECRET` must not forge tokens against a
@@ -590,11 +594,57 @@ pause.
 | `GET /api/auth/me` | user | User + tier + `is_admin` + effective LLM policy + feature flags + quota status (`used_today`, `limit`; for admins the `limits.admin` ceiling, §6.1/§6.4) + size limits (global and tier, or the admin ceiling's). `used_today` is defined identically to `reserve_llm_run`'s count: *started* ledger rows for the UTC day, regardless of run completion (§5.3/§6.4) — no UI/backend drift. The frontend's single source of truth for gating. |
 | `POST /api/auth/password` | user | Change own password; re-verifies current one. |
 | `GET /api/admin/users` | admin | List users (no password hashes in responses — a dedicated response model, never the row). |
-| `POST /api/admin/users` | admin | Create user: email, display name, initial password, tier, admin flag. 422 on duplicate email/invalid input. |
-| `PATCH /api/admin/users/{id}` | admin | Update tier / admin flag / active flag / display name / reset password. Admins cannot deactivate or de-admin themselves (409) — prevents lockout. |
+| `POST /api/admin/users` | admin | Create user: email, display name, initial password, tier, admin flag (subject to the admin-creation switch below). 422 on duplicate email/invalid input. |
+| `PATCH /api/admin/users/{id}` | admin | Update tier / admin flag / active flag / display name / reset password. Admins cannot deactivate or de-admin themselves (409) — prevents lockout. Promotion to admin is subject to the switch below. |
 
 No hard user delete in v1: deactivation preserves `owner_id` referential
 integrity.
+
+**Bootstrapping the first admin.** There is deliberately **no API path**
+to create the first admin: an unauthenticated bootstrap endpoint is a
+classic hole (it must either stay open forever or be disabled by a step
+someone forgets). Instead the first admin is seeded at startup from the
+`FW_ADMIN_EMAIL` / `FW_ADMIN_PASSWORD` environment variables, and only
+while the `users` table is empty — full rules in §9 step 2, including the
+fail-closed startup and the local-mode-only scoping. Two consequences
+worth stating here, where the endpoints live:
+
+- The seeding path is a **bootstrap, not an ongoing sync**: once any user
+  exists the variables are ignored entirely, so they can never act as a
+  standing password-reset backdoor. Changing the admin password
+  afterwards goes through `POST /api/auth/password` like anyone else's.
+- Losing the admin password means editing the database directly on the
+  server (or clearing `users` and re-seeding). That is acceptable at this
+  scale and is the intended recovery story — there is no email reset
+  flow (§11).
+
+**Admin-creation switch (`auth.allow_additional_admins`, default
+`false`).** One admin account is all this deployment needs; every further
+admin widens the blast radius of a compromise. While the switch is off:
+
+- `POST /api/admin/users` rejects `is_admin: true` with **403**;
+- `PATCH /api/admin/users/{id}` rejects a `false → true` transition of
+  `is_admin` with **403**;
+- **demotion stays allowed** (`true → false`) — it only ever reduces
+  privilege — though it cannot be undone while the switch is off, and
+  self-demotion remains blocked by the lockout rule above;
+- the startup seeding of the *first* admin is unaffected: the switch
+  governs the API, not the bootstrap.
+
+Like the admin spend ceiling (§6.1), this is **config-only and mutable
+through no API surface**, and that is the entire point: a stolen admin
+session can do damage until the account is deactivated or its password
+rotated, but it cannot mint a *second* admin account that survives that
+response. It turns admin compromise from potentially permanent into
+recoverable. Any future "manage settings in the admin UI" feature must
+keep this switch — and `limits.admin` — out of scope.
+
+A denied promotion attempt is logged at **WARNING** with actor and
+target: with the switch off, a legitimate admin has no reason to try, so
+the attempt is a compromise signal. If the DB is found to contain more
+than one admin while the switch is off (legacy state, or the switch was
+turned off after the fact), startup logs a warning and continues —
+existing admins are not silently demoted.
 
 **Admin audit trail:** every admin mutation (create user, tier/role/active
 change, password reset) appends a row to `admin_audit`. Cheap now,
@@ -839,7 +889,11 @@ uniqueness here.
   admin ceiling in place of their tier's limits, still writing ledger
   rows; startup seeders
   create only `owner_id IS NULL` rows on a fresh multi-user DB; admin
-  endpoint tests incl. self-lockout prevention and audit rows written;
+  endpoint tests incl. self-lockout prevention, audit rows written, and
+  the admin-creation switch (with `allow_additional_admins: false`,
+  creating an admin and promoting a user both give 403 with a WARNING
+  logged, while demotion still succeeds; with it `true`, both are
+  permitted — and no endpoint can change the switch itself);
   migration tests against a pre-auth schema fixture (admin seeding, owner
   backfill incl. the profiles name-match rule, the guarded
   `folders`/`profiles` rebuilds preserving every row and dropping the old
