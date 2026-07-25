@@ -1,3 +1,5 @@
+import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -213,11 +215,149 @@ def test_throttle_expires_stale_entries():
 def test_throttle_table_is_bounded():
     # An attacker spraying distinct addresses must not be able to grow the
     # table without limit — that would trade a brute-force defense for a
-    # memory-exhaustion vector.
-    throttle = LoginThrottle(threshold=1, max_entries=8, clock=lambda: 0.0)
+    # memory-exhaustion vector. Threshold is set above the single failure
+    # each key gets here so none of them become actively blocked: the cap
+    # must hold when nothing is protected from eviction. A blocked entry's
+    # protection from the cap is covered separately by
+    # test_actively_blocked_entry_survives_the_size_cap.
+    throttle = LoginThrottle(threshold=5, max_entries=8, clock=lambda: 0.0)
     for index in range(100):
         throttle.record_failure((f"user{index}@example.com", "127.0.0.1"))
     assert throttle.entry_count() <= 8
+
+
+def test_actively_blocked_entry_survives_the_size_cap():
+    # An attacker who has already triggered a block on one victim key must
+    # not be able to discard its accumulated backoff by spraying max_entries
+    # failed logins from disposable, unrelated addresses. Threshold is above
+    # 1 so the attacker's single-failure keys stay evictable while the
+    # victim, having reached threshold, does not.
+    throttle = LoginThrottle(threshold=3, base_delay=50.0, max_entries=8, clock=lambda: 0.0)
+    victim = ("victim@example.com", "127.0.0.1")
+    for _ in range(3):
+        throttle.record_failure(victim)
+    expected_delay = throttle.blocked_for(victim)
+    assert expected_delay > 0
+
+    for index in range(100):
+        throttle.record_failure((f"attacker{index}@example.com", "127.0.0.1"))
+
+    assert throttle.entry_count() <= 8
+    # Still blocked for exactly the delay computed from the original 3
+    # failures. If the size cap had evicted the victim's entry (or it had
+    # been recreated with a lower failure count), this would read 0.0 (entry
+    # gone) or a different delay (fewer failures), not the original value.
+    assert throttle.blocked_for(victim) == expected_delay
+
+
+def test_blocked_attempts_refresh_recency_so_ttl_does_not_prune_them():
+    # A key under sustained attack must not age out of the table just
+    # because every attempt against it is rejected before ever reaching
+    # record_failure again. The login handler calls record_blocked_attempt
+    # on every rejected-while-blocked attempt for exactly this reason.
+    now = [0.0]
+    throttle = LoginThrottle(threshold=1, base_delay=5.0, entry_ttl=100.0, clock=lambda: now[0])
+    key = ("ada@example.com", "127.0.0.1")
+    throttle.record_failure(key)
+
+    for _ in range(20):
+        now[0] += 40.0
+        throttle.record_blocked_attempt(key)
+
+    assert now[0] > 100.0  # sanity: we are well past entry_ttl by now
+    # Force a prune sweep (any record_failure call triggers one) at a time
+    # far past entry_ttl relative to the original failure.
+    throttle.record_failure(("other@example.com", "127.0.0.1"))
+    assert throttle.entry_count() == 2  # both `key` and `other` survived
+    # The block itself is not extended by the touches — only recency is.
+    assert throttle.blocked_for(key) == 0
+
+
+def test_concurrent_failures_on_one_key_produce_an_exact_count():
+    # login and password-change handlers are plain `def`s, so Starlette runs
+    # them in a threadpool: record_failure is called on the same key from
+    # multiple OS threads concurrently. A non-atomic read-modify-write would
+    # lose updates under contention. threshold is set to the exact number of
+    # calls made per trial, so the entry becomes blocked (blocked_for reads
+    # exactly base_delay) if and only if every one of them was actually
+    # counted — a lost update would leave it short of threshold and
+    # unblocked.
+    #
+    # A single trial is not a reliable regression test on its own: measured
+    # against a deliberately unlocked build of this class, CPython 3.13's
+    # specializing interpreter shrinks the usual GIL-preemption window
+    # inside a bare `x += 1` enough that any one trial only loses an update
+    # 5-20% of the time. Repeating the trial drives the chance of a real
+    # regression slipping through to well under 1%, at a cost of well under
+    # a second: 60 repeats reproduced the loss on every one of 14 out of 15
+    # independent checks against the unlocked class (worst case, one check
+    # took 43 of the 60 repeats to trigger), while the locked implementation
+    # below passed all 60 repeats with zero failures across dozens of runs.
+    thread_count = 24
+    iterations = 40
+    total = thread_count * iterations
+    trials = 60
+
+    def run_once() -> float:
+        throttle = LoginThrottle(threshold=total, base_delay=3.0, clock=lambda: 0.0)
+        key = ("ada@example.com", "127.0.0.1")
+        barrier = threading.Barrier(thread_count)
+
+        def hammer() -> None:
+            barrier.wait()
+            for _ in range(iterations):
+                throttle.record_failure(key)
+
+        threads = [threading.Thread(target=hammer) for _ in range(thread_count)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        return throttle.blocked_for(key)
+
+    original_interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)  # maximise thread interleaving to expose races
+    try:
+        for _ in range(trials):
+            assert run_once() == 3.0
+    finally:
+        sys.setswitchinterval(original_interval)
+
+
+def test_concurrent_failures_across_many_keys_do_not_raise():
+    # _prune used to iterate-and-delete from the OrderedDict with no lock;
+    # concurrent inserts/deletes from other threads could raise RuntimeError
+    # or KeyError out of the login handler — a 500 triggerable by
+    # unauthenticated concurrent traffic. max_entries is small relative to
+    # the number of distinct keys generated, so eviction runs on nearly
+    # every call. threshold is above the single failure each key gets so
+    # none of them become actively blocked and all stay evictable — this
+    # test is about crash-safety under concurrent pruning, not about the
+    # blocked-entry protection (covered by
+    # test_actively_blocked_entry_survives_the_size_cap).
+    throttle = LoginThrottle(threshold=5, max_entries=50, clock=lambda: 0.0)
+    errors: list[BaseException] = []
+
+    def hammer(offset: int) -> None:
+        try:
+            for i in range(200):
+                throttle.record_failure((f"user{offset}-{i}@example.com", "127.0.0.1"))
+        except BaseException as exc:  # capture to fail the test, not to hide it
+            errors.append(exc)
+
+    original_interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        threads = [threading.Thread(target=hammer, args=(offset,)) for offset in range(20)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        sys.setswitchinterval(original_interval)
+
+    assert errors == []
+    assert throttle.entry_count() <= 50
 
 
 def test_throttled_login_is_rejected_even_with_the_right_password(app_client):

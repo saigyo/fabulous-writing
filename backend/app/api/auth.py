@@ -1,5 +1,6 @@
 """Local authentication endpoints (auth.mode: local)."""
 
+import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable
@@ -31,14 +32,34 @@ class LoginThrottle:
     """Exponential backoff per (email, client IP) after repeated failures.
 
     In-process state, which is correct for the single-process deployment the
-    spec requires; it is not shared across processes. Supabase's own rate
-    limiting replaces this in sub-project 2.
+    spec requires; it is not shared across other processes. Supabase's own
+    rate limiting replaces this in sub-project 2.
+
+    FastAPI runs synchronous ("def") route handlers in a threadpool, so a
+    single process still means *multiple OS threads* touching this table
+    concurrently. `self._lock` guards every read and write of `_state`, so
+    `blocked_for`, `record_failure`, `record_success`,
+    `record_blocked_attempt` and `entry_count` are each atomic with respect
+    to one another. `_prune_locked` and `_evict_to_cap_locked` are
+    deliberately lock-free — their `_locked` suffix is the contract: callers
+    must already hold `self._lock` before calling them, which every public
+    method here does. Do not add a call to either from outside this class.
 
     The table is deliberately bounded. Its keys come from unauthenticated
     input, so an attacker who sends one failed login each for a million
     distinct addresses would otherwise grow it without limit — turning a
     brute-force defense into a memory-exhaustion vector. Entries also expire:
     a failure from an hour ago says nothing about the current attempt.
+
+    An entry whose block is still active (`blocked_until` in the future) is
+    never evicted by the size cap, and never ages out via the TTL as long as
+    the caller reports rejected attempts with `record_blocked_attempt`.
+    Without both of those, an attacker who has already triggered a block
+    against one victim key could spray `max_entries` failed logins from
+    disposable, unrelated addresses (no IP spoofing needed — the key varies
+    by email) to evict the victim's entry and discard its accumulated
+    backoff, or simply wait out the TTL against a victim nobody is
+    "refreshing" the record for.
     """
 
     threshold: int = 5
@@ -48,48 +69,105 @@ class LoginThrottle:
     max_entries: int = 4096
     clock: Callable[[], float] = time.monotonic
     _state: "OrderedDict[tuple[str, str], _Attempts]" = field(default_factory=OrderedDict)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self.max_delay > self.entry_ttl:
+            raise ValueError(
+                f"max_delay ({self.max_delay}) must not exceed entry_ttl "
+                f"({self.entry_ttl}): otherwise the TTL sweep could prune an "
+                "entry whose block is still nominally active"
+            )
 
     def entry_count(self) -> int:
-        return len(self._state)
+        with self._lock:
+            return len(self._state)
 
-    def _prune(self, now: float) -> None:
+    def _prune_locked(self, now: float) -> None:
+        """Evict expired and excess entries. Caller must hold `self._lock`."""
         cutoff = now - self.entry_ttl
         # Insertion order is maintained as last-seen order (record_failure
-        # moves an entry to the end), so expired entries are a prefix.
+        # and record_blocked_attempt both move a touched entry to the end),
+        # so expired entries are a prefix.
         while self._state:
             key, entry = next(iter(self._state.items()))
             if entry.last_seen >= cutoff:
                 break
             del self._state[key]
-        # Hard cap regardless of age: eviction favours the least recently
-        # seen, which is the attacker's spray rather than a real user's
-        # repeated attempts.
-        while len(self._state) > self.max_entries:
-            self._state.popitem(last=False)
+        if len(self._state) > self.max_entries:
+            self._evict_to_cap_locked(now)
+
+    def _evict_to_cap_locked(self, now: float) -> None:
+        """Evict least-recently-seen, non-blocked entries down to
+        `max_entries`. Caller must hold `self._lock`.
+
+        A single left-to-right pass over a snapshot of `_state` in last-seen
+        order (oldest first): O(n) once per call, not a rescan per eviction.
+        An entry whose block is still active (`blocked_until > now`) is
+        skipped rather than evicted, so the cap is not a hard ceiling in the
+        pathological case where every remaining entry is currently blocked —
+        the table is then allowed to exceed `max_entries` until those blocks
+        expire. That is still bounded in practice: reaching a blocked state
+        costs `threshold` failed logins per entry, each paying full bcrypt
+        time, and every block clears within `max_delay`.
+        """
+        excess = len(self._state) - self.max_entries
+        if excess <= 0:
+            return
+        removed = 0
+        for key, entry in list(self._state.items()):
+            if removed >= excess:
+                break
+            if entry.blocked_until > now:
+                continue
+            del self._state[key]
+            removed += 1
 
     def blocked_for(self, key: tuple[str, str]) -> float:
-        entry = self._state.get(key)
-        if entry is None:
-            return 0.0
-        return max(0.0, entry.blocked_until - self.clock())
+        with self._lock:
+            entry = self._state.get(key)
+            if entry is None:
+                return 0.0
+            return max(0.0, entry.blocked_until - self.clock())
 
     def record_failure(self, key: tuple[str, str]) -> None:
         now = self.clock()
-        entry = self._state.get(key)
-        if entry is None:
-            entry = _Attempts()
-            self._state[key] = entry
-        else:
-            self._state.move_to_end(key)
-        entry.failures += 1
-        entry.last_seen = now
-        if entry.failures >= self.threshold:
-            delay = min(self.max_delay, self.base_delay * 2 ** (entry.failures - self.threshold))
-            entry.blocked_until = now + delay
-        self._prune(now)
+        with self._lock:
+            entry = self._state.get(key)
+            if entry is None:
+                entry = _Attempts()
+                self._state[key] = entry
+            else:
+                self._state.move_to_end(key)
+            entry.failures += 1
+            entry.last_seen = now
+            if entry.failures >= self.threshold:
+                delay = min(
+                    self.max_delay, self.base_delay * 2 ** (entry.failures - self.threshold)
+                )
+                entry.blocked_until = now + delay
+            self._prune_locked(now)
 
     def record_success(self, key: tuple[str, str]) -> None:
-        self._state.pop(key, None)
+        with self._lock:
+            self._state.pop(key, None)
+
+    def record_blocked_attempt(self, key: tuple[str, str]) -> None:
+        """Refresh recency for a key rejected while already blocked.
+
+        Does not increment `failures` and does not extend `blocked_until` —
+        the caller already paid the throttle's cost by being blocked. This
+        exists solely so that being under continuous attack does not itself
+        become a way to escape the block, via TTL expiry or the size cap
+        (see the class docstring). A no-op if the key is not currently
+        tracked (e.g. its block already expired and was pruned).
+        """
+        with self._lock:
+            entry = self._state.get(key)
+            if entry is None:
+                return
+            entry.last_seen = self.clock()
+            self._state.move_to_end(key)
 
 
 class LoginRequest(BaseModel):
@@ -140,6 +218,11 @@ def _throttle_key(request: Request, email: str) -> tuple[str, str]:
     # would let an attacker mint a fresh spoofed IP per request and bypass
     # the throttle entirely. A deployment behind a proxy must configure a
     # trusted-proxy list first (sub-project 3).
+    # request.client is only None for a connection with no transport-level
+    # peer address (e.g. certain non-network ASGI test transports); every
+    # such connection collapsing into one shared "unknown" bucket is an
+    # accepted collision, not an oversight — ordinary HTTP deployments
+    # always populate request.client.
     client_ip = request.client.host if request.client else "unknown"
     return (email.strip().lower(), client_ip)
 
@@ -150,6 +233,11 @@ def login(request: Request, body: LoginRequest) -> LoginResponse:
     app = request.app
     key = _throttle_key(request, body.email)
     if app.state.login_throttle.blocked_for(key) > 0:
+        # Refresh recency without counting another failure or extending the
+        # block: otherwise an attacker who keeps hitting an already-blocked
+        # key indefinitely could let it age out via the TTL or the size cap
+        # (see LoginThrottle's docstring).
+        app.state.login_throttle.record_blocked_attempt(key)
         raise HTTPException(401, _INVALID_LOGIN)
     user = app.state.user_store.verify_credentials(body.email, body.password)
     if user is None:
