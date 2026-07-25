@@ -127,6 +127,18 @@ def test_login_strips_surrounding_whitespace_from_email(app_client):
     assert login(app_client, "  root@example.com  ", "bootstrap password").status_code == 200
 
 
+def test_login_rejects_whitespace_only_email_without_creating_a_throttle_entry(app_client):
+    # Round-2 added whitespace stripping to UserStore, but nothing rejected
+    # an email that is only whitespace: it normalized to '', which the
+    # throttle would then key on. This must be a 422 (request validation),
+    # not a 401 (invalid credentials) — and it must never reach the
+    # throttle at all, since a whitespace-only email is never a real login
+    # attempt to rate-limit.
+    response = login(app_client, "   ", "bootstrap password")
+    assert response.status_code == 422
+    assert app_client.app.state.login_throttle.entry_count() == 0
+
+
 def test_whitespace_variant_of_a_blocked_email_shares_its_throttle_key(app_client):
     """UserStore.create/get_by_email/verify_credentials now strip whitespace
     at the store boundary (so " x@example.com " and "x@example.com" are one

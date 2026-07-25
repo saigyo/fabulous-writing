@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from app.services import users as users_module
-from app.services.users import DuplicateEmailError, UserStore
+from app.services.users import DuplicateEmailError, InvalidEmailError, UserStore
 
 
 @pytest.fixture()
@@ -50,6 +50,18 @@ def test_email_with_surrounding_whitespace_logs_in_to_same_account(store):
     store.create_user("ada@example.com", "correct horse battery")
     user = store.verify_credentials("  ada@example.com  ", "correct horse battery")
     assert user is not None and user.email == "ada@example.com"
+
+
+@pytest.mark.parametrize("email", ["", "   ", "\t\n "])
+def test_create_user_rejects_empty_or_whitespace_only_email(store, email):
+    # The last line of defence: the request models reject this before it
+    # gets here, but any caller that bypasses them (the operator CLI's own
+    # future use, seed_admin's underlying call) must not be able to create
+    # an addressless account by relying on the store's own stripping to
+    # normalize whitespace down to ''.
+    with pytest.raises(InvalidEmailError):
+        store.create_user(email, "correct horse battery")
+    assert store.count() == 0
 
 
 def test_create_user_rejects_whitespace_variant_of_existing_email(store):

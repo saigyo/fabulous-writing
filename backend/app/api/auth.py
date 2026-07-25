@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.api.deps import CurrentUser, get_current_user
 from app.core.auth import SELF_MIN_PASSWORD_LENGTH, issue_token, validate_password
@@ -220,6 +220,24 @@ class LoginRequest(BaseModel):
     # an arbitrarily large key in the login throttle (see `_throttle_key`).
     email: str = Field(max_length=320)
     password: str
+
+    @field_validator("email")
+    @classmethod
+    def _reject_blank_email(cls, value: str) -> str:
+        # Empty-after-stripping must be rejected here, not merely normalized
+        # downstream: `UserStore` strips whitespace too (see its
+        # docstrings), so an all-whitespace email would otherwise normalize
+        # to '' and become a usable "no email" account/login. Returning the
+        # stripped value (not the raw one) means this validator agrees with
+        # `UserStore` and `_throttle_key`, which both strip too — the value
+        # that reaches the throttle key and the store is already the same
+        # string either way, so stripping here does not fight their own
+        # stripping, it just does it once, earlier, and rejects the empty
+        # case before any throttle or DB work happens.
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("email must not be empty or whitespace-only")
+        return stripped
 
 
 class MeResponse(BaseModel):

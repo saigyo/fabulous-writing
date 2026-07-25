@@ -77,6 +77,33 @@ def test_create_rejects_duplicates_and_weak_passwords(client):
     assert "at least 12" in weak.json()["detail"]
 
 
+def test_create_rejects_whitespace_only_email(client):
+    # Round-2 added whitespace stripping to UserStore, but nothing rejected
+    # an email that is only whitespace: it normalized to '', so an admin
+    # could create an addressless, still-loginable account. Must be
+    # rejected outright, and no user created.
+    response = client.post(
+        "/api/admin/users",
+        json={"email": "   ", "password": "an initial password"},
+        headers=admin_headers(client),
+    )
+    assert response.status_code == 422
+    listing = client.get("/api/admin/users", headers=admin_headers(client)).json()
+    assert [u["email"] for u in listing] == ["root@example.com"]
+
+
+def test_create_strips_surrounding_whitespace_from_a_real_email(client):
+    # Round-2's whitespace stripping must not regress: an email with
+    # legitimate surrounding whitespace still creates a normal, loginable
+    # account, distinct from the whitespace-only case above.
+    created = make_user(client, email="  ada@example.com  ")
+    assert created["email"] == "ada@example.com"
+    assert client.post(
+        "/api/auth/login",
+        json={"email": "ada@example.com", "password": "an initial password"},
+    ).status_code == 200
+
+
 def test_unknown_tier_is_rejected(client):
     # An unrecognised tier would be an authorization state no policy covers,
     # so it must never reach the database.
