@@ -548,6 +548,11 @@ Create `frontend/src/auth/session.test.ts` covering:
   buffer, so unsaved work survives signing back in;
 - `login()` clears a document buffer belonging to a different `ownerId`, and
   keeps one belonging to the user signing in;
+- **`login()` as the *same* user preserves the persisted settings** — this is
+  the path Task 8's silent re-authentication takes after a password change, and
+  purging there would reset locale, current document and collapse states for
+  someone who never switched accounts;
+- `login()` as a *different* user purges them;
 - a buffer with no `ownerId` (written by an older build) is cleared on login;
 - `restoreSession()` with no token sets `'anonymous'` without calling the API;
 - `restoreSession()` with a token the server rejects (401) calls
@@ -570,10 +575,14 @@ state; components call these functions rather than `setAuth` directly.
 
 ```ts
 export async function login(email: string, password: string): Promise<void> {
+  const previousUserId = useStore.getState().user?.id
   const { token, user } = await postLogin(email, password)
-  purgePersistedSettings()
+  // Purge is for a *user change*, per Decision 1. Re-authenticating as the
+  // same person — which Task 8 does silently after a password change — must
+  // not wipe their locale, current document and collapse states.
+  if (previousUserId !== user.id) purgePersistedSettings()
   discardForeignBuffer(user.id)   // keeps this user's own unsaved work
-  useStore.setState({ sessionExpired: false })
+  useStore.setState({ sessionExpired: false, restoreFailed: false })
   useStore.getState().setAuth(token, user)
 }
 
@@ -1940,8 +1949,17 @@ helper sends no `Authorization` header (`:65-74`), and it drives the UI with
 `page.goto` (`:179`) — so after Task 10 every staging call 401s, and after
 Task 7 the browser lands on the login gate instead of the editor.
 
-Log it in: `POST /api/auth/login` with the scratch stack's `FW_ADMIN_*`, attach
-the header in `api()`, and drive the login form before the first screenshot.
+Log it in: `POST /api/auth/login` with the scratch stack's `FW_ADMIN_*`, and
+drive the login form before the first screenshot.
+
+**Attaching the header in `api()` is not enough** — the script has other direct
+`fetch` calls that bypass it: `makeFolder()` (`:90-95`) and the requests that
+temporarily switch and then restore the EN Standard profile (`:76-88`). After
+Task 10 the folder staging 401s outright, and a restore that runs without auth
+leaves the seeded Standard profile modified — a scratch stack's leftovers, but
+confusing ones. Route every request through one authenticated helper rather
+than patching `api()` alone.
+
 Verify by running it against the scratch stack and looking at the output.
 
 - [ ] **Step 5: Update the architecture docs**
@@ -1957,7 +1975,15 @@ Also update two documents this milestone invalidates:
   without reading this plan. Task 2 changes that return type to
   `VerifiedToken`; update the roadmap or the guarantee is stale for M3–M6.
 - **Spec §5.1's `users` table** does not list `password_changed_at`. Add it,
-  with a line on why it exists. In `docs/frontend-architecture.md`: the auth slice, the gate,
+  with a line on why it exists.
+- **Spec §4.1** carries the verifier contract in two places — the numbered
+  request-authentication flow (`user_id = TokenVerifier.verify(token)`) and the
+  protocol itself (`def verify(self, token: str) -> int: ...`), plus the
+  sentence "**`verify` returns the local `users.id`** in every mode". Task 2
+  changes that return type to `VerifiedToken`. Update all three, keeping the
+  local-id guarantee explicit — it is still true, and it is the guarantee the
+  future Supabase implementation is written against. Leaving the spec
+  contradicting the code would mislead exactly the reader it exists for. In `docs/frontend-architecture.md`: the auth slice, the gate,
 where the Bearer header is attached, the fetch-based SSE reader and why
 `EventSource` was replaced, and the purge-on-user-change rule.
 
