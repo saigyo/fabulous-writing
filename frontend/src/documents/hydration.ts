@@ -36,10 +36,16 @@ let skipRecoveryHydrate = false
  * holds a dirty snapshot for a document other than the one about to be
  * hydrated (e.g. the user switched documents while a save was failing),
  * that snapshot is about to be silently overwritten. Give it one direct
- * replay attempt first so the edits aren't lost. */
-async function replayOrphanedSnapshot(targetDocId: number): Promise<void> {
+ * replay attempt first so the edits aren't lost.
+ *
+ * `gen` is the caller's generation, captured before that caller's *first*
+ * await — never re-read here — so a turnover that happened before this
+ * function was even called is caught too, not just one that happens during
+ * this function's own await. */
+async function replayOrphanedSnapshot(targetDocId: number, gen: number): Promise<void> {
   const existing = readSnapshot()
   if (!existing?.dirty || existing.docId === targetDocId) return
+  if (gen !== currentGeneration()) return // the session that owned this snapshot has ended
   // Take sole ownership of the orphaned snapshot: a pending backoff retry
   // for the previous document would otherwise race this direct PUT.
   cancelRetry()
@@ -54,13 +60,14 @@ async function replayOrphanedSnapshot(targetDocId: number): Promise<void> {
       settings: existing.settings,
     })
   } catch (error) {
+    if (gen !== currentGeneration()) return
     if (
       error instanceof HttpError &&
       (error.status === 409 || error.status === 404)
     ) {
       skipRecoveryHydrate = true
       try {
-        await recoverSnapshot(existing)
+        await recoverSnapshot(existing, gen)
       } finally {
         skipRecoveryHydrate = false
       }
@@ -80,17 +87,21 @@ export type HydrateSource = Omit<
 >
 
 /** Load a document into store + editor. The editor change and the restored
- * findings ride ONE transaction, so spans apply to the new text. */
-export async function hydrateFromDocument(doc: HydrateSource): Promise<void> {
-  // Callers on the deferred-init path (documents.ts' runInit()) already
-  // check freshness immediately before calling in here — but
-  // replayOrphanedSnapshot below makes its own network call (a PUT), and a
-  // session ending during that call is not caught by the caller's earlier
-  // check. Everything this function writes afterwards is synchronous, so
-  // one guard right after that await covers the rest of the function.
-  const gen = currentGeneration()
+ * findings ride ONE transaction, so spans apply to the new text.
+ *
+ * `gen` must be the CALLER's generation, captured before the caller's own
+ * first await (e.g. documents.ts' openDocument() captures it before
+ * `getDocument()`, not after) — never read fresh here. A generation read at
+ * this function's own entry would equal "whatever is current right now" by
+ * definition and could never detect that the `doc` this function was
+ * *handed* already belongs to a session that ended while the caller was
+ * still fetching it. Threading the caller's value is what makes this
+ * function safe to call with already-stale data, not just data that goes
+ * stale during its own execution. */
+export async function hydrateFromDocument(doc: HydrateSource, gen: number): Promise<void> {
+  if (gen !== currentGeneration()) return // already stale before we even started
   cancelCheck() // any in-flight check belongs to the outgoing document
-  await replayOrphanedSnapshot(doc.id)
+  await replayOrphanedSnapshot(doc.id, gen)
   if (gen !== currentGeneration()) return // session ended while replaying the orphan
   beginHydration()
   try {
@@ -144,7 +155,7 @@ export async function hydrateFromDocument(doc: HydrateSource): Promise<void> {
 }
 
 /** Offline path: bring the buffered document up without a backend. */
-export async function hydrateFromBuffer(snapshot: DocSnapshot): Promise<void> {
+export async function hydrateFromBuffer(snapshot: DocSnapshot, gen: number): Promise<void> {
   await hydrateFromDocument({
     id: snapshot.docId,
     name: snapshot.name,
@@ -160,7 +171,8 @@ export async function hydrateFromBuffer(snapshot: DocSnapshot): Promise<void> {
     last_findings: snapshot.findings,
     scorecard: snapshot.scorecard,
     revision: snapshot.revision,
-  })
+  }, gen)
+  if (gen !== currentGeneration()) return // hydrateFromDocument no-op'd; nothing to restore
   // hydrate marked the buffer clean; restore the dirty truth so the retry
   // loop keeps pushing it.
   writeSnapshot(snapshot)
@@ -174,16 +186,33 @@ export async function hydrateFromBuffer(snapshot: DocSnapshot): Promise<void> {
  * during navigation teardown after the server already durably applied it,
  * leaving the buffer dirty with a stale revision. The next replay of that
  * stale revision then gets a genuine 409/404 against content that is
- * byte-identical to what's already on the server — nothing to recover. */
-export async function recoverSnapshot(snapshot: DocSnapshot): Promise<void> {
+ * byte-identical to what's already on the server — nothing to recover.
+ *
+ * `gen` is threaded from the caller (push()'s conflict handler, or
+ * replayOrphanedSnapshot()/runInit() directly) rather than read fresh
+ * here — this is the most sensitive function in the module: the
+ * recovered-copy branch below POSTs `snapshot.text` (another user's
+ * buffered document text) to create a brand-new document. A generation
+ * check gates every await in between, including immediately before that
+ * POST, so a session turnover never causes it to fire on stale content —
+ * but note the POST itself cannot be un-issued once started; the check
+ * before it prevents *starting* a stale one, the checks after resolve
+ * prevent *acting* on the response of one that was already in flight when
+ * the turnover happened (see the audit in the Task 3 report for why that's
+ * the architectural limit of a client-side guard against an in-flight
+ * network call). */
+export async function recoverSnapshot(snapshot: DocSnapshot, gen: number): Promise<void> {
+  if (gen !== currentGeneration()) return // already stale before we even started
   try {
     const server = await getDocument(snapshot.docId)
+    if (gen !== currentGeneration()) return
     if (server.text === snapshot.text) {
       clearSnapshot()
       await refreshDocuments()
+      if (gen !== currentGeneration()) return
       if (skipRecoveryHydrate) return
       if (useStore.getState().docMeta?.id !== snapshot.docId) return
-      await hydrateFromDocument(server)
+      await hydrateFromDocument(server, gen)
       return
     }
   } catch (error) {
@@ -192,6 +221,7 @@ export async function recoverSnapshot(snapshot: DocSnapshot): Promise<void> {
     // recovered-copy logic below, same as the existing 404 handling.
   }
 
+  if (gen !== currentGeneration()) return // do not create a recovered copy for a dead session
   const copy = await apiCreateDocument({
     name: currentMessages().docRecovered(snapshot.name),
     name_source: 'user',
@@ -200,17 +230,21 @@ export async function recoverSnapshot(snapshot: DocSnapshot): Promise<void> {
     scorecard: snapshot.scorecard,
     ...snapshot.settings,
   })
+  if (gen !== currentGeneration()) return // the copy now exists server-side regardless; there
+  // is nothing left to do frontend-side for a session that has since ended
   clearSnapshot()
   await refreshDocuments()
   // Reached via replayOrphanedSnapshot: we're mid-hydration of an unrelated
   // target document, so this snapshot's own document must not be re-entered.
+  if (gen !== currentGeneration()) return
   if (skipRecoveryHydrate) return
   if (useStore.getState().docMeta?.id !== snapshot.docId) return
   try {
     const original = await getDocument(snapshot.docId)
-    await hydrateFromDocument(original)
+    if (gen !== currentGeneration()) return
+    await hydrateFromDocument(original, gen)
   } catch {
     // The original is gone server-side; the recovered copy takes over.
-    await hydrateFromDocument(copy)
+    await hydrateFromDocument(copy, gen)
   }
 }

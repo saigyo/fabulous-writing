@@ -103,13 +103,24 @@ export async function moveDocumentToFolder(
   )
 }
 
-export async function openDocument(id: number): Promise<void> {
+// gen defaults to a fresh currentGeneration() read: called with no argument,
+// that's exactly right for a UI-triggered call (the button click is *the*
+// start of this operation, nothing came before it to be stale relative to).
+// A caller further down this file that is itself mid-operation (runInit(),
+// removeDocument()) passes its own already-captured value instead, so this
+// function is checked against what its caller started with, not against
+// "whatever is current when this function happens to run".
+export async function openDocument(id: number, gen: number = currentGeneration()): Promise<void> {
   await flush()
   const doc = await getDocument(id)
-  await hydrateFromDocument(doc)
+  if (gen !== currentGeneration()) return // session ended while fetching the document
+  await hydrateFromDocument(doc, gen)
 }
 
-export async function createNewDocument(folderId?: number): Promise<void> {
+export async function createNewDocument(
+  folderId?: number,
+  gen: number = currentGeneration(),
+): Promise<void> {
   await flush()
   const state = useStore.getState()
   const base: DocumentCreatePayload = {
@@ -122,8 +133,16 @@ export async function createNewDocument(folderId?: number): Promise<void> {
       ? state.folders.find((f) => f.id === folderId)
       : undefined
   const doc = await apiCreateDocument(applyFolderDefaults(base, folder))
+  // `state` was captured before the await above: if the session turned over
+  // while apiCreateDocument was in flight, `state.documents` is the OUTGOING
+  // user's stale list, and resetSessionState() has already cleared the real
+  // store to []. Writing `[summaryOf(doc), ...state.documents]` here would
+  // resurrect that stale list on top of the incoming user's (already
+  // correctly empty) one — so this has to be skipped entirely, not merely
+  // re-read, when the generation no longer matches.
+  if (gen !== currentGeneration()) return
   useStore.getState().setDocuments([summaryOf(doc), ...state.documents])
-  await hydrateFromDocument(doc)
+  await hydrateFromDocument(doc, gen)
 }
 
 export async function renameDocument(id: number, name: string): Promise<void> {
@@ -148,7 +167,7 @@ export async function renameDocument(id: number, name: string): Promise<void> {
   })
 }
 
-export async function removeDocument(id: number): Promise<void> {
+export async function removeDocument(id: number, gen: number = currentGeneration()): Promise<void> {
   // A dirty buffered snapshot for the document being deleted must not
   // survive the delete: left in place, it would later replay via
   // replayOrphanedSnapshot, 404 against the now-gone document, and
@@ -158,16 +177,23 @@ export async function removeDocument(id: number): Promise<void> {
     clearSnapshot()
   }
   await apiDeleteDocument(id)
+  // Unlike createNewDocument(), this re-reads the store fresh (not a
+  // pre-await closure) and document ids are globally unique, so a stale
+  // `remaining` list still only ever removes `id` from whatever the store
+  // *currently* holds — already correctly empty for a different session by
+  // the time this runs. Nothing here needs its own generation check; `gen`
+  // is only threaded through to satisfy hydrateFromDocument()'s /
+  // createNewDocument()'s own guards below.
   const store = useStore.getState()
   const remaining = store.documents.filter((d) => d.id !== id)
   store.setDocuments(remaining)
   if (store.docMeta?.id !== id) return
   if (remaining.length > 0) {
     const doc = await getDocument(remaining[0].id)
-    await hydrateFromDocument(doc)
+    await hydrateFromDocument(doc, gen)
   } else {
     useStore.getState().setDocMeta(null)
-    await createNewDocument()
+    await createNewDocument(undefined, gen)
   }
 }
 
@@ -218,7 +244,11 @@ async function runInit(): Promise<void> {
         error instanceof HttpError &&
         (error.status === 409 || error.status === 404)
       ) {
-        await recoverSnapshot(buffered)
+        // stillCurrent() above is a fast path only (skip the call entirely
+        // when already stale) — the real protection is recoverSnapshot's
+        // own internal checks against the threaded `gen`, which cover
+        // invalidation happening during recoverSnapshot's own awaits too.
+        await recoverSnapshot(buffered, gen)
       }
       // Other failures: backend down; the offline path below takes over.
     }
@@ -232,7 +262,7 @@ async function runInit(): Promise<void> {
     useStore.getState().setDocListError(true)
     const snapshot = readSnapshot()
     if (snapshot) {
-      await hydrateFromBuffer(snapshot)
+      await hydrateFromBuffer(snapshot, gen)
       // The buffer is dirty (offline edits pending) and hydrateFromBuffer
       // restored that dirty truth: arm the backoff retry loop now so the
       // push happens as soon as the backend comes back, even with no
@@ -270,11 +300,11 @@ async function runInit(): Promise<void> {
       // Only drop the legacy key once the migration has actually landed.
       clearLegacyText()
       useStore.getState().setDocuments([summaryOf(doc)])
-      await hydrateFromDocument(doc)
+      await hydrateFromDocument(doc, gen)
       return
     }
     if (!stillCurrent()) return
-    await createNewDocument()
+    await createNewDocument(undefined, gen)
     return
   }
 
@@ -284,5 +314,5 @@ async function runInit(): Promise<void> {
   const target = documents.find((d) => d.id === persistedId) ?? documents[0]
   const doc = await getDocument(target.id)
   if (!stillCurrent()) return
-  await hydrateFromDocument(doc)
+  await hydrateFromDocument(doc, gen)
 }

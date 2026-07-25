@@ -27,8 +27,11 @@ let hydrating = false
 // chain — including the queued follow-up — has settled.
 let inFlight: Promise<void> | null = null
 // Injected by documents.ts (avoids a module cycle): resolves a 409/404 by
-// preserving the stale snapshot as a recovered copy.
-let onConflict: ((snapshot: DocSnapshot) => Promise<void>) | null = null
+// preserving the stale snapshot as a recovered copy. Takes push()'s own
+// captured generation (the second argument) so recoverSnapshot checks
+// against the generation this specific push started under, rather than
+// reading a fresh value that would trivially match "whatever is current".
+let onConflict: ((snapshot: DocSnapshot, gen: number) => Promise<void>) | null = null
 const titleAttempted = new Set<number>()
 
 // Bumped by invalidateDocumentWork() (documents.ts), called from logout()
@@ -56,7 +59,7 @@ export function cancelDebounce(): void {
 }
 
 export function setConflictHandler(
-  handler: (snapshot: DocSnapshot) => Promise<void>,
+  handler: (snapshot: DocSnapshot, gen: number) => Promise<void>,
 ): void {
   onConflict = handler
 }
@@ -216,7 +219,7 @@ async function push(snapshot: DocSnapshot): Promise<void> {
       (error.status === 409 || error.status === 404)
     ) {
       try {
-        await onConflict?.(snapshot)
+        await onConflict?.(snapshot, gen)
       } catch {
         // Silent: buffer stays as the handler left it.
       }
