@@ -153,6 +153,7 @@ class TokenVerifier(Protocol):
         fail closed when unlinked — so the request path never changes
         lookup keys between auth modes.
         """
+        ...
 
 
 def issue_token(user_id: int, secret: str, *, now: datetime | None = None) -> str:
@@ -197,8 +198,14 @@ class LocalTokenVerifier:
             raise InvalidToken(str(exc)) from exc
         # iat is checked here rather than left to the library so the leeway
         # is explicit and does not depend on PyJWT's version-specific
-        # treatment of future issue times.
-        drift = float(claims["iat"]) - datetime.now(UTC).timestamp()
+        # treatment of future issue times. Disabling verify_iat above also
+        # disabled PyJWT's own int(...) type-check on iat, so a malformed
+        # claim (list, dict, non-numeric string) must be caught here too,
+        # not just a bad drift value.
+        try:
+            drift = float(claims["iat"]) - datetime.now(UTC).timestamp()
+        except (TypeError, ValueError) as exc:
+            raise InvalidToken("iat is not a number") from exc
         if drift > IAT_LEEWAY_SECONDS:
             raise InvalidToken("token issued too far in the future")
         try:
