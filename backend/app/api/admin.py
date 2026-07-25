@@ -9,7 +9,7 @@ import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.api.deps import CurrentUser, require_admin
 from app.core.auth import ADMIN_SET_MIN_PASSWORD_LENGTH, validate_password
@@ -37,11 +37,33 @@ class UserCreate(BaseModel):
 
 
 class UserPatch(BaseModel):
+    # display_name is the one field here with a meaningful null (it clears
+    # the name), so it alone keeps a plain `| None = None`. The handler
+    # tells "explicitly cleared" apart from "omitted" via
+    # `model_fields_set`, not by whether the value is None.
     display_name: str | None = None
     tier: TierName | None = None
     is_admin: bool | None = None
     is_active: bool | None = None
+    # None means "don't change the password" whether the field was omitted
+    # or explicitly sent as null — there is no "clear the password" action.
     password: str | None = None
+
+    @field_validator("tier", "is_admin", "is_active")
+    @classmethod
+    def _reject_explicit_null(cls, value: object, info) -> object:
+        # This only fires when the field was submitted explicitly: Pydantic
+        # skips validators for an omitted field's default entirely
+        # (validate_default=False, the library default), so `value is None`
+        # here can only mean the caller sent `"<field>": null` in the body.
+        # Unlike display_name, none of these three has a meaningful
+        # "cleared" state — an explicit null is malformed input, not a
+        # silent no-op, so it is rejected here (422) rather than in the
+        # handler, symmetric with how an unrecognised tier is already
+        # rejected by the Literal type at the same layer.
+        if value is None:
+            raise ValueError(f"{info.field_name} must not be null")
+        return value
 
 
 def _store(request: Request):
@@ -120,15 +142,17 @@ def patch_user(
     if body.is_admin and not existing.is_admin:
         _guard_admin_creation(request, actor, existing.email)
 
+    # `model_fields_set` (not "value is not None") decides what was
+    # actually submitted: display_name can be explicitly cleared to null,
+    # so inferring "provided" from non-None would silently no-op a
+    # `{"display_name": null}` request — a 200 that changes nothing and
+    # writes no audit row. tier/is_admin/is_active can never be None here:
+    # UserPatch._reject_explicit_null already turned an explicit null for
+    # those into a 422 before this handler ran.
     changes = {
-        name: value
-        for name, value in (
-            ("display_name", body.display_name),
-            ("tier", body.tier),
-            ("is_admin", body.is_admin),
-            ("is_active", body.is_active),
-        )
-        if value is not None and value != getattr(existing, name)
+        name: getattr(body, name)
+        for name in ("display_name", "tier", "is_admin", "is_active")
+        if name in body.model_fields_set and getattr(body, name) != getattr(existing, name)
     }
     updated = store.update_user(user_id, **changes) if changes else existing
     for name, value in changes.items():

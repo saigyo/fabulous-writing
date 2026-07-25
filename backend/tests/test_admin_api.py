@@ -182,3 +182,57 @@ def test_switch_on_permits_creation(tmp_path):
         headers=admin_headers(client),
     )
     assert response.status_code == 201 and response.json()["is_admin"] is True
+
+
+def test_patch_explicit_null_clears_a_field_and_writes_an_audit_row(client):
+    # `{"display_name": null}` is the natural way to clear a display name.
+    # It must not be indistinguishable from omitting the field entirely.
+    headers = admin_headers(client)
+    user = make_user(client, display_name="Ada")
+    response = client.patch(
+        f"/api/admin/users/{user['id']}",
+        json={"display_name": None},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["display_name"] is None
+    rows = [r for r in client.app.state.user_store.list_audit() if r["field"] == "display_name"]
+    assert len(rows) == 1
+    assert rows[0]["old_value"] == "Ada" and rows[0]["new_value"] == "None"
+
+
+def test_patch_omitted_field_is_left_untouched(client):
+    headers = admin_headers(client)
+    user = make_user(client, display_name="Ada")
+    response = client.patch(
+        f"/api/admin/users/{user['id']}",
+        json={"tier": "premium"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["display_name"] == "Ada"
+
+
+def test_patch_resubmitting_the_current_value_writes_no_audit_row(client):
+    headers = admin_headers(client)
+    user = make_user(client, tier="basic")
+    response = client.patch(
+        f"/api/admin/users/{user['id']}",
+        json={"tier": "basic"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    rows = [r for r in client.app.state.user_store.list_audit() if r["field"] == "tier"]
+    assert rows == []
+
+
+@pytest.mark.parametrize("field", ["tier", "is_admin", "is_active"])
+def test_patch_rejects_explicit_null_for_non_nullable_fields(client, field):
+    headers = admin_headers(client)
+    user = make_user(client)
+    response = client.patch(
+        f"/api/admin/users/{user['id']}",
+        json={field: None},
+        headers=headers,
+    )
+    assert response.status_code == 422
