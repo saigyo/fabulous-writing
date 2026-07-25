@@ -366,7 +366,8 @@ Then in `get_current_user`, after the user row is read:
 ```
 
 Both sides are tz-aware UTC — `issued_at` from `fromtimestamp(..., UTC)` and
-`password_changed_at` from `_utcnow_precise()` — so the comparison is safe.
+`password_changed_at` from `_utcnow()` — and both are at second granularity,
+which is what makes the strict `<` correct on both sides of a change (Step 3).
 Getting this wrong in the obvious way (`int < datetime`) raises `TypeError` on
 **every authenticated request**, so it is worth checking the types line up
 before running anything. Reuse the same generic 401 — which failure occurred is
