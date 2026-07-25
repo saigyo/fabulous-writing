@@ -725,23 +725,257 @@ EOF
   `es.ts`, `it.ts`, `ja.ts`, `zh.ts`
 - Test: `frontend/src/i18n/i18n.test.ts` (runs unchanged; it enforces parity)
 
-Add the keys the next three tasks need: sign-in heading, email and password
-labels, sign-in button, an invalid-credentials message, a generic
-sign-in-failed message, the account menu's "Change password" and "Log out",
-the change-password dialog's current/new/confirm labels, its success and
-mismatch messages, and a session-expired notice.
+The strings are written out below rather than left as "add auth strings",
+because translation is a judgment call, not a mechanical one — the phrasing,
+formality and typography below were chosen against the existing catalogs, and
+an implementer should transcribe them, not invent them.
 
-Write `en.ts` first as the reference, then the other six. The parity test fails
-if any locale is missing a key, which is the check that this task is complete.
+Conventions they follow, taken from the current files: flat camelCase keys
+grouped under a comment header; parameterized messages are functions so each
+language controls word order; sentences take a full stop, buttons and labels do
+not; ellipsis is attached with no space (`checking: 'Checking…'`, `de: 'Prüft…'`);
+locale-native quotes and punctuation (`fr` « » with narrow spaces, `es` ¿ ?,
+`ja` 。, `zh` 。).
+
+**Two formality choices worth a second opinion** — flag them in your report and
+change them if the owner prefers otherwise: Spanish uses the *usted* form
+(`Vuelva a intentarlo`), and Japanese uses ログイン/ログアウト rather than
+サインイン, which is the more common register in Japanese software.
+
+- [ ] **Step 1: Extend the `Messages` interface**
+
+In `frontend/src/i18n/messages.ts`, add under a new `// Authentication`
+comment header:
+
+```ts
+  // Authentication
+  signInTitle: string
+  signInEmail: string
+  signInPassword: string
+  signInSubmit: string
+  signInPending: string
+  signInInvalid: string
+  signInFailed: string
+  sessionExpired: string
+  accountMenu: string
+  accountChangePassword: string
+  accountLogOut: string
+  passwordCurrent: string
+  passwordNew: string
+  passwordConfirm: string
+  passwordSubmit: string
+  passwordCancel: string
+  passwordMismatch: string
+  passwordTooShort: (min: number) => string
+  passwordCurrentWrong: string
+  passwordChanged: string
+  passwordFailed: string
+```
+
+- [ ] **Step 2: Add the catalogs**
+
+Append to each locale file, before the closing brace:
+
+`en.ts`
+
+```ts
+  // Authentication
+  signInTitle: 'Sign in',
+  signInEmail: 'Email',
+  signInPassword: 'Password',
+  signInSubmit: 'Sign in',
+  signInPending: 'Signing in…',
+  signInInvalid: 'Wrong email or password.',
+  signInFailed: 'Sign-in failed. Please try again.',
+  sessionExpired: 'Your session has ended. Please sign in again.',
+  accountMenu: 'Account',
+  accountChangePassword: 'Change password',
+  accountLogOut: 'Log out',
+  passwordCurrent: 'Current password',
+  passwordNew: 'New password',
+  passwordConfirm: 'Confirm new password',
+  passwordSubmit: 'Change password',
+  passwordCancel: 'Cancel',
+  passwordMismatch: 'The new passwords do not match.',
+  passwordTooShort: (min) => `The new password must be at least ${min} characters.`,
+  passwordCurrentWrong: 'The current password is not correct.',
+  passwordChanged: 'Password changed.',
+  passwordFailed: 'Changing the password failed.',
+```
+
+`de.ts`
+
+```ts
+  // Authentifizierung
+  signInTitle: 'Anmelden',
+  signInEmail: 'E-Mail',
+  signInPassword: 'Passwort',
+  signInSubmit: 'Anmelden',
+  signInPending: 'Meldet an…',
+  signInInvalid: 'E-Mail oder Passwort ist falsch.',
+  signInFailed: 'Anmeldung fehlgeschlagen. Bitte erneut versuchen.',
+  sessionExpired: 'Die Sitzung ist beendet. Bitte erneut anmelden.',
+  accountMenu: 'Konto',
+  accountChangePassword: 'Passwort ändern',
+  accountLogOut: 'Abmelden',
+  passwordCurrent: 'Aktuelles Passwort',
+  passwordNew: 'Neues Passwort',
+  passwordConfirm: 'Neues Passwort bestätigen',
+  passwordSubmit: 'Passwort ändern',
+  passwordCancel: 'Abbrechen',
+  passwordMismatch: 'Die neuen Passwörter stimmen nicht überein.',
+  passwordTooShort: (min) => `Das neue Passwort muss mindestens ${min} Zeichen lang sein.`,
+  passwordCurrentWrong: 'Das aktuelle Passwort ist nicht korrekt.',
+  passwordChanged: 'Passwort geändert.',
+  passwordFailed: 'Ändern des Passworts fehlgeschlagen.',
+```
+
+`fr.ts`
+
+```ts
+  // Authentification
+  signInTitle: 'Connexion',
+  signInEmail: 'E-mail',
+  signInPassword: 'Mot de passe',
+  signInSubmit: 'Se connecter',
+  signInPending: 'Connexion…',
+  signInInvalid: 'E-mail ou mot de passe incorrect.',
+  signInFailed: 'Échec de la connexion. Veuillez réessayer.',
+  sessionExpired: 'Votre session a pris fin. Veuillez vous reconnecter.',
+  accountMenu: 'Compte',
+  accountChangePassword: 'Changer le mot de passe',
+  accountLogOut: 'Se déconnecter',
+  passwordCurrent: 'Mot de passe actuel',
+  passwordNew: 'Nouveau mot de passe',
+  passwordConfirm: 'Confirmer le nouveau mot de passe',
+  passwordSubmit: 'Changer le mot de passe',
+  passwordCancel: 'Annuler',
+  passwordMismatch: 'Les nouveaux mots de passe ne correspondent pas.',
+  passwordTooShort: (min) =>
+    `Le nouveau mot de passe doit comporter au moins ${min} caractères.`,
+  passwordCurrentWrong: 'Le mot de passe actuel est incorrect.',
+  passwordChanged: 'Mot de passe modifié.',
+  passwordFailed: 'Échec de la modification du mot de passe.',
+```
+
+`es.ts`
+
+```ts
+  // Autenticación
+  signInTitle: 'Iniciar sesión',
+  signInEmail: 'Correo electrónico',
+  signInPassword: 'Contraseña',
+  signInSubmit: 'Iniciar sesión',
+  signInPending: 'Iniciando sesión…',
+  signInInvalid: 'Correo electrónico o contraseña incorrectos.',
+  signInFailed: 'No se pudo iniciar sesión. Vuelva a intentarlo.',
+  sessionExpired: 'La sesión ha finalizado. Inicie sesión de nuevo.',
+  accountMenu: 'Cuenta',
+  accountChangePassword: 'Cambiar contraseña',
+  accountLogOut: 'Cerrar sesión',
+  passwordCurrent: 'Contraseña actual',
+  passwordNew: 'Nueva contraseña',
+  passwordConfirm: 'Confirmar nueva contraseña',
+  passwordSubmit: 'Cambiar contraseña',
+  passwordCancel: 'Cancelar',
+  passwordMismatch: 'Las nuevas contraseñas no coinciden.',
+  passwordTooShort: (min) => `La nueva contraseña debe tener al menos ${min} caracteres.`,
+  passwordCurrentWrong: 'La contraseña actual no es correcta.',
+  passwordChanged: 'Contraseña cambiada.',
+  passwordFailed: 'No se pudo cambiar la contraseña.',
+```
+
+`it.ts`
+
+```ts
+  // Autenticazione
+  signInTitle: 'Accedi',
+  signInEmail: 'E-mail',
+  signInPassword: 'Password',
+  signInSubmit: 'Accedi',
+  signInPending: 'Accesso in corso…',
+  signInInvalid: 'E-mail o password non corretti.',
+  signInFailed: 'Accesso non riuscito. Riprova.',
+  sessionExpired: 'La sessione è terminata. Effettua di nuovo l’accesso.',
+  accountMenu: 'Account',
+  accountChangePassword: 'Cambia password',
+  accountLogOut: 'Esci',
+  passwordCurrent: 'Password attuale',
+  passwordNew: 'Nuova password',
+  passwordConfirm: 'Conferma nuova password',
+  passwordSubmit: 'Cambia password',
+  passwordCancel: 'Annulla',
+  passwordMismatch: 'Le nuove password non coincidono.',
+  passwordTooShort: (min) => `La nuova password deve contenere almeno ${min} caratteri.`,
+  passwordCurrentWrong: 'La password attuale non è corretta.',
+  passwordChanged: 'Password modificata.',
+  passwordFailed: 'Modifica della password non riuscita.',
+```
+
+`ja.ts`
+
+```ts
+  // 認証
+  signInTitle: 'ログイン',
+  signInEmail: 'メールアドレス',
+  signInPassword: 'パスワード',
+  signInSubmit: 'ログイン',
+  signInPending: 'ログインしています…',
+  signInInvalid: 'メールアドレスまたはパスワードが正しくありません。',
+  signInFailed: 'ログインに失敗しました。もう一度お試しください。',
+  sessionExpired: 'セッションが終了しました。もう一度ログインしてください。',
+  accountMenu: 'アカウント',
+  accountChangePassword: 'パスワードを変更',
+  accountLogOut: 'ログアウト',
+  passwordCurrent: '現在のパスワード',
+  passwordNew: '新しいパスワード',
+  passwordConfirm: '新しいパスワード（確認）',
+  passwordSubmit: 'パスワードを変更',
+  passwordCancel: 'キャンセル',
+  passwordMismatch: '新しいパスワードが一致しません。',
+  passwordTooShort: (min) => `新しいパスワードは${min}文字以上で入力してください。`,
+  passwordCurrentWrong: '現在のパスワードが正しくありません。',
+  passwordChanged: 'パスワードを変更しました。',
+  passwordFailed: 'パスワードの変更に失敗しました。',
+```
+
+`zh.ts`
+
+```ts
+  // 身份验证
+  signInTitle: '登录',
+  signInEmail: '邮箱',
+  signInPassword: '密码',
+  signInSubmit: '登录',
+  signInPending: '正在登录…',
+  signInInvalid: '邮箱或密码不正确。',
+  signInFailed: '登录失败，请重试。',
+  sessionExpired: '会话已结束，请重新登录。',
+  accountMenu: '账户',
+  accountChangePassword: '修改密码',
+  accountLogOut: '退出登录',
+  passwordCurrent: '当前密码',
+  passwordNew: '新密码',
+  passwordConfirm: '确认新密码',
+  passwordSubmit: '修改密码',
+  passwordCancel: '取消',
+  passwordMismatch: '两次输入的新密码不一致。',
+  passwordTooShort: (min) => `新密码至少需要 ${min} 个字符。`,
+  passwordCurrentWrong: '当前密码不正确。',
+  passwordChanged: '密码已修改。',
+  passwordFailed: '修改密码失败。',
+```
+
+The parity test fails if any locale is missing a key, which is the check that
+this task is complete.
 Keep the wording plain and short — these are UI strings, not documentation.
 
-- [ ] **Step 1: Add keys to the `Messages` interface, then all seven locales**
-- [ ] **Step 2: Run the parity test**
+- [ ] **Step 3: Run the parity test**
 
 Run: `npx vitest run src/i18n`
 Expected: PASS.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add src/i18n
