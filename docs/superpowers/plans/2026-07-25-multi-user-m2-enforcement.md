@@ -472,12 +472,26 @@ EOF
 ### Task 3: Frontend auth state and session actions
 
 **Files:**
-- Modify: `frontend/src/state/store.ts`, `frontend/src/documents/buffer.ts`
-  (add `ownerId` to `DocSnapshot`), `frontend/src/documents/autosave.ts`
-  (populate it in `collectSnapshot()`)
+- Modify: `frontend/src/state/store.ts` (auth fields, `INITIAL_DATA`,
+  `resetSessionState()`), `frontend/src/documents/buffer.ts` (add `ownerId` to
+  `DocSnapshot`), `frontend/src/documents/autosave.ts` (populate it in
+  `collectSnapshot()`; the generation check on deferred writes),
+  `frontend/src/documents/documents.ts` (`invalidateDocumentWork()`,
+  `clearLegacyText()`, the generation check on `initDocuments`' post-`await`
+  writes), `frontend/src/checking/controller.ts` (register
+  `cancelInFlightCheck` through the injection setter — `cancelCheck()` lives
+  here, at `:16`, and `session.ts` must not import this module),
+  `frontend/src/api/client.ts` (`postLogin`, `getMe`,
+  `setUnauthorizedHandler`)
 - Create: `frontend/src/auth/session.ts`
 - Test: `frontend/src/state/store.test.ts` (append),
-  `frontend/src/auth/session.test.ts` (new)
+  `frontend/src/auth/session.test.ts` (new),
+  `frontend/src/documents/documents.test.ts` and
+  `frontend/src/documents/autosave.test.ts` (the `ownerId` literals and the
+  in-flight handoff cases)
+
+This list and the `git add` in Step 7 must name the same files; they are the
+same fact written twice, which is what the one-home constraint is about.
 
 **Interfaces:**
 - Produces: on the store, `token: string | null`, `user: MeResponse | null`,
@@ -864,6 +878,7 @@ Expected: PASS.
 
 ```bash
 git add src/state/store.ts src/state/store.test.ts src/auth src/api/client.ts \
+        src/checking/controller.ts \
         src/documents/buffer.ts src/documents/autosave.ts \
         src/documents/autosave.test.ts src/documents/documents.ts \
         src/documents/documents.test.ts
