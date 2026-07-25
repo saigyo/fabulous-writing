@@ -31,12 +31,19 @@ def _sentence_start(text: str, start: int) -> bool:
     if start == 0:
         return True
     # A newline followed only by whitespace or markdown structure characters.
+    # The newline is tracked during the walk rather than tested afterwards
+    # with `"\n" in text[index:start]`, which would copy the whole trailing
+    # run — needless allocation on attacker-supplied text.
     index = start
-    while index > 0 and (
-        text[index - 1].isspace() or text[index - 1] in _MARKDOWN_STRUCTURE
-    ):
+    saw_newline = False
+    while index > 0:
+        char = text[index - 1]
+        if char == "\n":
+            saw_newline = True
+        elif not (char.isspace() or char in _MARKDOWN_STRUCTURE):
+            break
         index -= 1
-    if "\n" in text[index:start]:
+    if saw_newline:
         return True
     # Sentence-ending punctuation, optional closing quotes/brackets, then at
     # least one whitespace character.

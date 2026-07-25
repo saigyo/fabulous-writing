@@ -179,14 +179,25 @@ class TestCasingHelpers:
         # every start position re-scanned the whitespace run each time, so a
         # document of newlines cost ~0.5 s at 16k characters and ~20 s at
         # 100k — once per term match, from a single request.
+        #
+        # `start` is the index of the trailing "x", not len(text): callers
+        # only ever pass a match position, and it is what makes the scan walk
+        # the whole 200k newline run instead of stopping at the first
+        # character.
+        #
+        # The bound is deliberately loose. The linear scan takes ~5 ms
+        # locally, while the quadratic form would need ~80 s at this size, so
+        # anything in between separates them; 5 s leaves a shared CI runner
+        # three orders of magnitude of headroom over the real cost while
+        # still failing decisively on a regression.
         import time
 
         from app.checkers.terminology import _sentence_start
 
         text = "\n" * 200_000 + "x"
         started = time.perf_counter()
-        assert _sentence_start(text, len(text)) is False
-        assert time.perf_counter() - started < 0.5
+        assert _sentence_start(text, len(text) - 1) is True
+        assert time.perf_counter() - started < 5.0
 
 
 class TestPreferredCasing:
