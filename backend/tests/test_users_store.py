@@ -32,6 +32,34 @@ def test_email_lookup_and_uniqueness_are_case_insensitive(store):
         store.create_user("ADA@example.com", "another password")
 
 
+def test_email_whitespace_is_stripped_on_create_and_stored_value(store):
+    user = store.create_user("  ada@example.com  ", "correct horse battery")
+    # Stored/returned value has no surrounding whitespace, but case is
+    # preserved (COLLATE NOCASE already handles case-insensitivity; the
+    # store must not also lowercase).
+    assert user.email == "ada@example.com"
+
+
+def test_email_with_surrounding_whitespace_resolves_to_same_account(store):
+    created = store.create_user("ada@example.com", "correct horse battery")
+    assert store.get_by_email(" ada@example.com ") == created
+    assert store.get_by_email("ada@example.com\t") == created
+
+
+def test_email_with_surrounding_whitespace_logs_in_to_same_account(store):
+    store.create_user("ada@example.com", "correct horse battery")
+    user = store.verify_credentials("  ada@example.com  ", "correct horse battery")
+    assert user is not None and user.email == "ada@example.com"
+
+
+def test_create_user_rejects_whitespace_variant_of_existing_email(store):
+    store.create_user("x@example.com", "correct horse battery")
+    with pytest.raises(DuplicateEmailError):
+        store.create_user("x@example.com ", "another password")
+    with pytest.raises(DuplicateEmailError):
+        store.create_user(" x@example.com", "another password")
+
+
 def test_verify_credentials(store):
     store.create_user("ada@example.com", "correct horse battery")
     assert store.verify_credentials("ADA@example.com", "correct horse battery") is not None

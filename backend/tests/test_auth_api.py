@@ -1,5 +1,6 @@
 import sys
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -122,6 +123,27 @@ def test_login_is_case_insensitive_on_email(app_client):
     assert login(app_client, "ROOT@Example.com", "bootstrap password").status_code == 200
 
 
+def test_login_strips_surrounding_whitespace_from_email(app_client):
+    assert login(app_client, "  root@example.com  ", "bootstrap password").status_code == 200
+
+
+def test_whitespace_variant_of_a_blocked_email_shares_its_throttle_key(app_client):
+    """UserStore.create/get_by_email/verify_credentials now strip whitespace
+    at the store boundary (so " x@example.com " and "x@example.com" are one
+    DB row), while `_throttle_key` has always normalized with
+    `.strip().lower()`. This pins the invariant a prior whole-branch review
+    established: a DB match must imply an equal throttle key, so an email
+    the store treats as identical to an already-blocked one cannot dodge
+    the block by adding whitespace. If the two boundaries ever normalize
+    whitespace differently, this test is where that would show up.
+    """
+    for _ in range(5):
+        login(app_client, "root@example.com", "wrong password")
+    blocked = login(app_client, "  root@example.com  ", "bootstrap password")
+    assert blocked.status_code == 401
+    assert blocked.json()["detail"] == "Invalid email or password"
+
+
 @pytest.mark.parametrize(
     ("email", "password"),
     [("root@example.com", "wrong password"), ("nobody@example.com", "bootstrap password")],
@@ -186,6 +208,39 @@ def test_throttle_blocks_after_repeated_failures_then_recovers():
     assert throttle.blocked_for(key) > 0
     now[0] += 2.0
     assert throttle.blocked_for(key) == 0
+
+
+def test_extreme_failure_count_saturates_to_max_delay_without_hanging():
+    """Regression test for unbounded exponentiation in the backoff.
+
+    `record_failure` used to compute `base_delay * 2 ** (failures -
+    threshold)` with an *integer* exponent. `failures` cannot realistically
+    reach an unsafe value via real logins (it only increments once per
+    block window, and each increment costs a full bcrypt hash), so this
+    drives it directly by mutating the stored entry rather than issuing
+    thousands of real logins.
+
+    The fix caps the exponent (see `_MAX_SAFE_EXPONENT` in
+    `app/api/auth.py`) rather than merely switching to a float base: a
+    float base alone does not save you in CPython — `2.0 ** 1024` raises
+    OverflowError instead of returning `inf`, so an uncapped float
+    exponent would trade a hang for a crash. This test would fail either
+    way: by hanging/OOMing on unbounded int exponentiation, or by raising
+    OverflowError on an uncapped float one.
+    """
+    now = [0.0]
+    throttle = LoginThrottle(threshold=3, base_delay=1.0, max_delay=60.0, clock=lambda: now[0])
+    key = ("ada@example.com", "127.0.0.1")
+    throttle.record_failure(key)
+    entry = throttle._state[key]
+    entry.failures = 10**9  # far beyond anything reachable via real logins
+
+    start = time.monotonic()
+    throttle.record_failure(key)
+    elapsed = time.monotonic() - start
+
+    assert throttle.blocked_for(key) == pytest.approx(60.0)
+    assert elapsed < 1.0  # promptly, not after allocating a giant bigint
 
 
 def test_throttle_backoff_grows_and_success_clears_it():
