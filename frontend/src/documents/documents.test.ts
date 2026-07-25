@@ -436,6 +436,38 @@ describe('invalidateDocumentWork', () => {
     expect(useStore.getState().docMeta).toBeNull()
   })
 
+  it('frees the memoised initDocuments() run so the next call starts fresh, without waiting for the stale one first', async () => {
+    let resolveFirstList!: (docs: ReturnType<typeof summaryOf>[]) => void
+    vi.mocked(listDocuments).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirstList = resolve
+        }) as never,
+    )
+
+    const stale = initDocuments() // user A's run: starts, awaiting listDocuments()
+    invalidateDocumentWork() // user A logs out mid-flight
+
+    // Deliberately NOT awaiting `stale` here: if invalidateDocumentWork()
+    // hadn't cleared initInFlight, the next call below would just return
+    // this same still-pending promise instead of starting user B's own run
+    // — leaving user B's sidebar and editor uninitialised forever.
+    vi.mocked(listDocuments).mockResolvedValueOnce([summaryOf(doc(2))])
+    vi.mocked(getDocument).mockResolvedValueOnce(doc(2))
+    const fresh = initDocuments()
+    expect(fresh).not.toBe(stale)
+
+    await fresh
+    expect(useStore.getState().docMeta?.id).toBe(2)
+    expect(useStore.getState().documents.map((d) => d.id)).toEqual([2])
+
+    // The stale run resolving afterwards must still not clobber user B's
+    // already-landed state.
+    resolveFirstList([summaryOf(doc(1))])
+    await stale
+    expect(useStore.getState().docMeta?.id).toBe(2)
+  })
+
   it('a login as another user mid-initDocuments() never surfaces the first user\'s content', async () => {
     let resolveGet: ((d: DocumentFull) => void) | undefined
     vi.mocked(listDocuments).mockResolvedValue([summaryOf(doc(7))])

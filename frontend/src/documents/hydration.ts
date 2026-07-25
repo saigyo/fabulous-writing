@@ -14,6 +14,7 @@ import {
   beginHydration,
   cancelRetry,
   collectSnapshot,
+  currentGeneration,
   endHydration,
 } from './autosave'
 import {
@@ -81,8 +82,16 @@ export type HydrateSource = Omit<
 /** Load a document into store + editor. The editor change and the restored
  * findings ride ONE transaction, so spans apply to the new text. */
 export async function hydrateFromDocument(doc: HydrateSource): Promise<void> {
+  // Callers on the deferred-init path (documents.ts' runInit()) already
+  // check freshness immediately before calling in here — but
+  // replayOrphanedSnapshot below makes its own network call (a PUT), and a
+  // session ending during that call is not caught by the caller's earlier
+  // check. Everything this function writes afterwards is synchronous, so
+  // one guard right after that await covers the rest of the function.
+  const gen = currentGeneration()
   cancelCheck() // any in-flight check belongs to the outgoing document
   await replayOrphanedSnapshot(doc.id)
+  if (gen !== currentGeneration()) return // session ended while replaying the orphan
   beginHydration()
   try {
     const store = useStore.getState()

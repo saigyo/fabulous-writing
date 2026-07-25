@@ -29,6 +29,16 @@ import { settingsPayload } from './settings'
 
 const LEGACY_TEXT_KEY = 'fabulous-writing-text'
 
+// Memoises the run started by initDocuments() so StrictMode's double mount
+// effect (and any other re-entrant caller) shares one run instead of
+// double-creating documents and double-replaying the dirty buffer. Cleared
+// by that run's own `.finally()` — see initDocuments() — and also by
+// invalidateDocumentWork() below, since a stale run's `.finally` clearing it
+// again (after a fresh one has already started) would otherwise clobber the
+// fresh run's slot; the `.finally` guards against that by only clearing the
+// slot if it still points at itself.
+let initInFlight: Promise<void> | null = null
+
 /** Removes the pre-multi-document editor buffer. Exported for auth/session.ts
  * — documents.ts is the module that owns LEGACY_TEXT_KEY. */
 export function clearLegacyText(): void {
@@ -36,16 +46,21 @@ export function clearLegacyText(): void {
 }
 
 /** Invalidates all pending and in-flight document work: cancels the
- * debounce and backoff-retry timers so no queued write fires again, and
- * bumps the generation counter so a push or `initDocuments()` run already
- * in flight — which cancelling a timer cannot stop — no-ops instead of
- * recreating the buffer for a session that has since ended. Called by
- * logout() and expireSession() (auth/session.ts), never directly by UI
- * code. */
+ * debounce and backoff-retry timers so no queued write fires again, bumps
+ * the generation counter so work already in flight — which cancelling a
+ * timer cannot stop — no-ops instead of recreating the buffer for a session
+ * that has since ended, and clears the memoised initDocuments() run. That
+ * last part matters on its own: without it, a logout mid-initDocuments()
+ * leaves `initInFlight` holding the stale (already-invalidated) run, so the
+ * next mount's `initInFlight ??=` hands the new user's mount that same
+ * stale promise instead of starting a fresh run — the new user's document
+ * list and folders then never initialise at all. Called by logout() and
+ * expireSession() (auth/session.ts), never directly by UI code. */
 export function invalidateDocumentWork(): void {
   cancelDebounce()
   cancelRetry()
   bumpGeneration()
+  initInFlight = null
 }
 
 /** Mirrors the backend rule in app/services/naming.py. */
@@ -156,24 +171,29 @@ export async function removeDocument(id: number): Promise<void> {
   }
 }
 
-let initInFlight: Promise<void> | null = null
-
 /** App startup: replay dirty buffer, fetch list, migrate legacy text,
  * open the last-open (or most recent) document. */
 export function initDocuments(): Promise<void> {
-  // StrictMode double-invokes the mount effect; concurrent runs would
-  // double-create documents and double-replay the dirty buffer.
-  initInFlight ??= runInit().finally(() => {
-    initInFlight = null
-  })
+  if (!initInFlight) {
+    // StrictMode double-invokes the mount effect; concurrent runs would
+    // double-create documents and double-replay the dirty buffer.
+    const run: Promise<void> = runInit().finally(() => {
+      // Only clear the slot if it still points at this run: if
+      // invalidateDocumentWork() already cleared it and a fresh run has
+      // since been assigned, this stale run's own completion must not
+      // clobber that fresh run's slot.
+      if (initInFlight === run) initInFlight = null
+    })
+    initInFlight = run
+  }
   return initInFlight
 }
 
 async function runInit(): Promise<void> {
-  // Captured before any await: invalidateDocumentWork() (logout, expiry, or
-  // a login that changes the user) bumps this while a fetch below is still
-  // pending. Every write past an await checks it first, so a run started
-  // for one session cannot land its writes into the next one.
+  // Captured before any await: invalidateDocumentWork() (logout or expiry —
+  // login never calls it, see auth/session.ts) bumps this while a fetch
+  // below is still pending. Every write past an await checks it first, so
+  // a run started for one session cannot land its writes into the next.
   const gen = currentGeneration()
   const stillCurrent = () => gen === currentGeneration()
 

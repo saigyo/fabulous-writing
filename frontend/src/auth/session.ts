@@ -1,17 +1,8 @@
 import { getMe, HttpError, postLogin, setUnauthorizedHandler } from '../api/client'
+import { cancelInFlightCheck } from '../checking/cancelSlot'
 import { clearLegacyText, invalidateDocumentWork } from '../documents/documents'
 import { clearSnapshot, readSnapshot } from '../documents/buffer'
 import { resetSessionState, useStore } from '../state/store'
-
-// Injected by checking/controller.ts at module load (avoids a module
-// cycle): session.ts must not import controller.ts to get cancelCheck(),
-// because documents.ts (imported below) already reaches controller.ts
-// indirectly via hydration.ts. Defaults to a no-op so a call before
-// controller.ts has registered itself never throws.
-let cancelInFlightCheck: () => void = () => {}
-export function setCancelCheckHandler(fn: () => void): void {
-  cancelInFlightCheck = fn
-}
 
 /** Discards the buffered document unless it belongs to the user now signing
  * in — including a buffer with no ownerId at all (written by an older
@@ -77,21 +68,34 @@ let restoreInFlight: Promise<void> | null = null
  * requests. The dedup lives here, with the function, so every caller
  * benefits. */
 export function restoreSession(): Promise<void> {
-  restoreInFlight ??= runRestore().finally(() => {
-    restoreInFlight = null
-  })
+  if (!restoreInFlight) {
+    const run: Promise<void> = runRestore().finally(() => {
+      // Only clear the slot if it still points at this run — see
+      // documents.ts' initDocuments() for why a stale run's own completion
+      // must not clobber a fresher run's slot.
+      if (restoreInFlight === run) restoreInFlight = null
+    })
+    restoreInFlight = run
+  }
   return restoreInFlight
 }
 
 async function runRestore(): Promise<void> {
+  // Same hazard login() guards against: a logout() (or another login())
+  // landing while getMe() is in flight means the token this restore is
+  // about to commit may no longer be the session's token at all.
+  const startedAt = generation
   const token = useStore.getState().token
   if (!token) {
     useStore.getState().setAuth(null, null)
     return
   }
   try {
-    useStore.getState().setAuth(token, await getMe())
+    const user = await getMe()
+    if (startedAt !== generation) return
+    useStore.getState().setAuth(token, user)
   } catch (error) {
+    if (startedAt !== generation) return
     // Only an authentication rejection ends the session. A 500 or a dropped
     // connection during startup must NOT discard a perfectly good token —
     // that would turn a backend hiccup into a logout, and the spec scopes

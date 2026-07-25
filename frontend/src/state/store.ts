@@ -301,6 +301,19 @@ export const INITIAL_DATA: Omit<
  * login that changes the user — see session.ts for which. */
 export function resetSessionState(): void {
   useStore.persist.clearStorage()
+  // Order matters, but not the way it looks: clearStorage() removes the
+  // localStorage key, then setState() immediately triggers the persist
+  // middleware to write it straight back — with token still holding
+  // whatever it was before this call, since every caller (login/logout/
+  // expireSession) sets auth via setAuth() right after this returns. So the
+  // key ends up *recreated with INITIAL_DATA's values plus the old token*,
+  // not removed, for the instant between this line and that setAuth() call.
+  // All three callers still end up correct because they all call setAuth()
+  // immediately afterwards, but do not reorder this to setState() then
+  // clearStorage() — that would instead leave the *reset* state (not the
+  // old one) sitting in storage during that same instant, which is a
+  // smaller window but the same class of bug the moment a caller is added
+  // that doesn't immediately call setAuth().
   useStore.setState(INITIAL_DATA) // shallow merge: the actions survive
 }
 
