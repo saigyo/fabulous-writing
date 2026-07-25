@@ -831,10 +831,54 @@ CREATE TABLE admin_audit (
 `EventSource` cannot set headers, so the SSE client in
 `frontend/src/api/client.ts` switches to a `fetch()`-based stream reader:
 `Authorization: Bearer` header like every other call, `text/event-stream`
-parsed from the response `ReadableStream` (~30 lines, both ends ours; our
-streams are one-shot and short-lived, so `EventSource` auto-reconnect is
-not a loss). Cancellation uses `AbortController`, integrating with the
-existing `cancelCheck()` machinery.
+parsed from the response `ReadableStream`. Cancellation uses
+`AbortController`, integrating with the existing `cancelCheck()` machinery.
+
+**Framing comes from `eventsource-parser`; the connection lifecycle is
+ours.** An earlier draft of this spec called for hand-rolling both ("~30
+lines, both ends ours"). Revised on 2026-07-25 after evaluating the
+alternatives, because the two halves of the problem have opposite answers:
+
+- *Framing* is fiddly and generic — assembling frames across chunk
+  boundaries, `\r\n` vs `\n` separators, multi-line `data:` fields, comment
+  lines, the single leading space that must be stripped. Nothing about our
+  application makes our version of this special, and the edge cases are
+  exactly where a hand-rolled parser goes wrong silently.
+- *Lifecycle* is unusual for us and simple: our streams are **one-shot and
+  short-lived**. The server sends `done` and closes. There is nothing to
+  reconnect to, and a reconnect is actively wrong — it would re-subscribe
+  to a finished check.
+
+`eventsource-parser` (MIT, zero runtime dependencies, actively maintained)
+supplies exactly the first half and none of the second.
+
+Two fuller SSE clients were considered and rejected, both for the same
+reason — they are built around the `EventSource` model of *persistent*
+streams that should survive disconnects, which is the opposite of our
+lifecycle:
+
+- **`@microsoft/fetch-event-source`** — auto-retries by default and
+  reconnects on page-visibility change. We would be adding a dependency in
+  order to switch off its principal feature. It was also last published in
+  April 2021, and it would sit on the authentication path with no upstream
+  to fix anything that surfaces.
+- **`eventsource-client`** (the maintained companion to
+  `eventsource-parser`, and a good package) — reconnects automatically, and
+  treats only HTTP **204** as non-retryable. A **401** from an expired token
+  mid-stream is therefore not recognised as terminal: the client would
+  attempt to parse the JSON error body as an event stream, find no events,
+  reach end-of-stream and reconnect — a silent loop against an endpoint that
+  will keep returning 401, which our central 401 handler would never see.
+  Bending it into shape would mean closing on `done`, closing on
+  disconnect, guarding `onDone()` against double-firing, and injecting a
+  custom `fetch` to detect 401 — at which point the lifecycle is ours again
+  and the library is being used only for its parser.
+
+The residual risk of the chosen split is that the connection code is still
+ours to get right: `done` must close the stream, an ended stream without
+`done` must still settle, and the returned unsubscribe function must be
+idempotent because `runCheck()` calls it unconditionally before every new
+check.
 
 **Principle (binding for future work): tokens never appear in URLs.** Query
 strings persist in server/proxy/edge access logs; a logged bearer token is

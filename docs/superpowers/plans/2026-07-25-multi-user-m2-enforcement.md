@@ -583,18 +583,28 @@ EOF
 ### Task 5: fetch-based SSE reader
 
 **Files:**
-- Modify: `frontend/src/api/client.ts`
+- Modify: `frontend/src/api/client.ts`, `frontend/package.json`
 - Test: `frontend/src/api/sse.test.ts` (new)
 
 **Interfaces:**
-- Consumes: nothing new.
+- Consumes: `eventsource-parser` (new dependency).
 - Produces: `subscribeCheck(checkId, handlers) => () => void` — **the same
   signature it has today**, so `checking/controller.ts` needs no change.
 
-**This is the riskiest task in the milestone.** `EventSource` cannot send an
-`Authorization` header, which is why it goes; but it also gives us framing,
-event dispatch and cancellation for free, and all three now have to be written
-by hand. The existing behavioural contract, which `controller.ts` depends on:
+**Framing comes from the library; the lifecycle is ours.** `EventSource` cannot
+send an `Authorization` header, which is why it goes — but it also gave us
+framing, event dispatch and cancellation for free, and those now have to come
+from somewhere. Spec §7.3 records the evaluation: `eventsource-parser` (MIT,
+zero runtime dependencies, actively maintained) handles the generic, fiddly
+half — frames split across chunks, `\r\n` vs `\n`, multi-line `data:`, comment
+lines, the leading space that must be stripped. The fuller clients
+(`@microsoft/fetch-event-source`, `eventsource-client`) were rejected because
+both reconnect automatically, which is wrong for one-shot streams, and
+`eventsource-client` treats only HTTP 204 as terminal — a 401 from an expired
+token would produce a silent reconnect loop our central 401 handler never sees.
+
+**What remains ours is the risky part of this task**, so treat the contract
+below as binding. `controller.ts` depends on it:
 
 - five event names: `checker_result`, `llm_progress`, `scorecard`,
   `checker_error`, `done`;
@@ -607,35 +617,54 @@ by hand. The existing behavioural contract, which `controller.ts` depends on:
   `cancelCheck()` calls it, and `runCheck()` calls it again at the start of
   every new check. It must be idempotent and must never throw.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Add the dependency**
+
+Run from `frontend/`:
+
+```bash
+npm install eventsource-parser
+```
+
+Expected: a `dependencies` entry and a `package-lock.json` update. Note that
+this repo pins install-script approvals in `package.json`'s `allowScripts`;
+`eventsource-parser` has no install script and no runtime dependencies, so
+nothing should need approving — say so in your report if `npm` disagrees.
+
+- [ ] **Step 2: Write the failing tests**
 
 Create `frontend/src/api/sse.test.ts`. Stub `globalThis.fetch` to return a
 `Response` whose `body` is a `ReadableStream` you push chunks into, so you can
 control framing precisely. Cover:
 
 - each of the five events dispatches to the right handler with parsed data;
-- an event split across two chunks mid-frame is assembled correctly — the
-  buffer must not assume a frame arrives whole;
-- `\r\n\r\n` frame separators are handled, not only `\n\n`;
-- a `data:` line with a leading space has that one space stripped (per the SSE
-  spec) and the JSON still parses;
-- multi-line `data:` within one frame is joined with `\n`;
-- `done` calls `onDone()` once and stops reading;
+- an event split across two chunks mid-frame is assembled correctly;
+- `done` calls `onDone()` **exactly once** and stops reading;
 - the unsubscribe function aborts the fetch, and calling it twice does not
   throw;
-- a stream that ends without `done` calls `onDone()` (the network-error path);
+- a stream that ends without `done` calls `onDone()` (the network-error path),
+  and does **not** call it a second time if `done` had already arrived;
 - the request carries the `Authorization` header.
 
-- [ ] **Step 2: Run them and watch them fail**
+Do **not** re-test the library's own framing edge cases (`\r\n` separators,
+multi-line `data:`, leading-space stripping, comment lines). Those are
+`eventsource-parser`'s contract, covered by its own suite; asserting them here
+would be testing the dependency rather than our code. The split-chunk case
+stays because it verifies *we* feed the parser incrementally rather than
+assuming whole frames.
+
+- [ ] **Step 3: Run them and watch them fail**
 
 Run: `npx vitest run src/api/sse.test.ts`
 Expected: FAIL — `subscribeCheck` still constructs an `EventSource`.
 
-- [ ] **Step 3: Implement**
+- [ ] **Step 4: Implement**
 
-Replace `subscribeCheck` with a `fetch()` + `AbortController` reader. Shape:
+Replace `subscribeCheck` with a `fetch()` + `AbortController` reader that feeds
+chunks to the library's parser. Shape:
 
 ```ts
+import { createParser, type EventSourceMessage } from 'eventsource-parser'
+
 export function subscribeCheck(
   checkId: string,
   handlers: CheckEventHandlers,
@@ -647,31 +676,39 @@ export function subscribeCheck(
 ```
 
 `readEvents` opens the request with the Bearer header and
-`Accept: text/event-stream`, reads `response.body` through a
-`TextDecoder`, buffers until a frame separator, parses `event:`/`data:` lines,
-and dispatches. Wrap the whole read loop so an `AbortError` — the normal
-cancellation path — is not reported as a failure, and any other error ends in
-`onDone()` to match today's semantics.
+`Accept: text/event-stream`, creates a parser with an `onEvent` callback that
+dispatches on `event.event` to the five handlers, then reads `response.body`
+through a `TextDecoder` and calls `parser.feed(chunk)` for each chunk.
 
-Keep the parser a separate, exported-for-test pure function that turns a buffer
-into `[frames, remainder]`. That is the part with the edge cases, and testing it
-directly is far cheaper than driving every case through a stream.
+Three things are yours to get right, and each has a test above:
+
+1. **Settle exactly once.** `done` calls `onDone()`; so does an ended or failed
+   stream. Guard with a flag so a `done` frame immediately followed by
+   end-of-stream does not fire it twice.
+2. **`AbortError` is the normal cancellation path**, not a failure — it must
+   not surface as an error, and after an abort `onDone()` should not fire
+   (`cancelCheck()` already resets the store itself).
+3. **Any other error ends in `onDone()`**, matching today's semantics where a
+   network error is indistinguishable from completion.
 
 `AbortController` does not exist anywhere in this codebase yet; this is new
 code, not a refactor.
 
-- [ ] **Step 4: Run the tests**
+- [ ] **Step 5: Run the tests**
 
 Run: `npx vitest run src/api src/checking`
 Expected: PASS — including `controller.test.ts`, which mocks `subscribeCheck`
 at the module level and therefore must be unaffected.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add src/api/client.ts src/api/sse.test.ts
+git add package.json package-lock.json src/api/client.ts src/api/sse.test.ts
 git commit -m "$(cat <<'EOF'
 feat(auth): read check events over fetch so SSE can carry a bearer token
+
+Framing via eventsource-parser; the one-shot lifecycle stays ours. See
+spec 7.3 for why the fuller SSE clients were rejected.
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01QG5RSDiRACnzQgN89FceuQ
