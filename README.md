@@ -220,6 +220,34 @@ Which model to pick — per language, API vs. local Ollama, hardware and cost
 considerations — is covered in
 [docs/model-recommendations.md](docs/model-recommendations.md).
 
+### Authentication (foundation only — not yet enforced)
+
+The backend has user accounts and local email/password login (see
+[Authentication and user accounts](docs/backend-architecture.md#authentication-and-user-accounts-m1-foundation-only)
+in the architecture doc), but **no endpoint currently requires a logged-in
+user** — the app above works exactly as before. Enforcement lands in a later
+milestone. These variables are read from the environment only, never stored:
+
+| Variable | Purpose |
+|-----------|-------|
+| `FW_AUTH_SECRET` | HS256 token-signing secret, **required** to start the backend in `auth.mode: local` (the default), at least 32 characters. Generate one with `openssl rand -base64 32`. Startup fails closed without it, unless `auth.ephemeral_secret: true` is set in `config.yaml` for local development (a random secret is generated per process start, so every token dies on restart — never use this outside development). |
+| `FW_ADMIN_EMAIL` | Email for the bootstrap admin account. Read **only while the `users` table is empty** — once any user exists, this variable is ignored, so it can never serve as a standing password reset. |
+| `FW_ADMIN_PASSWORD` | Password for the bootstrap admin account, at least 12 characters. Same "only while empty" rule as `FW_ADMIN_EMAIL`. |
+
+```sh
+export FW_AUTH_SECRET="$(openssl rand -base64 32)"
+export FW_ADMIN_EMAIL="you@example.com"
+export FW_ADMIN_PASSWORD="a bootstrap password"
+cd backend
+uv run uvicorn app.main:app --reload --port 8000
+```
+
+`backend/config.example.yaml`'s `auth:` block documents the same variables
+alongside the related config-only knobs (`mode`, `ephemeral_secret`,
+`allow_additional_admins`). Password/account recovery without a working web
+session is available via the operator CLI: `uv run python -m app.manage
+--help` (from `backend/`).
+
 ### Configuration
 
 All configuration is optional. Copy `backend/config.example.yaml` to

@@ -15,8 +15,10 @@ This document explains how the pieces fit together and why.
 backend/
 ├── app/
 │   ├── main.py                  # app factory: builds and wires all singletons
+│   ├── manage.py                # operator CLI: `python -m app.manage <command>`
 │   ├── core/
 │   │   ├── config.py            # Settings (YAML file + defaults); no secrets
+│   │   ├── auth.py              # secrets, password hashing, HS256 tokens, TokenVerifier
 │   │   └── models.py            # the Finding contract shared with the frontend
 │   ├── api/                     # one FastAPI router per resource
 │   │   ├── checks.py            # POST /api/checks + SSE event stream
@@ -29,7 +31,10 @@ backend/
 │   │   ├── validation.py        # shared validate_name() name guard
 │   │   ├── providers.py         # provider availability + live model discovery
 │   │   ├── routing.py           # tier routing table + per-tier availability
-│   │   └── languages.py         # supported languages + NLP model status
+│   │   ├── languages.py         # supported languages + NLP model status
+│   │   ├── deps.py              # get_current_user / require_admin
+│   │   ├── auth.py              # POST /api/auth/login|password, GET /api/auth/me
+│   │   └── admin.py             # /api/admin/users list/create/patch (require_admin)
 │   ├── checkers/
 │   │   ├── pipeline.py          # duplicate-diagnosis dedup between checkers
 │   │   ├── terminology.py       # terminology checker (regex / CJK PhraseMatcher)
@@ -59,11 +64,16 @@ backend/
 │       ├── documents.py         # SQLite store: documents
 │       ├── folders.py           # SQLite store: folders + per-folder defaults
 │       ├── seed.py              # example terminology domain
-│       └── seed_profiles.py     # Standard + example profiles per language
+│       ├── seed_profiles.py     # Standard + example profiles per language
+│       ├── users.py             # UserStore: users + admin_audit tables
+│       └── seed_admin.py        # bootstrap the first admin from the environment
 ├── rules/<lang>/<category>/*.yml  # the shipped rule catalog
 ├── demos/                       # seed example texts for profiles
 └── tests/                       # pytest suite (one module per unit)
 ```
+
+See [Authentication and user accounts](#authentication-and-user-accounts-m1-foundation-only)
+below for the auth/admin/manage modules just added to this map.
 
 ## The Finding contract
 
@@ -116,6 +126,10 @@ Singletons on `app.state`:
 | `jobs` | in-memory `JobManager` for check jobs |
 | `nlp` | `NlpRegistry` of lazy spaCy pipelines |
 | `provider_factory` | `(name?, model?) -> LLMProvider` |
+| `user_store` | `UserStore` — users + admin_audit (see [Authentication](#authentication-and-user-accounts-m1-foundation-only)) |
+| `auth_secret` | resolved HS256 signing secret (never logged) |
+| `token_verifier` | `LocalTokenVerifier` bound to `auth_secret` |
+| `login_throttle` | in-process `LoginThrottle`, per-(email, IP) backoff |
 
 The **provider factory** is the only place that knows how to construct concrete LLM
 providers; everything else works against the `LLMProvider` protocol. Besides the five
@@ -783,6 +797,192 @@ in `src/documents/documents.ts`, see `docs/frontend-architecture.md#documents`) 
 `POST /api/documents` itself is unchanged by phase 3; it still just accepts whatever
 settings the client sends in the create payload, same as before defaults existed.
 
+## Authentication and user accounts (M1: foundation only)
+
+Milestone 1 of the multi-user work adds user accounts, local email/password
+login, an admin user-management API, and an operator CLI. **It authenticates
+no existing endpoint.** `documents`, `folders`, `checks`, `profiles`,
+`terminology`, `rules`, `providers`, `routing`, `suggestions`, and
+`languages` remain exactly as unauthenticated as before, so `main` keeps
+working against the current frontend unchanged. Wiring `get_current_user`/
+`require_admin` onto those routers — together with the frontend that can
+satisfy it — is M2. Everything below exists, is fully tested, and is live at
+its own `/api/auth`/`/api/admin` endpoints, but nothing yet *requires* a
+caller to use it.
+
+### Users and the audit trail
+
+`app/services/users.py` adds two SQLite tables via the same idempotent
+`CREATE TABLE IF NOT EXISTS` pattern every other store uses: `users` (`id`,
+`external_id` — reserved for the future Supabase subject UUID, `email
+UNIQUE COLLATE NOCASE`, `display_name`, `password_hash`, `tier`
+(`basic`/`premium`, validated at the API layer rather than a DB `CHECK` —
+SQLite cannot alter a `CHECK` without rebuilding the table, so a constraint
+would turn "add a tier" into a migration), `is_admin`, `is_active`,
+`created_at`) and `admin_audit` (`id`, `actor_id` nullable, `target_id`,
+`field`, `old_value`, `new_value`, `created_at`) — one row per changed
+field, with `actor_id NULL` marking an action taken by the operator CLI
+rather than through a web session.
+
+`User` (the pydantic model every caller sees) never carries
+`password_hash`, so no code path can leak it into an API response by
+accident. Email lookups (`get_by_email`, `verify_credentials`) use `COLLATE
+NOCASE`, and the `UNIQUE` constraint is declared the same way, so
+`Alice@example.com` and `alice@example.com` are one account both at lookup
+time and at the database's own duplicate check.
+
+`verify_credentials` is where the timing-equalisation defense actually
+meets the database: `check_password` (below) runs unconditionally, even
+when no row matched, so an unknown email spends the same bcrypt time as a
+wrong password on a real account. The method's own comment warns against
+adding an early `if row is None: return None` — that would skip bcrypt for
+unknown emails and reopen the account-enumeration timing oracle the generic
+401 (below) is meant to close.
+
+### `app/core/auth.py` — secrets, passwords, tokens
+
+**Secret resolution** (`resolve_auth_secret`) is fail-closed: `FW_AUTH_SECRET`
+must be at least 32 characters or startup raises `AuthConfigError`. The one
+escape hatch is `auth.ephemeral_secret: true` (config-only, never an env
+var), which generates a random per-process secret and logs a warning — every
+token issued before a restart is worthless after it, so this is explicitly
+"never outside development."
+
+**Password hashing** (`hash_password`/`check_password`) wraps bcrypt with a
+72-byte ceiling — bcrypt's own hard input limit, not a policy choice. The
+write path (`hash_password`) raises on an over-long password; every caller
+validates first via `validate_password`, so silently truncating here would
+weaken a credential without telling anyone. The read path (`check_password`)
+never raises: an over-long candidate is truncated only far enough to keep
+`bcrypt.checkpw` from throwing, which still runs (to preserve timing) before
+the function unconditionally returns `False` — no over-long password could
+ever have been *stored*, once `hash_password` started rejecting them, so no
+over-long candidate can ever legitimately match. A module-level
+`_dummy_hash()` (`lru_cache(maxsize=1)`) supplies a real hash to check
+against when no account matches at all, which is what makes
+`verify_credentials`'s unconditional bcrypt call meaningful.
+
+**Tokens** (`issue_token`/`LocalTokenVerifier`) are HS256 JWTs with a
+24-hour TTL and no refresh tokens. `LocalTokenVerifier.verify()` pins
+exactly one algorithm (`algorithms=["HS256"]` — never `none`, never an
+asymmetric algorithm an attacker could supply a public key for) and requires
+`exp`, `iss`, `aud`, and `iat` to all be present, with `iss`/`aud` both the
+literal string `fabulous-writing`. `iat` gets hand-rolled handling: PyJWT's
+own `verify_iat` is disabled and the 60-second future-leeway check is done
+explicitly, so the tolerance doesn't depend on PyJWT's version-specific
+interpretation of a future issue time — disabling that flag also disables
+PyJWT's own type check on `iat`, so `LocalTokenVerifier` re-validates that
+the claim is actually numeric before comparing it.
+
+**`TokenVerifier` is a `Protocol`, and every implementation returns the
+local `users.id`** — never an external subject id. That return value is the
+seam: when Supabase Auth arrives (sub-project 2), its verifier resolves a
+Supabase subject UUID to `users.external_id` internally and fails closed if
+unlinked, so nothing on the request path — `get_current_user`, any handler
+reading `CurrentUser.id` — changes shape when the auth mode changes.
+
+### `app/api/deps.py` — per-request identity
+
+`get_current_user` reads the `Authorization: Bearer <token>` header, verifies
+it via `app.state.token_verifier`, and then **re-reads the user row from the
+database on every request** rather than trusting the token's claims. That
+re-read is what makes deactivation and de-admin take effect immediately: the
+alternative (trusting `is_admin`/`is_active` baked into the token) would need
+token-revocation machinery to get the same guarantee. Every authentication
+failure — missing header, malformed/expired token, unknown or inactive user —
+collapses to the same `401 "Not authenticated"`, so a caller cannot
+distinguish "no such account" from "token expired" from "account
+deactivated." `require_admin` layers a `403` on top for a non-admin caller.
+
+### `app/api/auth.py` — login, me, password change
+
+`/api/auth/login|me|password`, all local-mode only — `_require_local_mode`
+404s in `supabase` mode, so a leaked `FW_AUTH_SECRET` could never forge
+tokens against a Supabase-mode deployment. Login failures are uniformly
+`401 "Invalid email or password"`: unknown email, wrong password, and
+deactivated account are indistinguishable to the caller.
+
+`LoginThrottle` is exponential backoff keyed on `(email, client IP)` —
+`client_ip` is `request.client.host`; `X-Forwarded-For`/`Forwarded` are
+deliberately ignored, since trusting them unverified would let an attacker
+mint a fresh spoofed IP per request and bypass the throttle entirely. It is
+in-process state (correct for this single-process deployment; Supabase's own
+rate limiting replaces it in sub-project 2) and thread-safe because FastAPI
+runs sync ("def") handlers in a threadpool — one `threading.Lock` guards
+every read/write of the attempts table. Its size cap (`max_entries=4096`) is
+a **soft** ceiling: an entry whose block is currently active is exempt from
+both the TTL sweep and eviction, so the table can briefly exceed the cap.
+That exemption closes a bypass rather than opening one — without it, an
+attacker who already triggered a block on a victim key could spray
+disposable throwaway emails from the same IP to evict the victim's entry and
+reset its accumulated backoff. What actually bounds the exempt set's growth
+is bcrypt cost, not the cap: reaching a blocked state costs `threshold` (5)
+failed logins per entry, each paying full bcrypt time. See the class
+docstring for the complete argument.
+
+### `app/api/admin.py` — admin user management
+
+`/api/admin/users` (list/create/patch) attaches `require_admin` at **router
+level** (`APIRouter(..., dependencies=[Depends(require_admin)])`), not on
+individual endpoints, so an admin endpoint added later inherits the check by
+construction — it cannot ship unauthenticated by omission. Every changed
+field on a patch writes one `admin_audit` row (never the password's value or
+even its length, only that it changed). `auth.allow_additional_admins` gates
+minting or promoting a *second* admin; it is config-only, read from
+`Settings`, and never reachable through the API — a stolen admin session
+could still do damage before being deactivated, but it must not be able to
+create a fresh admin account that survives that response. An admin can never
+remove their own `is_admin`/`is_active` through this API (409) — the
+deliberate version of that action lives only in the operator CLI.
+
+### Startup bootstrap
+
+`app/services/seed_admin.py#seed_admin` creates the first admin from
+`FW_ADMIN_EMAIL`/`FW_ADMIN_PASSWORD` **only while `users` is empty**
+(`store.count() > 0` short-circuits). There is deliberately no API endpoint
+for this — an unauthenticated bootstrap endpoint either stays open forever
+or depends on someone remembering to close it — so once any user exists, the
+two env vars are inert: they can never serve as a standing password reset.
+
+`create_app()` (`app/main.py`) wires all of this in a fixed order: it checks
+`settings.auth.mode == "local"` (raising `AuthConfigError` for `supabase`,
+not yet implemented) **before** `UserStore` creates any table, then resolves
+the secret (`resolve_auth_secret`, fail-closed as above), builds the
+`LocalTokenVerifier` and `LoginThrottle`, and only then calls `seed_admin`.
+Startup fails closed on any of: a missing/short `FW_AUTH_SECRET` (unless
+`ephemeral_secret` is on), a missing/short bootstrap email/password while
+`users` is empty, or a non-`local` `auth.mode`.
+
+One deviation from the eager-singleton pattern the rest of `main.py` uses:
+the module-level `app` that `uvicorn app.main:app` needs used to be built
+eagerly (`app = create_app()` at import time), but that ran `create_app()` —
+and its fail-closed auth/admin bootstrap — as a side effect of merely
+*importing* `app.main`, including via `from app.main import create_app` in
+test files, which fired during pytest collection before test fixtures had
+set a test secret and bootstrap credentials. `app.main` now defines a PEP
+562 module-level `__getattr__` that builds and caches the app lazily, on
+first access to the `app` attribute — `uvicorn app.main:app` is unaffected
+(uvicorn accesses that attribute to obtain the ASGI app); only a bare
+`import app.main` no longer has the side effect.
+
+### `app/manage.py` — operator CLI
+
+`python -m app.manage <command>` handles password and access recovery
+without a working web session: `list-users`, `set-password`, `make-admin`,
+`revoke-admin`, `deactivate`, `activate`. It requires shell access to the
+host, which already implies control of the database, so it adds no new
+attack surface. Passwords are **never** accepted as `argv` arguments —
+always prompted (`getpass`) or read from stdin — since an argv value is
+visible in shell history and to every other process via `ps`. A custom
+`_SilentArgumentParser` overrides argparse's `error()` so a mistyped
+subcommand or a stray extra token never echoes the offending value back
+(argparse's default messages interpolate the bad token directly, which could
+put a mistyped password on stderr). Every mutation is audited with
+`actor_id=None`, marking it as taken out-of-band rather than through the web
+API. `revoke-admin`/`deactivate` warn — but don't refuse — if the action
+would leave no active admin: freezing all admin access during an incident
+and minting a fresh one afterward is exactly what this tool is for.
+
 ## API surface
 
 | Endpoint | Purpose |
@@ -794,6 +994,8 @@ settings the client sends in the create payload, same as before defaults existed
 | `GET/POST/PUT/DELETE /api/profiles`, `POST /api/profiles/{id}/reset` | profile CRUD |
 | `GET/POST/PUT/DELETE /api/documents`, `POST /api/documents/{id}/generate-name` | revision-guarded document CRUD + auto-titling (see [Documents](#documents)) |
 | `GET/POST/PUT/DELETE /api/folders` | folder CRUD, lossless delete, read-time defaults pruning (see [Folders](#folders)) |
+| `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/password` | local login/session/password-change; unauthenticated by every *other* router (see [Authentication](#authentication-and-user-accounts-m1-foundation-only)) |
+| `GET/POST/PATCH /api/admin/users` | admin user management, `require_admin` at router level (see [Authentication](#authentication-and-user-accounts-m1-foundation-only)) |
 | `PUT /api/folders/{id}/defaults` | full-replace a folder's per-folder defaults; 422 matrix + 404 (see [Per-folder defaults](#per-folder-defaults)) |
 | `POST /api/documents/{id}/move` | revision-free move of a document into/out of a folder |
 | `GET /api/providers` | provider availability + model discovery |
