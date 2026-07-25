@@ -1,0 +1,82 @@
+from pathlib import Path
+
+import pytest
+
+from app.services.users import DuplicateEmailError, UserStore
+
+
+@pytest.fixture()
+def store(tmp_path: Path) -> UserStore:
+    return UserStore(tmp_path / "test.db")
+
+
+def test_create_and_read_back(store):
+    user = store.create_user("Ada@example.com", "correct horse battery", display_name="Ada")
+    assert user.id == 1 and user.email == "Ada@example.com"
+    assert user.tier == "basic" and user.is_admin is False and user.is_active is True
+    assert user.created_at
+    assert store.get_user(user.id) == user
+    assert store.get_user(999) is None
+
+
+def test_user_model_never_exposes_password_material(store):
+    user = store.create_user("ada@example.com", "correct horse battery")
+    assert "password" not in user.model_dump()
+
+
+def test_email_lookup_and_uniqueness_are_case_insensitive(store):
+    store.create_user("ada@example.com", "correct horse battery")
+    assert store.get_by_email("ADA@Example.com") is not None
+    with pytest.raises(DuplicateEmailError):
+        store.create_user("ADA@example.com", "another password")
+
+
+def test_verify_credentials(store):
+    store.create_user("ada@example.com", "correct horse battery")
+    assert store.verify_credentials("ADA@example.com", "correct horse battery") is not None
+    assert store.verify_credentials("ada@example.com", "wrong") is None
+    assert store.verify_credentials("nobody@example.com", "correct horse battery") is None
+
+
+def test_deactivated_user_cannot_authenticate(store):
+    user = store.create_user("ada@example.com", "correct horse battery")
+    store.update_user(user.id, is_active=False)
+    assert store.verify_credentials("ada@example.com", "correct horse battery") is None
+
+
+def test_update_user_changes_only_named_fields(store):
+    user = store.create_user("ada@example.com", "correct horse battery", display_name="Ada")
+    updated = store.update_user(user.id, tier="premium", is_admin=True)
+    assert updated.tier == "premium" and updated.is_admin is True
+    assert updated.display_name == "Ada" and updated.is_active is True
+    assert store.update_user(999, tier="premium") is None
+
+
+def test_set_password_replaces_the_credential(store):
+    user = store.create_user("ada@example.com", "old password here")
+    assert store.set_password(user.id, "new password here") is True
+    assert store.verify_credentials("ada@example.com", "old password here") is None
+    assert store.verify_credentials("ada@example.com", "new password here") is not None
+    assert store.set_password(999, "irrelevant") is False
+
+
+def test_count_and_list(store):
+    assert store.count() == 0
+    store.create_user("b@example.com", "correct horse battery")
+    store.create_user("a@example.com", "correct horse battery")
+    assert store.count() == 2
+    assert [u.email for u in store.list_users()] == ["a@example.com", "b@example.com"]
+
+
+def test_audit_rows_record_the_actor_or_none_for_cli(store):
+    admin = store.create_user("admin@example.com", "correct horse battery", is_admin=True)
+    target = store.create_user("ada@example.com", "correct horse battery")
+    store.record_audit(actor_id=admin.id, target_id=target.id, field="tier",
+                       old_value="basic", new_value="premium")
+    store.record_audit(actor_id=None, target_id=target.id, field="password")
+    rows = store.list_audit()
+    assert [(r["actor_id"], r["field"]) for r in rows] == [
+        (admin.id, "tier"),
+        (None, "password"),  # None marks an out-of-band operator CLI action
+    ]
+    assert all(r["created_at"] for r in rows)

@@ -7,11 +7,17 @@ from pathlib import Path
 
 
 @contextmanager
-def connect(db_path: Path) -> Iterator[sqlite3.Connection]:
+def connect(db_path: Path, *, timeout: float | None = None) -> Iterator[sqlite3.Connection]:
     # sqlite3's own context manager only wraps a transaction (commit or
     # rollback); this wrapper also closes the connection afterwards, so
     # `with connect(...) as conn:` cannot leak connections.
-    conn = sqlite3.connect(db_path)
+    # `timeout` lets the operator CLI (app/manage.py) wait out a busy
+    # database owned by a running server instead of failing instantly.
+    conn = (
+        sqlite3.connect(db_path)
+        if timeout is None
+        else sqlite3.connect(db_path, timeout=timeout)
+    )
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     try:
