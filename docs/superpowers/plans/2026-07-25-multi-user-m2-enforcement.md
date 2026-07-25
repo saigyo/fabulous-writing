@@ -288,19 +288,26 @@ In `backend/app/services/users.py`:
   reach it;
 - add `password_changed_at: str | None = None` to the `User` model and to
   `_row_to_user`;
-- have `set_password` write a **sub-second** timestamp into it in the same
-  `UPDATE`. `_utcnow()` is `timespec="seconds"` (`users.py:80`) and
-  `issue_token` writes `int(issued.timestamp())` (`core/auth.py:173`), so a
-  second-resolution value makes the comparison in Step 5 useless: a token
-  minted and a password changed microseconds apart land in the *same* second
-  and `issued_at < password_changed_at` is false. Add a
-  `_utcnow_precise()` — `datetime.now(UTC).isoformat()` with no `timespec` —
-  and use it here only. Leave `_utcnow()` alone; `created_at` deliberately
-  matches the other stores' second granularity.
+- have `set_password` write `_utcnow()` into it in the same `UPDATE` —
+  second granularity, the same as every other timestamp in this store.
 
-  Residual, and acceptable: `iat` is floored to the second, so a token minted
-  *later in the same second* as a password change is still revoked. That errs
-  toward revoking, which is the safe direction.
+  **This is load-bearing, and the obvious "more precise is safer" instinct is
+  wrong here.** `issue_token` floors `iat` to the second
+  (`int(issued.timestamp())`, `core/auth.py:173`). If `password_changed_at`
+  carried sub-second precision, the token minted by the silent re-login in
+  Task 8 would floor to *before* it and be rejected on its first use — a login
+  loop. Verified: with `password_changed_at = …:06.628` a fresh token whose
+  `iat` is `…:06` compares as older and is refused.
+
+  Flooring both sides and comparing strictly gives the right answer on both
+  sides of the change: a token minted two seconds earlier is rejected
+  (`floor(t-2) < floor(t)`), and the replacement token minted in the same
+  second is accepted (`floor(t) < floor(t)` is false).
+
+  Residual, accepted: a token minted earlier in the *same second* as the change
+  survives. The window is under one second and requires the attacker's token to
+  have been issued in that second — a far better trade than a re-login that
+  cannot succeed.
 
 Do **not** set it in `create_user`: a brand-new account has never had a
 password *changed*, and `None` is the honest value. The comparison in Step 5
@@ -476,9 +483,10 @@ In `frontend/src/state/store.ts`, add to `AppState`:
   user: MeResponse | null
   authStatus: 'unknown' | 'anonymous' | 'authenticated'
   sessionExpired: boolean
+  restoreFailed: boolean
 ```
 
-with initial values `null`, `null`, `'unknown'`, `false`, and a setter
+with initial values `null`, `null`, `'unknown'`, `false`, `false`, and a setter
 `setAuth(token: string | null, user: MeResponse | null)` that sets the first
 three consistently (`authStatus` derived: `'authenticated'` when both are
 present, `'anonymous'` otherwise). **`setAuth` leaves `sessionExpired`
@@ -566,11 +574,25 @@ export async function restoreSession(): Promise<void> {
   }
   try {
     useStore.getState().setAuth(token, await getMe())
-  } catch {
-    expireSession()
+  } catch (error) {
+    // Only an authentication rejection ends the session. A 500 or a dropped
+    // connection during startup must NOT discard a perfectly good token —
+    // that would turn a backend hiccup into a logout, and the spec scopes
+    // auth-clearing to 401 alone.
+    if (error instanceof HttpError && error.status === 401) {
+      expireSession()
+      return
+    }
+    useStore.setState({ restoreFailed: true })   // authStatus stays 'unknown'
   }
 }
 ```
+
+`restoreFailed` is why `authStatus` has an `'unknown'` state at all. Without
+this branch the gate renders nothing forever on a transient failure — a blank
+screen with no way forward. `LoginGate` (Task 7) renders a short
+"cannot reach the server" message and a retry button that calls
+`restoreSession()` again; a successful retry clears the flag.
 
 `resetCheckState()` clears `checkPhase`, `llmStartedAt` and `llmTokens` and
 cancels any in-flight subscription. The store is module-level and survives the
@@ -739,17 +761,18 @@ not clear state opts in explicitly rather than being special-cased by URL.
 
 **Name the option `{ keepSessionOn401: true }`, not `{ anonymous: true }`.**
 It has exactly one effect: skip the clear-auth branch when the response is 401.
-It must **never** influence header construction. There are two callers, and
-only one of them is anonymous:
+It must **never** influence header construction — a flag called `anonymous`
+invites an implementation that strips the `Authorization` header.
 
-| Caller | Sends a token? | Why exempt |
-|---|---|---|
-| `postLogin` | no | its 401 *is* the bad-credentials signal the form renders inline |
-| `postPasswordChange` | **yes** | its 401 means "current password wrong", not "session dead" |
-
-A flag called `anonymous` invites an implementation that strips the
-`Authorization` header — which would make every password change 401 and throw
-the user out, the precise bug Task 8's headline test exists to prevent.
+**`postLogin` is its only caller.** An earlier draft exempted
+`postPasswordChange` too, which was wrong: `POST /api/auth/password` can return
+401 from *either* `get_current_user` (the session is dead) or the
+current-password check (`app/api/auth.py:340`), and a status code cannot tell
+them apart. Exempting it would leave a genuinely expired session believing it
+was still authenticated, showing "current password is not correct" for a token
+that no longer works. Task 8 removes the ambiguity at the source instead — see
+its Step 3 — so that endpoint's 401 means one thing and flows through
+`expireSession()` like any other.
 
 Clearing state on 401 goes through **`session.expireSession()`** — not
 `logout()`, which would delete the document buffer and destroy unsaved work.
@@ -981,6 +1004,8 @@ comment header:
   passwordCurrentWrong: string
   passwordChanged: string
   passwordFailed: string
+  connectionFailed: string
+  connectionRetry: string
 ```
 
 - [ ] **Step 2: Add the catalogs**
@@ -1013,6 +1038,8 @@ Append to each locale file, before the closing brace:
   passwordCurrentWrong: 'The current password is not correct.',
   passwordChanged: 'Password changed.',
   passwordFailed: 'Changing the password failed.',
+  connectionFailed: 'Cannot reach the server.',
+  connectionRetry: 'Try again',
 ```
 
 `de.ts`
@@ -1041,6 +1068,8 @@ Append to each locale file, before the closing brace:
   passwordCurrentWrong: 'Das aktuelle Passwort ist nicht korrekt.',
   passwordChanged: 'Passwort geändert.',
   passwordFailed: 'Ändern des Passworts fehlgeschlagen.',
+  connectionFailed: 'Der Server ist nicht erreichbar.',
+  connectionRetry: 'Erneut versuchen',
 ```
 
 `fr.ts`
@@ -1070,6 +1099,8 @@ Append to each locale file, before the closing brace:
   passwordCurrentWrong: 'Le mot de passe actuel est incorrect.',
   passwordChanged: 'Mot de passe modifié.',
   passwordFailed: 'Échec de la modification du mot de passe.',
+  connectionFailed: 'Le serveur est injoignable.',
+  connectionRetry: 'Réessayer',
 ```
 
 `es.ts`
@@ -1098,6 +1129,8 @@ Append to each locale file, before the closing brace:
   passwordCurrentWrong: 'La contraseña actual no es correcta.',
   passwordChanged: 'Contraseña cambiada.',
   passwordFailed: 'No se pudo cambiar la contraseña.',
+  connectionFailed: 'No se puede conectar con el servidor.',
+  connectionRetry: 'Reintentar',
 ```
 
 `it.ts`
@@ -1126,6 +1159,8 @@ Append to each locale file, before the closing brace:
   passwordCurrentWrong: 'La password attuale non è corretta.',
   passwordChanged: 'Password modificata.',
   passwordFailed: 'Modifica della password non riuscita.',
+  connectionFailed: 'Impossibile raggiungere il server.',
+  connectionRetry: 'Riprova',
 ```
 
 `ja.ts`
@@ -1154,6 +1189,8 @@ Append to each locale file, before the closing brace:
   passwordCurrentWrong: '現在のパスワードが正しくありません。',
   passwordChanged: 'パスワードを変更しました。',
   passwordFailed: 'パスワードの変更に失敗しました。',
+  connectionFailed: 'サーバーに接続できません。',
+  connectionRetry: '再試行',
 ```
 
 `zh.ts`
@@ -1181,6 +1218,8 @@ Append to each locale file, before the closing brace:
   passwordCurrentWrong: '当前密码不正确。',
   passwordChanged: '密码已修改。',
   passwordFailed: '修改密码失败。',
+  connectionFailed: '无法连接到服务器。',
+  connectionRetry: '重试',
 ```
 
 The parity test fails if any locale is missing a key, which is the check that
@@ -1265,6 +1304,9 @@ Create `frontend/src/auth/LoginGate.test.tsx`:
   form is shown;
 - when `sessionExpired` is set, the gate shows the session-expired notice above
   the form; after a plain log-out it does not;
+- when `restoreFailed` is set, the gate shows the connection message and a
+  retry button rather than the login form or a blank screen, and the button
+  calls `restoreSession()` again;
 - while `'anonymous'`, the login form is shown and children are **not**
   rendered;
 - while `'authenticated'`, children are rendered and the form is not;
@@ -1334,7 +1376,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add package.json package-lock.json src/auth src/main.tsx src/App.tsx
+git add package.json package-lock.json src/auth src/main.tsx src/App.tsx src/App.css
 git commit -m "$(cat <<'EOF'
 feat(auth): full-screen login gate above the app shell
 
@@ -1355,14 +1397,46 @@ EOF
 
 **Interfaces:**
 - Consumes: `user` from the store, `logout()` and `login()` from Task 3.
+- Modifies: `backend/app/api/auth.py` — `change_password`'s failure codes, see
+  below. This is the one backend change in this task.
 - Produces: `postPasswordChange(current: string, next: string): Promise<void>`
   on the api client — `POST /api/auth/password` with body **`{ current, new: next }`**
   (the server's field is literally `new`, `app/api/auth.py:269-272`), 204 →
-  `undefined`, and the call sets `{ keepSessionOn401: true }` from Task 4.
+  `undefined`. It does **not** set `keepSessionOn401`: after the change below,
+  a 401 from this endpoint genuinely means the session is dead.
 - Produces: `MIN_PASSWORD_LENGTH = 8` alongside it. The server's
   `SELF_MIN_PASSWORD_LENGTH` is 8 (`core/auth.py:59`) and no endpoint exposes
-  it, so the client hardcodes it; a mismatch shows up as a 422 the user cannot
-  act on.
+  it, so the client hardcodes it.
+
+**Backend change: make the endpoint's failures distinguishable.** Today
+`change_password` raises `401 "Current password is incorrect"`
+(`app/api/auth.py:340`) — the same status `get_current_user` raises for a dead
+session — and a `422` whose message covers both "too short" and bcrypt's
+72-byte ceiling (`validate_password` enforces both). A client cannot act
+correctly on either. Two failures that need different responses must not share
+a status with no discriminator.
+
+Change it so the endpoint returns:
+
+| Condition | Status | `detail` |
+|---|---|---|
+| bearer token rejected | **401** | unchanged, raised by `get_current_user` |
+| current password wrong | **422** | `{"code": "wrong_current_password"}` |
+| new password too short | **422** | `{"code": "password_too_short"}` |
+| new password over 72 bytes | **422** | `{"code": "password_too_long"}` |
+
+Wrong-current-password is a validation failure of the submitted body, not a
+failure to authenticate the request — the bearer token authenticated fine — so
+422 is the honest code and matches spec §7.2's "422 validation". Update the M1
+tests in `tests/test_auth_api.py` that assert the old 401 and the old string
+detail; the frontend never displays server messages, so the `code` is purely
+for branching.
+
+The client maps `wrong_current_password` → `passwordCurrentWrong`,
+`password_too_short` → `passwordTooShort(8)`, `password_too_long` → the
+generic `passwordFailed`, and any unrecognised code → `passwordFailed`.
+**Do not map bare status 422 to "too short"** — that is actively misleading for
+a multibyte password that tripped the byte ceiling.
 
 Without this, `POST /api/auth/password` and logging out have no entry point in
 the UI at all.
@@ -1373,11 +1447,15 @@ Cover:
 
 - the signed-in email is shown, and the menu offers change-password and log-out;
 - log-out calls `logout()`;
-- a 401 from the change endpoint (wrong current password) shows the
-  invalid-credentials message **without** logging the user out, and the failed
-  request still carried the `Authorization` header;
-- a 422 shows `passwordTooShort`, and the form pre-validates against
-  `MIN_PASSWORD_LENGTH` so the common case never reaches the server;
+- the change request carries the `Authorization` header;
+- a 422 `wrong_current_password` shows `passwordCurrentWrong` and does **not**
+  log the user out;
+- a 422 `password_too_short` shows `passwordTooShort`, and the form
+  pre-validates against `MIN_PASSWORD_LENGTH` so the common case never reaches
+  the server;
+- a 422 with an unrecognised code shows the generic `passwordFailed`;
+- **a 401 from this endpoint ends the session** — it can now only mean the
+  bearer token was rejected;
 - mismatched new/confirm shows `passwordMismatch` and sends no request;
 - **a successful change leaves the user signed in** — see below;
 - reopening the menu after each dismissal path shows the menu, not the
@@ -1471,7 +1549,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/auth src/App.tsx src/api/client.ts
+git add src/auth src/App.tsx src/App.css src/api/client.ts
 git commit -m "$(cat <<'EOF'
 feat(auth): account menu with password change and log out
 
@@ -1597,10 +1675,15 @@ def test_preflight_to_an_authenticated_route_is_not_401(client):
         headers={
             "Origin": "http://localhost:5173",
             "Access-Control-Request-Method": "GET",
+            # The header the Bearer client actually triggers a preflight for.
+            # Without it this test passes even if allow_headers stops permitting
+            # Authorization — while every authenticated browser request fails.
+            "Access-Control-Request-Headers": "authorization",
         },
     )
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+    assert "authorization" in response.headers["access-control-allow-headers"].lower()
 ```
 
 `CORSMiddleware` wraps the app ahead of routing, so it answers preflight before
@@ -1784,7 +1867,7 @@ ownership scoping is still M3.
 - [ ] **Step 8: Commit, push, open the PR**
 
 ```bash
-git add docs README.md
+git add docs README.md frontend/scripts/capture-screenshots.mjs
 git commit -m "$(cat <<'EOF'
 docs: record the M2 enforcement milestone
 
