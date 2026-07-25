@@ -7,6 +7,7 @@ import {
   type FolderDefaults,
 } from '../api/client'
 import { useStore } from '../state/store'
+import { currentGeneration } from './autosave'
 import { sortedByName } from './list'
 
 /** Overlay a folder's set defaults on a document-create payload. Unset
@@ -58,9 +59,20 @@ export async function saveFolderDefaults(
   store.setFolders(store.folders.map((f) => (f.id === id ? updated : f)))
 }
 
-/** Create a folder. Errors are rethrown: the sidebar shows a 409 inline. */
-export async function addFolder(name: string): Promise<void> {
+/** Create a folder. Errors are rethrown: the sidebar shows a 409 inline.
+ *
+ * `gen` defaults to a fresh currentGeneration() read: called with no
+ * argument (as the sidebar does), that's exactly right — the button click
+ * is the start of this operation. A session turnover while apiCreateFolder
+ * is in flight must not append the outgoing user's newly created folder
+ * name onto whatever the incoming user's (already correctly reset) folder
+ * list now is. */
+export async function addFolder(
+  name: string,
+  gen: number = currentGeneration(),
+): Promise<void> {
   const folder = await apiCreateFolder(name.trim())
+  if (gen !== currentGeneration()) return
   const store = useStore.getState()
   store.setFolders(sortedByName([...store.folders, folder]))
 }
