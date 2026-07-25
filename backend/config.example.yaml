@@ -24,7 +24,9 @@ auth:
   # When false, no API call may create or promote an admin account.
   allow_additional_admins: false
 
-# Required environment variables (never stored in this file):
+# Required environment variables (never stored in this file). FW_AUTH_SECRET
+# is the only one with an escape hatch: ephemeral_secret above (dev only).
+# The two admin variables are always required while the users table is empty.
 #   FW_AUTH_SECRET     signing secret, >= 32 chars, randomly generated:
 #                      openssl rand -base64 32
 #   FW_ADMIN_EMAIL     bootstrap admin, used only while the users table is empty
