@@ -13,11 +13,41 @@ CJK_LANGUAGES = {Language.JA, Language.ZH}
 # Positions where an initial capital is conventional: text start, after
 # sentence-ending punctuation (+ optional closing quotes/brackets), or after
 # a newline (optionally followed by markdown structure characters).
-_SENTENCE_START = re.compile(r'(?:^|[.!?…]["\')\]]*\s+|\n[\s>#*+-]*)$')
+#
+# Scanned backwards rather than matched with the equivalent regex
+#   re.compile(r'(?:^|[.!?…]["\')\]]*\s+|\n[\s>#*+-]*)$').search(text, 0, start)
+# which is quadratic in the document length: `search` retries at every start
+# position and each attempt re-scans the trailing whitespace run to reach the
+# `$` anchor. Measured on a document of newlines: 4k -> 33 ms, 8k -> 129 ms,
+# 16k -> 510 ms, i.e. ~20 s at 100k — and this runs once per term match, so a
+# single crafted request could pin a CPU core (CodeQL py/polynomial-redos).
+# The scan below only ever touches the trailing run, so it is linear.
+_SENTENCE_PUNCTUATION = ".!?…"
+_CLOSING_MARKS = "\"')]"
+_MARKDOWN_STRUCTURE = ">#*+-"
 
 
 def _sentence_start(text: str, start: int) -> bool:
-    return _SENTENCE_START.search(text, 0, start) is not None
+    if start == 0:
+        return True
+    # A newline followed only by whitespace or markdown structure characters.
+    index = start
+    while index > 0 and (
+        text[index - 1].isspace() or text[index - 1] in _MARKDOWN_STRUCTURE
+    ):
+        index -= 1
+    if "\n" in text[index:start]:
+        return True
+    # Sentence-ending punctuation, optional closing quotes/brackets, then at
+    # least one whitespace character.
+    index = start
+    while index > 0 and text[index - 1].isspace():
+        index -= 1
+    if index == start:
+        return False
+    while index > 0 and text[index - 1] in _CLOSING_MARKS:
+        index -= 1
+    return index > 0 and text[index - 1] in _SENTENCE_PUNCTUATION
 
 
 def _casing_ok(text: str, start: int, matched: str, preferred: str) -> bool:
