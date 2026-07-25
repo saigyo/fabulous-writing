@@ -1,12 +1,13 @@
 import sys
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.auth import LoginThrottle
+from app.api.auth import LoginThrottle, _throttle_key
 from app.api.deps import CurrentUser, get_current_user, require_admin
 from app.core.auth import LocalTokenVerifier, issue_token
 from app.core.config import Settings
@@ -372,3 +373,24 @@ def test_throttled_login_is_rejected_even_with_the_right_password(app_client):
     blocked = login(app_client, "root@example.com", "bootstrap password")
     assert blocked.status_code == 401
     assert blocked.json()["detail"] == "Invalid email or password"
+
+
+def test_overlong_login_email_is_rejected_without_growing_the_throttle_table(app_client):
+    # A 200,012-character email must not reach _throttle_key at all:
+    # LoginRequest.email's max_length=320 rejects it at the Pydantic layer,
+    # before the handler (and therefore the throttle) ever sees it.
+    huge_email = "a" * 200_012 + "@example.com"
+    response = login(app_client, huge_email, "whatever password")
+    assert response.status_code == 422
+    assert app_client.app.state.login_throttle.entry_count() == 0
+
+
+def test_throttle_key_length_is_bounded_regardless_of_input_size():
+    # Defense in depth: even if some future caller invokes _throttle_key
+    # directly with unvalidated input (bypassing LoginRequest's max_length),
+    # the key it produces must stay bounded, since it is retained for
+    # entry_ttl seconds per unique key.
+    fake_request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+    huge_email = "b" * 200_012 + "@example.com"
+    key = _throttle_key(fake_request, huge_email)
+    assert len(key[0]) <= 320

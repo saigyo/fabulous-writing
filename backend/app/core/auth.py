@@ -109,16 +109,25 @@ def check_password(password: str, password_hash: str | None) -> bool:
 
     # Encode and check length.
     encoded = password.encode()
-    if len(encoded) > MAX_PASSWORD_BYTES:
-        # Truncate to prevent ValueError from bcrypt, but spend the bcrypt time
-        # to avoid timing leaks. Return False unconditionally: an over-long
-        # candidate cannot match any stored hash.
-        bcrypt.checkpw(encoded[:MAX_PASSWORD_BYTES], candidate.encode())
-        return False
+    try:
+        if len(encoded) > MAX_PASSWORD_BYTES:
+            # Truncate to prevent ValueError from bcrypt, but spend the bcrypt time
+            # to avoid timing leaks. Return False unconditionally: an over-long
+            # candidate cannot match any stored hash.
+            bcrypt.checkpw(encoded[:MAX_PASSWORD_BYTES], candidate.encode())
+            return False
 
-    matched = bcrypt.checkpw(encoded, candidate.encode())
-    # Return True only if match succeeds AND a real hash was present.
-    return matched and bool(password_hash)
+        matched = bcrypt.checkpw(encoded, candidate.encode())
+        # Return True only if match succeeds AND a real hash was present.
+        return matched and bool(password_hash)
+    except ValueError:
+        # bcrypt.checkpw raises ValueError on a non-empty but malformed
+        # stored hash (bad prefix, wrong length, invalid salt). Unreachable
+        # today, since hash_password() is the only writer and "" / None are
+        # already handled above, but a Supabase-era migration or a
+        # hand-edited row could introduce one — treat it as "does not
+        # match" rather than letting it 500 the login path.
+        return False
 
 
 def validate_password(password: str, *, min_length: int) -> str:

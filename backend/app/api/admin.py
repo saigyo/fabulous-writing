@@ -9,7 +9,7 @@ import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from app.api.deps import CurrentUser, require_admin
 from app.core.auth import ADMIN_SET_MIN_PASSWORD_LENGTH, validate_password
@@ -29,7 +29,9 @@ TierName = Literal["basic", "premium"]
 
 
 class UserCreate(BaseModel):
-    email: str
+    # 320 is RFC 5321's ceiling for an address; matches LoginRequest.email
+    # in app/api/auth.py.
+    email: str = Field(max_length=320)
     password: str
     display_name: str | None = None
     tier: TierName = "basic"

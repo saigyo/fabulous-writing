@@ -57,7 +57,7 @@ backend/
 │   │       └── vetting.py       # deterministic vetting of LLM fixes
 │   ├── nlp/registry.py          # lazy per-language spaCy pipelines
 │   └── services/
-│       ├── _sqlite.py           # shared connect()/migrate_columns() for all four stores
+│       ├── _sqlite.py           # shared connect()/migrate_columns() for all five stores
 │       ├── jobs.py              # in-memory check jobs + event streams
 │       ├── terminology.py       # SQLite store: domains, terms
 │       ├── profiles.py          # SQLite store: checking profiles
@@ -533,8 +533,9 @@ per-document settings — the multi-document upgrade from the earlier single-buf
 There is one owner (`owner_id` defaults to `1`; the column exists so a future multi-user
 mode is a data migration, not a schema change — nothing today issues a different value).
 
-All four SQLite-backed stores (`terminology.py`, `profiles.py`, `documents.py`,
-`folders.py` under `app/services/`) share two small helpers from
+All five SQLite-backed stores (`terminology.py`, `profiles.py`, `documents.py`,
+`folders.py`, `users.py` under `app/services/`) share `connect()`, and three of them
+(`documents.py`, `folders.py`, `profiles.py`) also share `migrate_columns()`, from
 `app/services/_sqlite.py` instead of each hand-rolling the same plumbing:
 `connect(db_path)` is a context manager that wraps `sqlite3.connect` with
 `row_factory = sqlite3.Row`, `PRAGMA foreign_keys = ON`, and — unlike sqlite3's own
@@ -911,8 +912,13 @@ rate limiting replaces it in sub-project 2) and thread-safe because FastAPI
 runs sync ("def") handlers in a threadpool — one `threading.Lock` guards
 every read/write of the attempts table. Its size cap (`max_entries=4096`) is
 a **soft** ceiling: an entry whose block is currently active is exempt from
-both the TTL sweep and eviction, so the table can briefly exceed the cap.
-That exemption closes a bypass rather than opening one — without it, an
+eviction via an explicit check in `_evict_to_cap_locked`, so the table can
+briefly exceed the cap. It is also, in effect, exempt from the TTL sweep,
+but not via any explicit check — `_prune_locked` never inspects
+`blocked_until`. That exemption instead falls out of the invariant
+`max_delay <= entry_ttl` enforced in `__post_init__`: while an entry stays
+blocked, its `last_seen` can never age past `entry_ttl`, so the sweep never
+reaches it. That exemption closes a bypass rather than opening one — without it, an
 attacker who already triggered a block on a victim key could spray
 disposable throwaway emails from the same IP to evict the victim's entry and
 reset its accumulated backoff. What actually bounds the exempt set's growth
