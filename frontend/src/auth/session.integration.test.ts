@@ -61,8 +61,34 @@ beforeEach(() => {
   ])
 })
 
-describe('a real logout() vs. a real save in flight', () => {
-  it('a push that fails after a real logout() does not schedule a retry', async () => {
+// A real logout() (and login() as a different user) resets `user` and
+// `docMeta` to null/reset values. That means a save that lands afterwards
+// is *already* blocked by push()'s own `docMeta?.id === snapshot.docId`
+// check (success path) or by collectSnapshot() returning null once the
+// retry's own flush() re-collects (catch path) — REGARDLESS of whether
+// push()'s generation guards (autosave.ts) are present. An earlier version
+// of these two tests logged out and asserted "nothing was written", which
+// passed even with both generation guards deleted, for exactly that reason.
+//
+// To isolate the generation check as the only remaining line of defense,
+// both tests below log out AND log back in as a *different* user, then
+// deliberately set that user's docMeta to point at the SAME numeric
+// document id (5) the outgoing user's save was for — plausible once a
+// per-user id space exists, and exactly the setup the generation guard is
+// for regardless: docMeta?.id matches again (for the wrong reason), and
+// collectSnapshot() would return a real, non-null snapshot for the
+// *incoming* user's document if asked. With user/docMeta both live and
+// matching, only the generation check stands between the outgoing user's
+// stale save and overwriting the incoming user's currently-open document.
+describe('a real logout()+login() turnover vs. a real save started under the outgoing user', () => {
+  async function switchToADifferentUserWithTheSameDocIdOpen(): Promise<void> {
+    logout() // the real logout()
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok2', user: { ...USER, id: 2 } })
+    await login('b@example.com', 'pw') // the real login(), as a different user
+    useStore.getState().setDocMeta({ id: 5, name: "B's doc", nameSource: 'user', revision: 9 })
+  }
+
+  it('a push that fails after the turnover does not retry into the new user\'s document', async () => {
     vi.useFakeTimers()
     try {
       let rejectPut!: (reason?: unknown) => void
@@ -73,25 +99,25 @@ describe('a real logout() vs. a real save in flight', () => {
           }) as never,
       )
 
-      void flush() // the real push() starts and is now in flight
+      void flush() // user A's real push() starts (doc 5, revision 2), now in flight
       expect(updateDocument).toHaveBeenCalledTimes(1)
 
-      logout() // the real logout(): invalidateDocumentWork -> bumpGeneration
+      await switchToADifferentUserWithTheSameDocIdOpen()
 
       rejectPut(new TypeError('offline'))
       await vi.advanceTimersByTimeAsync(60000)
 
-      // Only the real generation guard in push()'s catch branch prevents
-      // this: docMeta is null after logout() too, but that check doesn't
-      // gate scheduleRetry() — the generation check is the only thing that
-      // does.
+      // Without the generation guard, scheduleRetry() fires unconditionally;
+      // the retry's own flush() would then find a live, matching docMeta
+      // and a real collectSnapshot() and genuinely re-save — landing an
+      // unrelated, stale-revision write on user B's document.
       expect(updateDocument).toHaveBeenCalledTimes(1)
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('a push that succeeds after a real logout() does not write the buffer back', async () => {
+  it('a push that succeeds after the turnover does not overwrite the new user\'s document', async () => {
     let resolvePut!: (v: unknown) => void
     vi.mocked(updateDocument).mockImplementationOnce(
       () =>
@@ -100,8 +126,8 @@ describe('a real logout() vs. a real save in flight', () => {
         }) as never,
     )
 
-    const pending = flush() // the real push() starts and is now in flight
-    logout() // clears the buffer for real; the stale push must not recreate it
+    const pending = flush() // user A's real push() starts (doc 5, revision 2), now in flight
+    await switchToADifferentUserWithTheSameDocIdOpen()
 
     resolvePut({
       id: 5,
@@ -113,6 +139,15 @@ describe('a real logout() vs. a real save in flight', () => {
     })
     await pending
 
+    // Without the generation guard, this would patch docMeta's revision to
+    // 3 (user A's server response) and rewrite the localStorage buffer with
+    // user A's stale text, dirty: false, under user B's document.
+    expect(useStore.getState().docMeta).toEqual({
+      id: 5,
+      name: "B's doc",
+      nameSource: 'user',
+      revision: 9,
+    })
     expect(readSnapshot()).toBeNull()
   })
 })

@@ -8,8 +8,8 @@ import {
 } from '../api/client'
 import { useStore } from '../state/store'
 import type { Profile } from '../types'
-import { clearSnapshot, readSnapshot, writeSnapshot } from './buffer'
-import { flush, noteChange, resetAutosaveForTests } from './autosave'
+import { clearSnapshot, readSnapshot, writeSnapshot, type DocSnapshot } from './buffer'
+import { currentGeneration, flush, noteChange, resetAutosaveForTests } from './autosave'
 import {
   createNewDocument,
   fallbackName,
@@ -20,6 +20,7 @@ import {
   removeDocument,
   removeFolder,
 } from './documents'
+import { recoverSnapshot } from './hydration'
 import { addFolder, applyFolderDefaults, saveFolderDefaults } from './folders'
 import {
   applyHeaderProfileSelection,
@@ -492,6 +493,122 @@ describe('invalidateDocumentWork', () => {
     // hydrateFromDocument must never have run for the stale fetch: user 1's
     // document never gets opened into the editor for user 2's session.
     expect(useStore.getState().docMeta).toBeNull()
+    expect(dispatched).toHaveLength(0)
+  })
+
+  it('createNewDocument() does not resurrect the outgoing user\'s stale document list when the session turns over mid-create', async () => {
+    // Captured into createNewDocument's `state` closure before its await —
+    // the write must not resurrect this once the session has moved on,
+    // even though nothing re-reads the store to notice it's stale.
+    useStore.getState().setDocuments([summaryOf(doc(1))])
+    let resolveCreate: ((d: DocumentFull) => void) | undefined
+    vi.mocked(createDocument).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve
+        }) as never,
+    )
+
+    const pending = createNewDocument() // starts; will reach `await apiCreateDocument`
+    await vi.waitFor(() => {
+      if (!resolveCreate) throw new Error('createDocument not called yet')
+    })
+
+    invalidateDocumentWork() // the session that started this create has ended
+    useStore.getState().setDocuments([summaryOf(doc(2))]) // a wholly different, incoming list
+
+    resolveCreate!(doc(9))
+    await pending
+
+    // Must still be exactly the incoming list — not [doc(9), doc(1)], which
+    // would be the outgoing user's stale `state.documents` closure
+    // resurrected on top of it.
+    expect(useStore.getState().documents.map((d) => d.id)).toEqual([2])
+  })
+
+  it('recoverSnapshot() does not create a recovered copy once the session has ended while checking the server', async () => {
+    // The most sensitive write in the module: on a 404, this POSTs
+    // `snapshot.text` to create a brand-new document. A session turnover
+    // while checking the server must stop this before it fires at all.
+    const snapshot: DocSnapshot = {
+      docId: 1,
+      revision: 1,
+      dirty: true,
+      name: 'Doc 1',
+      text: 'private text',
+      findings: [],
+      scorecard: null,
+      settings: {
+        language: 'en',
+        profile_id: null,
+        domain_ids: [],
+        llm_provider: null,
+        llm_model: null,
+        llm_tier: null,
+        llm_auto: true,
+      },
+      ownerId: 1,
+    }
+    let rejectGet: ((reason?: unknown) => void) | undefined
+    vi.mocked(getDocument).mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectGet = reject
+        }) as never,
+    )
+
+    const gen = currentGeneration()
+    const pending = recoverSnapshot(snapshot, gen)
+    await vi.waitFor(() => {
+      if (!rejectGet) throw new Error('getDocument not called yet')
+    })
+
+    invalidateDocumentWork() // the session that owned this snapshot has ended
+
+    rejectGet!(new HttpError(404, 'gone')) // falls through to the recovered-copy path
+    await pending
+
+    expect(createDocument).not.toHaveBeenCalled()
+  })
+
+  it('removeDocument()\'s hydrate of the next document does not run once the session has ended', async () => {
+    // removeDocument() has no pre-check of its own before calling
+    // hydrateFromDocument() (its own setDocuments() write re-derives from
+    // live store state, confirmed fine in the previous review round) — so
+    // this exercises hydrateFromDocument()'s own entry guard in isolation,
+    // with no caller-side check to confound it.
+    useStore.getState().setDocuments([summaryOf(doc(1)), summaryOf(doc(2))])
+    useStore.getState().setDocMeta({ id: 1, name: 'Doc 1', nameSource: 'user', revision: 0 })
+    vi.mocked(deleteDocument).mockResolvedValue(undefined)
+    let resolveGet: ((d: DocumentFull) => void) | undefined
+    vi.mocked(getDocument).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveGet = resolve
+        }) as never,
+    )
+
+    const pending = removeDocument(1) // starts; will reach `await getDocument(2)`
+    await vi.waitFor(() => {
+      if (!resolveGet) throw new Error('getDocument not called yet')
+    })
+
+    invalidateDocumentWork() // the session that started this delete has ended
+
+    resolveGet!(doc(2))
+    await pending
+
+    // invalidateDocumentWork() alone (unlike a real logout()/expireSession())
+    // does not touch docMeta — only resetSessionState() does that. So the
+    // correct outcome here is that docMeta stays exactly what it was before
+    // this call (doc 1's, already unrelated to the delete target), not that
+    // it gets overwritten with doc 2's data from the stale hydrate.
+    expect(useStore.getState().docMeta).toEqual({
+      id: 1,
+      name: 'Doc 1',
+      nameSource: 'user',
+      revision: 0,
+    })
     expect(dispatched).toHaveLength(0)
   })
 })
