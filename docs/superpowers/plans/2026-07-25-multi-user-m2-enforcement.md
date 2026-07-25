@@ -1041,9 +1041,33 @@ Expected: FAIL — the module does not exist.
 `LoginForm` is a controlled email/password form that calls `login()` on submit,
 shows the invalid-credentials message for an `HttpError` with status 401 and
 the generic failure message otherwise, disables the submit button while in
-flight, and uses the i18n keys from Task 6. It is a full-screen layout — the
-unauthenticated user must not see the editor chrome, document sidebar or nav
-(spec §8).
+flight (showing `signInPending`), and uses the i18n keys from Task 6.
+
+**Design — settled, transcribe it rather than deciding.** Reviewed against
+rendered alternatives on 2026-07-25; a split-panel/landing-page treatment was
+considered and deferred to a later UI polish phase (see the roadmap backlog).
+
+- Full-viewport container, `background: var(--panel)`, contents centred both
+  axes. The unauthenticated user must see no editor chrome, document sidebar
+  or nav at all (spec §8).
+- A single card: `background: var(--bg)`, `1px solid var(--border)`,
+  `border-radius: 10px`, `padding: 1.2rem`, `width: 18rem`, column flex with
+  `gap: 0.55rem`, `box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08)`.
+- The wordmark sits at the top of the card, reusing the header's exact markup
+  so the two never drift: `Fabulous <span class="accent">Writing</span>`, at
+  `1.25rem` / weight 700.
+- Two labelled inputs — email (`type="email"`, `autocomplete="username"`) and
+  password (`type="password"`, `autocomplete="current-password"`) — labels at
+  `0.7rem` in `var(--text-dim)`, inputs 30px tall with the app's standard
+  `1px solid var(--border)` / `6px` radius.
+- Submit button spans the card width: `background: var(--accent)`, white text,
+  weight 600, 30px tall, no border.
+- The error message renders **above** the submit button and reuses the app's
+  existing boxed-error idiom rather than a new colour — `color: #e5484d`,
+  `border: 1px solid #e5484d55`, `border-radius: 6px`, matching `.llm-error`.
+  Do not introduce an error token; the codebase uses this literal throughout.
+- The `sessionExpired` notice, when set, renders in the same position and
+  styling as the error.
 
 In `main.tsx`, wrap: `<StrictMode><LoginGate><App /></LoginGate></StrictMode>`.
 
@@ -1101,9 +1125,54 @@ interaction between this task and Task 4.
 - [ ] **Step 2: Run it and watch it fail**
 - [ ] **Step 3: Implement**
 
-`AccountMenu` renders the user's email and a small menu, following whatever
-pattern the existing header selectors use rather than inventing a new one.
-Mount it in `Header()` alongside the other global controls.
+**Design — settled, transcribe it rather than deciding.** Reviewed against
+rendered alternatives on 2026-07-25. A full email-address trigger was rejected
+because it squeezes the Domain selector out of an already-tight header, and a
+modal for the password form was deferred to a later UI polish phase (see the
+roadmap backlog) — the app has **no modal or `<dialog>` anywhere today**, so
+one would mean building a scrim, focus trap, Escape handling and scroll lock
+from scratch for three fields.
+
+**Trigger** — last element inside `.header-controls`, after the Check button:
+
+- a circular badge, `height`/`width` = `var(--control-h)` (26px),
+  `border-radius: 999px`;
+- `background: var(--accent-soft)`, `color: var(--accent)`,
+  `1px solid var(--accent)`, `font-size: 0.72rem`, weight 700;
+- content is the **uppercase first character of the email**;
+- it needs an accessible name — use the `accountMenu` key, since the visible
+  content is a single letter.
+
+**Menu** — the existing popover recipe, copied from `.doc-menu` so it inherits
+the app's look and behaviour rather than starting a second idiom:
+`position: absolute; right: 0; top: calc(100% + 6px); z-index: 20;`
+`min-width: 11rem; background: var(--bg); border: 1px solid var(--border);`
+`border-radius: 8px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.15);` column flex.
+Its anchor gets `position: relative`.
+
+- First row: the **full** email address, non-interactive, `0.75rem`,
+  `var(--text-dim)`, separated by `1px solid var(--border)`. This is what pays
+  for the badge hiding the identity.
+- Then two buttons — `accountChangePassword`, `accountLogOut` — left-aligned,
+  `padding: 0.4rem 0.7rem`, borderless, `background: var(--accent-soft)` on
+  hover, exactly as `.doc-menu button` does.
+
+**Password form** — replaces the menu's contents *in the same popover*, which
+widens to about `15rem`. Three labelled password inputs (`passwordCurrent`,
+`passwordNew`, `passwordConfirm`; `autocomplete="current-password"` and
+`new-password`), then a right-aligned action row: a quiet Cancel button
+(`1px solid var(--border)`, `var(--bg)`) and the accent-filled submit. Result
+messages use the same boxed idiom as the login gate — `#e5484d` with
+`1px solid #e5484d55` for failures, `var(--text-dim)` for `passwordChanged`.
+
+**One trap this codebase has already hit:** when the popover closes, reset it
+back to the menu view. `DocumentItem`'s `moving` submenu shipped with exactly
+this bug — closing via one path left the submenu expanded, so reopening showed
+it pre-expanded. Whatever dismissal paths you support (outside click, Escape,
+choosing an item), every one of them must clear the "showing password form"
+state. Write a test for reopening after each dismissal path.
+
+Mount it in `Header()` as the final child of `.header-controls`.
 
 - [ ] **Step 4: Run the tests**
 
