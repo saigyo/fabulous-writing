@@ -193,3 +193,20 @@ def test_token_issued_far_in_the_future_is_rejected_but_small_skew_is_tolerated(
 def test_garbage_token_is_rejected():
     with pytest.raises(InvalidToken):
         LocalTokenVerifier(SECRET).verify("not-a-token")
+
+
+@pytest.mark.parametrize("bad_iat", ["not-a-number", ["x"], {"a": 1}])
+def test_malformed_iat_is_rejected_not_leaked(bad_iat):
+    # iat is caller-controlled and must never crash the verifier with a
+    # raw ValueError/TypeError from the drift computation; it must be
+    # translated to InvalidToken like every other malformed claim.
+    payload = {
+        "sub": "1",
+        "iss": TOKEN_ISSUER,
+        "aud": TOKEN_AUDIENCE,
+        "iat": bad_iat,
+        "exp": int((datetime.now(UTC) + timedelta(hours=1)).timestamp()),
+    }
+    forged = jwt.encode(payload, SECRET, algorithm="HS256")
+    with pytest.raises(InvalidToken):
+        LocalTokenVerifier(SECRET).verify(forged)
