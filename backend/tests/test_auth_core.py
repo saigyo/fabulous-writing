@@ -92,12 +92,27 @@ def test_check_password_with_over_long_input_returns_false():
     assert check_password(over_long, None) is False
 
 
-def test_hash_password_with_over_long_input_does_not_raise():
+def test_hash_password_with_over_long_input_raises():
     over_long = "あ" * 25  # 75 bytes, exceeds bcrypt limit
-    # Must not raise; should be safe to call
-    result = hash_password(over_long)
-    assert result is not None
-    assert isinstance(result, str)
+    # hash_password is a write path; over-long input is a programming error.
+    # It must raise to prevent accidentally storing a truncated password.
+    with pytest.raises(ValueError, match="validate_password"):
+        hash_password(over_long)
+
+
+def test_false_accept_regression_distinct_passwords_with_same_prefix():
+    # Two distinct passwords sharing a 72-byte prefix must not cross-match.
+    # Construct a 72-byte valid password and store it.
+    valid_72_byte = "x" * 72
+    assert len(valid_72_byte.encode()) == 72
+    stored = hash_password(valid_72_byte)
+
+    # An over-long candidate with the same 72-byte prefix must still return False.
+    # (After hash_password rejects over-long input, no over-long password can be
+    # stored, so the truncation cannot produce a false accept.)
+    candidate_with_suffix = "x" * 72 + "AAAA"
+    assert len(candidate_with_suffix.encode()) == 76  # exceeds limit
+    assert check_password(candidate_with_suffix, stored) is False
 
 
 def test_check_password_with_empty_string_hash_returns_false():

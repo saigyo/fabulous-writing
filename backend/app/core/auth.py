@@ -58,17 +58,6 @@ ADMIN_SET_MIN_PASSWORD_LENGTH = 12
 MAX_PASSWORD_BYTES = 72  # bcrypt's hard input limit, not a policy choice
 
 
-def _encode_password(password: str) -> bytes:
-    """Encode password to bytes, truncating to bcrypt's 72-byte limit.
-
-    Every write path (hash_password) validates first, so truncation is only
-    ever reached by an unvalidated login attempt — which cannot match a
-    stored hash it did not create.
-    """
-    encoded = password.encode()
-    return encoded[:MAX_PASSWORD_BYTES]
-
-
 @lru_cache(maxsize=1)
 def _dummy_hash() -> str:
     """A real hash to verify against when no account matches.
@@ -81,20 +70,50 @@ def _dummy_hash() -> str:
 
 
 def hash_password(password: str) -> str:
+    """Hash a password with bcrypt.
+
+    Write path: must fail loudly on over-long input. Every caller
+    (admin API, self-service change, bootstrap, operator CLI) validates first;
+    truncating here would silently weaken a credential.
+    """
     # gensalt() is the salting step: bcrypt generates a fresh random salt
     # per call and stores it inside the resulting hash string
     # ($2b$<cost>$<22-char salt><hash>), so two identical passwords never
     # produce the same hash. No separate salt column is needed — or wanted.
-    return bcrypt.hashpw(_encode_password(password), bcrypt.gensalt()).decode()
+    encoded = password.encode()
+    if len(encoded) > MAX_PASSWORD_BYTES:
+        raise ValueError(
+            f"Password is too long ({len(encoded)} bytes, max {MAX_PASSWORD_BYTES}). "
+            f"Call validate_password() before hashing."
+        )
+    return bcrypt.hashpw(encoded, bcrypt.gensalt()).decode()
 
 
 def check_password(password: str, password_hash: str | None) -> bool:
+    """Verify a password candidate against a stored hash.
+
+    Read path with untrusted input: must never raise and must never leak
+    timing. Truncates over-long candidates to prevent bcrypt ValueError,
+    but returns False unconditionally for any over-long candidate because
+    no over-long password can ever have been stored after hash_password
+    started rejecting them.
+    """
     # Treat both None and empty string as "no hash stored".
     if not password_hash:
         candidate = _dummy_hash()
     else:
         candidate = password_hash
-    matched = bcrypt.checkpw(_encode_password(password), candidate.encode())
+
+    # Encode and check length.
+    encoded = password.encode()
+    if len(encoded) > MAX_PASSWORD_BYTES:
+        # Truncate to prevent ValueError from bcrypt, but spend the bcrypt time
+        # to avoid timing leaks. Return False unconditionally: an over-long
+        # candidate cannot match any stored hash.
+        bcrypt.checkpw(encoded[:MAX_PASSWORD_BYTES], candidate.encode())
+        return False
+
+    matched = bcrypt.checkpw(encoded, candidate.encode())
     # Return True only if match succeeds AND a real hash was present.
     return matched and bool(password_hash)
 
