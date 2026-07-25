@@ -14,6 +14,7 @@ import {
   createNewDocument,
   fallbackName,
   initDocuments,
+  invalidateDocumentWork,
   moveDocumentToFolder,
   openDocument,
   removeDocument,
@@ -101,6 +102,8 @@ function summaryOf(d: DocumentFull) {
   }
 }
 
+const USER = { id: 1, email: 'ada@example.com', display_name: null, tier: 'basic', is_admin: false }
+
 beforeEach(() => {
   resetAutosaveForTests()
   clearSnapshot()
@@ -108,6 +111,7 @@ beforeEach(() => {
   localStorage.clear()
   useStore.getState().setDocMeta(null)
   useStore.getState().setDocuments([])
+  useStore.setState({ user: USER })
 })
 
 afterEach(() => vi.clearAllMocks())
@@ -128,6 +132,7 @@ describe('openDocument', () => {
     expect(consumeProfileApplySuppression()).toBe(true)
     expect(consumeProfileApplySuppression()).toBe(false) // one-shot
     expect(readSnapshot()?.dirty).toBe(false)
+    expect(readSnapshot()?.ownerId).toBe(1)
     expect(dispatched.length).toBe(1) // text + findings in one transaction
   })
 
@@ -388,6 +393,74 @@ describe('initDocuments', () => {
     expect(useStore.getState().docMeta?.id).toBe(3)
     expect(useStore.getState().docMeta?.revision).toBe(7)
     expect(readSnapshot()?.dirty).toBe(false)
+  })
+})
+
+describe('invalidateDocumentWork', () => {
+  it('cancels a pending debounced save and a pending backoff retry', async () => {
+    vi.useFakeTimers()
+    try {
+      useStore.getState().setDocMeta({ id: 1, name: 'Doc 1', nameSource: 'user', revision: 4 })
+      vi.mocked(updateDocument).mockRejectedValueOnce(new TypeError('offline'))
+      await flush() // fails: schedules a backoff retry
+      expect(updateDocument).toHaveBeenCalledTimes(1)
+
+      noteChange() // arms a fresh debounce timer too
+      invalidateDocumentWork()
+
+      await vi.advanceTimersByTimeAsync(60000)
+      expect(updateDocument).toHaveBeenCalledTimes(1) // neither timer fired
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('an initDocuments() run still in flight when the session ends writes nothing', async () => {
+    let resolveList!: (docs: ReturnType<typeof summaryOf>[]) => void
+    vi.mocked(listDocuments).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveList = resolve
+        }) as never,
+    )
+
+    const pending = initDocuments() // starts, now awaiting listDocuments()
+    invalidateDocumentWork() // simulates logout()/expireSession() firing mid-flight
+
+    resolveList([summaryOf(doc(1))])
+    await pending
+
+    // The stale run's fetch resolved after invalidation: its writes must
+    // have been dropped rather than landing the first user's document list.
+    expect(useStore.getState().documents).toEqual([])
+    expect(useStore.getState().docMeta).toBeNull()
+  })
+
+  it('a login as another user mid-initDocuments() never surfaces the first user\'s content', async () => {
+    let resolveGet: ((d: DocumentFull) => void) | undefined
+    vi.mocked(listDocuments).mockResolvedValue([summaryOf(doc(7))])
+    vi.mocked(getDocument).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveGet = resolve
+        }) as never,
+    )
+
+    const pending = initDocuments() // starts; will reach `await getDocument(7)`
+    await vi.waitFor(() => {
+      if (!resolveGet) throw new Error('getDocument not called yet')
+    })
+
+    invalidateDocumentWork() // user 1 logs out
+    useStore.setState({ user: { ...USER, id: 2 } }) // user 2 signs in
+
+    resolveGet!(doc(7, { text: 'user 1 private text' }))
+    await pending
+
+    // hydrateFromDocument must never have run for the stale fetch: user 1's
+    // document never gets opened into the editor for user 2's session.
+    expect(useStore.getState().docMeta).toBeNull()
+    expect(dispatched).toHaveLength(0)
   })
 })
 

@@ -13,7 +13,14 @@ import {
 } from '../api/client'
 import { currentMessages } from '../i18n'
 import { useStore } from '../state/store'
-import { cancelRetry, flush, setConflictHandler } from './autosave'
+import {
+  bumpGeneration,
+  cancelDebounce,
+  cancelRetry,
+  currentGeneration,
+  flush,
+  setConflictHandler,
+} from './autosave'
 import { clearSnapshot, readSnapshot, writeSnapshot } from './buffer'
 import { applyFolderDefaults } from './folders'
 import { hydrateFromBuffer, hydrateFromDocument, recoverSnapshot } from './hydration'
@@ -21,6 +28,25 @@ import { refreshDocuments, refreshFolders, summaryOf } from './list'
 import { settingsPayload } from './settings'
 
 const LEGACY_TEXT_KEY = 'fabulous-writing-text'
+
+/** Removes the pre-multi-document editor buffer. Exported for auth/session.ts
+ * — documents.ts is the module that owns LEGACY_TEXT_KEY. */
+export function clearLegacyText(): void {
+  localStorage.removeItem(LEGACY_TEXT_KEY)
+}
+
+/** Invalidates all pending and in-flight document work: cancels the
+ * debounce and backoff-retry timers so no queued write fires again, and
+ * bumps the generation counter so a push or `initDocuments()` run already
+ * in flight — which cancelling a timer cannot stop — no-ops instead of
+ * recreating the buffer for a session that has since ended. Called by
+ * logout() and expireSession() (auth/session.ts), never directly by UI
+ * code. */
+export function invalidateDocumentWork(): void {
+  cancelDebounce()
+  cancelRetry()
+  bumpGeneration()
+}
 
 /** Mirrors the backend rule in app/services/naming.py. */
 export function fallbackName(text: string): string | null {
@@ -144,6 +170,13 @@ export function initDocuments(): Promise<void> {
 }
 
 async function runInit(): Promise<void> {
+  // Captured before any await: invalidateDocumentWork() (logout, expiry, or
+  // a login that changes the user) bumps this while a fetch below is still
+  // pending. Every write past an await checks it first, so a run started
+  // for one session cannot land its writes into the next one.
+  const gen = currentGeneration()
+  const stillCurrent = () => gen === currentGeneration()
+
   setConflictHandler(recoverSnapshot)
   const buffered = readSnapshot()
   if (buffered?.dirty) {
@@ -157,8 +190,10 @@ async function runInit(): Promise<void> {
         },
         settings: buffered.settings,
       })
+      if (!stillCurrent()) return
       writeSnapshot({ ...buffered, revision: updated.revision, dirty: false })
     } catch (error) {
+      if (!stillCurrent()) return
       if (
         error instanceof HttpError &&
         (error.status === 409 || error.status === 404)
@@ -173,6 +208,7 @@ async function runInit(): Promise<void> {
   try {
     documents = await listDocuments()
   } catch {
+    if (!stillCurrent()) return
     useStore.getState().setDocListError(true)
     const snapshot = readSnapshot()
     if (snapshot) {
@@ -186,8 +222,10 @@ async function runInit(): Promise<void> {
     }
     return
   }
+  if (!stillCurrent()) return
   useStore.getState().setDocListError(false)
   await refreshFolders()
+  if (!stillCurrent()) return
 
   if (documents.length === 0) {
     const legacy = localStorage.getItem(LEGACY_TEXT_KEY)
@@ -204,23 +242,27 @@ async function runInit(): Promise<void> {
         // The migration create failed: leave the legacy text in place (it
         // would otherwise be permanently lost) and surface the retry
         // surface via the doc-list error, same as the offline path.
+        if (!stillCurrent()) return
         useStore.getState().setDocListError(true)
         return
       }
+      if (!stillCurrent()) return
       // Only drop the legacy key once the migration has actually landed.
-      localStorage.removeItem(LEGACY_TEXT_KEY)
+      clearLegacyText()
       useStore.getState().setDocuments([summaryOf(doc)])
       await hydrateFromDocument(doc)
       return
     }
+    if (!stillCurrent()) return
     await createNewDocument()
     return
   }
 
-  localStorage.removeItem(LEGACY_TEXT_KEY)
+  clearLegacyText()
   useStore.getState().setDocuments(documents)
   const persistedId = useStore.getState().currentDocId
   const target = documents.find((d) => d.id === persistedId) ?? documents[0]
   const doc = await getDocument(target.id)
+  if (!stillCurrent()) return
   await hydrateFromDocument(doc)
 }

@@ -31,6 +31,29 @@ let inFlight: Promise<void> | null = null
 let onConflict: ((snapshot: DocSnapshot) => Promise<void>) | null = null
 const titleAttempted = new Set<number>()
 
+// Bumped by invalidateDocumentWork() (auth/session.ts, via
+// documents.ts). Cancelling the debounce and retry timers stops future
+// writes, but a push already in flight when a session ends is still
+// awaiting `updateDocument()` — its completion captures this counter and
+// no-ops if it no longer matches, so it cannot recreate the buffer for a
+// user who has since logged out or been replaced.
+let generation = 0
+export function currentGeneration(): number {
+  return generation
+}
+export function bumpGeneration(): void {
+  generation++
+}
+
+/** Cancel the pending debounce timer (the backoff retry timer has its own
+ * cancelRetry()). Called by documents.ts' invalidateDocumentWork(). */
+export function cancelDebounce(): void {
+  if (timer) {
+    clearTimeout(timer)
+    timer = null
+  }
+}
+
 export function setConflictHandler(
   handler: (snapshot: DocSnapshot) => Promise<void>,
 ): void {
@@ -55,13 +78,14 @@ export function resetAutosaveForTests(): void {
   inFlight = null
   onConflict = null
   titleAttempted.clear()
+  generation = 0
 }
 
 /** Assemble the current document's full state from editor + store. */
 export function collectSnapshot(): DocSnapshot | null {
   const state = useStore.getState()
   const view = getEditorView()
-  if (!view || !state.docMeta) return null
+  if (!view || !state.docMeta || !state.user) return null
   return {
     docId: state.docMeta.id,
     revision: state.docMeta.revision,
@@ -79,6 +103,7 @@ export function collectSnapshot(): DocSnapshot | null {
     scorecard: state.scorecard
       ? { card: state.scorecard, stale: state.scorecardStale }
       : null,
+    ownerId: state.user.id,
     settings: settingsPayload(state),
   }
 }
@@ -149,6 +174,11 @@ export async function flush(): Promise<void> {
 }
 
 async function push(snapshot: DocSnapshot): Promise<void> {
+  // Captured before the request goes out: invalidateDocumentWork() (logout,
+  // expiry, or a login that changes the user) bumps this while the PUT is
+  // in flight. Cancelling the debounce/retry timers cannot stop a fetch
+  // already awaited, so the completion below must check for itself.
+  const gen = currentGeneration()
   saving = true
   let succeeded = false
   try {
@@ -161,6 +191,7 @@ async function push(snapshot: DocSnapshot): Promise<void> {
       },
       settings: snapshot.settings,
     })
+    if (gen !== currentGeneration()) return // session ended: do not write
     retryDelay = RETRY_BASE_MS
     if (retryTimer) {
       clearTimeout(retryTimer)
@@ -178,6 +209,7 @@ async function push(snapshot: DocSnapshot): Promise<void> {
     await maybeGenerateTitle(snapshot)
     succeeded = true
   } catch (error) {
+    if (gen !== currentGeneration()) return // session ended: no retry, no recovery
     if (
       error instanceof HttpError &&
       (error.status === 409 || error.status === 404)

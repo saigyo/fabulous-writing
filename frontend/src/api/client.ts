@@ -41,6 +41,43 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json()
 }
 
+/** Mirrors the backend's own response (`backend/app/api/auth.py`). M4 and M5
+ * extend this same type (LLM policy, quota/size/concurrency limits) rather
+ * than adding a second one. */
+export interface MeResponse {
+  id: number
+  email: string
+  display_name: string | null
+  tier: string
+  is_admin: boolean
+}
+
+export interface LoginResponse {
+  token: string
+  user: MeResponse
+}
+
+export const postLogin = (email: string, password: string) =>
+  request<LoginResponse>('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  })
+
+export const getMe = () => request<MeResponse>('/api/auth/me')
+
+// Injected by auth/session.ts (avoids a module cycle): session.ts imports
+// this module for postLogin/getMe, so this module must not import
+// session.ts back to call expireSession() directly. getUnauthorizedHandler
+// is read by request()'s 401 branch, added in Task 4 — not yet wired up
+// here.
+let onUnauthorized: (() => void) | null = null
+export function setUnauthorizedHandler(fn: () => void): void {
+  onUnauthorized = fn
+}
+export function getUnauthorizedHandler(): (() => void) | null {
+  return onUnauthorized
+}
+
 export interface RuleConfig {
   categories_off: Category[]
   exceptions: string[]
