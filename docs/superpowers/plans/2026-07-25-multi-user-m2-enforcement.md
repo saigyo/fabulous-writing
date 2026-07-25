@@ -76,8 +76,13 @@ them to nothing.
   credential in the `Authorization` header, which is the whole reason
   `EventSource` is being replaced.
 - Gates before opening the PR: from `backend/`, `uv run pytest -q` passes with
-  **zero warnings**; from `frontend/`, `npx vitest run && npx tsc --noEmit &&
+  **zero warnings**; from `frontend/`, `npx vitest run && npx tsc -b &&
   npm run lint && npm run build` all pass.
+- **Type-check with `tsc -b`, never `tsc --noEmit`.** The root `tsconfig.json`
+  is solution-style — `"files": []` plus references to `tsconfig.app.json` and
+  `tsconfig.node.json` — so `tsc --noEmit` type-checks **zero files** and
+  always exits 0. It is a gate that cannot fail. `npm run build` is
+  `tsc -b && vite build`, so the build has been carrying the real check.
 - A plain `uv run pytest` goes through a filtering proxy that hides FAILED
   lines. Use `rtk proxy uv run pytest -q` when you need the true list.
 - **One home per requirement.** Where a snippet and prose describe the same
@@ -841,7 +846,7 @@ is constructed — every other write spreads an existing one — so that is the
 single place to populate the field. When `user` is null, `collectSnapshot()`
 returns `null` as it already does for a missing `docMeta`.
 
-Making the field required would break `tsc --noEmit` at roughly seven
+Making the field required would break `tsc -b` at roughly seven
 object-literal `writeSnapshot({…})` calls across `documents.test.ts` and
 `autosave.test.ts`; declaring it optional avoids that churn, and the
 clear-if-not-mine rule already treats `undefined` as "not mine".
@@ -1812,7 +1817,7 @@ Its anchor gets `position: relative`.
 widens to about `15rem`. Three labelled password inputs (`passwordCurrent`,
 `passwordNew`, `passwordConfirm`; `autoComplete="current-password"` and
 `autoComplete="new-password"` — **camelCase**, since React's typed DOM prop is
-`autoComplete` and the lowercase spelling fails `tsc --noEmit`), then a
+`autoComplete` and the lowercase spelling fails `tsc -b`), then a
 right-aligned action row: a quiet Cancel button
 (`1px solid var(--border)`, `var(--bg)`) and the accent-filled submit. Result
 messages use the same boxed idiom as the login gate — `#e5484d` with
@@ -2095,7 +2100,7 @@ dependabot setup respectively, not to M2.)
 - [ ] **Step 2: Run both gates**
 
 From `backend/`: `rtk proxy uv run pytest -q` — all green, zero warnings.
-From `frontend/`: `npx vitest run && npx tsc --noEmit && npm run lint && npm run build`.
+From `frontend/`: `npx vitest run && npx tsc -b && npm run lint && npm run build`.
 
 - [ ] **Step 3: Verify by running the application**
 
