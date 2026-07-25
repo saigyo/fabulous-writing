@@ -3,6 +3,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.auth import LoginThrottle, router as auth_router
 from app.api.checks import router as checks_router
 from app.api.documents import router as documents_router
 from app.api.folders import router as folders_router
@@ -20,6 +21,7 @@ from app.checkers.llm.ollama import OllamaProvider
 from app.checkers.llm.openai_compat import OpenAICompatProvider
 from app.checkers.llm.provider import LLMProvider
 from app.checkers.rules.engine import RuleEngine
+from app.core.auth import AuthConfigError, LocalTokenVerifier, resolve_auth_secret
 from app.core.config import BUILTIN_ENV_KEYS, Settings, load_settings
 from app.nlp.registry import NlpRegistry
 from app.services.documents import DocumentStore
@@ -27,8 +29,10 @@ from app.services.folders import FolderStore
 from app.services.jobs import JobManager
 from app.services.profiles import ProfileStore
 from app.services.seed import seed_terminology
+from app.services.seed_admin import seed_admin
 from app.services.seed_profiles import seed_profiles
 from app.services.terminology import TerminologyStore
+from app.services.users import UserStore
 
 APP_NAME = "Fabulous Writing"
 
@@ -103,6 +107,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings.demos_dir,
         seed_examples=settings.seed_example_profiles,
     )
+    app.state.user_store = UserStore(settings.db_path)
+    if settings.auth.mode != "local":
+        raise AuthConfigError(
+            "auth.mode 'supabase' is not implemented yet (sub-project 2)"
+        )
+    app.state.auth_secret = resolve_auth_secret(
+        ephemeral_ok=settings.auth.ephemeral_secret
+    )
+    app.state.token_verifier = LocalTokenVerifier(app.state.auth_secret)
+    app.state.login_throttle = LoginThrottle()
+    seed_admin(app.state.user_store)
     app.include_router(terminology_router)
     app.include_router(checks_router)
     app.include_router(languages_router)
@@ -113,6 +128,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(folders_router)
     app.include_router(profiles_router)
     app.include_router(routing_router)
+    app.include_router(auth_router)
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
@@ -121,4 +137,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     return app
 
 
-app = create_app()
+def __getattr__(name: str):
+    """Build the default app lazily, on first attribute access (PEP 562).
+
+    `uvicorn app.main:app` needs a module-level `app`, but building it
+    eagerly at import time — as a plain `app = create_app()` — ran
+    `create_app()` (and its fail-closed auth/admin bootstrap) as a side
+    effect of *any* import of this module, including `from app.main import
+    create_app` in test files. That fired during pytest's collection
+    phase, before conftest's fixtures set the test secret and bootstrap
+    credentials, and against the default (real) `db_path`. Deferring the
+    call until something actually asks for `app` keeps `create_app` itself
+    a plain, side-effect-free import.
+    """
+    if name == "app":
+        instance = create_app()
+        globals()["app"] = instance
+        return instance
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

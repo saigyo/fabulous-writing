@@ -14,6 +14,22 @@
 # vet_suggestions: true    # deterministic vetting of LLM-generated fixes
 # dictionaries_dir: dictionaries  # hunspell dicts (scripts/install-dictionaries.sh)
 
+# Authentication. These are startup-only: none of them can be changed
+# through the API, so a stolen admin session cannot lift its own limits.
+auth:
+  mode: local                   # 'supabase' arrives with sub-project 2
+  # Dev-only: allow a generated, per-start signing secret when
+  # FW_AUTH_SECRET is unset. Tokens then die on every restart.
+  ephemeral_secret: false
+  # When false, no API call may create or promote an admin account.
+  allow_additional_admins: false
+
+# Required environment variables (never stored in this file):
+#   FW_AUTH_SECRET     signing secret, >= 32 chars, randomly generated:
+#                      openssl rand -base64 32
+#   FW_ADMIN_EMAIL     bootstrap admin, used only while the users table is empty
+#   FW_ADMIN_PASSWORD  bootstrap admin password, >= 12 chars
+
 providers:
   ollama_base_url: http://localhost:11434
   ollama_model: llama3.1
