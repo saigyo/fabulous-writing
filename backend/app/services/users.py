@@ -64,6 +64,18 @@ class DuplicateEmailError(ValueError):
     """An account with that email already exists (case-insensitively)."""
 
 
+class InvalidEmailError(ValueError):
+    """The email is empty, or whitespace-only, after stripping.
+
+    The API models (`LoginRequest.email`, `UserCreate.email`) already reject
+    this before it gets here — this is the last line of defence for callers
+    that bypass those models: `seed_admin` (which does its own check),
+    the operator CLI, and any future direct caller of `create_user`.
+    Without it, a whitespace-only email would silently normalize to '' (see
+    the stripping comment below) and become a usable, addressless account.
+    """
+
+
 def _utcnow() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -101,7 +113,6 @@ class UserStore:
         tier: str = "basic",
         is_admin: bool = False,
     ) -> User:
-        password_hash = hash_password(password) if password else None
         # Strip only — do NOT lowercase. COLLATE NOCASE on the column already
         # gives case-insensitive matching; lowercasing here would throw away
         # the case the user chose before it ever reaches `User.email`.
@@ -112,6 +123,11 @@ class UserStore:
         # treats as one row already map to the same throttle key once both
         # sides strip whitespace the same way.
         email = email.strip()
+        if not email:
+            # Checked before hashing the password: no reason to pay bcrypt's
+            # cost for an input that is rejected outright.
+            raise InvalidEmailError("email must not be empty or whitespace-only")
+        password_hash = hash_password(password) if password else None
         with self._connect() as conn:
             try:
                 cursor = conn.execute(

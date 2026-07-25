@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.api.deps import CurrentUser, require_admin
 from app.core.auth import ADMIN_SET_MIN_PASSWORD_LENGTH, validate_password
-from app.services.users import DuplicateEmailError, User
+from app.services.users import DuplicateEmailError, InvalidEmailError, User
 
 router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
@@ -36,6 +36,20 @@ class UserCreate(BaseModel):
     display_name: str | None = None
     tier: TierName = "basic"
     is_admin: bool = False
+
+    @field_validator("email")
+    @classmethod
+    def _reject_blank_email(cls, value: str) -> str:
+        # Mirrors LoginRequest._reject_blank_email in app/api/auth.py: an
+        # all-whitespace email would otherwise pass this model and reach
+        # `UserStore.create_user`, which strips whitespace and would
+        # normalize it to ''. Stripping and returning here means this
+        # validator and the store agree on the value rather than each
+        # re-stripping the other's output.
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("email must not be empty or whitespace-only")
+        return stripped
 
 
 class UserPatch(BaseModel):
@@ -118,7 +132,7 @@ def create_user(
             tier=body.tier,
             is_admin=body.is_admin,
         )
-    except DuplicateEmailError as exc:
+    except (DuplicateEmailError, InvalidEmailError) as exc:
         raise HTTPException(422, str(exc)) from exc
     store.record_audit(actor_id=actor.id, target_id=user.id, field="created",
                        new_value=user.email)
