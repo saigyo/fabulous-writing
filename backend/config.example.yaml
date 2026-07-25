@@ -24,6 +24,12 @@ auth:
   # When false, no API call may create or promote an admin account.
   allow_additional_admins: false
 
+# CORS: browser origins permitted to call the API. Non-browser clients are
+# unaffected — CORS only constrains requests made from a web page.
+# cors:
+#   origins:
+#     - http://localhost:5173
+
 # Required environment variables (never stored in this file). FW_AUTH_SECRET
 # is the only one with an escape hatch: ephemeral_secret above (dev only).
 # The two admin variables are always required while the users table is empty.
