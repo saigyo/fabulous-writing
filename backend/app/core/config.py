@@ -1,5 +1,6 @@
 import re
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -181,6 +182,16 @@ class NlpSettings(BaseModel):
     )
 
 
+class AuthSettings(BaseModel):
+    # Startup-only knobs. None of these is reachable through the API: a
+    # stolen admin session must not be able to lift its own constraints.
+    mode: Literal["local", "supabase"] = "local"
+    # Dev-only escape hatch for a missing FW_AUTH_SECRET (tokens die on restart).
+    ephemeral_secret: bool = False
+    # When false, no API path may create or promote an admin (§7.1).
+    allow_additional_admins: bool = False
+
+
 class Settings(BaseModel):
     db_path: Path = BACKEND_DIR / "data" / "fabulous.db"
     rules_dir: Path = BACKEND_DIR / "rules"
@@ -198,6 +209,7 @@ class Settings(BaseModel):
     providers: ProviderSettings = Field(default_factory=ProviderSettings)
     routing: RoutingSettings = Field(default_factory=RoutingSettings)
     nlp: NlpSettings = Field(default_factory=NlpSettings)
+    auth: AuthSettings = Field(default_factory=AuthSettings)
 
 
 def load_settings(config_file: Path | None = None) -> Settings:
