@@ -13,6 +13,7 @@ import sqlite3
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from typing import NoReturn
 
 from app.core.auth import ADMIN_SET_MIN_PASSWORD_LENGTH, validate_password
 from app.core.config import load_settings
@@ -38,12 +39,19 @@ def _is_lock_contention(exc: sqlite3.OperationalError) -> bool:
     "no such column: <typo>". Message-sniffing is the only way to tell
     them apart, which is a smell — but the alternative (treating every
     OperationalError from a handler as "busy") mislabels a real bug as
-    database trouble and swallows its traceback. Kept deliberately narrow
-    to SQLite's own two lock-contention wordings so anything else falls
-    through unrecognised.
+    database trouble and swallows its traceback.
+
+    "database is locked" is SQLite's real SQLITE_BUSY message — confirmed
+    by `strings` against the libsqlite3 this build actually links, not
+    assumed. Deadlock ("database is deadlocked", from `BEGIN CONCURRENT`)
+    is deliberately not matched: this build's SQLite does not contain that
+    string at all (grepped for and absent), and UserStore never issues
+    `BEGIN CONCURRENT`, so the case cannot arise here. An unmatched
+    deadlock would fall through to the generic re-raise below and surface
+    as a traceback — a safe default, not a silent misdiagnosis — rather
+    than as a wrong "busy" message.
     """
-    message = str(exc).lower()
-    return "database is locked" in message or "database is busy" in message
+    return "database is locked" in str(exc).lower()
 
 
 def _find(store: UserStore, email: str) -> User | None:
@@ -215,7 +223,7 @@ class _SilentArgumentParser(argparse.ArgumentParser):
     the same generic path as an unknown top-level subcommand.
     """
 
-    def error(self, message: str) -> None:  # noqa: ARG002 - message deliberately unused
+    def error(self, message: str) -> NoReturn:  # noqa: ARG002 - message deliberately unused
         self.print_usage(sys.stderr)
         print(
             f"{self.prog}: error: invalid arguments. Valid commands: "
