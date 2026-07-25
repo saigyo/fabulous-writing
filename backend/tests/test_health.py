@@ -47,3 +47,29 @@ def test_create_app_refuses_supabase_mode_before_writing_user_tables(tmp_path: P
         conn.close()
     assert "users" not in tables
     assert "admin_audit" not in tables
+
+
+def test_cors_allows_only_the_configured_origin(tmp_path):
+    # A deliberately NON-default origin. Testing with the default
+    # http://localhost:5173 would pass against an implementation that simply
+    # hard-codes that string in place of "*" and never reads settings.cors —
+    # which is the entire point of this task.
+    configured = "https://writing.example.test"
+    settings = Settings(
+        db_path=tmp_path / "test.db",
+        rules_dir=tmp_path / "rules",
+        cors={"origins": [configured]},
+    )
+    client = TestClient(create_app(settings))
+
+    def preflight(origin: str):
+        return client.options(
+            "/api/health",
+            headers={"Origin": origin, "Access-Control-Request-Method": "GET"},
+        )
+
+    assert preflight(configured).headers["access-control-allow-origin"] == configured
+    # The default is denied when it is not the configured value — this is the
+    # assertion a hard-coded implementation fails.
+    assert "access-control-allow-origin" not in preflight("http://localhost:5173").headers
+    assert "access-control-allow-origin" not in preflight("https://evil.example.com").headers

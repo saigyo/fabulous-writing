@@ -86,9 +86,12 @@ def make_provider_factory(settings: Settings):
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     app = FastAPI(title=APP_NAME)
+    # allow_credentials is deliberately left unset (defaults to False): Bearer-
+    # header auth does not need CORS credentials mode, and enabling it
+    # alongside a permissive origin list is a common mistake.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=settings.cors.origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )

@@ -182,6 +182,12 @@ class NlpSettings(BaseModel):
     )
 
 
+class CorsSettings(BaseModel):
+    # Browsers only. The API is also reachable by non-browser clients, which
+    # CORS does not constrain — this narrows which *web origins* may call it.
+    origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+
+
 class AuthSettings(BaseModel):
     # Startup-only knobs. None of these is reachable through the API: a
     # stolen admin session must not be able to lift its own constraints.
@@ -210,6 +216,7 @@ class Settings(BaseModel):
     routing: RoutingSettings = Field(default_factory=RoutingSettings)
     nlp: NlpSettings = Field(default_factory=NlpSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
+    cors: CorsSettings = Field(default_factory=CorsSettings)
 
 
 def load_settings(config_file: Path | None = None) -> Settings:
