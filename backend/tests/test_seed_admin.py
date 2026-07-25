@@ -41,6 +41,9 @@ def test_fails_closed_when_no_users_and_no_env(store):
 
 
 def test_rejects_a_short_bootstrap_password(store):
-    with pytest.raises(ValueError, match="at least 12"):
+    # AuthConfigError, not the bare ValueError validate_password raises:
+    # every other startup gate raises AuthConfigError, and an operator
+    # wrapper catching it around create_app() must catch this case too.
+    with pytest.raises(AuthConfigError, match="at least 12"):
         seed_admin(store, env={"FW_ADMIN_EMAIL": "root@example.com",
                                "FW_ADMIN_PASSWORD": "short"})

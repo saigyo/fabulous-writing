@@ -176,10 +176,15 @@ remembered). Rule messages are authored per rule file and are not translated by 
 
 ### Quick start
 
-Backend (requires [uv](https://docs.astral.sh/uv/)):
+Backend (requires [uv](https://docs.astral.sh/uv/)); startup fails closed without the
+three `FW_*` variables below (see
+[Authentication](#authentication-foundation-only--not-yet-enforced) for what they do):
 
 ```sh
 cd backend
+export FW_AUTH_SECRET="$(openssl rand -base64 32)"
+export FW_ADMIN_EMAIL="you@example.com"
+export FW_ADMIN_PASSWORD="a bootstrap password"
 uv run uvicorn app.main:app --reload --port 8000
 ```
 
@@ -191,8 +196,9 @@ npm install
 npm run dev          # http://localhost:5173
 ```
 
-That's a fully working installation: rules and terminology checks need nothing else.
-The sections below add LLM checking and optional language components.
+With the three variables set, that's a fully working installation: rules and
+terminology checks need nothing else. The sections below add LLM checking and
+optional language components.
 
 ### LLM providers
 
@@ -224,23 +230,18 @@ considerations — is covered in
 
 The backend has user accounts and local email/password login (see
 [Authentication and user accounts](docs/backend-architecture.md#authentication-and-user-accounts-m1-foundation-only)
-in the architecture doc), but **no endpoint currently requires a logged-in
-user** — the app above works exactly as before. Enforcement lands in a later
-milestone. These variables are read from the environment only, never stored:
+in the architecture doc). Startup now fails closed without the three
+variables below — that's why they're already set in [Quick start](#quick-start)
+above — but once the app has started, **no endpoint currently requires a
+logged-in user**: request handling works exactly as before. Enforcement lands
+in a later milestone. These variables are read from the environment only,
+never stored:
 
 | Variable | Purpose |
 |-----------|-------|
 | `FW_AUTH_SECRET` | HS256 token-signing secret, **required** to start the backend in `auth.mode: local` (the default), at least 32 characters. Generate one with `openssl rand -base64 32`. Startup fails closed without it, unless `auth.ephemeral_secret: true` is set in `config.yaml` for local development (a random secret is generated per process start, so every token dies on restart — never use this outside development). |
 | `FW_ADMIN_EMAIL` | Email for the bootstrap admin account. Read **only while the `users` table is empty** — once any user exists, this variable is ignored, so it can never serve as a standing password reset. |
 | `FW_ADMIN_PASSWORD` | Password for the bootstrap admin account, at least 12 characters. Same "only while empty" rule as `FW_ADMIN_EMAIL`. |
-
-```sh
-export FW_AUTH_SECRET="$(openssl rand -base64 32)"
-export FW_ADMIN_EMAIL="you@example.com"
-export FW_ADMIN_PASSWORD="a bootstrap password"
-cd backend
-uv run uvicorn app.main:app --reload --port 8000
-```
 
 `backend/config.example.yaml`'s `auth:` block documents the same variables
 alongside the related config-only knobs (`mode`, `ephemeral_secret`,

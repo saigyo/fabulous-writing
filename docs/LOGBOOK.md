@@ -2812,7 +2812,7 @@ login throttle's table was unbounded against attacker-supplied keys.
 **Next**: M1 implementation on branch `multi-user-auth-core`.
 
 ## 2026-07-25 — M1: multi-user auth core (users, local login, admin API, operator CLI)
-Commits: `e7f19ec`..`8a83b76`
+Commits: `e7f19ec`..`8a83b76` + docs commits
 
 Implemented the ten-task plan from the previous entry on branch
 `multi-user-auth-core`. **This milestone authenticates no existing
@@ -2870,3 +2870,53 @@ and the root `README.md`) closes the loop `app/core/auth.py`'s
 `resolve_auth_secret` docstring already promised: the `openssl rand -base64
 32` guidance now lives in both `config.example.yaml` (Task 7) and the
 README (this task).
+
+## 2026-07-25 — M1: final whole-branch review fixes
+Commits: this commit (on top of `8ac966b`)
+
+A cross-cutting review of the whole `multi-user-auth-core` branch (817
+tests, zero warnings) found two Important issues and six cheap Minors,
+fixed here in one pass. **Important**: the README's Quick start no longer
+produced a working backend — `create_app` now fails closed without
+`FW_AUTH_SECRET`/`FW_ADMIN_EMAIL`/`FW_ADMIN_PASSWORD`, but the documented
+`uv run uvicorn ...` command and the "fully working installation" /"works
+exactly as before" claims predated that gate. The three variables are now
+part of the Quick start block itself (verified by actually constructing
+`create_app` against a `tmp_path` database with only those variables set,
+and confirming it still fails closed without them); the Authentication
+section's duplicate command block was folded into a cross-reference instead
+of repeating it. **Important**: `LoginRequest.email` (and `UserCreate.email`
+for symmetry) had no length bound, so an unauthenticated caller could park
+an arbitrarily large key in `LoginThrottle` for up to `entry_ttl`; both now
+cap at 320 (RFC 5321), and `_throttle_key` truncates defensively as a second
+layer independent of request validation.
+
+**Minors**: `docs/backend-architecture.md`'s module map still said "four"
+SQLite stores after `users.py` became the fifth (`_sqlite.py`'s own
+docstring was already fixed in `f6a65e1`); `seed_admin`'s short-password
+path raised a bare `ValueError` instead of `AuthConfigError` like every
+other startup gate, which would slip past an operator wrapper that only
+catches the latter (`test_seed_admin.py` updated to match — it asserted
+`ValueError`, which would otherwise have started failing since
+`AuthConfigError` subclasses `RuntimeError`, not `ValueError`); both
+`app/api/auth.py`'s `LoginThrottle` docstring and the architecture doc
+credited an explicit `blocked_until` check for exempting an actively-
+blocked entry from the TTL sweep, but `_prune_locked` has no such check —
+the exemption is a consequence of `__post_init__`'s `max_delay <=
+entry_ttl` invariant, so both places were reworded to say that instead of
+adding a redundant (and untestable-without-violating-the-invariant) branch;
+`check_password` now catches the `ValueError` `bcrypt.checkpw` raises on a
+malformed (non-empty) stored hash, matching its own "never raises"
+docstring — unreachable via `hash_password` today, but not via a future
+Supabase-era migration or hand-edited row; `app/main.py`'s lazy PEP 562
+`__getattr__` for the module-level `app` (the line deciding whether
+`uvicorn app.main:app` works at all) had no test, added one against a
+sentinel factory so it never constructs a real app; and this entry plus the
+one above account for the docs commit (`8ac966b`) and this fix commit that
+the milestone's original commit-range note omitted.
+
+**Gates**: backend `uv run pytest -q` → all green, zero warnings (see
+report for the exact count). Documentation-only changes, so the frontend
+gate was not re-run.
+
+Full detail: `.superpowers/sdd/m1-final-review-fixes-report.md`.

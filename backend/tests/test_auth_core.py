@@ -128,6 +128,16 @@ def test_check_password_with_empty_string_hash_returns_false():
     assert check_password("any password", "") is False
 
 
+def test_check_password_with_malformed_stored_hash_returns_false():
+    # hash_password() is the only writer today, so this is unreachable via
+    # normal operation, but a Supabase-era migration or a hand-edited row
+    # could leave a non-empty, non-bcrypt value in password_hash. bcrypt's
+    # own checkpw() raises ValueError on that input; check_password's
+    # contract is to never raise, so this must return False, not 500 the
+    # login path.
+    assert check_password("any password", "not-a-real-bcrypt-hash") is False
+
+
 # 64 bytes, not merely the 32-byte minimum: the foreign-algorithm test
 # below signs with HS512, and PyJWT emits InsecureKeyLengthWarning for a
 # SHA512 key under 64 bytes — which would break the zero-warnings gate.

@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, get_current_user
 from app.core.auth import SELF_MIN_PASSWORD_LENGTH, issue_token, validate_password
@@ -46,11 +46,18 @@ class LoginThrottle:
     method here does. Do not add a call to either from outside this class.
 
     The table is bounded, but the cap is a soft ceiling: an entry whose
-    block is still active (`blocked_until` in the future) is exempt from
-    both the TTL sweep and the size cap, so `entry_count()` can exceed
-    `max_entries`. Every other entry is hard-bounded as before — expired by
-    `entry_ttl` or evicted under the cap — since its keys come from
-    unauthenticated input and an attacker spraying one failed login per
+    block is still active (`blocked_until` in the future) is exempt from the
+    size cap via an explicit check in `_evict_to_cap_locked`, so
+    `entry_count()` can exceed `max_entries`. It is also, in effect, exempt
+    from the TTL sweep — but `_prune_locked` has no `blocked_until` check at
+    all; that exemption is not an explicit rule but a consequence of
+    `__post_init__`'s `max_delay <= entry_ttl` invariant. A still-blocked
+    entry's `blocked_until` is at most `last_seen + max_delay`, so for as
+    long as it remains blocked, `last_seen` is at most `max_delay` (<=
+    `entry_ttl`) in the past — always inside the TTL sweep's cutoff, so the
+    sweep never reaches it. Every other entry is hard-bounded as before —
+    expired by `entry_ttl` or evicted under the cap — since its keys come
+    from unauthenticated input and an attacker spraying one failed login per
     address would otherwise grow the table without limit.
 
     The exemption exists to close a bypass, not to reopen one: without it,
@@ -184,7 +191,10 @@ class LoginThrottle:
 
 
 class LoginRequest(BaseModel):
-    email: str
+    # 320 is RFC 5321's ceiling for an address (64 local-part + '@' + 255
+    # domain). Bounding it here keeps an unauthenticated caller from parking
+    # an arbitrarily large key in the login throttle (see `_throttle_key`).
+    email: str = Field(max_length=320)
     password: str
 
 
@@ -237,7 +247,14 @@ def _throttle_key(request: Request, email: str) -> tuple[str, str]:
     # accepted collision, not an oversight — ordinary HTTP deployments
     # always populate request.client.
     client_ip = request.client.host if request.client else "unknown"
-    return (email.strip().lower(), client_ip)
+    # Defensive memory bound, not a validation rule: `LoginRequest.email`
+    # already caps input at 320 chars (RFC 5321's ceiling for an address),
+    # but this truncation holds regardless of what any future caller passes
+    # in, so a single throttle key can never grow unbounded. 320 exceeds any
+    # realistic address's length, so this never fires for real traffic and
+    # never changes which entries collide.
+    normalized_email = email.strip().lower()[:320]
+    return (normalized_email, client_ip)
 
 
 @router.post("/auth/login")

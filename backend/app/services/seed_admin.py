@@ -28,7 +28,13 @@ def seed_admin(store: UserStore, env: Mapping[str, str] | None = None) -> None:
             "No users exist and FW_ADMIN_EMAIL / FW_ADMIN_PASSWORD are unset: "
             "the instance would have no way to authenticate anyone."
         )
-    validate_password(password, min_length=ADMIN_SET_MIN_PASSWORD_LENGTH)
+    try:
+        validate_password(password, min_length=ADMIN_SET_MIN_PASSWORD_LENGTH)
+    except ValueError as exc:
+        # Every other startup gate raises AuthConfigError; an operator
+        # wrapper catching AuthConfigError around create_app() would
+        # otherwise miss exactly this case.
+        raise AuthConfigError(str(exc)) from exc
     store.create_user(
         email, password, display_name="Administrator", tier="premium", is_admin=True
     )
