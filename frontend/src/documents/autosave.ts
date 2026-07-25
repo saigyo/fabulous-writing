@@ -31,12 +31,13 @@ let inFlight: Promise<void> | null = null
 let onConflict: ((snapshot: DocSnapshot) => Promise<void>) | null = null
 const titleAttempted = new Set<number>()
 
-// Bumped by invalidateDocumentWork() (auth/session.ts, via
-// documents.ts). Cancelling the debounce and retry timers stops future
-// writes, but a push already in flight when a session ends is still
-// awaiting `updateDocument()` — its completion captures this counter and
-// no-ops if it no longer matches, so it cannot recreate the buffer for a
-// user who has since logged out or been replaced.
+// Bumped by invalidateDocumentWork() (documents.ts), called from logout()
+// and expireSession() only — never from login(), which never invalidates.
+// Cancelling the debounce and retry timers stops future writes, but a push
+// already in flight when a session ends is still awaiting
+// `updateDocument()` — its completion captures this counter and no-ops if
+// it no longer matches, so it cannot recreate the buffer for a user who has
+// since logged out or whose token has expired.
 let generation = 0
 export function currentGeneration(): number {
   return generation
@@ -174,10 +175,10 @@ export async function flush(): Promise<void> {
 }
 
 async function push(snapshot: DocSnapshot): Promise<void> {
-  // Captured before the request goes out: invalidateDocumentWork() (logout,
-  // expiry, or a login that changes the user) bumps this while the PUT is
-  // in flight. Cancelling the debounce/retry timers cannot stop a fetch
-  // already awaited, so the completion below must check for itself.
+  // Captured before the request goes out: invalidateDocumentWork() (logout
+  // or expiry — login never calls it, see auth/session.ts) bumps this while
+  // the PUT is in flight. Cancelling the debounce/retry timers cannot stop
+  // a fetch already awaited, so the completion below must check for itself.
   const gen = currentGeneration()
   saving = true
   let succeeded = false
@@ -259,7 +260,12 @@ export function cancelRetry(): void {
   retryDelay = RETRY_BASE_MS
 }
 
-/** Fire the one-shot LLM titling once a fallback-named doc has enough text. */
+/** Fire the one-shot LLM titling once a fallback-named doc has enough text.
+ * Called from push() after push()'s own generation check already passed,
+ * but this makes its own network call (generateDocumentName) and so needs
+ * its own guard on the write after that call resolves — push()'s check,
+ * taken before this function was even called, cannot cover an invalidation
+ * that happens during this await. */
 async function maybeGenerateTitle(snapshot: DocSnapshot): Promise<void> {
   const meta = useStore.getState().docMeta
   if (!meta || meta.id !== snapshot.docId) return
@@ -267,8 +273,10 @@ async function maybeGenerateTitle(snapshot: DocSnapshot): Promise<void> {
   if (titleAttempted.has(meta.id)) return
   if (wordCount(snapshot.text) < TITLE_WORD_THRESHOLD) return
   titleAttempted.add(meta.id)
+  const gen = currentGeneration()
   try {
     const doc = await generateDocumentName(meta.id)
+    if (gen !== currentGeneration()) return // session ended: do not write
     const store = useStore.getState()
     if (store.docMeta?.id === doc.id) {
       store.patchDocMeta({ name: doc.name, nameSource: doc.name_source })

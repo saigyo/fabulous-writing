@@ -23,6 +23,7 @@ vi.mock('../documents/documents', () => ({
 }))
 
 import { getMe, postLogin } from '../api/client'
+import { setCancelCheckHandler } from '../checking/cancelSlot'
 import { clearLegacyText, invalidateDocumentWork } from '../documents/documents'
 import { clearSnapshot, readSnapshot, writeSnapshot } from '../documents/buffer'
 import {
@@ -31,7 +32,6 @@ import {
   logout,
   restoreSession,
   sessionGeneration,
-  setCancelCheckHandler,
 } from './session'
 
 function user(id: number, overrides: Partial<MeResponse> = {}): MeResponse {
@@ -312,5 +312,26 @@ describe('restoreSession', () => {
     await Promise.all([p1, p2])
     expect(getMe).toHaveBeenCalledTimes(1)
     expect(useStore.getState().authStatus).toBe('authenticated')
+  })
+
+  it('does not commit setAuth when logout() runs while getMe() is in flight', async () => {
+    useStore.setState({ token: 'tok', user: null, authStatus: 'unknown' })
+    let resolveMe!: (u: MeResponse) => void
+    vi.mocked(getMe).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveMe = resolve
+        }),
+    )
+    const pending = restoreSession()
+    logout() // fires while getMe() is still in flight
+
+    resolveMe(user(1))
+    await pending
+
+    const state = useStore.getState()
+    expect(state.token).toBeNull()
+    expect(state.user).toBeNull()
+    expect(state.authStatus).toBe('anonymous')
   })
 })

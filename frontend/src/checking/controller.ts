@@ -1,5 +1,4 @@
 import { postCheck, subscribeCheck } from '../api/client'
-import { setCancelCheckHandler } from '../auth/session'
 import { flush } from '../documents/autosave'
 import { getEditorView } from '../editor/editorRef'
 import { mergeFindingsEffect } from '../editor/findings'
@@ -7,6 +6,7 @@ import { currentMessages } from '../i18n'
 import { activeProfile, effectiveRuleConfig } from '../profiles/profile'
 import { useStore } from '../state/store'
 import type { Finding } from '../types'
+import { setCancelCheckHandler } from './cancelSlot'
 import { resolveModel } from './routing'
 
 let currentCheckId: string | null = null
@@ -22,8 +22,9 @@ export function cancelCheck(): void {
 }
 
 // Registered at load so session.ts can abort a running check on logout or
-// expiry without importing this module (that would recreate the cycle the
-// injection idiom exists to break — see session.ts).
+// expiry without importing this module — see checking/cancelSlot.ts for why
+// that indirection is a dedicated leaf module rather than controller.ts and
+// session.ts registering into each other directly.
 setCancelCheckHandler(cancelCheck)
 
 /**
