@@ -33,12 +33,22 @@ them to nothing.
 
 ## Global Constraints
 
-- Branch `multi-user-enforcement`, branched from `main` at `7abc259`. This plan
-  is the branch's first commit; implementation follows on the same branch and
-  ships in **one** PR. Request a Copilot review at the end and **resolve every
-  review thread** — the `main` ruleset blocks merge while any thread is open.
-  Copilot auto-review on push is currently **disabled**, so review rounds are
-  requested explicitly rather than firing per push.
+- Branch `multi-user-m2-implementation`, branched from `main` at `d111691` —
+  the squash-merge of PR #22, which carried this plan. All eleven tasks ship
+  in **one** PR: Task 10 is where the pieces first have to fit together, and
+  merging Tasks 1–8 ahead of it would commit assumptions it may invalidate.
+- **At the Task 8 boundary**, before starting Task 9: run a cross-task review
+  of Tasks 1–8 — aimed at the seams the per-task gates cannot see, chiefly the
+  injection wiring, the three session-end paths, and the shared 401 handler
+  both `request()` and the SSE reader depend on — then push, open the PR as a
+  **draft**, and take one Copilot round on the partial branch. Tasks 9–11
+  continue on the same branch and PR; mark it ready for review when Task 11 is
+  done.
+- Request a Copilot review at the end as well, and **resolve every review
+  thread** — the `main` ruleset blocks merge while any thread is open. Copilot
+  auto-review on push is **disabled**, so rounds are requested explicitly. A
+  round reporting few or no findings means nothing unless the changed files
+  were in its read set: check the "reviewed N out of M changed files" line.
 - **Every commit message ends with these two trailers, verbatim:**
 
   ```
