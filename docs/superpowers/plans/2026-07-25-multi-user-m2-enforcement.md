@@ -1423,7 +1423,7 @@ considered and deferred to a later UI polish phase (see the roadmap backlog).
   drift — extract a `<Wordmark/>` component and use it in both places:
   `Fabulous <span className="accent">Writing</span>`, here at `1.25rem` /
   weight 700.
-- Two labelled inputs — email (`type="email"`, `autocomplete="username"`) and
+- Two labelled inputs — email (`type="email"`, `autoComplete="username"`) and
   password (`type="password"`, `autoComplete="current-password"`) — labels at
   `0.7rem` in `var(--text-dim)`, inputs 30px tall with the app's standard
   `1px solid var(--border)` / `6px` radius.
