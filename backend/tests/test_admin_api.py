@@ -55,7 +55,10 @@ def test_admin_endpoints_require_an_admin(client):
 def test_list_and_create(client):
     created = make_user(client, display_name="Ada", tier="premium")
     assert created["email"] == "ada@example.com" and created["tier"] == "premium"
-    assert "password" not in str(created)
+    # "password" alone would also match the new password_changed_at field,
+    # which is just a timestamp, not credential material; password_hash is
+    # what must never leak (same convention as test_auth_api.py).
+    assert "password_hash" not in str(created)
     listing = client.get("/api/admin/users", headers=admin_headers(client)).json()
     assert [u["email"] for u in listing] == ["ada@example.com", "root@example.com"]
 

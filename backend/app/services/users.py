@@ -12,7 +12,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from app.core.auth import check_password, hash_password
-from app.services._sqlite import connect
+from app.services._sqlite import connect, migrate_columns
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS users (
     tier TEXT NOT NULL DEFAULT 'basic',
     is_admin INTEGER NOT NULL DEFAULT 0,
     is_active INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    password_changed_at TEXT
 );
 CREATE TABLE IF NOT EXISTS admin_audit (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,6 +59,7 @@ class User(BaseModel):
     is_active: bool = True
     created_at: str
     external_id: str | None = None
+    password_changed_at: str | None = None
 
 
 class DuplicateEmailError(ValueError):
@@ -90,6 +92,7 @@ def _row_to_user(row: sqlite3.Row) -> User:
         is_active=bool(row["is_active"]),
         created_at=row["created_at"],
         external_id=row["external_id"],
+        password_changed_at=row["password_changed_at"],
     )
 
 
@@ -100,9 +103,17 @@ class UserStore:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+            self._migrate(conn)
 
     def _connect(self):
         return connect(self.db_path, timeout=self.timeout)
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        """Add columns introduced after a database already existed in the
+        field. A bare DDL change to `_SCHEMA` only applies via
+        `CREATE TABLE IF NOT EXISTS`, which never touches an existing
+        table."""
+        migrate_columns(conn, "users", [("password_changed_at", "TEXT")])
 
     def create_user(
         self,
@@ -196,8 +207,8 @@ class UserStore:
     def set_password(self, user_id: int, password: str) -> bool:
         with self._connect() as conn:
             cursor = conn.execute(
-                "UPDATE users SET password_hash = ? WHERE id = ?",
-                (hash_password(password), user_id),
+                "UPDATE users SET password_hash = ?, password_changed_at = ? WHERE id = ?",
+                (hash_password(password), _utcnow(), user_id),
             )
         return cursor.rowcount > 0
 

@@ -9,6 +9,7 @@ import logging
 import os
 import secrets
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import Protocol
@@ -153,9 +154,26 @@ class InvalidToken(Exception):
     """The token is absent, malformed, expired, or not ours."""
 
 
+@dataclass(frozen=True)
+class VerifiedToken:
+    """The result of a successful verify(): who, and when the token was
+    minted.
+
+    `issued_at` crosses this boundary — rather than staying an internal
+    detail of the verifier — because the request path, not the verifier,
+    owns revocation policy: `get_current_user` compares it against
+    `users.password_changed_at`, and a future Supabase verifier has no
+    notion of that column at all.
+    """
+
+    user_id: int          # always the LOCAL users.id, in every auth mode
+    issued_at: datetime   # tz-aware UTC
+
+
 class TokenVerifier(Protocol):
-    def verify(self, token: str) -> int:
-        """Return the LOCAL users.id, or raise InvalidToken.
+    def verify(self, token: str) -> VerifiedToken:
+        """Return the LOCAL users.id and the token's issue time, or raise
+        InvalidToken.
 
         Every implementation returns a local id — the Supabase verifier
         will resolve its subject UUID to users.external_id internally and
@@ -186,7 +204,7 @@ class LocalTokenVerifier:
     def __init__(self, secret: str) -> None:
         self._secret = secret
 
-    def verify(self, token: str) -> int:
+    def verify(self, token: str) -> VerifiedToken:
         try:
             claims = jwt.decode(
                 token,
@@ -217,13 +235,22 @@ class LocalTokenVerifier:
         # disabled PyJWT's own int(...) type-check on iat, so a malformed
         # claim (list, dict, non-numeric string) must be caught here too,
         # not just a bad drift value.
+        # Parsed once and converted inside the same guard that used to just
+        # call float(): fromtimestamp() rejects a numeric *string* that
+        # float() accepts, and an out-of-range value raises OverflowError
+        # (OSError on some platforms), neither of which was in the original
+        # tuple. Letting either escape here is exactly the M1 leak (a
+        # crafted iat becoming a raw 500 on the auth path) this guard exists
+        # to prevent.
         try:
-            drift = float(claims["iat"]) - datetime.now(UTC).timestamp()
-        except (TypeError, ValueError) as exc:
-            raise InvalidToken("iat is not a number") from exc
+            issued_at = datetime.fromtimestamp(float(claims["iat"]), UTC)
+        except (TypeError, ValueError, OverflowError, OSError) as exc:
+            raise InvalidToken("iat is not a usable timestamp") from exc
+        drift = issued_at.timestamp() - datetime.now(UTC).timestamp()
         if drift > IAT_LEEWAY_SECONDS:
             raise InvalidToken("token issued too far in the future")
         try:
-            return int(claims["sub"])
+            user_id = int(claims["sub"])
         except (TypeError, ValueError) as exc:
             raise InvalidToken("sub is not a user id") from exc
+        return VerifiedToken(user_id=user_id, issued_at=issued_at)
