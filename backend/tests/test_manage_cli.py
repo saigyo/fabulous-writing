@@ -37,14 +37,51 @@ def test_set_password_lets_the_account_log_in_again(db):
     assert store.verify_credentials("ada@example.com", "a recovered password") is not None
 
 
-def test_set_password_never_accepts_the_password_as_an_argument(db, capsys):
-    # A password in argv lands in shell history and in `ps` output for every
-    # other process on the machine — and it must not *also* land in stderr,
-    # which is routinely logged or `tee`d for an audit trail. argparse's own
-    # "unrecognized arguments" error would otherwise echo the token back.
+# A password in argv lands in shell history and in `ps` output for every
+# other process on the machine regardless of what the CLI does. What the CLI
+# controls is whether it *also* lands in stderr/stdout — which is routinely
+# logged or `tee`d for an audit trail — via one of argparse's own error
+# messages, which by default interpolate the offending token directly (e.g.
+# "invalid choice: '<token>'", "unrecognized arguments: <token>").
+_LEAKY_PASSWORD = "hunter2hunter2"
+
+
+@pytest.mark.parametrize(
+    "argv_suffix",
+    [
+        pytest.param([_LEAKY_PASSWORD], id="unknown-subcommand"),
+        pytest.param(
+            [_LEAKY_PASSWORD, "set-password", "ada@example.com"], id="token-before-subcommand"
+        ),
+        pytest.param(["set-password"], id="missing-required-email"),
+        pytest.param(
+            ["set-password", "ada@example.com", _LEAKY_PASSWORD],
+            id="extra-positional-after-email",
+        ),
+        pytest.param(
+            ["--bogus", _LEAKY_PASSWORD, "list-users"],
+            id="unknown-option-space-form-before-subcommand",
+        ),
+        pytest.param(
+            [f"--bogus={_LEAKY_PASSWORD}", "list-users"],
+            id="unknown-option-equals-form-before-subcommand",
+        ),
+        pytest.param(
+            ["set-password", "ada@example.com", "--bogus", _LEAKY_PASSWORD],
+            id="unknown-option-space-form-after-subcommand",
+        ),
+        pytest.param(
+            ["set-password", "ada@example.com", f"--bogus={_LEAKY_PASSWORD}"],
+            id="unknown-option-equals-form-after-subcommand",
+        ),
+    ],
+)
+def test_no_argv_shape_ever_echoes_a_password_onto_stderr_or_stdout(db, capsys, argv_suffix):
     with pytest.raises(SystemExit):
-        main(["--db", str(db), "set-password", "ada@example.com", "hunter2hunter2"])
-    assert "hunter2hunter2" not in capsys.readouterr().err
+        main(["--db", str(db), *argv_suffix])
+    captured = capsys.readouterr()
+    assert _LEAKY_PASSWORD not in captured.err
+    assert _LEAKY_PASSWORD not in captured.out
 
 
 def test_set_password_enforces_the_admin_minimum(db, capsys):
@@ -123,6 +160,20 @@ def test_a_corrupt_database_file_is_reported_cleanly_not_as_a_traceback(tmp_path
     assert run(bad, "list-users") == 1
     err = capsys.readouterr().err.lower()
     assert "corrupt" in err or "unreadable" in err
+
+
+def test_a_non_lock_operational_error_in_a_handler_is_not_mislabeled_as_busy(db, monkeypatch):
+    # sqlite3 gives lock contention and an ordinary bug (a typo'd column
+    # name, schema drift) the *same* exception class. A real bug raised
+    # from inside a handler must keep its traceback rather than being
+    # mistaken for "the database is busy" and silently swallowed — that
+    # would send an operator to wait out a lock that does not exist.
+    def _boom(self, user_id, password):  # noqa: ARG001 - stand-in for a real bug
+        raise sqlite3.OperationalError("no such column: bogus_field")
+
+    monkeypatch.setattr(UserStore, "set_password", _boom)
+    with pytest.raises(sqlite3.OperationalError):
+        run(db, "set-password", "ada@example.com", password="a recovered password")
 
 
 def test_make_admin_on_an_already_active_admin_is_a_true_no_op(db, capsys):
