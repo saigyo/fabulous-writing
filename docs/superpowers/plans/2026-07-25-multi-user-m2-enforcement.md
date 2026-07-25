@@ -123,7 +123,7 @@ reading the tasks:
 | `backend/tests/conftest.py` (modify) | Shared `authed_client` fixture so ten test files stop hand-rolling tokens. |
 | `frontend/src/state/store.ts` (modify) | Auth slice (`token`, `user`, `authStatus`, `sessionExpired`); persist purge on user change. |
 | `frontend/src/documents/buffer.ts` (modify) | `ownerId` on `DocSnapshot`, so the document buffer can be cleared for a different user without destroying the owner's unsaved work. |
-| `frontend/src/api/client.ts` (modify) | Bearer header in `request()`; `HttpError` unchanged in shape; `subscribeCheck` rewritten on `fetch` + `AbortController`. |
+| `frontend/src/api/client.ts` (modify) | Bearer header in `request()`; `HttpError` gains an optional `code` parsed from the error body; `subscribeCheck` rewritten on `fetch` + `AbortController`. |
 | `frontend/src/auth/LoginGate.tsx` (new) | Full-screen gate replacing the app shell while unauthenticated. |
 | `frontend/src/auth/LoginForm.tsx` (new) | Email/password form, inline error handling. |
 | `frontend/src/auth/AccountMenu.tsx` (new) | Header menu: change password, log out. |
@@ -404,7 +404,13 @@ trivially true — `create_user` never sets it, so it would pass even if the
 migration silently did nothing. Assert the column actually exists:
 
 ```python
-cols = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
+import sqlite3
+from pathlib import Path
+
+rehearsal = Path("/tmp/fw-m2-rehearsal.db")
+UserStore(rehearsal)                       # runs the migration
+with sqlite3.connect(rehearsal) as conn:   # UserStore keeps its connection private
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
 assert "password_changed_at" in cols
 ```
 
@@ -444,8 +450,11 @@ EOF
 - Produces: on the store, `token: string | null`, `user: MeResponse | null`,
   `authStatus: 'unknown' | 'anonymous' | 'authenticated'`,
   `sessionExpired: boolean`; `session.ts` exporting `login(email, password)`,
-  `logout()`, **`expireSession()`**, `restoreSession()`, and
-  `setUnauthorizedHandler(fn)`.
+  `logout()`, **`expireSession()`**, `restoreSession()`.
+- Consumes: `setUnauthorizedHandler(fn)` — which is defined and exported by
+  `client.ts`, **not** by `session.ts`. `session.ts` registers `expireSession`
+  through it at module load. Getting this backwards recreates the import cycle
+  the injection exists to break; see the import-direction note below.
 
 **Three ways a session ends, three functions.** `logout()` and
 `expireSession()` differ in exactly one respect — what happens to the document
@@ -563,7 +572,7 @@ Create `frontend/src/auth/session.test.ts` covering:
 - **a later successful restore clears `restoreFailed`**, so the gate stops
   showing the connection branch;
 - `restoreSession()` called twice concurrently issues **one** `/api/auth/me`
-  request and both callers resolve — the StrictMode case.
+  request and both callers resolve (see the dedup requirement in Step 5).
 
 Mock the api client module (`vi.mock('../api/client', ...)`), matching how
 `controller.test.ts` does it.
@@ -640,6 +649,13 @@ leave the Check button disabled after signing back in. **Do not import
 
 `discardForeignBuffer(userId)` calls `clearSnapshot()` unless the stored
 snapshot's `ownerId` equals `userId`.
+
+**`restoreSession()` must be idempotent while in flight.** Hold the in-flight
+promise in a module-level variable and return it if a restore is already
+running, clearing it when it settles. `<StrictMode>` double-invokes mount
+effects, so the gate in Task 7 would otherwise issue two concurrent
+`/api/auth/me` requests — but the dedup belongs here, with the function, so
+every caller benefits and Task 3's own test can pass.
 
 **Import direction, stated so it does not become a cycle.** Task 4 makes
 `client.ts` need to clear auth on a 401, and `session.ts` already imports
@@ -750,7 +766,11 @@ EOF
 **Interfaces:**
 - Produces: every `request()` call carries `Authorization: Bearer <token>` when
   a token exists; a 401 from anything other than the login endpoint clears auth
-  state; `HttpError` keeps its existing `{ status, message }` shape.
+  state; `HttpError` keeps `status` and `message` and **gains
+  `readonly code?: string`**, parsed from an object `detail` in the error body.
+  Task 8 depends on that field to tell a wrong current password from a
+  password-policy failure — both are 422.
+- Produces: `setUnauthorizedHandler(fn)`, exported from this module.
 
 **The trap to avoid:** `request()` currently does
 
@@ -1402,11 +1422,9 @@ render nothing while `'unknown'`, `<LoginForm/>` while `'anonymous'`,
 
 **`main.tsx` keeps `<StrictMode>`, which double-invokes mount effects in
 development**, so a plain empty-dependency effect fires `restoreSession()`
-twice and sends two concurrent `/api/auth/me` requests. Make
-`restoreSession()` itself idempotent rather than guarding at the call site:
-hold the in-flight promise in a module-level variable and return it if a
-restore is already running, clearing it when it settles. That way any caller —
-the gate's effect, the retry button, a future one — gets one request.
+twice. Task 3 already made `restoreSession()` idempotent while in flight for
+exactly this reason, so the gate needs no guard of its own — the test below
+confirms the two layers actually compose.
 
 This codebase has been bitten by StrictMode before and solves it the same way:
 `Header()` compares a `prevLanguage` ref rather than consuming a boolean,
@@ -1918,8 +1936,12 @@ backend rather than the owner's.
 **Task 1 makes this stricter than it used to be.** With `cors.origins`
 defaulting to `["http://localhost:5173"]`, a frontend on 4199 has its
 preflights refused and every call fails for a reason that looks nothing like
-CORS from the UI. Point the scratch backend at a scratch `config.yaml` (or an
-env override) whose `cors.origins` lists the frontend origin you actually use.
+CORS from the UI. Point the scratch backend at a scratch **`config.yaml`**
+whose `cors.origins` lists the frontend origin you actually use.
+
+It must be a YAML file: `load_settings()` reads YAML only
+(`app/core/config.py:195-221`) and Task 1 adds no environment overlay for
+CORS, so there is no `FW_CORS_*` variable to reach for.
 
 Start it against a **scratch** database (never `backend/data/fabulous.db`) with
 `FW_AUTH_SECRET`, `FW_ADMIN_EMAIL` and `FW_ADMIN_PASSWORD` set.
