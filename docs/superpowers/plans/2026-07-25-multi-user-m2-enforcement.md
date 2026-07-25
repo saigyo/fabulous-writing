@@ -97,6 +97,20 @@ reading the tasks:
    without separate changes.
 4. **CORS becomes config-driven** (`cors.origins`, default
    `["http://localhost:5173"]`) per spec §7.4, following `AuthSettings`' shape.
+5. **Component tests are adopted, reversing the 2026-07-12 "keep
+   no-component-test convention" triage.** M2 adds the first components whose
+   *behaviour* is security-relevant — the gate deciding not to render the app,
+   the account menu not signing you out on a mistyped password — and neither
+   property is expressible as a pure function without contorting the design.
+   Task 7 Step 1 adds `@testing-library/react`; the LOGBOOK records the
+   reversal so it reads as a decision rather than drift.
+6. **A successful password change re-authenticates silently** rather than
+   signing the user out. Task 2 makes their own token stale the instant the
+   change succeeds; the client calls `login()` with the new password before
+   showing the success message. Sessions on other devices are still evicted,
+   which is the point of the revocation. The alternative — returning a fresh
+   token from `POST /api/auth/password` — would amend spec §7.1's 204 and was
+   not worth it for one caller.
 
 ## File Structure
 
@@ -113,7 +127,7 @@ reading the tasks:
 | `frontend/src/auth/LoginGate.tsx` (new) | Full-screen gate replacing the app shell while unauthenticated. |
 | `frontend/src/auth/LoginForm.tsx` (new) | Email/password form, inline error handling. |
 | `frontend/src/auth/AccountMenu.tsx` (new) | Header menu: change password, log out. |
-| `frontend/src/auth/session.ts` (new) | `login()`, `logout()`, `loadMe()` — the only writers of auth state. |
+| `frontend/src/auth/session.ts` (new) | `login()`, `logout()`, `expireSession()`, `restoreSession()` — the only writers of auth state. |
 | `frontend/src/i18n/messages.ts` + 7 locale files (modify) | Auth strings. |
 | `frontend/src/App.tsx` (modify) | Mount-time fetches deferred until authenticated; account menu in the header. |
 | `frontend/src/main.tsx` (modify) | `<LoginGate>` wraps `<App/>`. |
@@ -176,7 +190,7 @@ In `backend/app/core/config.py`, next to `AuthSettings`:
 class CorsSettings(BaseModel):
     # Browsers only. The API is also reachable by non-browser clients, which
     # CORS does not constrain — this narrows which *web origins* may call it.
-    origins: list[str] = ["http://localhost:5173"]
+    origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
 ```
 
 and on `Settings`:
@@ -266,12 +280,27 @@ Expected: FAIL — `User` has no `password_changed_at`.
 In `backend/app/services/users.py`:
 
 - add `password_changed_at TEXT` to the `users` DDL in `_SCHEMA`;
-- add a `migrate_columns` call for existing databases, matching how
-  `documents.py` and `folders.py` phase columns in — this database already
-  exists in the field, so a bare DDL change would not reach it;
+- `UserStore` has **no** `_migrate` method today (unlike `documents.py` and
+  `folders.py`), so create one and call it from `__init__` immediately after
+  `conn.executescript(_SCHEMA)`, using the shared `migrate_columns(conn,
+  "users", [("password_changed_at", "TEXT")])` from `app/services/_sqlite.py`.
+  This database already exists in the field, so a bare DDL change would not
+  reach it;
 - add `password_changed_at: str | None = None` to the `User` model and to
   `_row_to_user`;
-- have `set_password` write `_utcnow()` into it in the same `UPDATE`.
+- have `set_password` write a **sub-second** timestamp into it in the same
+  `UPDATE`. `_utcnow()` is `timespec="seconds"` (`users.py:80`) and
+  `issue_token` writes `int(issued.timestamp())` (`core/auth.py:173`), so a
+  second-resolution value makes the comparison in Step 5 useless: a token
+  minted and a password changed microseconds apart land in the *same* second
+  and `issued_at < password_changed_at` is false. Add a
+  `_utcnow_precise()` — `datetime.now(UTC).isoformat()` with no `timespec` —
+  and use it here only. Leave `_utcnow()` alone; `created_at` deliberately
+  matches the other stores' second granularity.
+
+  Residual, and acceptable: `iat` is floored to the second, so a token minted
+  *later in the same second* as a password change is still revoked. That errs
+  toward revoking, which is the safe direction.
 
 Do **not** set it in `create_user`: a brand-new account has never had a
 password *changed*, and `None` is the honest value. The comparison in Step 5
@@ -286,10 +315,14 @@ def test_changing_the_password_invalidates_tokens_issued_before_it(probe):
     store = probe.state.user_store
     user = store.create_user("ada@example.com", "correct horse battery")
     client = TestClient(probe)
-    headers = auth(user.id)
-    assert client.get("/probe/user", headers=headers).status_code == 200
+    # Mint the "before" token explicitly in the past rather than relying on
+    # wall-clock ordering: iat is floored to the second, so a token minted in
+    # the same second as the change would not be provably older.
+    old = issue_token(user.id, SECRET, now=datetime.now(UTC) - timedelta(seconds=2))
+    stale = {"Authorization": f"Bearer {old}"}
+    assert client.get("/probe/user", headers=stale).status_code == 200
     store.set_password(user.id, "a replacement password")
-    assert client.get("/probe/user", headers=headers).status_code == 401
+    assert client.get("/probe/user", headers=stale).status_code == 401
     # A token issued after the change still works.
     assert client.get("/probe/user", headers=auth(user.id)).status_code == 200
 ```
@@ -299,23 +332,38 @@ def test_changing_the_password_invalidates_tokens_issued_before_it(probe):
 `get_current_user` currently discards the token's claims after `verify()`
 returns the user id. It now needs `iat` as well.
 
-Change `TokenVerifier.verify` to return the id **and** the issue time. Update
-the protocol, `LocalTokenVerifier`, and the docstring that says it returns the
-local `users.id` — it still does, alongside `iat`. Pick a small explicit
-return type rather than a bare tuple, and say in a comment why `iat` crosses
-this boundary: the request path, not the verifier, owns the revocation policy,
-because a Supabase verifier will not know about `password_changed_at`.
+Change `TokenVerifier.verify` to return the id **and** the issue time, using an
+explicit type rather than a bare tuple:
+
+```python
+@dataclass(frozen=True)
+class VerifiedToken:
+    user_id: int          # always the LOCAL users.id, in every auth mode
+    issued_at: datetime   # tz-aware UTC
+```
+
+`LocalTokenVerifier.verify` builds it with
+`datetime.fromtimestamp(claims["iat"], UTC)`. Update the protocol and the
+docstring that says it returns the local `users.id` — it still does, alongside
+`iat`. Say in a comment why `iat` crosses this boundary: the request path, not
+the verifier, owns the revocation policy, because a Supabase verifier will not
+know about `password_changed_at`.
 
 Then in `get_current_user`, after the user row is read:
 
 ```python
-    if user.password_changed_at and issued_at < _parse_utc(user.password_changed_at):
+    if user.password_changed_at and verified.issued_at < datetime.fromisoformat(
+        user.password_changed_at
+    ):
         raise HTTPException(401, _UNAUTHENTICATED)
 ```
 
-Compare in UTC. `password_changed_at` is written by `_utcnow()`, which is
-timezone-aware ISO 8601, so parse it with `datetime.fromisoformat`. Reuse the
-same generic 401 — which failure occurred is not the caller's business.
+Both sides are tz-aware UTC — `issued_at` from `fromtimestamp(..., UTC)` and
+`password_changed_at` from `_utcnow_precise()` — so the comparison is safe.
+Getting this wrong in the obvious way (`int < datetime`) raises `TypeError` on
+**every authenticated request**, so it is worth checking the types line up
+before running anything. Reuse the same generic 401 — which failure occurred is
+not the caller's business.
 
 - [ ] **Step 6: Run the tests**
 
@@ -330,9 +378,21 @@ expected churn, not a regression.
 cp backend/data/fabulous.db /tmp/fw-m2-rehearsal.db
 ```
 
-Then open the copy with `UserStore(Path('/tmp/fw-m2-rehearsal.db'))` and assert
-`get_user(1)` returns a user with `password_changed_at is None`. **Never point
-this at `backend/data/fabulous.db`.** Delete the copy afterwards.
+Then open the copy with `UserStore(Path('/tmp/fw-m2-rehearsal.db'))` and check
+two things. `get_user(1).password_changed_at is None` is necessary but
+trivially true — `create_user` never sets it, so it would pass even if the
+migration silently did nothing. Assert the column actually exists:
+
+```python
+cols = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
+assert "password_changed_at" in cols
+```
+
+**Never point this at `backend/data/fabulous.db`.** Delete the copy afterwards.
+
+Note the bootstrap admin also has `password_changed_at is None`, which is
+correct: they have never *changed* a password, so no revocation point exists
+and every token they hold stays valid until it expires.
 
 - [ ] **Step 8: Commit**
 
@@ -353,7 +413,9 @@ EOF
 ### Task 3: Frontend auth state and session actions
 
 **Files:**
-- Modify: `frontend/src/state/store.ts`
+- Modify: `frontend/src/state/store.ts`, `frontend/src/documents/buffer.ts`
+  (add `ownerId` to `DocSnapshot`), `frontend/src/documents/autosave.ts`
+  (populate it in `collectSnapshot()`)
 - Create: `frontend/src/auth/session.ts`
 - Test: `frontend/src/state/store.test.ts` (append),
   `frontend/src/auth/session.test.ts` (new)
@@ -362,7 +424,14 @@ EOF
 - Produces: on the store, `token: string | null`, `user: MeResponse | null`,
   `authStatus: 'unknown' | 'anonymous' | 'authenticated'`,
   `sessionExpired: boolean`; `session.ts` exporting `login(email, password)`,
-  `logout()`, `restoreSession()`.
+  `logout()`, **`expireSession()`**, `restoreSession()`, and
+  `setUnauthorizedHandler(fn)`.
+
+**Three ways a session ends, three functions.** `logout()` and
+`expireSession()` differ in exactly one respect — what happens to the document
+buffer — and conflating them destroys unsaved work, so they are separate
+exports rather than one function with a flag. Task 4 calls `expireSession()`,
+never `logout()`.
 - `MeResponse` is a **new frontend type** mirroring the backend's response —
   `{ id: number; email: string; display_name: string | null; tier: string;
   is_admin: boolean }` — declared in `client.ts` beside the other response
@@ -406,17 +475,30 @@ In `frontend/src/state/store.ts`, add to `AppState`:
   token: string | null
   user: MeResponse | null
   authStatus: 'unknown' | 'anonymous' | 'authenticated'
+  sessionExpired: boolean
 ```
 
-with initial values `null`, `null`, `'unknown'`, and a setter
-`setAuth(token: string | null, user: MeResponse | null)` that sets all three
-consistently (`authStatus` derived: `'authenticated'` when both are present,
-`'anonymous'` otherwise).
+with initial values `null`, `null`, `'unknown'`, `false`, and a setter
+`setAuth(token: string | null, user: MeResponse | null)` that sets the first
+three consistently (`authStatus` derived: `'authenticated'` when both are
+present, `'anonymous'` otherwise). **`setAuth` leaves `sessionExpired`
+untouched** — only `expireSession()` sets it and only `login()` clears it,
+so a re-login after an expiry does not have to race the setter.
 
-Add `token` — and only `token` — to `partialize`. Bump `version` to `3` and
-extend `migrate` with a branch that drops any pre-existing auth-ish keys; a
-blob written by an older build has none, so the branch is a pass-through that
-exists to make the version bump explicit rather than silent.
+Add `token` — and only `token` — to `partialize`. **Leave `version` at `2`.**
+Adding a key to the `partialize` allowlist needs no migration (an older blob
+simply lacks it, and `token: null` is the correct initial value), and a version
+bump whose `migrate` branch is admittedly a pass-through buys a diff marker at
+the cost of a branch that can never be exercised. Note the addition in the
+comment above `persistConfig` instead.
+
+`purgePersistedSettings()` must also reset the in-memory fields the blob owns,
+or the middleware writes them straight back on the next state change. Reset to
+the same initial values the store declares: `uiLocale` to `null` (so the next
+user gets browser-detected locale rather than the previous user's choice),
+`lastProfileByLanguage` to `{}`, `currentDocId` to `null`, and
+`rulesCollapsed` / `docSidebarCollapsed` / `docFoldersCollapsed` to their
+declared defaults.
 
 Keep exporting the same `persistConfig` object reference — `store.test.ts`
 asserts against it directly, as the comment above it explains.
@@ -453,11 +535,26 @@ state; components call these functions rather than `setAuth` directly.
 export async function login(email: string, password: string): Promise<void> {
   const { token, user } = await postLogin(email, password)
   purgePersistedSettings()
+  discardForeignBuffer(user.id)   // keeps this user's own unsaved work
+  useStore.setState({ sessionExpired: false })
   useStore.getState().setAuth(token, user)
 }
 
+/** Deliberate exit. The machine may be handed over, so nothing survives. */
 export function logout(): void {
+  resetCheckState()
   purgePersistedSettings()
+  clearSnapshot()
+  useStore.getState().setAuth(null, null)
+}
+
+/** The token stopped working. The same user is almost certainly coming back,
+ *  so the document buffer is deliberately left alone — it is the only copy of
+ *  their unsaved text, and Task 6's notice promises it in seven languages. */
+export function expireSession(): void {
+  resetCheckState()
+  purgePersistedSettings()
+  useStore.setState({ sessionExpired: true })
   useStore.getState().setAuth(null, null)
 }
 
@@ -470,10 +567,35 @@ export async function restoreSession(): Promise<void> {
   try {
     useStore.getState().setAuth(token, await getMe())
   } catch {
-    useStore.getState().setAuth(null, null)
+    expireSession()
   }
 }
 ```
+
+`resetCheckState()` clears `checkPhase`, `llmStartedAt` and `llmTokens` and
+cancels any in-flight subscription. The store is module-level and survives the
+gate swap, so a check that was running when the token expired would otherwise
+leave the Check button disabled after signing back in. **Do not import
+`controller.ts` to get `cancelCheck()`** — see the import-direction note below.
+
+`discardForeignBuffer(userId)` calls `clearSnapshot()` unless the stored
+snapshot's `ownerId` equals `userId`.
+
+**Import direction, stated so it does not become a cycle.** Task 4 makes
+`client.ts` need to clear auth on a 401, and `session.ts` already imports
+`postLogin`/`getMe` from `client.ts`. `client.ts` must therefore **not** import
+`session.ts`. Use the injection idiom this codebase already uses for exactly
+this problem — `autosave.ts:30-37`'s `setConflictHandler`, commented "Injected
+by documents.ts (avoids a module cycle)":
+
+```ts
+// client.ts
+let onUnauthorized: (() => void) | null = null
+export function setUnauthorizedHandler(fn: () => void): void { onUnauthorized = fn }
+```
+
+`session.ts` registers `expireSession` at module load. Apply the same idiom for
+`resetCheckState()` rather than importing `controller.ts`.
 
 `purgePersistedSettings()` clears the persisted blob so a previous user's
 `currentDocId`, `lastProfileByLanguage` and collapse states do not leak into
@@ -506,12 +628,27 @@ turn an expired token into data loss. The three paths differ:
 | **401 / session expiry** | cleared | **kept** — the same user is almost certainly coming back |
 | **Login** | cleared | cleared **only if it belongs to someone else** |
 
-To make that last row decidable, add `ownerId: number` to `DocSnapshot` and
-write it wherever snapshots are written. On login, read the snapshot and call
-`clearSnapshot()` unless `ownerId === user.id`. A snapshot written by an older
-build has no `ownerId`; treat that as unknown and clear it — failing safe costs
-one document's unsaved buffer once, while failing open leaks text across
-accounts.
+To make that last row decidable, add `ownerId: number | undefined` to
+`DocSnapshot`. A snapshot written by an older build has no `ownerId`; treat
+that as unknown and clear it — failing safe costs one unsaved buffer once,
+while failing open leaks text across accounts.
+
+**`ownerId` is the id of the signed-in user, not the document's owner.**
+`DocumentFull` already carries an `owner_id` (`client.ts:222`) which M2
+hardcodes to `1`. Sourcing the snapshot's field from *that* would clear the
+buffer on their own login for every user whose id is not 1, and retain a
+stranger's buffer for user 1 — the exact inverse of the intent. The value is
+`useStore.getState().user?.id`.
+
+`collectSnapshot()` (`autosave.ts:149-181`) is the only place a `DocSnapshot`
+is constructed — every other write spreads an existing one — so that is the
+single place to populate the field. When `user` is null, `collectSnapshot()`
+returns `null` as it already does for a missing `docMeta`.
+
+Making the field required would break `tsc --noEmit` at roughly seven
+object-literal `writeSnapshot({…})` calls across `documents.test.ts` and
+`autosave.test.ts`; declaring it optional avoids that churn, and the
+clear-if-not-mine rule already treats `undefined` as "not mine".
 
 **Also reset transient check state on logout.** The store is module-level and
 survives the gate swap, so a check that was running when the token expired
@@ -530,7 +667,8 @@ Expected: PASS.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/state/store.ts src/state/store.test.ts src/auth src/api/client.ts
+git add src/state/store.ts src/state/store.test.ts src/auth src/api/client.ts \
+        src/documents/buffer.ts src/documents/autosave.ts
 git commit -m "$(cat <<'EOF'
 feat(auth): frontend auth state and session actions
 
@@ -545,7 +683,8 @@ EOF
 ### Task 4: Bearer header and 401 handling in the API client
 
 **Files:**
-- Modify: `frontend/src/api/client.ts`
+- Modify: `frontend/src/api/client.ts`, `frontend/src/state/store.ts`,
+  `frontend/src/auth/session.ts`
 - Test: `frontend/src/api/client.test.ts` (new)
 
 **Interfaces:**
@@ -574,10 +713,14 @@ Create `frontend/src/api/client.test.ts`, stubbing `globalThis.fetch`:
   `Authorization: Bearer <token>` **and** still sends
   `Content-Type: application/json`;
 - a request made with no token sends no `Authorization` header;
-- a 401 from a normal endpoint clears auth state;
+- a 401 from a normal endpoint calls `expireSession()` and **does not** clear
+  the document buffer (assert `readSnapshot()` still returns the snapshot);
 - a 401 from `POST /api/auth/login` does **not** clear auth state and the
   `HttpError` reaches the caller — otherwise a wrong password would trigger a
   state-clearing loop;
+- a 401 from `POST /api/auth/password` does **not** clear auth state, **and
+  that request still carried the `Authorization` header** — this is the test
+  that catches `keepSessionOn401` being implemented as "send no token";
 - a **429** does not clear auth state — it is transient (spec §8);
 - a 500 does not clear auth state.
 
@@ -589,17 +732,29 @@ Expected: FAIL — no header is attached and no 401 branch exists.
 - [ ] **Step 3: Implement**
 
 In `request()`: read the token from the store, build headers explicitly, and
-add the 401 branch. Express the login exemption as a property of the call, not
-by string-matching the path at the point of failure — pass an option through
-`request()` (e.g. `{ anonymous: true }`) that `postLogin` sets, so a future
-endpoint that also must not clear state opts in explicitly rather than being
-special-cased by URL.
+add the 401 branch. Express the exemption as a property of the call, not by
+string-matching the path at the point of failure — pass an option through
+`request()` that the exempt callers set, so a future endpoint that also must
+not clear state opts in explicitly rather than being special-cased by URL.
 
-Clearing state on 401 must go through the same `session.logout()` used
-everywhere else, so the persisted blob is purged on this path too. Set
-`sessionExpired: true` on this path only — a user who was thrown out mid-session
-should be told why, whereas someone who chose "Log out" should not see an
-error. `login()` clears the flag on success.
+**Name the option `{ keepSessionOn401: true }`, not `{ anonymous: true }`.**
+It has exactly one effect: skip the clear-auth branch when the response is 401.
+It must **never** influence header construction. There are two callers, and
+only one of them is anonymous:
+
+| Caller | Sends a token? | Why exempt |
+|---|---|---|
+| `postLogin` | no | its 401 *is* the bad-credentials signal the form renders inline |
+| `postPasswordChange` | **yes** | its 401 means "current password wrong", not "session dead" |
+
+A flag called `anonymous` invites an implementation that strips the
+`Authorization` header — which would make every password change 401 and throw
+the user out, the precise bug Task 8's headline test exists to prevent.
+
+Clearing state on 401 goes through **`session.expireSession()`** — not
+`logout()`, which would delete the document buffer and destroy unsaved work.
+`client.ts` reaches it through the `setUnauthorizedHandler` injection from
+Task 3, not by importing `session.ts`.
 
 - [ ] **Step 4: Run the tests**
 
@@ -684,6 +839,8 @@ control framing precisely. Cover:
   throw;
 - a stream that ends without `done` calls `onDone()` (the network-error path),
   and does **not** call it a second time if `done` had already arrived;
+- **a 401 response to the stream calls `expireSession()` and `onDone()` exactly
+  once** — the case the spec rejected a whole library over;
 - the request carries the `Authorization` header.
 
 Do **not** re-test the library's own framing edge cases (`\r\n` separators,
@@ -721,16 +878,29 @@ export function subscribeCheck(
 dispatches on `event.event` to the five handlers, then reads `response.body`
 through a `TextDecoder` and calls `parser.feed(chunk)` for each chunk.
 
-Three things are yours to get right, and each has a test above:
+Four things are yours to get right, and each has a test above:
 
-1. **Settle exactly once.** `done` calls `onDone()`; so does an ended or failed
-   stream. Guard with a flag so a `done` frame immediately followed by
-   end-of-stream does not fire it twice.
-2. **`AbortError` is the normal cancellation path**, not a failure — it must
+1. **A non-OK response is not a fetch error.** `fetch` resolves happily for a
+   401, so without an explicit check the reader would parse the JSON error body
+   as an event stream, emit nothing, reach end-of-stream and call `onDone()` —
+   the check stops silently while the app still believes the session is valid.
+   That is *precisely* the failure spec §7.3 cites when rejecting
+   `eventsource-client`; reproducing it here by omission would be absurd.
+   Before reading the body: if `!response.ok`, route the status through the
+   same handling `request()` uses in Task 4 (so a 401 reaches
+   `expireSession()`), then settle. Build the request headers with Task 4's
+   helper rather than assembling a second copy.
+2. **Settle exactly once.** `done` calls `onDone()`; so does an ended or failed
+   stream, and so does the non-OK path above. Guard with a flag so a `done`
+   frame immediately followed by end-of-stream does not fire it twice.
+3. **`AbortError` is the normal cancellation path**, not a failure — it must
    not surface as an error, and after an abort `onDone()` should not fire
    (`cancelCheck()` already resets the store itself).
-3. **Any other error ends in `onDone()`**, matching today's semantics where a
-   network error is indistinguishable from completion.
+4. **Every other error still ends in `onDone()`.** Today a network error is
+   indistinguishable from completion, and this milestone deliberately keeps
+   that. Rule 1 is the single exception, added because a 401 must reach the
+   session handler — do not read it as a general move toward surfacing stream
+   errors.
 
 `AbortController` does not exist anywhere in this codebase yet; this is new
 code, not a refactor.
@@ -1056,7 +1226,38 @@ unauthenticated — or if `App` is mounted and merely hidden — those effects r
 and produce a burst of 401s. `LoginGate` must not render its children at all
 until `authStatus === 'authenticated'`.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Add component-testing infrastructure**
+
+Tasks 7 and 8 are the first tests in this repo that mount React. There is no
+`@testing-library/*` today, and the sole existing `.test.tsx`
+(`DocumentSidebar.test.tsx`) imports no component — it tests pure functions.
+
+**This reverses a deliberate decision.** On 2026-07-12 the owner triaged
+"keep no-component-test convention". It is being reversed on purpose, because
+M2 adds the first components whose *behaviour* is security-relevant: the gate
+deciding not to render the app, and the account menu not logging you out on a
+mistyped password. Record the reversal in the LOGBOOK entry (Task 11) so a
+future reader sees a decision rather than drift.
+
+Run from `frontend/`:
+
+```bash
+npm install -D @testing-library/react @testing-library/user-event
+```
+
+`happy-dom` is already a devDependency, and `vite.config.ts` sets no global
+`environment` — DOM-needing files opt in per file. **Every new `.tsx` test file
+starts with the docblock**, exactly as `documents.test.ts:1` does:
+
+```ts
+// @vitest-environment happy-dom
+```
+
+Check whether `@testing-library/react` needs an entry in `package.json`'s
+`allowScripts` (this repo pins install-script approvals); report what `npm`
+said either way.
+
+- [ ] **Step 2: Write the failing test**
 
 Create `frontend/src/auth/LoginGate.test.tsx`:
 
@@ -1074,12 +1275,12 @@ Create `frontend/src/auth/LoginGate.test.tsx`:
 Assert children are absent via a sentinel child element, so the test pins
 "not rendered" rather than "not visible".
 
-- [ ] **Step 2: Run it and watch it fail**
+- [ ] **Step 3: Run it and watch it fail**
 
 Run: `npx vitest run src/auth/LoginGate.test.tsx`
 Expected: FAIL — the module does not exist.
 
-- [ ] **Step 3: Implement**
+- [ ] **Step 4: Implement**
 
 `LoginGate` calls `restoreSession()` once on mount and switches on
 `authStatus`: render nothing while `'unknown'`, `<LoginForm/>` while
@@ -1100,9 +1301,11 @@ considered and deferred to a later UI polish phase (see the roadmap backlog).
 - A single card: `background: var(--bg)`, `1px solid var(--border)`,
   `border-radius: 10px`, `padding: 1.2rem`, `width: 18rem`, column flex with
   `gap: 0.55rem`, `box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08)`.
-- The wordmark sits at the top of the card, reusing the header's exact markup
-  so the two never drift: `Fabulous <span class="accent">Writing</span>`, at
-  `1.25rem` / weight 700.
+- The wordmark sits at the top of the card. It is currently inline JSX in
+  `Header()` (`App.tsx:123-125`) and not exported, so copying it is how the two
+  drift — extract a `<Wordmark/>` component and use it in both places:
+  `Fabulous <span className="accent">Writing</span>`, here at `1.25rem` /
+  weight 700.
 - Two labelled inputs — email (`type="email"`, `autocomplete="username"`) and
   password (`type="password"`, `autocomplete="current-password"`) — labels at
   `0.7rem` in `var(--text-dim)`, inputs 30px tall with the app's standard
@@ -1123,15 +1326,15 @@ in place. If the gate genuinely never renders `App` unauthenticated they do
 not, and adding a second guard would be redundant — verify rather than assume,
 and say which you found in your report.
 
-- [ ] **Step 4: Run the tests**
+- [ ] **Step 5: Run the tests**
 
 Run: `npx vitest run`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add src/auth src/main.tsx src/App.tsx
+git add package.json package-lock.json src/auth src/main.tsx src/App.tsx
 git commit -m "$(cat <<'EOF'
 feat(auth): full-screen login gate above the app shell
 
@@ -1151,34 +1354,62 @@ EOF
 - Test: `frontend/src/auth/AccountMenu.test.tsx` (new)
 
 **Interfaces:**
-- Consumes: `user` from the store, `logout()` from Task 3, `postPasswordChange`
-  on the api client.
+- Consumes: `user` from the store, `logout()` and `login()` from Task 3.
+- Produces: `postPasswordChange(current: string, next: string): Promise<void>`
+  on the api client — `POST /api/auth/password` with body **`{ current, new: next }`**
+  (the server's field is literally `new`, `app/api/auth.py:269-272`), 204 →
+  `undefined`, and the call sets `{ keepSessionOn401: true }` from Task 4.
+- Produces: `MIN_PASSWORD_LENGTH = 8` alongside it. The server's
+  `SELF_MIN_PASSWORD_LENGTH` is 8 (`core/auth.py:59`) and no endpoint exposes
+  it, so the client hardcodes it; a mismatch shows up as a 422 the user cannot
+  act on.
 
 Without this, `POST /api/auth/password` and logging out have no entry point in
 the UI at all.
 
 - [ ] **Step 1: Write the failing test**
 
-Cover: the signed-in email is shown; the menu offers change-password and
-log-out; log-out calls `logout()`; a successful password change shows the
-success message; a 401 from the change endpoint (wrong current password) shows
-the invalid-credentials message **without** logging the user out — the client's
-401 branch from Task 4 must be exempted for this call the same way login is,
-or changing a password with one typo throws the user out of the app.
+Cover:
 
-That last case is the one worth writing first; it is the non-obvious
-interaction between this task and Task 4.
+- the signed-in email is shown, and the menu offers change-password and log-out;
+- log-out calls `logout()`;
+- a 401 from the change endpoint (wrong current password) shows the
+  invalid-credentials message **without** logging the user out, and the failed
+  request still carried the `Authorization` header;
+- a 422 shows `passwordTooShort`, and the form pre-validates against
+  `MIN_PASSWORD_LENGTH` so the common case never reaches the server;
+- mismatched new/confirm shows `passwordMismatch` and sends no request;
+- **a successful change leaves the user signed in** — see below;
+- reopening the menu after each dismissal path shows the menu, not the
+  password form.
+
+The 401 case is the one worth writing first; it is the non-obvious interaction
+between this task and Task 4.
+
+**A successful password change would otherwise sign the user out.** Task 2
+makes `get_current_user` reject any token issued before `password_changed_at`,
+and `POST /api/auth/password` returns 204 without issuing a new one — so the
+caller's own token is stale the moment it succeeds, and the very next request
+hits Task 4's 401 branch. The user would see "Password changed." followed
+immediately by "Your session has ended."
+
+Resolution (owner's decision, 2026-07-25): **the client re-authenticates
+silently.** On 204, call `login(currentUserEmail, newPassword)` before showing
+`passwordChanged`. The form already holds the new password, no backend or spec
+change is needed, and sessions on *other* devices still get evicted — which is
+the entire point of the revocation. If that re-login fails, fall through to the
+normal expiry path rather than leaving the UI claiming success.
 
 - [ ] **Step 2: Run it and watch it fail**
 - [ ] **Step 3: Implement**
 
 **Design — settled, transcribe it rather than deciding.** Reviewed against
 rendered alternatives on 2026-07-25. A full email-address trigger was rejected
-because it squeezes the Domain selector out of an already-tight header, and a
-modal for the password form was deferred to a later UI polish phase (see the
-roadmap backlog) — the app has **no modal or `<dialog>` anywhere today**, so
-one would mean building a scrim, focus trap, Escape handling and scroll lock
-from scratch for three fields.
+because it squeezes the Domain selector out of an already-tight header. A modal
+for the password form was deferred to a later UI polish phase (roadmap B3):
+a scrim already exists — `FolderDefaultsDialog` renders `.dialog-overlay`
+(`App.css:1719`) with backdrop-click dismissal — but focus trap, Escape and
+scroll lock do not, and three short fields did not justify building them here.
 
 **Trigger** — last element inside `.header-controls`, after the Check button:
 
@@ -1212,12 +1443,23 @@ widens to about `15rem`. Three labelled password inputs (`passwordCurrent`,
 messages use the same boxed idiom as the login gate — `#e5484d` with
 `1px solid #e5484d55` for failures, `var(--text-dim)` for `passwordChanged`.
 
-**One trap this codebase has already hit:** when the popover closes, reset it
-back to the menu view. `DocumentItem`'s `moving` submenu shipped with exactly
-this bug — closing via one path left the submenu expanded, so reopening showed
-it pre-expanded. Whatever dismissal paths you support (outside click, Escape,
-choosing an item), every one of them must clear the "showing password form"
-state. Write a test for reopening after each dismissal path.
+**Dismissal — use what exists.** `useDismissOnOutsideClick(ref, open, onDismiss)`
+(`frontend/src/hooks/useDismissOnOutsideClick.ts`) handles mousedown-outside and
+is what `DocumentSidebar` already uses. Use it. It does **not** handle Escape;
+adding Escape is in scope for this task, since a password form the keyboard
+cannot dismiss is worse than one that closes on a stray click.
+
+**Every dismissal path must reset the popover to its menu view** — outside
+click, Escape, choosing an item, and logging out. `DocumentSidebar` gets this
+right today (`closeMenu` resets `moving`, `:322-325`); follow that shape rather
+than tracking the sub-view in a way each path has to remember to clear. A test
+per dismissal path is listed above.
+
+**Where the CSS goes:** append to `frontend/src/App.css` with the other
+component styles — this repo keeps one stylesheet, and a new `auth.css` would
+be the only exception. Class prefixes: `.account-badge`, `.account-menu`,
+`.account-who`, `.account-password-panel`; the gate uses `.login-gate`,
+`.login-card`, `.login-form`, `.login-error`.
 
 Mount it in `Header()` as the final child of `.header-controls`.
 
@@ -1248,9 +1490,27 @@ EOF
 - Test: exercised by Task 10; no test of its own.
 
 **Interfaces:**
-- Produces: a fixture that yields a `TestClient` whose requests already carry a
-  valid bearer token for a seeded user, plus a way to get a second user's
-  client for tests that need two identities.
+- Produces **two** helpers, because a single whole-client fixture does not fit
+  most of the files Task 10 must convert:
+  - `authed_client(tmp_path)` — builds the app with plain `tmp_path` settings
+    and returns a `TestClient` with the header pre-attached. Fits
+    `test_documents_api.py`, `test_folders_api.py`, `test_languages_api.py`.
+  - `auth_headers(client) -> dict[str, str]` — POSTs to `/api/auth/login` with
+    `conftest.TEST_ADMIN_EMAIL` / `TEST_ADMIN_PASSWORD` and returns the Bearer
+    header, for the seven files that must build their own app. This is the
+    idiom `test_admin_api.py:24-29` already uses; obtaining the token through a
+    real login rather than calling `issue_token` directly keeps the tests
+    honest about the path a client actually takes.
+
+  The seven that need `auth_headers` rather than the fixture, because they pass
+  their own settings: `test_check_api.py` (five apps — `rules_dir`,
+  `seed_terminology=False`, a recording provider, custom `NlpSettings`),
+  `test_routing_api.py` and `test_providers_api.py` (monkeypatched env plus
+  `ProviderSettings`), `test_rules_api.py` (real rules dir),
+  `test_profiles_api.py`, `test_terminology_api.py`, `test_suggestions_api.py`.
+
+  Do **not** add a second-user fixture: no M2 test needs two identities, and an
+  unused fixture is churn that M3 can add when ownership makes it real.
 
 Ten test files currently build their own `TestClient(create_app(...))` with no
 shared fixture and send no `Authorization` header. Task 10 turns every one of
@@ -1269,19 +1529,22 @@ The bootstrap admin is seeded as id 1 by `seed_admin`; use it rather than
 creating another user, so the fixture matches what the app actually does at
 startup.
 
-- [ ] **Step 2: Prove it works on one file**
+- [ ] **Step 2: Prove both helpers work, on one file each**
 
-Convert `backend/tests/test_languages_api.py` — the smallest of the ten — to
-the fixture, ahead of enforcement. It must still pass, since an ignored
-`Authorization` header changes nothing while the router is open.
+Convert `backend/tests/test_languages_api.py` to `authed_client`, and
+`backend/tests/test_routing_api.py` to `auth_headers` — one of each, ahead of
+enforcement, so the harder shape is proven before Task 10 depends on it.
+Converting only a simple file would hide the mismatch until nine files were in
+flight. Both must still pass, since an ignored `Authorization` header changes
+nothing while the routers are open.
 
-Run: `uv run pytest tests/test_languages_api.py -q`
+Run: `uv run pytest tests/test_languages_api.py tests/test_routing_api.py -q`
 Expected: PASS.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add tests/conftest.py tests/test_languages_api.py
+git add tests/conftest.py tests/test_languages_api.py tests/test_routing_api.py
 git commit -m "$(cat <<'EOF'
 test(auth): shared authenticated client fixture
 
@@ -1317,12 +1580,32 @@ PUBLIC = {("/api/health", "GET"), ("/api/auth/login", "POST")}
 ```
 
 For each remaining route, issue an unauthenticated request and assert **401**.
-Use a path that satisfies any parameters (`{id}` → `1`); a 404 or 422 from a
+Substitute `1` for every `{param}` segment (routes use `{check_id}`, `{document_id}`, `{domain_id}`, `{term_id}`, `{profile_id}`, `{folder_id}` — there is no `{id}`); a 404 or 422 from a
 nonexistent id would mean the request got past auth, so assert specifically on
 401 rather than "not 200".
 
 This test is the real deliverable of the task: it fails the moment someone adds
 an unauthenticated route.
+
+Add the preflight test spec §7.4 requires, which Task 1's could not provide —
+it used `/api/health`, which stays public and therefore can never regress:
+
+```python
+def test_preflight_to_an_authenticated_route_is_not_401(client):
+    response = client.options(
+        "/api/documents",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+```
+
+`CORSMiddleware` wraps the app ahead of routing, so it answers preflight before
+any auth dependency runs. This test is what proves that ordering did not
+silently change.
 
 - [ ] **Step 2: Run it and watch it fail**
 
@@ -1420,52 +1703,85 @@ From `frontend/`: `npx vitest run && npx tsc --noEmit && npm run lint && npm run
 
 - [ ] **Step 3: Verify by running the application**
 
-Start the backend against a **scratch** database (never
-`backend/data/fabulous.db`) with `FW_AUTH_SECRET`, `FW_ADMIN_EMAIL` and
-`FW_ADMIN_PASSWORD` set, and the frontend dev server on a port that is **not**
-5173 if one is already running — the owner runs their own servers on 8000 and
-5173 and those must never be touched. Record the PIDs you start and kill only
-those.
+Bring up a scratch stack. The owner runs their own servers on **8000** and
+**5173**; never touch those, record the PIDs you start, and kill only those.
+
+The repo already documents a working recipe in
+`frontend/scripts/capture-screenshots.mjs:20-25` — follow it: backend on
+**8001**, frontend via `vite preview --port 4199`, and
+`VITE_API_URL=http://127.0.0.1:8001` so the client talks to the scratch
+backend rather than the owner's.
+
+**Task 1 makes this stricter than it used to be.** With `cors.origins`
+defaulting to `["http://localhost:5173"]`, a frontend on 4199 has its
+preflights refused and every call fails for a reason that looks nothing like
+CORS from the UI. Point the scratch backend at a scratch `config.yaml` (or an
+env override) whose `cors.origins` lists the frontend origin you actually use.
+
+Start it against a **scratch** database (never `backend/data/fabulous.db`) with
+`FW_AUTH_SECRET`, `FW_ADMIN_EMAIL` and `FW_ADMIN_PASSWORD` set.
 
 Confirm, and report what you observed rather than that it "worked":
 
 1. loading the app unauthenticated shows the login gate and **no** editor
-   chrome, and the network panel shows no `/api/*` calls other than
-   `/api/auth/me`;
+   chrome. With no stored token the network panel shows **zero** `/api/*`
+   calls (`restoreSession()` returns without calling the API); with a stale
+   token it shows exactly one, `/api/auth/me`;
 2. a wrong password shows the inline error and does not clear the form into a
    loop;
 3. a correct password loads the editor and documents;
 4. a check runs to completion — this exercises the new SSE reader end to end,
    which no unit test does;
 5. cancelling a check mid-run stops it and leaves the UI in idle;
-6. changing the password via the account menu succeeds, and the session
-   survives it or requires a fresh login — say which, and confirm it matches
-   Task 2's revocation behaviour;
+6. changing the password via the account menu succeeds **and leaves you signed
+   in** (Task 8 re-authenticates silently), while the old password no longer
+   works on a fresh sign-in;
 7. logging out returns to the gate and clears the persisted blob.
 
-- [ ] **Step 4: Update the architecture docs**
+- [ ] **Step 4: Fix the screenshot script, which this milestone breaks**
+
+`frontend/scripts/capture-screenshots.mjs` is a real repo entry point
+(`npm run screenshots`, and the README's images come from it). Its `api()`
+helper sends no `Authorization` header (`:65-74`), and it drives the UI with
+`page.goto` (`:179`) — so after Task 10 every staging call 401s, and after
+Task 7 the browser lands on the login gate instead of the editor.
+
+Log it in: `POST /api/auth/login` with the scratch stack's `FW_ADMIN_*`, attach
+the header in `api()`, and drive the login form before the first screenshot.
+Verify by running it against the scratch stack and looking at the output.
+
+- [ ] **Step 5: Update the architecture docs**
 
 Record in `docs/backend-architecture.md`: CORS is config-driven; every feature
 router carries a router-level auth dependency; `password_changed_at` and how it
-revokes sessions. In `docs/frontend-architecture.md`: the auth slice, the gate,
+revokes sessions.
+
+Also update two documents this milestone invalidates:
+
+- **The roadmap's Cross-milestone interfaces block** fixes
+  `TokenVerifier.verify(token: str) -> int` so later milestones can rely on it
+  without reading this plan. Task 2 changes that return type to
+  `VerifiedToken`; update the roadmap or the guarantee is stale for M3–M6.
+- **Spec §5.1's `users` table** does not list `password_changed_at`. Add it,
+  with a line on why it exists. In `docs/frontend-architecture.md`: the auth slice, the gate,
 where the Bearer header is attached, the fetch-based SSE reader and why
 `EventSource` was replaced, and the purge-on-user-change rule.
 
 State explicitly that data is **not** owner-scoped yet and that M3 does it.
 
-- [ ] **Step 5: Update the README**
+- [ ] **Step 6: Update the README**
 
 The Quick start's environment variables are unchanged, but the app now requires
 a login. Say so, and that the bootstrap admin credentials are what to sign in
 with the first time.
 
-- [ ] **Step 6: Append the LOGBOOK entry**
+- [ ] **Step 7: Append the LOGBOOK entry**
 
 Run `date '+%Y-%m-%d'` first and use exactly that. Record what M2 delivered,
 the commit range, the before/after test counts for both suites, and that
 ownership scoping is still M3.
 
-- [ ] **Step 7: Commit, push, open the PR**
+- [ ] **Step 8: Commit, push, open the PR**
 
 ```bash
 git add docs README.md
