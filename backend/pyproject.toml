@@ -6,11 +6,13 @@ license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "anthropic>=0.120.0",
+    "bcrypt>=4.2.0",
     "boto3>=1.43.56",
     "fastapi>=0.140.0",
     "httpx>=0.28.1",
     "httpx2>=2.9.1",
     "pydantic>=2.13.4",
+    "pyjwt>=2.10.0",
     "pyspellchecker>=0.9.0",
     "pyyaml>=6.0.3",
     "spacy>=3.8.14",
