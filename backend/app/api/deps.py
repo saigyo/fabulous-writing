@@ -10,15 +10,9 @@ from app.core.auth import InvalidToken
 # not the caller's business.
 _UNAUTHENTICATED = "Not authenticated"
 
-# A locally issued token is ~208 bytes, so this ceiling is generous by
-# comparison — but do not tune it down to fit only today's local tokens:
-# the future Supabase verifier will see third-party JWTs carrying user
-# metadata that can run to a couple of kilobytes. 8192 still sits far below
-# the ~26.7 KB a token needs to drive PyJWT's header-segment json.loads into
-# RecursionError (see LocalTokenVerifier.verify in app/core/auth.py, which
-# is what actually guarantees that a request can never hit that path — this
-# is just the cheap first line that rejects the obviously-oversized case
-# before the verifier is even invoked).
+# Cheap first line against oversized tokens; LocalTokenVerifier.verify is
+# what actually guarantees safety. Sized for the Supabase JWTs the future
+# verifier will see (a few KB), not for today's ~208-byte local tokens.
 MAX_TOKEN_BYTES = 8192
 
 
@@ -36,7 +30,8 @@ def get_current_user(request: Request) -> CurrentUser:
     token = token.strip()
     if scheme.lower() != "bearer" or not token:
         raise HTTPException(401, _UNAUTHENTICATED)
-    if len(token.encode("utf-8")) > MAX_TOKEN_BYTES:
+    # Starlette decodes headers as latin-1, so len() already is the wire size.
+    if len(token) > MAX_TOKEN_BYTES:
         raise HTTPException(401, _UNAUTHENTICATED)
     try:
         user_id = request.app.state.token_verifier.verify(token)
