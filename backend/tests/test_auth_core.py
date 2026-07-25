@@ -1,3 +1,4 @@
+import base64
 from datetime import UTC, datetime, timedelta
 
 import jwt
@@ -220,3 +221,18 @@ def test_malformed_iat_is_rejected_not_leaked(bad_iat):
     forged = jwt.encode(payload, SECRET, algorithm="HS256")
     with pytest.raises(InvalidToken):
         LocalTokenVerifier(SECRET).verify(forged)
+
+
+def test_deeply_nested_header_segment_is_rejected_not_a_raw_recursion_error():
+    # PyJWT must json.loads the header segment before it can even look at
+    # `alg`, and json.loads raises RecursionError (a RuntimeError subclass,
+    # not jwt.PyJWTError) on deeply nested input. A depth of 20000 is well
+    # above the ~9999 measured threshold, so this does not sit on the
+    # boundary; building the string is just two cheap `str * int` repeats,
+    # not a loop.
+    depth = 20000
+    header_json = "[" * depth + "]" * depth
+    header = base64.urlsafe_b64encode(header_json.encode()).decode().rstrip("=")
+    token = f"{header}.e30.c2ln"  # payload "{}", arbitrary signature bytes
+    with pytest.raises(InvalidToken):
+        LocalTokenVerifier(SECRET).verify(token)

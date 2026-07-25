@@ -203,7 +203,23 @@ class LocalTokenVerifier:
                     "verify_iat": False,
                 },
             )
-        except jwt.PyJWTError as exc:
+        except (jwt.PyJWTError, RecursionError) as exc:
+            # RecursionError is not a jwt.PyJWTError — it's a RuntimeError
+            # subclass, raised by json.loads() while PyJWT parses the
+            # header segment (it has to, to read `alg`, before signature
+            # verification even starts) on sufficiently deeply nested
+            # input. This is not made redundant by the length cap in
+            # app/api/deps.py: that cap is a cheap first line sized to
+            # today's ~208-byte local tokens and future few-KB third-party
+            # JWTs, but the recursion depth needed to trigger this
+            # depends on the interpreter's recursion limit and platform —
+            # a build with a lower limit could hit RecursionError on a
+            # token smaller than the cap allows through. This except is
+            # what actually makes verify()'s documented contract — returns
+            # an int or raises InvalidToken — true, regardless of what the
+            # caller passed through. Kept narrow (no bare `except
+            # Exception`) so a genuine TypeError/AttributeError from a
+            # real bug still surfaces as a 500 instead of being swallowed.
             raise InvalidToken(str(exc)) from exc
         # iat is checked here rather than left to the library so the leeway
         # is explicit and does not depend on PyJWT's version-specific

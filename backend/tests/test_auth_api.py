@@ -1,15 +1,17 @@
+import base64
 import sys
 import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.auth import LoginThrottle, _throttle_key
-from app.api.deps import CurrentUser, get_current_user, require_admin
+from app.api.deps import MAX_TOKEN_BYTES, CurrentUser, get_current_user, require_admin
 from app.core.auth import LocalTokenVerifier, issue_token
 from app.core.config import Settings
 from app.main import create_app
@@ -62,6 +64,39 @@ def test_missing_or_malformed_credentials_are_401(probe, headers):
 
 def test_token_for_an_unknown_user_is_401(probe):
     assert TestClient(probe).get("/probe/user", headers=auth(999)).status_code == 401
+
+
+def _deeply_nested_token(depth: int = 20000) -> str:
+    # Same construction as test_auth_core.py's recursion regression test:
+    # a header segment whose JSON is nested far past the ~9999-depth
+    # threshold that drives PyJWT's json.loads into RecursionError before
+    # it ever gets to look at `alg`.
+    header_json = "[" * depth + "]" * depth
+    header = base64.urlsafe_b64encode(header_json.encode()).decode().rstrip("=")
+    return f"{header}.e30.c2ln"  # payload "{}", arbitrary signature bytes
+
+
+def test_deeply_nested_jwt_is_401_through_the_dependency_not_500(probe):
+    # End-to-end regression test for the RecursionError-escapes-as-500
+    # defect: this must come back as the same generic 401 as every other
+    # authentication failure, never an unhandled 500.
+    headers = {"Authorization": f"Bearer {_deeply_nested_token()}"}
+    assert TestClient(probe).get("/probe/user", headers=headers).status_code == 401
+
+
+def test_overlong_token_is_401_without_invoking_the_verifier(probe):
+    # Pins the cheap-rejection property of the MAX_TOKEN_BYTES guard in
+    # get_current_user: an over-long bearer token must be turned away
+    # before it ever reaches the verifier, not merely end up 401 after
+    # the verifier runs.
+    probe.state.token_verifier.verify = MagicMock(
+        side_effect=AssertionError("verifier must not be called for an over-long token")
+    )
+    huge_token = "a" * (MAX_TOKEN_BYTES + 1)
+    headers = {"Authorization": f"Bearer {huge_token}"}
+    response = TestClient(probe).get("/probe/user", headers=headers)
+    assert response.status_code == 401
+    probe.state.token_verifier.verify.assert_not_called()
 
 
 def test_deactivation_takes_effect_on_the_next_request(probe):
