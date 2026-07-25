@@ -37,7 +37,16 @@ def _find(store: UserStore, email: str) -> User | None:
     return user
 
 
-def _set_admin(store: UserStore, user: User, value: bool) -> None:
+def _set_admin(store: UserStore, user: User, value: bool) -> bool:
+    """Set is_admin, returning whether anything actually changed.
+
+    A no-op write would still look like a state transition in the audit
+    trail (old_value == new_value), which is actively misleading during an
+    incident — the trail is the thing being read. Mirrors how the admin API
+    (app/api/admin.py) already filters no-ops before writing.
+    """
+    if user.is_admin == value:
+        return False
     store.update_user(user.id, is_admin=value)
     store.record_audit(
         actor_id=None,  # out-of-band operator action
@@ -46,9 +55,13 @@ def _set_admin(store: UserStore, user: User, value: bool) -> None:
         old_value=str(user.is_admin),
         new_value=str(value),
     )
+    return True
 
 
-def _set_active(store: UserStore, user: User, value: bool) -> None:
+def _set_active(store: UserStore, user: User, value: bool) -> bool:
+    """Set is_active, returning whether anything actually changed."""
+    if user.is_active == value:
+        return False
     store.update_user(user.id, is_active=value)
     store.record_audit(
         actor_id=None,
@@ -57,6 +70,7 @@ def _set_active(store: UserStore, user: User, value: bool) -> None:
         old_value=str(user.is_active),
         new_value=str(value),
     )
+    return True
 
 
 def _warn_if_no_admin_remains(store: UserStore) -> None:
@@ -106,10 +120,12 @@ def _cmd_make_admin(store: UserStore, args: argparse.Namespace) -> int:
     user = _find(store, args.email)
     if user is None:
         return 1
-    _set_admin(store, user, True)
-    if not user.is_active:
-        _set_active(store, user, True)
-    print(f"{user.email} is now an active admin")
+    admin_changed = _set_admin(store, user, True)
+    active_changed = _set_active(store, user, True)
+    if admin_changed or active_changed:
+        print(f"{user.email} is now an active admin")
+    else:
+        print(f"{user.email} is already an active admin; no change made")
     return 0
 
 
@@ -117,8 +133,10 @@ def _cmd_revoke_admin(store: UserStore, args: argparse.Namespace) -> int:
     user = _find(store, args.email)
     if user is None:
         return 1
-    _set_admin(store, user, False)
-    print(f"Admin privileges revoked for {user.email}")
+    if _set_admin(store, user, False):
+        print(f"Admin privileges revoked for {user.email}")
+    else:
+        print(f"{user.email} was already not an admin; no change made")
     # Warn rather than refuse: freezing all admin access during an incident
     # and then minting a fresh account is exactly what this tool is for.
     _warn_if_no_admin_remains(store)
@@ -129,8 +147,10 @@ def _cmd_deactivate(store: UserStore, args: argparse.Namespace) -> int:
     user = _find(store, args.email)
     if user is None:
         return 1
-    _set_active(store, user, False)
-    print(f"{user.email} deactivated; their next request will be rejected")
+    if _set_active(store, user, False):
+        print(f"{user.email} deactivated; their next request will be rejected")
+    else:
+        print(f"{user.email} was already inactive; no change made")
     _warn_if_no_admin_remains(store)
     return 0
 
@@ -139,8 +159,10 @@ def _cmd_activate(store: UserStore, args: argparse.Namespace) -> int:
     user = _find(store, args.email)
     if user is None:
         return 1
-    _set_active(store, user, True)
-    print(f"{user.email} reactivated")
+    if _set_active(store, user, True):
+        print(f"{user.email} reactivated")
+    else:
+        print(f"{user.email} was already active; no change made")
     return 0
 
 
@@ -165,21 +187,56 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _parse_args(parser: argparse.ArgumentParser, argv: list[str] | None) -> argparse.Namespace:
+    # parse_known_args (not parse_args) so a stray extra token — most
+    # plausibly a mistyped password after `set-password <email>` — can be
+    # rejected without letting argparse format it into its own "unrecognized
+    # arguments: <token>" message. That message goes to stderr, which is
+    # routinely logged or `tee`d for an audit trail, so echoing it back
+    # would leak the very password argv is not supposed to carry. Every
+    # other parse failure (unknown subcommand, missing email, unknown
+    # option) is raised by parse_known_args itself, before this point, with
+    # argparse's normal — and safe — messages intact.
+    args, extras = parser.parse_known_args(argv)
+    if extras:
+        print(parser.format_usage(), end="", file=sys.stderr)
+        print(
+            f"{parser.prog}: error: unrecognized arguments (value withheld: "
+            "passwords are never accepted as command-line arguments — they "
+            "are prompted for or read from stdin)",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    return args
+
+
 def main(
     argv: list[str] | None = None, *, read_password: Callable[[str], str] | None = None
 ) -> int:
     # Passwords are read interactively or from stdin, never from argv: an
     # argument is visible in shell history and in `ps` to every other
     # process on the machine.
-    args = _build_parser().parse_args(argv)
+    args = _parse_args(_build_parser(), argv)
     args.read_password = read_password or _prompt_password
     db_path = args.db or load_settings().db_path
-    store = UserStore(db_path, timeout=_BUSY_TIMEOUT_SECONDS)
-    handler, _ = _COMMANDS[args.command]
     try:
+        # UserStore.__init__ writes the schema on every invocation, so the
+        # busy/corrupt guard must cover construction too, not just the
+        # command handler below — a database locked by a running server (or
+        # an unreadable/corrupt file) is exactly as likely to be hit here.
+        store = UserStore(db_path, timeout=_BUSY_TIMEOUT_SECONDS)
+        handler, _ = _COMMANDS[args.command]
         return handler(store, args)
     except sqlite3.OperationalError as exc:
         print(f"Database is busy ({exc}). Is the server writing right now?", file=sys.stderr)
+        return 1
+    except sqlite3.DatabaseError as exc:
+        # OperationalError (busy) is a subclass of DatabaseError, so this
+        # broader clause must come second or it would shadow the message
+        # above for the busy case. Whatever is left over here is a
+        # different operator situation — a corrupt or unreadable file —
+        # calling for a different next step (restore from backup, not wait).
+        print(f"Database is unreadable or corrupt ({exc}).", file=sys.stderr)
         return 1
 
 
