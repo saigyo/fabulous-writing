@@ -361,8 +361,23 @@ class VerifiedToken:
     issued_at: datetime   # tz-aware UTC
 ```
 
-`LocalTokenVerifier.verify` builds it with
-`datetime.fromtimestamp(claims["iat"], UTC)`. Update the protocol and the
+`LocalTokenVerifier.verify` builds it from the already-guarded numeric parse —
+**do not hand `claims["iat"]` straight to `fromtimestamp`.** The current code
+does `float(claims["iat"])` inside `try/except (TypeError, ValueError)` and
+re-raises `InvalidToken`; that guard exists because M1 shipped a leak where a
+crafted `iat` escaped as a raw `ValueError`/`TypeError` and became a 500 on the
+auth path. `fromtimestamp` rejects a numeric *string* that `float()` accepts,
+and an out-of-range value raises `OverflowError`, which is in neither the
+existing tuple nor `PyJWTError`. Parse once and convert inside the same guard:
+
+```python
+        try:
+            issued_at = datetime.fromtimestamp(float(claims["iat"]), UTC)
+        except (TypeError, ValueError, OverflowError, OSError) as exc:
+            raise InvalidToken("iat is not a usable timestamp") from exc
+```
+
+Keep the existing future-drift check against `issued_at`. Update the protocol and the
 docstring that says it returns the local `users.id` — it still does, alongside
 `iat`. Say in a comment why `iat` crosses this boundary: the request path, not
 the verifier, owns the revocation policy, because a Supabase verifier will not
@@ -395,7 +410,9 @@ expected churn, not a regression.
 - [ ] **Step 7: Rehearse the migration on a copy of the live database**
 
 ```bash
-cp backend/data/fabulous.db /tmp/fw-m2-rehearsal.db
+# Task 2's commands run from backend/, so this path is backend-relative —
+# "backend/data/..." would resolve to backend/backend/data/... and fail.
+cp data/fabulous.db /tmp/fw-m2-rehearsal.db
 ```
 
 Then open the copy with `UserStore(Path('/tmp/fw-m2-rehearsal.db'))` and check
@@ -717,8 +734,10 @@ logout**, and on **login** whenever the document snapshot is foreign or
 unowned. Test the failed-migration handoff — leave the key in place, log out,
 log in as another user, and assert the text does not appear.
 
-To make that last row decidable, add `ownerId: number | undefined` to
-`DocSnapshot`. A snapshot written by an older build has no `ownerId`; treat
+To make that last row decidable, add **`ownerId?: number`** to `DocSnapshot` —
+optional-property syntax, not `ownerId: number | undefined`, which TypeScript
+still treats as *required* and would break the existing object literals exactly
+as described below. A snapshot written by an older build has no `ownerId`; treat
 that as unknown and clear it — failing safe costs one unsaved buffer once,
 while failing open leaks text across accounts.
 
