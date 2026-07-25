@@ -9,6 +9,9 @@ import logging
 import os
 import secrets
 from collections.abc import Mapping
+from functools import lru_cache
+
+import bcrypt
 
 logger = logging.getLogger(__name__)
 
@@ -48,3 +51,38 @@ def resolve_auth_secret(
         "FW_AUTH_SECRET is unset. Generate one with `openssl rand -base64 32`, "
         "or set auth.ephemeral_secret: true for local development."
     )
+
+
+SELF_MIN_PASSWORD_LENGTH = 8
+ADMIN_SET_MIN_PASSWORD_LENGTH = 12
+
+
+@lru_cache(maxsize=1)
+def _dummy_hash() -> str:
+    """A real hash to verify against when no account matches.
+
+    Computed once, lazily: without it an unknown email would skip bcrypt
+    entirely and answer measurably faster than a known one, re-enabling the
+    account enumeration the generic 401 is meant to prevent.
+    """
+    return hash_password("timing-equalisation-placeholder")
+
+
+def hash_password(password: str) -> str:
+    # gensalt() is the salting step: bcrypt generates a fresh random salt
+    # per call and stores it inside the resulting hash string
+    # ($2b$<cost>$<22-char salt><hash>), so two identical passwords never
+    # produce the same hash. No separate salt column is needed — or wanted.
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+
+def check_password(password: str, password_hash: str | None) -> bool:
+    candidate = password_hash if password_hash else _dummy_hash()
+    matched = bcrypt.checkpw(password.encode(), candidate.encode())
+    return matched and password_hash is not None
+
+
+def validate_password(password: str, *, min_length: int) -> str:
+    if len(password) < min_length:
+        raise ValueError(f"Password must be at least {min_length} characters")
+    return password
