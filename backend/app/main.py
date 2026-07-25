@@ -107,11 +107,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings.demos_dir,
         seed_examples=settings.seed_example_profiles,
     )
-    app.state.user_store = UserStore(settings.db_path)
     if settings.auth.mode != "local":
         raise AuthConfigError(
             "auth.mode 'supabase' is not implemented yet (sub-project 2)"
         )
+    app.state.user_store = UserStore(settings.db_path)
     app.state.auth_secret = resolve_auth_secret(
         ephemeral_ok=settings.auth.ephemeral_secret
     )
