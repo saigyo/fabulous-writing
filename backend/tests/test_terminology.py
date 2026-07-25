@@ -161,6 +161,44 @@ class TestCasingHelpers:
 
         assert _casing_ok("Sign In here.", 0, "Sign In", "sign in") is False
 
+    def test_sentence_start_detection_covers_each_context(self) -> None:
+        from app.checkers.terminology import _sentence_start
+
+        assert _sentence_start("", 0) is True  # start of text
+        assert _sentence_start("Done. ", 6) is True  # after punctuation
+        assert _sentence_start('Done." ', 7) is True  # closing quote between
+        assert _sentence_start("Done.\n\n", 7) is True  # after a newline
+        assert _sentence_start("Intro:\n- ", 9) is True  # markdown structure
+        assert _sentence_start("Done.", 5) is False  # punctuation, no space
+        assert _sentence_start("mid sentence ", 13) is False  # plain space
+        assert _sentence_start("Done) ", 6) is False  # bracket is not punctuation
+
+    def test_sentence_start_is_linear_in_document_length(self) -> None:
+        # Guards against reintroducing the quadratic regex this replaced
+        # (CodeQL py/polynomial-redos): searching for the `$` anchor from
+        # every start position re-scanned the whitespace run each time, so a
+        # document of newlines cost ~0.5 s at 16k characters and ~20 s at
+        # 100k — once per term match, from a single request.
+        #
+        # `start` is the index of the trailing "x", not len(text): callers
+        # only ever pass a match position, and it is what makes the scan walk
+        # the whole 200k newline run instead of stopping at the first
+        # character.
+        #
+        # The bound is deliberately loose. The linear scan takes ~5 ms
+        # locally, while the quadratic form would need ~80 s at this size, so
+        # anything in between separates them; 5 s leaves a shared CI runner
+        # three orders of magnitude of headroom over the real cost while
+        # still failing decisively on a regression.
+        import time
+
+        from app.checkers.terminology import _sentence_start
+
+        text = "\n" * 200_000 + "x"
+        started = time.perf_counter()
+        assert _sentence_start(text, len(text) - 1) is True
+        assert time.perf_counter() - started < 5.0
+
 
 class TestPreferredCasing:
     def _github_domain(self, store: TerminologyStore) -> int:
