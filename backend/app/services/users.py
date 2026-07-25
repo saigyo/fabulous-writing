@@ -77,7 +77,7 @@ class InvalidEmailError(ValueError):
 
 
 def _utcnow() -> str:
-    return datetime.now(UTC).isoformat()
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _row_to_user(row: sqlite3.Row) -> User:

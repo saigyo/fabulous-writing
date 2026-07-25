@@ -176,8 +176,8 @@ remembered). Rule messages are authored per rule file and are not translated by 
 
 ### Quick start
 
-Backend (requires [uv](https://docs.astral.sh/uv/)); startup fails closed without the
-three `FW_*` variables below (see
+Backend (requires [uv](https://docs.astral.sh/uv/)); in the default configuration, startup
+fails closed without the three `FW_*` variables below (see
 [Authentication](#authentication-foundation-only--not-yet-enforced) for what they do):
 
 ```sh
@@ -230,8 +230,8 @@ considerations — is covered in
 
 The backend has user accounts and local email/password login (see
 [Authentication and user accounts](docs/backend-architecture.md#authentication-and-user-accounts-m1-foundation-only)
-in the architecture doc). Startup now fails closed without the three
-variables below — that's why they're already set in [Quick start](#quick-start)
+in the architecture doc). In the default configuration, startup fails closed
+without the three variables below — that's why they're already set in [Quick start](#quick-start)
 above — but once the app has started, **no endpoint currently requires a
 logged-in user**: request handling works exactly as before. Enforcement lands
 in a later milestone. These variables are read from the environment only,
