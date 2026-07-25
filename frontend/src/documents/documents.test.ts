@@ -856,6 +856,33 @@ describe('folders', () => {
     await expect(addFolder('Mango')).rejects.toThrow('dup')
   })
 
+  it('addFolder() does not append the outgoing user\'s new folder once the session has ended', async () => {
+    useStore.getState().setFolders([{ id: 1, name: 'alpha', created_at: '' }] as never[])
+    let resolveCreate: ((f: Folder) => void) | undefined
+    vi.mocked(createFolder).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveCreate = resolve
+        }) as never,
+    )
+
+    const pending = addFolder('Mango') // starts; will reach `await apiCreateFolder`
+    await vi.waitFor(() => {
+      if (!resolveCreate) throw new Error('createFolder not called yet')
+    })
+
+    invalidateDocumentWork() // the session that started this create has ended
+    useStore.getState().setFolders([{ id: 2, name: 'incoming', created_at: '' }] as never[]) // a wholly different, incoming list
+
+    resolveCreate!({ id: 3, name: 'Mango', created_at: '' } as never)
+    await pending
+
+    // Must still be exactly the incoming list — not with "Mango" appended,
+    // which would be the outgoing user's newly created folder leaking into
+    // the incoming user's live list.
+    expect(useStore.getState().folders.map((f) => f.name)).toEqual(['incoming'])
+  })
+
   it('createNewDocument places the document in the given folder', async () => {
     useStore.getState().setDocMeta(null)
     vi.mocked(createDocument).mockResolvedValue(doc(9, { folder_id: 4 }))

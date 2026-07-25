@@ -263,11 +263,16 @@ async function runInit(): Promise<void> {
     const snapshot = readSnapshot()
     if (snapshot) {
       await hydrateFromBuffer(snapshot, gen)
+      if (!stillCurrent()) return // hydrateFromBuffer no-op'd; nothing to arm
       // The buffer is dirty (offline edits pending) and hydrateFromBuffer
       // restored that dirty truth: arm the backoff retry loop now so the
       // push happens as soon as the backend comes back, even with no
       // further user input. Without this, a dirty buffer at offline
-      // startup would sit inert until the user typed again.
+      // startup would sit inert until the user typed again. Guarded above
+      // by stillCurrent() rather than relying on collectSnapshot()
+      // incidentally returning null once user is nulled — logout()/
+      // expireSession() are the only current callers of
+      // invalidateDocumentWork(), but this must not depend on that.
       void flush()
     }
     return
