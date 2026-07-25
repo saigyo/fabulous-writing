@@ -206,11 +206,25 @@ def test_garbage_token_is_rejected():
         LocalTokenVerifier(SECRET).verify("not-a-token")
 
 
-@pytest.mark.parametrize("bad_iat", ["not-a-number", ["x"], {"a": 1}])
+@pytest.mark.parametrize(
+    "bad_iat",
+    [
+        "not-a-number",
+        ["x"],
+        {"a": 1},
+        10**20,  # float() accepts it, but fromtimestamp() raises OverflowError
+        float("nan"),  # float() accepts it, but fromtimestamp() raises ValueError
+    ],
+)
 def test_malformed_iat_is_rejected_not_leaked(bad_iat):
     # iat is caller-controlled and must never crash the verifier with a
-    # raw ValueError/TypeError from the drift computation; it must be
-    # translated to InvalidToken like every other malformed claim.
+    # raw ValueError/TypeError/OverflowError/OSError from the timestamp
+    # conversion; it must be translated to InvalidToken like every other
+    # malformed claim. The last two values are only caught by the widened
+    # (TypeError, ValueError, OverflowError, OSError) guard: both are
+    # accepted by float() and would have slipped past the original
+    # (TypeError, ValueError) tuple, so without them here a revert to the
+    # narrow tuple would pass this test while reopening the M1 leak.
     payload = {
         "sub": "1",
         "iss": TOKEN_ISSUER,
