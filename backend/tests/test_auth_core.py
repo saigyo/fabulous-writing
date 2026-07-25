@@ -1,11 +1,19 @@
+from datetime import UTC, datetime, timedelta
+
+import jwt
 import pytest
 
 from app.core.auth import (
     ADMIN_SET_MIN_PASSWORD_LENGTH,
     SELF_MIN_PASSWORD_LENGTH,
+    TOKEN_AUDIENCE,
+    TOKEN_ISSUER,
     AuthConfigError,
+    InvalidToken,
+    LocalTokenVerifier,
     check_password,
     hash_password,
+    issue_token,
     resolve_auth_secret,
     validate_password,
 )
@@ -118,3 +126,70 @@ def test_false_accept_regression_distinct_passwords_with_same_prefix():
 def test_check_password_with_empty_string_hash_returns_false():
     # Empty-string password_hash must return False and not crash.
     assert check_password("any password", "") is False
+
+
+# 64 bytes, not merely the 32-byte minimum: the foreign-algorithm test
+# below signs with HS512, and PyJWT emits InsecureKeyLengthWarning for a
+# SHA512 key under 64 bytes — which would break the zero-warnings gate.
+SECRET = "s" * 64
+
+
+def test_issued_token_verifies_to_the_local_user_id():
+    verifier = LocalTokenVerifier(SECRET)
+    assert verifier.verify(issue_token(42, SECRET)) == 42
+
+
+def test_token_signed_with_another_secret_is_rejected():
+    with pytest.raises(InvalidToken):
+        LocalTokenVerifier(SECRET).verify(issue_token(1, "other" * 10))
+
+
+def test_expired_token_is_rejected():
+    long_ago = datetime.now(UTC) - timedelta(hours=25)
+    with pytest.raises(InvalidToken):
+        LocalTokenVerifier(SECRET).verify(issue_token(1, SECRET, now=long_ago))
+
+
+def test_token_with_foreign_algorithm_is_rejected():
+    # The classic JWT bugs: 'alg: none' and RS256->HS256 confusion. A
+    # permissive decode accepts them; a pinned single-algorithm decode
+    # does not.
+    forged = jwt.encode(
+        {"sub": "1", "iss": TOKEN_ISSUER, "aud": TOKEN_AUDIENCE,
+         "iat": int(datetime.now(UTC).timestamp()),
+         "exp": int((datetime.now(UTC) + timedelta(hours=1)).timestamp())},
+        SECRET,
+        algorithm="HS512",
+    )
+    with pytest.raises(InvalidToken):
+        LocalTokenVerifier(SECRET).verify(forged)
+
+
+@pytest.mark.parametrize("claim", ["iss", "aud"])
+def test_token_for_another_project_is_rejected(claim):
+    payload = {
+        "sub": "1",
+        "iss": TOKEN_ISSUER,
+        "aud": TOKEN_AUDIENCE,
+        "iat": int(datetime.now(UTC).timestamp()),
+        "exp": int((datetime.now(UTC) + timedelta(hours=1)).timestamp()),
+    }
+    payload[claim] = "some-other-project"
+    forged = jwt.encode(payload, SECRET, algorithm="HS256")
+    with pytest.raises(InvalidToken):
+        LocalTokenVerifier(SECRET).verify(forged)
+
+
+def test_token_issued_far_in_the_future_is_rejected_but_small_skew_is_tolerated():
+    verifier = LocalTokenVerifier(SECRET)
+    # 30s of clock drift must still work; 10 minutes must not.
+    near = datetime.now(UTC) + timedelta(seconds=30)
+    assert verifier.verify(issue_token(7, SECRET, now=near)) == 7
+    far = datetime.now(UTC) + timedelta(minutes=10)
+    with pytest.raises(InvalidToken):
+        verifier.verify(issue_token(7, SECRET, now=far))
+
+
+def test_garbage_token_is_rejected():
+    with pytest.raises(InvalidToken):
+        LocalTokenVerifier(SECRET).verify("not-a-token")
