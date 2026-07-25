@@ -102,6 +102,16 @@ class UserStore:
         is_admin: bool = False,
     ) -> User:
         password_hash = hash_password(password) if password else None
+        # Strip only — do NOT lowercase. COLLATE NOCASE on the column already
+        # gives case-insensitive matching; lowercasing here would throw away
+        # the case the user chose before it ever reaches `User.email`.
+        # Stripping keeps this store's notion of "same email" aligned with
+        # `_throttle_key` (`app/api/auth.py`), which normalizes with
+        # `.strip().lower()`: SQLite's NOCASE is ASCII-only casefolding, a
+        # strict subset of Python's `.lower()`, so any two emails the DB
+        # treats as one row already map to the same throttle key once both
+        # sides strip whitespace the same way.
+        email = email.strip()
         with self._connect() as conn:
             try:
                 cursor = conn.execute(
@@ -125,7 +135,7 @@ class UserStore:
     def get_by_email(self, email: str) -> User | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM users WHERE email = ? COLLATE NOCASE", (email,)
+                "SELECT * FROM users WHERE email = ? COLLATE NOCASE", (email.strip(),)
             ).fetchone()
         return _row_to_user(row) if row is not None else None
 
@@ -149,7 +159,7 @@ class UserStore:
         """
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM users WHERE email = ? COLLATE NOCASE", (email,)
+                "SELECT * FROM users WHERE email = ? COLLATE NOCASE", (email.strip(),)
             ).fetchone()
         stored = row["password_hash"] if row is not None else None
         # check_password runs unconditionally — even for an unknown email

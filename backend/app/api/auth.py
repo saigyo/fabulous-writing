@@ -19,6 +19,13 @@ router = APIRouter(prefix="/api", tags=["auth"])
 # applied: any distinction is an account-enumeration oracle.
 _INVALID_LOGIN = "Invalid email or password"
 
+# Upper bound on the exponent used in LoginThrottle's backoff calculation
+# (see `record_failure`). 2**64 already dwarfs any realistic `max_delay` by
+# many orders of magnitude while staying nowhere near the ~2**1024 boundary
+# where a double's range ends, so `2.0 ** _MAX_SAFE_EXPONENT` is cheap and
+# exact regardless of how large `failures` gets.
+_MAX_SAFE_EXPONENT = 64
+
 
 @dataclass
 class _Attempts:
@@ -162,9 +169,26 @@ class LoginThrottle:
             entry.failures += 1
             entry.last_seen = now
             if entry.failures >= self.threshold:
-                delay = min(
-                    self.max_delay, self.base_delay * 2 ** (entry.failures - self.threshold)
-                )
+                # `failures` only grows while the key is unblocked, and every
+                # increment already costs a full bcrypt hash, so reaching a
+                # huge exponent this way is not a realistic attack — but the
+                # arithmetic should be obviously safe regardless, not safe by
+                # that argument. Plain integer exponentiation (`2 **
+                # huge_int`) would materialize a bigint with millions of
+                # digits before `min()` ever looks at it. Switching only the
+                # base to float does NOT fix this the way it would in other
+                # languages: CPython's `**` raises OverflowError on a float
+                # result outside double range instead of returning `inf`
+                # (verified: `2.0 ** 1024` raises; it does not saturate).
+                # Capping the exponent at `_MAX_SAFE_EXPONENT` sidesteps both
+                # problems — `2.0 ** _MAX_SAFE_EXPONENT` is a cheap, exact
+                # power of two, nowhere near the overflow boundary, and
+                # already dwarfs any realistic `max_delay` by many orders of
+                # magnitude, so the `min()` below always resolves to
+                # `max_delay` once `failures` is large. Do not restore
+                # unbounded exponentiation, integer or float.
+                exponent = min(entry.failures - self.threshold, _MAX_SAFE_EXPONENT)
+                delay = min(self.max_delay, self.base_delay * 2.0**exponent)
                 entry.blocked_until = now + delay
             self._prune_locked(now)
 

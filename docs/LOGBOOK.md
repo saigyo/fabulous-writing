@@ -2847,8 +2847,11 @@ the config-only `auth.allow_additional_admins` switch never reachable
 through the API. `app/services/seed_admin.py` plus `create_app` wiring
 bootstrap the first admin from `FW_ADMIN_EMAIL`/`FW_ADMIN_PASSWORD` only
 while `users` is empty; startup fails closed on a missing/short secret,
-missing/short bootstrap credentials, or a non-local `auth.mode`, checked
-before any table is created. `app/manage.py` — the operator CLI (`python -m
+missing/short bootstrap credentials, or a non-local `auth.mode` — only the
+last of which is checked before the auth-owned tables (`users`,
+`admin_audit`) are created; the terminology, document, folder and profile
+stores create their own tables earlier still. `app/manage.py` — the
+operator CLI (`python -m
 app.manage`) for password and access recovery without a working web
 session; passwords are never accepted as argv arguments; every CLI mutation
 is audited with `actor_id=None`.
