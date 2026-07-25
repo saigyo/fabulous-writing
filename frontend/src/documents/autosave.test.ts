@@ -5,6 +5,8 @@ import { useStore } from '../state/store'
 import { readSnapshot, clearSnapshot } from './buffer'
 import {
   beginHydration,
+  bumpGeneration,
+  cancelDebounce,
   endHydration,
   flush,
   noteChange,
@@ -25,6 +27,8 @@ import { generateDocumentName, updateDocument } from '../api/client'
 
 let docText = 'hello world'
 
+const USER = { id: 1, email: 'ada@example.com', display_name: null, tier: 'basic', is_admin: false }
+
 function seedStore(): void {
   useStore.getState().setDocMeta({ id: 5, name: 'Doc', nameSource: 'user', revision: 2 })
   useStore.getState().setDocuments([
@@ -39,6 +43,7 @@ function seedStore(): void {
       updated_at: '2026-07-10T00:00:00+00:00',
     },
   ])
+  useStore.setState({ user: USER })
 }
 
 function serverDoc(revision: number) {
@@ -231,5 +236,67 @@ describe('autosave', () => {
     await vi.advanceTimersByTimeAsync(2000) // the scheduled retry fires
     expect(updateDocument).toHaveBeenCalledTimes(2)
     expect(readSnapshot()?.dirty).toBe(false)
+  })
+})
+
+describe('ownership', () => {
+  it('stamps the snapshot with the signed-in user id', () => {
+    noteChange()
+    expect(readSnapshot()?.ownerId).toBe(1)
+  })
+
+  it('collects nothing without a signed-in user, same as a missing docMeta', () => {
+    useStore.setState({ user: null })
+    noteChange()
+    expect(readSnapshot()).toBeNull()
+  })
+})
+
+describe('invalidation (logout / expiry mid-flight)', () => {
+  it('a push already in flight when the session ends does not write the buffer back', async () => {
+    let resolveFirst!: (value: unknown) => void
+    vi.mocked(updateDocument).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirst = resolve
+        }) as never,
+    )
+
+    void flush() // save starts and is now in flight
+    expect(updateDocument).toHaveBeenCalledTimes(1)
+
+    bumpGeneration() // simulates logout()/expireSession() firing mid-flight
+
+    resolveFirst(serverDoc(3))
+    await vi.advanceTimersByTimeAsync(0)
+
+    // The completion must not have rewritten the buffer or docMeta: both
+    // still reflect the state from before the (now-stale) push resolved.
+    expect(readSnapshot()?.dirty).toBe(true)
+    expect(useStore.getState().docMeta?.revision).toBe(2)
+  })
+
+  it('a push that fails after the session ends does not schedule a retry', async () => {
+    let rejectFirst!: (reason?: unknown) => void
+    vi.mocked(updateDocument).mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectFirst = reject
+        }) as never,
+    )
+
+    void flush()
+    bumpGeneration()
+    rejectFirst(new TypeError('offline'))
+    await vi.advanceTimersByTimeAsync(60000)
+
+    expect(updateDocument).toHaveBeenCalledTimes(1) // no retry fired
+  })
+
+  it('cancelDebounce cancels a pending debounced save', async () => {
+    noteChange()
+    cancelDebounce()
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(updateDocument).not.toHaveBeenCalled()
   })
 })

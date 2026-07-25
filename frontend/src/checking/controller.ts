@@ -1,4 +1,5 @@
 import { postCheck, subscribeCheck } from '../api/client'
+import { setCancelCheckHandler } from '../auth/session'
 import { flush } from '../documents/autosave'
 import { getEditorView } from '../editor/editorRef'
 import { mergeFindingsEffect } from '../editor/findings'
@@ -19,6 +20,11 @@ export function cancelCheck(): void {
   currentCheckId = null
   useStore.setState({ checkPhase: 'idle', llmStartedAt: null, llmTokens: null })
 }
+
+// Registered at load so session.ts can abort a running check on logout or
+// expiry without importing this module (that would recreate the cycle the
+// injection idiom exists to break — see session.ts).
+setCancelCheckHandler(cancelCheck)
 
 /**
  * Run a check on the current editor text. Fast findings (rules/terminology)

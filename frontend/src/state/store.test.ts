@@ -1,8 +1,9 @@
+// @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { HeldBackSuggestion } from '../api/client'
 import type { TrackedFinding } from '../editor/findings'
 import type { Finding } from '../types'
-import { persistConfig, useStore } from './store'
+import { persistConfig, resetSessionState, useStore } from './store'
 
 function tracked(id: string, from: number, to: number, text: string): TrackedFinding {
   const finding: Finding = {
@@ -207,5 +208,85 @@ describe('document state', () => {
     )
     expect((migrated as any).uiLocale).toBe('de')
     expect(persistConfig.version).toBe(2)
+  })
+
+  it('persists the token but never the user object', () => {
+    const persisted = persistConfig.partialize({
+      ...useStore.getState(),
+      token: 'a-token',
+      user: { id: 1, email: 'ada@example.com', tier: 'basic', is_admin: false },
+    } as never) as Record<string, unknown>
+    expect(persisted.token).toBe('a-token')
+    expect(persisted.user).toBeUndefined()
+  })
+})
+
+describe('resetSessionState', () => {
+  it('resets the whole data half of the store, not just the persisted blob', () => {
+    useStore.setState({
+      tracked: [tracked('dirty', 0, 4, 'very')],
+      documents: [summary(9, 'Dirty doc', '2026-07-11T00:00:00+00:00')],
+      folders: [{ id: 1, name: 'Dirty folder', created_at: '' }] as never[],
+      docMeta: { id: 9, name: 'Dirty doc', nameSource: 'user', revision: 3 },
+      scorecard: { overall: 10 } as never,
+      rewrites: { f1: { original: 'x', options: ['y'] } },
+      uiLocale: 'de',
+      currentDocId: 9,
+    })
+    resetSessionState()
+    const state = useStore.getState()
+    expect(state.tracked).toEqual([])
+    expect(state.documents).toEqual([])
+    expect(state.folders).toEqual([])
+    expect(state.docMeta).toBeNull()
+    expect(state.scorecard).toBeNull()
+    expect(state.rewrites).toEqual({})
+    expect(state.uiLocale).toBeNull()
+    expect(state.currentDocId).toBeNull()
+  })
+})
+
+describe('setAuth', () => {
+  const user = {
+    id: 1,
+    email: 'ada@example.com',
+    display_name: null,
+    tier: 'basic',
+    is_admin: false,
+  }
+
+  beforeEach(() => {
+    useStore.setState({
+      token: null,
+      user: null,
+      authStatus: 'unknown',
+      sessionExpired: false,
+      restoreFailed: false,
+    })
+  })
+
+  it('derives authenticated when both token and user are present', () => {
+    useStore.getState().setAuth('tok', user)
+    const state = useStore.getState()
+    expect(state.authStatus).toBe('authenticated')
+    expect(state.token).toBe('tok')
+    expect(state.user).toEqual(user)
+  })
+
+  it('derives anonymous when either is missing', () => {
+    useStore.getState().setAuth(null, null)
+    expect(useStore.getState().authStatus).toBe('anonymous')
+  })
+
+  it('leaves sessionExpired untouched', () => {
+    useStore.setState({ sessionExpired: true })
+    useStore.getState().setAuth('tok', user)
+    expect(useStore.getState().sessionExpired).toBe(true)
+  })
+
+  it('always clears restoreFailed', () => {
+    useStore.setState({ restoreFailed: true })
+    useStore.getState().setAuth(null, null)
+    expect(useStore.getState().restoreFailed).toBe(false)
   })
 })

@@ -1,6 +1,12 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { DocumentSummary, Folder, HeldBackSuggestion, NameSource } from '../api/client'
+import type {
+  DocumentSummary,
+  Folder,
+  HeldBackSuggestion,
+  MeResponse,
+  NameSource,
+} from '../api/client'
 import type { TrackedFinding } from '../editor/findings'
 import { mapEquivalentIds } from '../findings/equivalence'
 import type { SourceGroup } from '../findings/source'
@@ -29,7 +35,11 @@ export interface DocMeta {
   revision: number
 }
 
-interface AppState {
+// Data fields only; actions live in AppStateActions below. The split lets
+// INITIAL_DATA (further down) be typed against AppStateData alone, so
+// resetSessionState() can restore every data field without enumerating them
+// and without also having to know about the actions.
+interface AppStateData {
   language: Language
   // UI display language; null = follow the browser locale.
   uiLocale: Locale | null
@@ -87,6 +97,22 @@ interface AppState {
   // Collapsed folder groups in the document sidebar (folder ids).
   docFoldersCollapsed: number[]
 
+  // Auth. token is the only one of these five persisted (see partialize
+  // below); user is re-fetched from /api/auth/me on every load rather than
+  // cached, so it can never go stale (stale tier/is_admin flags).
+  token: string | null
+  user: MeResponse | null
+  authStatus: 'unknown' | 'anonymous' | 'authenticated'
+  // Set only by expireSession(), cleared only by login(): see session.ts.
+  sessionExpired: boolean
+  // Set when restoreSession() fails to reach the server (not a 401):
+  // authStatus stays 'unknown' rather than logging the user out. Cleared by
+  // every setAuth call, since reaching a resolved auth state at all means
+  // the server answered.
+  restoreFailed: boolean
+}
+
+interface AppStateActions {
   setLanguage: (language: Language) => void
   setUiLocale: (uiLocale: Locale) => void
   setDomainIds: (domainIds: number[]) => void
@@ -132,7 +158,15 @@ interface AppState {
   setDocListError: (docListError: boolean) => void
   setFolders: (folders: Folder[]) => void
   toggleFolderCollapsed: (id: number) => void
+  // authStatus is derived: 'authenticated' when both token and user are
+  // present, 'anonymous' otherwise. sessionExpired is deliberately left
+  // untouched here — only expireSession() sets it and only login() clears
+  // it (see session.ts), so a re-login after an expiry does not race this
+  // setter.
+  setAuth: (token: string | null, user: MeResponse | null) => void
 }
+
+type AppState = AppStateData & AppStateActions
 
 export interface Rewrite {
   original: string
@@ -174,6 +208,11 @@ function migrateByFinding<T>(
 // Persist options shared with tests: zustand v5 gives tests no handle on the
 // inline options, so the SAME object is exported (never a copy — a copy can
 // silently drift from what the store actually runs).
+//
+// token was added to the allowlist without a version bump: an older blob
+// simply lacks the key, and token: null is the correct initial value, so
+// there is nothing for a migrate branch to do. user is deliberately never
+// persisted — see the field's own comment.
 export const persistConfig = {
   name: 'fabulous-writing-settings',
   version: 2,
@@ -193,56 +232,87 @@ export const persistConfig = {
     currentDocId: state.currentDocId,
     docSidebarCollapsed: state.docSidebarCollapsed,
     docFoldersCollapsed: state.docFoldersCollapsed,
+    token: state.token,
   }),
+}
+
+// Every AppStateData field except the five auth fields (token, user,
+// authStatus, sessionExpired, restoreFailed) — those are set explicitly by
+// every resetSessionState() caller right afterwards (see session.ts), never
+// through this object. Exported (rather than enumerated again inside
+// resetSessionState()) so a field added here is reset automatically instead
+// of silently leaking from one account's session into the next.
+export const INITIAL_DATA: Omit<
+  AppStateData,
+  'token' | 'user' | 'authStatus' | 'sessionExpired' | 'restoreFailed'
+> = {
+  language: 'en',
+  uiLocale: null,
+  domainIds: [],
+  provider: 'ollama',
+  model: null,
+  tier: 'balanced',
+  llmAuto: true,
+  activeView: 'editor',
+  tracked: [],
+  selectedId: null,
+  severityFilter: null,
+  sourceFilter: null,
+  checkPhase: 'idle',
+  llmError: null,
+  llmStartedAt: null,
+  llmTokens: null,
+  providers: [],
+  routing: null,
+  domains: [],
+  languages: FALLBACK_LANGUAGES,
+  profiles: [],
+  profileId: null,
+  lastProfileByLanguage: {},
+  rulesCollapsed: [],
+  scorecard: null,
+  scorecardStale: false,
+  docWords: 0,
+  extraSuggestions: {},
+  suggestPendingId: null,
+  suggestErrors: {},
+  suggestHeldBack: {},
+  suggestAdvice: {},
+  rewrites: {},
+  rewritePendingId: null,
+  rewriteErrors: {},
+  rewriteHeldBack: {},
+  rewriteAdvice: {},
+  documents: [],
+  docMeta: null,
+  currentDocId: null,
+  docSidebarCollapsed: false,
+  docListError: false,
+  folders: [],
+  docFoldersCollapsed: [],
+}
+
+/** Resets the whole data half of the store — not just the persisted blob.
+ * Most of the store (tracked findings, documents, folders, scorecard, ...)
+ * is never persisted and so is invisible to `persist.clearStorage()` alone;
+ * left alone it would survive a gate swap and render the previous account's
+ * data until async initialisation replaces it (or forever, if that
+ * initialisation fails). Called on logout, on session expiry, and on a
+ * login that changes the user — see session.ts for which. */
+export function resetSessionState(): void {
+  useStore.persist.clearStorage()
+  useStore.setState(INITIAL_DATA) // shallow merge: the actions survive
 }
 
 export const useStore = create<AppState>()(
   persist(
     (set) => ({
-      language: 'en',
-      uiLocale: null,
-      domainIds: [],
-      provider: 'ollama',
-      model: null,
-      tier: 'balanced',
-      llmAuto: true,
-      activeView: 'editor',
-      tracked: [],
-      selectedId: null,
-      severityFilter: null,
-      sourceFilter: null,
-      checkPhase: 'idle',
-      llmError: null,
-      llmStartedAt: null,
-      llmTokens: null,
-      providers: [],
-      routing: null,
-      domains: [],
-      languages: FALLBACK_LANGUAGES,
-      profiles: [],
-      profileId: null,
-      lastProfileByLanguage: {},
-      rulesCollapsed: [],
-      scorecard: null,
-      scorecardStale: false,
-      docWords: 0,
-      extraSuggestions: {},
-      suggestPendingId: null,
-      suggestErrors: {},
-      suggestHeldBack: {},
-      suggestAdvice: {},
-      rewrites: {},
-      rewritePendingId: null,
-      rewriteErrors: {},
-      rewriteHeldBack: {},
-      rewriteAdvice: {},
-      documents: [],
-      docMeta: null,
-      currentDocId: null,
-      docSidebarCollapsed: false,
-      docListError: false,
-      folders: [],
-      docFoldersCollapsed: [],
+      ...INITIAL_DATA,
+      token: null,
+      user: null,
+      authStatus: 'unknown',
+      sessionExpired: false,
+      restoreFailed: false,
 
       setLanguage: (language) => set({ language }),
       setUiLocale: (uiLocale) => set({ uiLocale }),
@@ -365,6 +435,13 @@ export const useStore = create<AppState>()(
             ? state.docFoldersCollapsed.filter((f) => f !== id)
             : [...state.docFoldersCollapsed, id],
         })),
+      setAuth: (token, user) =>
+        set({
+          token,
+          user,
+          authStatus: token && user ? 'authenticated' : 'anonymous',
+          restoreFailed: false,
+        }),
     }),
     persistConfig,
   ),
