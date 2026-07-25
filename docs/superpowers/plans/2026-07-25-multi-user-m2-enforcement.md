@@ -70,6 +70,12 @@ them to nothing.
   npm run lint && npm run build` all pass.
 - A plain `uv run pytest` goes through a filtering proxy that hides FAILED
   lines. Use `rtk proxy uv run pytest -q` when you need the true list.
+- **One home per requirement.** Where a snippet and prose describe the same
+  behaviour, the **snippet is canonical** and the prose explains only *why*.
+  Seven rounds of review on this document kept finding the same defect shape:
+  a fix landed in the prose and the snippet still said the old thing, or the
+  reverse. Implementers transcribe snippets. If you change one, check whether
+  prose nearby now disagrees.
 
 ## Decisions this plan makes
 
@@ -482,10 +488,11 @@ EOF
 buffer — and conflating them destroys unsaved work, so they are separate
 exports rather than one function with a flag. Task 4 calls `expireSession()`,
 never `logout()`.
-- `MeResponse` is a **new frontend type** mirroring the backend's response —
-  `{ id: number; email: string; display_name: string | null; tier: string;
-  is_admin: boolean }` — declared in `client.ts` beside the other response
-  types. M4 and M5 extend this same type rather than adding a second one.
+
+`MeResponse` is a **new frontend type** mirroring the backend's response —
+`{ id: number; email: string; display_name: string | null; tier: string;
+is_admin: boolean }` — declared in `client.ts` beside the other response types.
+M4 and M5 extend this same type rather than adding a second one.
 
 **Design note:** `authStatus` starts at `'unknown'` rather than `'anonymous'`
 so the gate can render nothing (not a login form) during the initial
@@ -665,7 +672,7 @@ export async function login(email: string, password: string): Promise<boolean> {
 export function logout(): void {
   generation++
   invalidateDocumentWork()   // first: pending saves must not write the buffer back
-  resetCheckState()
+  cancelInFlightCheck()
   resetSessionState()
   clearSnapshot()
   clearLegacyText()
@@ -678,7 +685,7 @@ export function logout(): void {
 export function expireSession(): void {
   generation++
   invalidateDocumentWork()   // the buffer survives; the work that rewrites it must not
-  resetCheckState()
+  cancelInFlightCheck()
   resetSessionState()
   useStore.setState({ sessionExpired: true })
   useStore.getState().setAuth(null, null)
@@ -712,18 +719,20 @@ screen with no way forward. `LoginGate` (Task 7) renders a short
 "cannot reach the server" message and a retry button that calls
 `restoreSession()` again; a successful retry clears the flag.
 
-`resetCheckState()` clears `checkPhase`, `llmStartedAt` and `llmTokens` and
-cancels any in-flight subscription. The store is module-level and survives the
-gate swap, so a check that was running when the token expired would otherwise
-leave the Check button disabled after signing back in. **Do not import
-`controller.ts` to get `cancelCheck()`** — see the import-direction note below.
+`cancelInFlightCheck()` aborts a running check's subscription — and only that.
+`checkPhase`, `llmStartedAt` and `llmTokens` are part of `INITIAL_DATA`, so
+`resetSessionState()` already restores them; a second helper writing the same
+three fields is how the two drift apart. The cancellation still has to happen,
+because the store survives the gate swap and a check that was running when the
+token expired would otherwise leave the Check button disabled after signing
+back in. **Do not import `controller.ts` to get `cancelCheck()`** — see the
+import-direction note below.
 
 `discardForeignBuffer(userId)` calls `clearSnapshot()` unless the stored
-snapshot's `ownerId` equals `userId` — and in that same foreign-or-unowned
-branch also calls `clearLegacyText()`, because `fabulous-writing-text` carries
-no owner marker and would otherwise be imported into the new account (see the
-legacy-key paragraph below). `clearLegacyText()` removes `LEGACY_TEXT_KEY` and
-is exported from `documents.ts`, which already owns the constant.
+snapshot's `ownerId` equals `userId`, and in that same foreign-or-unowned
+branch also calls `clearLegacyText()` — which removes `LEGACY_TEXT_KEY` and is
+exported from `documents.ts`, the module that owns the constant. The
+legacy-key paragraph below says why that key needs clearing at all.
 
 **`restoreSession()` must be idempotent while in flight.** Hold the in-flight
 promise in a module-level variable and return it if a restore is already
@@ -746,18 +755,15 @@ export function setUnauthorizedHandler(fn: () => void): void { onUnauthorized = 
 ```
 
 `session.ts` registers `expireSession` at module load. Apply the same idiom for
-`resetCheckState()` rather than importing `controller.ts`.
+`cancelInFlightCheck()` rather than importing `controller.ts`.
 
-`resetSessionState()` clears the persisted blob so a previous user's
-`currentDocId`, `lastProfileByLanguage` and collapse states do not leak into
-the next session on a shared browser. Purge on **login** as well as logout:
-logout is not guaranteed to have happened — a token can simply expire, and the
-next person may log in on the same browser.
-
-Clearing must not fight the persist middleware, which re-writes on the next
-state change. That is why `resetSessionState()` goes through zustand's
-`persist` API (`useStore.persist.clearStorage()`) rather than touching
-`localStorage` directly, and resets the in-memory fields in the same action.
+`resetSessionState()` runs on **logout**, on **expiry**, and on a login that
+**changes the user** — not on every login. It carries login at all because
+logout is not guaranteed to have happened: a token can simply expire and the
+next person signs in on the same browser, and a previous user's `currentDocId`,
+`lastProfileByLanguage` and collapse states must not follow them. But
+re-authenticating as the *same* person must leave those alone, which is what
+Task 8's silent re-login does after a password change.
 
 **There is a second localStorage key, and it is the one that actually matters.**
 `fabulous-writing-doc-buffer` (`documents/buffer.ts`) is a write-through cache
@@ -777,7 +783,7 @@ turn an expired token into data loss. The three paths differ:
 |---|---|---|
 | Explicit **log out** | cleared | **cleared** — deliberate exit, and the machine may be handed over |
 | **401 / session expiry** | cleared | **kept** — the same user is almost certainly coming back |
-| **Login** | cleared | cleared **only if it belongs to someone else** |
+| **Login** | cleared **only on a user change** | cleared **only if it belongs to someone else** |
 
 **And a third content-bearing key, which nothing currently clears.**
 `LEGACY_TEXT_KEY = 'fabulous-writing-text'` (`documents.ts:23`) is the
@@ -787,10 +793,10 @@ but **deliberately kept when the legacy import cannot reach the backend**
 has looked at it, and a later account with no documents would import the
 previous user's text.
 
-It carries no owner marker, so treat it as unowned: clear it on **explicit
-logout**, and on **login** whenever the document snapshot is foreign or
-unowned. Test the failed-migration handoff — leave the key in place, log out,
-log in as another user, and assert the text does not appear.
+It carries no owner marker, so it can only be treated as unowned — which is
+why `logout()` and `discardForeignBuffer()` above both clear it. Test the
+failed-migration handoff: leave the key in place, log out, log in as another
+user, and assert the text does not appear.
 
 To make that last row decidable, add **`ownerId?: number`** to `DocSnapshot` —
 optional-property syntax, not `ownerId: number | undefined`, which TypeScript
@@ -831,19 +837,11 @@ Add a module-level session generation to the document layer: an exported
 already `cancelRetry()`, `autosave.ts:222`) and bumps a counter. Every deferred
 write — the autosave push completion, the retry, `initDocuments`' post-`await`
 writes — captures the counter when it starts and no-ops if it has changed.
-`logout()` and `expireSession()` both call it, before clearing storage.
 
 Test the handoff with work genuinely in flight: start a save, log out before it
 resolves, and assert nothing is written afterwards; and start
 `initDocuments()`, log out mid-flight, log in as another user, and assert the
 first user's content never appears.
-
-**Also reset transient check state on logout.** The store is module-level and
-survives the gate swap, so a check that was running when the token expired
-would leave `checkPhase` at `'running'` — and the Check button disabled — after
-signing back in. `logout()` should reset `checkPhase`, `llmStartedAt` and
-`llmTokens`, and cancel any in-flight subscription, the way `cancelCheck()`
-already does.
 
 Add `postLogin` and `getMe` to the api client as ordinary `request()` calls.
 
@@ -1444,7 +1442,6 @@ Append to each locale file, before the closing brace:
 
 The parity test fails if any locale is missing a key, which is the check that
 this task is complete.
-Keep the wording plain and short — these are UI strings, not documentation.
 
 - [ ] **Step 3: Run the parity test**
 
@@ -1660,7 +1657,9 @@ Change it so the endpoint returns:
 
 Wrong-current-password is a validation failure of the submitted body, not a
 failure to authenticate the request — the bearer token authenticated fine — so
-422 is the honest code and matches spec §7.2's "422 validation". Update the M1 tests in `tests/test_auth_api.py` that assert the old 401 and the
+422 is the honest code and matches spec §7.2's "422 validation".
+
+Update the M1 tests in `tests/test_auth_api.py` that assert the old 401 and the
 old string detail; the frontend never displays server messages, so the `code`
 is purely for branching.
 
@@ -1726,8 +1725,8 @@ Resolution (owner's decision, 2026-07-25): **the client re-authenticates
 silently.** On 204, call `login(currentUserEmail, newPassword)` before showing
 `passwordChanged`. The form already holds the new password, no backend or spec
 change is needed, and sessions on *other* devices still get evicted — which is
-the entire point of the revocation. If that re-login fails, fall through to the
-normal expiry path rather than leaving the UI claiming success.
+the entire point of the revocation. The failure path is above: `expireSession()`,
+not an error message.
 
 **Guard the completion against a session that changed underneath it — at both
 await points.** The popover stays dismissible while the request is in flight,
@@ -2156,9 +2155,11 @@ Also update two documents this milestone invalidates:
   changes that return type to `VerifiedToken`. Update all three, keeping the
   local-id guarantee explicit — it is still true, and it is the guarantee the
   future Supabase implementation is written against. Leaving the spec
-  contradicting the code would mislead exactly the reader it exists for. In `docs/frontend-architecture.md`: the auth slice, the gate,
-where the Bearer header is attached, the fetch-based SSE reader and why
-`EventSource` was replaced, and the purge-on-user-change rule.
+  contradicting the code would mislead exactly the reader it exists for.
+
+Record in `docs/frontend-architecture.md`: the auth slice, the gate, where the
+Bearer header is attached, the fetch-based SSE reader and why `EventSource` was
+replaced, and the purge-on-user-change rule.
 
 State explicitly that data is **not** owner-scoped yet and that M3 does it.
 
