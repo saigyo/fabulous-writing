@@ -55,6 +55,18 @@ def resolve_auth_secret(
 
 SELF_MIN_PASSWORD_LENGTH = 8
 ADMIN_SET_MIN_PASSWORD_LENGTH = 12
+MAX_PASSWORD_BYTES = 72  # bcrypt's hard input limit, not a policy choice
+
+
+def _encode_password(password: str) -> bytes:
+    """Encode password to bytes, truncating to bcrypt's 72-byte limit.
+
+    Every write path (hash_password) validates first, so truncation is only
+    ever reached by an unvalidated login attempt — which cannot match a
+    stored hash it did not create.
+    """
+    encoded = password.encode()
+    return encoded[:MAX_PASSWORD_BYTES]
 
 
 @lru_cache(maxsize=1)
@@ -73,16 +85,25 @@ def hash_password(password: str) -> str:
     # per call and stores it inside the resulting hash string
     # ($2b$<cost>$<22-char salt><hash>), so two identical passwords never
     # produce the same hash. No separate salt column is needed — or wanted.
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    return bcrypt.hashpw(_encode_password(password), bcrypt.gensalt()).decode()
 
 
 def check_password(password: str, password_hash: str | None) -> bool:
-    candidate = password_hash if password_hash else _dummy_hash()
-    matched = bcrypt.checkpw(password.encode(), candidate.encode())
-    return matched and password_hash is not None
+    # Treat both None and empty string as "no hash stored".
+    if not password_hash:
+        candidate = _dummy_hash()
+    else:
+        candidate = password_hash
+    matched = bcrypt.checkpw(_encode_password(password), candidate.encode())
+    # Return True only if match succeeds AND a real hash was present.
+    return matched and bool(password_hash)
 
 
 def validate_password(password: str, *, min_length: int) -> str:
+    # Minimum is counted in characters (policy constraint); maximum in bytes
+    # (bcrypt's technical limit).
     if len(password) < min_length:
         raise ValueError(f"Password must be at least {min_length} characters")
+    if len(password.encode()) > MAX_PASSWORD_BYTES:
+        raise ValueError(f"Password must be at most {MAX_PASSWORD_BYTES} bytes")
     return password

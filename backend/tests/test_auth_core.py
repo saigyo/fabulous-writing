@@ -71,3 +71,35 @@ def test_password_length_rules():
         validate_password("1234567", min_length=SELF_MIN_PASSWORD_LENGTH)
     with pytest.raises(ValueError, match="at least 12"):
         validate_password("12345678", min_length=ADMIN_SET_MIN_PASSWORD_LENGTH)
+
+
+def test_password_byte_limit():
+    # Password with multi-byte character to exercise byte-vs-character distinction.
+    # 'あ' is 3 bytes in UTF-8, so "あ" * 25 = 75 bytes, exceeds bcrypt's 72-byte limit.
+    over_long = "あ" * 25
+    assert len(over_long) == 25  # 25 characters
+    assert len(over_long.encode()) == 75  # but 75 bytes
+    with pytest.raises(ValueError, match="at most 72 bytes"):
+        validate_password(over_long, min_length=SELF_MIN_PASSWORD_LENGTH)
+
+
+def test_check_password_with_over_long_input_returns_false():
+    over_long = "あ" * 25  # 75 bytes, exceeds bcrypt limit
+    # Against a real stored hash: must return False, not raise
+    stored = hash_password("correct horse battery")
+    assert check_password(over_long, stored) is False
+    # Against None (timing-equalisation path): must return False, not raise
+    assert check_password(over_long, None) is False
+
+
+def test_hash_password_with_over_long_input_does_not_raise():
+    over_long = "あ" * 25  # 75 bytes, exceeds bcrypt limit
+    # Must not raise; should be safe to call
+    result = hash_password(over_long)
+    assert result is not None
+    assert isinstance(result, str)
+
+
+def test_check_password_with_empty_string_hash_returns_false():
+    # Empty-string password_hash must return False and not crash.
+    assert check_password("any password", "") is False
