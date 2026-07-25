@@ -81,7 +81,8 @@ reading the tasks:
    Purging is simpler, keeps localStorage bounded on a shared browser, and has
    no failure mode where a stale namespace resurfaces. The cost is that
    per-user UI preferences do not survive a logout, which is acceptable for the
-   six persisted keys involved.
+   six persisted keys involved. The *document* buffer is treated separately —
+   see Task 3; purging it on expiry would turn an expired token into data loss.
 2. **Frontend before backend.** Tasks 3–8 build auth state, the Bearer header,
    the SSE reader, the gate and the account menu while the backend still allows
    anonymous access; Tasks 9–10 then enforce. The app therefore works at every
@@ -106,7 +107,8 @@ reading the tasks:
 | `backend/app/services/users.py` (modify) | `password_changed_at` column, written by `set_password`. |
 | `backend/app/api/deps.py` (modify) | Reject a token issued before `password_changed_at`. |
 | `backend/tests/conftest.py` (modify) | Shared `authed_client` fixture so ten test files stop hand-rolling tokens. |
-| `frontend/src/state/store.ts` (modify) | Auth slice (`token`, `user`, `authStatus`); persist purge on user change. |
+| `frontend/src/state/store.ts` (modify) | Auth slice (`token`, `user`, `authStatus`, `sessionExpired`); persist purge on user change. |
+| `frontend/src/documents/buffer.ts` (modify) | `ownerId` on `DocSnapshot`, so the document buffer can be cleared for a different user without destroying the owner's unsaved work. |
 | `frontend/src/api/client.ts` (modify) | Bearer header in `request()`; `HttpError` unchanged in shape; `subscribeCheck` rewritten on `fetch` + `AbortController`. |
 | `frontend/src/auth/LoginGate.tsx` (new) | Full-screen gate replacing the app shell while unauthenticated. |
 | `frontend/src/auth/LoginForm.tsx` (new) | Email/password form, inline error handling. |
@@ -428,8 +430,13 @@ Create `frontend/src/auth/session.test.ts` covering:
 - `login()` with bad credentials leaves `authStatus` at `'anonymous'` and
   propagates the error to the caller rather than swallowing it (the form
   renders it inline);
-- `logout()` clears token, user, **and the persisted settings blob**, then sets
-  `'anonymous'`;
+- `logout()` clears token, user, the persisted settings blob **and the document
+  buffer**, resets `checkPhase`, then sets `'anonymous'`;
+- the 401/expiry path clears the settings blob but **keeps** the document
+  buffer, so unsaved work survives signing back in;
+- `login()` clears a document buffer belonging to a different `ownerId`, and
+  keeps one belonging to the user signing in;
+- a buffer with no `ownerId` (written by an older build) is cleared on login;
 - `restoreSession()` with no token sets `'anonymous'` without calling the API;
 - `restoreSession()` with a token that the server rejects (401) clears state
   and sets `'anonymous'`.
@@ -474,10 +481,44 @@ the next session on a shared browser. Purge on **login** as well as logout:
 logout is not guaranteed to have happened — a token can simply expire, and the
 next person may log in on the same browser.
 
-Note that clearing must not fight the persist middleware, which re-writes on
-the next state change. Clear via zustand's `persist` API
+Clearing must not fight the persist middleware, which re-writes on the next
+state change. Clear via zustand's `persist` API
 (`useStore.persist.clearStorage()`) rather than touching `localStorage`
 directly, and reset the in-memory fields the blob owns in the same action.
+
+**There is a second localStorage key, and it is the one that actually matters.**
+`fabulous-writing-doc-buffer` (`documents/buffer.ts`) is a write-through cache
+of the *whole current document* — `text`, name, findings, scorecard — written
+by `noteChange()` on every keystroke, before any network call. It is not part
+of the zustand blob, so `persist.clearStorage()` does not touch it. Leaving it
+alone would let one user's unsaved document text be restored into the next
+user's session on a shared browser, which is exactly what spec §8 forbids
+("any future content-bearing persisted field must not survive into another
+user's session").
+
+It cannot simply be purged alongside the settings, though: that same buffer is
+what preserves unsaved work across a session expiry, and destroying it would
+turn an expired token into data loss. The three paths differ:
+
+| Path | Settings blob | Document buffer |
+|---|---|---|
+| Explicit **log out** | cleared | **cleared** — deliberate exit, and the machine may be handed over |
+| **401 / session expiry** | cleared | **kept** — the same user is almost certainly coming back |
+| **Login** | cleared | cleared **only if it belongs to someone else** |
+
+To make that last row decidable, add `ownerId: number` to `DocSnapshot` and
+write it wherever snapshots are written. On login, read the snapshot and call
+`clearSnapshot()` unless `ownerId === user.id`. A snapshot written by an older
+build has no `ownerId`; treat that as unknown and clear it — failing safe costs
+one document's unsaved buffer once, while failing open leaks text across
+accounts.
+
+**Also reset transient check state on logout.** The store is module-level and
+survives the gate swap, so a check that was running when the token expired
+would leave `checkPhase` at `'running'` — and the Check button disabled — after
+signing back in. `logout()` should reset `checkPhase`, `llmStartedAt` and
+`llmTokens`, and cancel any in-flight subscription, the way `cancelCheck()`
+already does.
 
 Add `postLogin` and `getMe` to the api client as ordinary `request()` calls.
 
@@ -787,7 +828,8 @@ Append to each locale file, before the closing brace:
   signInPending: 'Signing in…',
   signInInvalid: 'Wrong email or password.',
   signInFailed: 'Sign-in failed. Please try again.',
-  sessionExpired: 'Your session has ended. Please sign in again.',
+  sessionExpired:
+    'Your session has ended. Please sign in again — unsaved changes have been kept.',
   accountMenu: 'Account',
   accountChangePassword: 'Change password',
   accountLogOut: 'Log out',
@@ -814,7 +856,8 @@ Append to each locale file, before the closing brace:
   signInPending: 'Meldet an…',
   signInInvalid: 'E-Mail oder Passwort ist falsch.',
   signInFailed: 'Anmeldung fehlgeschlagen. Bitte erneut versuchen.',
-  sessionExpired: 'Die Sitzung ist beendet. Bitte erneut anmelden.',
+  sessionExpired:
+    'Die Sitzung ist beendet. Bitte erneut anmelden — ungespeicherte Änderungen bleiben erhalten.',
   accountMenu: 'Konto',
   accountChangePassword: 'Passwort ändern',
   accountLogOut: 'Abmelden',
@@ -841,7 +884,8 @@ Append to each locale file, before the closing brace:
   signInPending: 'Connexion…',
   signInInvalid: 'E-mail ou mot de passe incorrect.',
   signInFailed: 'Échec de la connexion. Veuillez réessayer.',
-  sessionExpired: 'Votre session a pris fin. Veuillez vous reconnecter.',
+  sessionExpired:
+    'Votre session a pris fin. Veuillez vous reconnecter — les modifications non enregistrées ont été conservées.',
   accountMenu: 'Compte',
   accountChangePassword: 'Changer le mot de passe',
   accountLogOut: 'Se déconnecter',
@@ -869,7 +913,8 @@ Append to each locale file, before the closing brace:
   signInPending: 'Iniciando sesión…',
   signInInvalid: 'Correo electrónico o contraseña incorrectos.',
   signInFailed: 'No se pudo iniciar sesión. Vuelva a intentarlo.',
-  sessionExpired: 'La sesión ha finalizado. Inicie sesión de nuevo.',
+  sessionExpired:
+    'La sesión ha finalizado. Inicie sesión de nuevo: los cambios sin guardar se han conservado.',
   accountMenu: 'Cuenta',
   accountChangePassword: 'Cambiar contraseña',
   accountLogOut: 'Cerrar sesión',
@@ -896,7 +941,8 @@ Append to each locale file, before the closing brace:
   signInPending: 'Accesso in corso…',
   signInInvalid: 'E-mail o password non corretti.',
   signInFailed: 'Accesso non riuscito. Riprova.',
-  sessionExpired: 'La sessione è terminata. Effettua di nuovo l’accesso.',
+  sessionExpired:
+    'La sessione è terminata. Effettua di nuovo l’accesso: le modifiche non salvate sono state conservate.',
   accountMenu: 'Account',
   accountChangePassword: 'Cambia password',
   accountLogOut: 'Esci',
@@ -923,7 +969,8 @@ Append to each locale file, before the closing brace:
   signInPending: 'ログインしています…',
   signInInvalid: 'メールアドレスまたはパスワードが正しくありません。',
   signInFailed: 'ログインに失敗しました。もう一度お試しください。',
-  sessionExpired: 'セッションが終了しました。もう一度ログインしてください。',
+  sessionExpired:
+    'セッションが終了しました。もう一度ログインしてください。未保存の変更は保持されています。',
   accountMenu: 'アカウント',
   accountChangePassword: 'パスワードを変更',
   accountLogOut: 'ログアウト',
@@ -950,7 +997,7 @@ Append to each locale file, before the closing brace:
   signInPending: '正在登录…',
   signInInvalid: '邮箱或密码不正确。',
   signInFailed: '登录失败，请重试。',
-  sessionExpired: '会话已结束，请重新登录。',
+  sessionExpired: '会话已结束，请重新登录。未保存的更改已保留。',
   accountMenu: '账户',
   accountChangePassword: '修改密码',
   accountLogOut: '退出登录',
