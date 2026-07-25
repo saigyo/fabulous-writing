@@ -334,8 +334,16 @@ def test_changing_the_password_invalidates_tokens_issued_before_it(probe):
     assert client.get("/probe/user", headers=stale).status_code == 200
     store.set_password(user.id, "a replacement password")
     assert client.get("/probe/user", headers=stale).status_code == 401
-    # A token issued after the change still works.
-    assert client.get("/probe/user", headers=auth(user.id)).status_code == 200
+    # The replacement token is minted at the recorded change timestamp, not at
+    # "now" — this is the same-second equality case that makes Task 8's silent
+    # re-login work, and minting at wall-clock time could drift into the next
+    # second and stop exercising it. A regression to a sub-second
+    # password_changed_at fails here.
+    changed_at = datetime.fromisoformat(store.get_user(user.id).password_changed_at)
+    fresh = issue_token(user.id, SECRET, now=changed_at)
+    assert client.get(
+        "/probe/user", headers={"Authorization": f"Bearer {fresh}"}
+    ).status_code == 200
 ```
 
 - [ ] **Step 5: Reject stale tokens**
@@ -542,8 +550,15 @@ Create `frontend/src/auth/session.test.ts` covering:
   keeps one belonging to the user signing in;
 - a buffer with no `ownerId` (written by an older build) is cleared on login;
 - `restoreSession()` with no token sets `'anonymous'` without calling the API;
-- `restoreSession()` with a token that the server rejects (401) clears state
-  and sets `'anonymous'`.
+- `restoreSession()` with a token the server rejects (401) calls
+  `expireSession()` and sets `'anonymous'`;
+- `restoreSession()` that fails with a **500 or a network error** keeps the
+  token, leaves `authStatus` at `'unknown'` and sets `restoreFailed` — a
+  backend hiccup must not log anyone out;
+- **a later successful restore clears `restoreFailed`**, so the gate stops
+  showing the connection branch;
+- `restoreSession()` called twice concurrently issues **one** `/api/auth/me`
+  request and both callers resolve — the StrictMode case.
 
 Mock the api client module (`vi.mock('../api/client', ...)`), matching how
 `controller.test.ts` does it.
@@ -754,9 +769,9 @@ Create `frontend/src/api/client.test.ts`, stubbing `globalThis.fetch`:
 - a 401 from `POST /api/auth/login` does **not** clear auth state and the
   `HttpError` reaches the caller — otherwise a wrong password would trigger a
   state-clearing loop;
-- a 401 from `POST /api/auth/password` does **not** clear auth state, **and
-  that request still carried the `Authorization` header** — this is the test
-  that catches `keepSessionOn401` being implemented as "send no token";
+- a 401 from `POST /api/auth/password` **does** clear auth state — after
+  Task 8 that endpoint's 401 can only mean the bearer token was rejected, so
+  it must flow through `expireSession()` like any other endpoint's;
 - a **429** does not clear auth state — it is transient (spec §8);
 - a 500 does not clear auth state.
 
@@ -766,6 +781,16 @@ Run: `npx vitest run src/api/client.test.ts`
 Expected: FAIL — no header is attached and no 401 branch exists.
 
 - [ ] **Step 3: Implement**
+
+**`HttpError` must carry the server's error code, or Task 8's mapping cannot
+work.** Today `request()` discards the response body entirely and `HttpError`
+exposes only `status` and `message` (`client.ts:20-38`), so every 422 looks
+identical to a caller. Task 8 needs to tell `wrong_current_password` from
+`password_too_short`. Extend the error path: on a non-OK response, attempt to
+parse the JSON body, and if `detail` is an object with a string `code`, put it
+on the error as `readonly code?: string`. Wrap the parse — an error body is not
+guaranteed to be JSON, and a failure to parse one must not replace the real
+status with a parse error.
 
 In `request()`: read the token from the store, build headers explicitly, and
 add the 401 branch. Express the exemption as a property of the call, not by
@@ -1399,7 +1424,7 @@ considered and deferred to a later UI polish phase (see the roadmap backlog).
   `Fabulous <span className="accent">Writing</span>`, here at `1.25rem` /
   weight 700.
 - Two labelled inputs — email (`type="email"`, `autocomplete="username"`) and
-  password (`type="password"`, `autocomplete="current-password"`) — labels at
+  password (`type="password"`, `autoComplete="current-password"`) — labels at
   `0.7rem` in `var(--text-dim)`, inputs 30px tall with the app's standard
   `1px solid var(--border)` / `6px` radius.
 - Submit button spans the card width: `background: var(--accent)`, white text,
@@ -1477,10 +1502,17 @@ Change it so the endpoint returns:
 
 Wrong-current-password is a validation failure of the submitted body, not a
 failure to authenticate the request — the bearer token authenticated fine — so
-422 is the honest code and matches spec §7.2's "422 validation". Update the M1
-tests in `tests/test_auth_api.py` that assert the old 401 and the old string
-detail; the frontend never displays server messages, so the `code` is purely
-for branching.
+422 is the honest code and matches spec §7.2's "422 validation". Update the M1 tests in `tests/test_auth_api.py` that assert the old 401 and the
+old string detail; the frontend never displays server messages, so the `code`
+is purely for branching.
+
+**Add an API test for each of the three codes**, including
+`password_too_long` — send a password over 72 UTF-8 bytes (a multibyte string
+makes the byte-vs-character distinction real) and assert
+`detail["code"] == "password_too_long"`. Without it the newest discriminator is
+the one nothing verifies: the frontend's "unrecognised code" branch cannot tell
+you what the server actually emits, so the code could be renamed or dropped
+with both suites green.
 
 The client maps `wrong_current_password` → `passwordCurrentWrong`,
 `password_too_short` → `passwordTooShort(8)`, `password_too_long` → the
@@ -1576,8 +1608,10 @@ Its anchor gets `position: relative`.
 
 **Password form** — replaces the menu's contents *in the same popover*, which
 widens to about `15rem`. Three labelled password inputs (`passwordCurrent`,
-`passwordNew`, `passwordConfirm`; `autocomplete="current-password"` and
-`new-password`), then a right-aligned action row: a quiet Cancel button
+`passwordNew`, `passwordConfirm`; `autoComplete="current-password"` and
+`autoComplete="new-password"` — **camelCase**, since React's typed DOM prop is
+`autoComplete` and the lowercase spelling fails `tsc --noEmit`), then a
+right-aligned action row: a quiet Cancel button
 (`1px solid var(--border)`, `var(--bg)`) and the accent-filled submit. Result
 messages use the same boxed idiom as the login gate — `#e5484d` with
 `1px solid #e5484d55` for failures, `var(--text-dim)` for `passwordChanged`.
@@ -1610,7 +1644,8 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/auth src/App.tsx src/App.css src/api/client.ts
+git add src/auth src/App.tsx src/App.css src/api/client.ts \
+        ../backend/app/api/auth.py ../backend/tests/test_auth_api.py
 git commit -m "$(cat <<'EOF'
 feat(auth): account menu with password change and log out
 
@@ -1718,6 +1753,21 @@ with an explicit allowlist of the two public ones:
 PUBLIC = {("/api/health", "GET"), ("/api/auth/login", "POST")}
 ```
 
+This file needs its own **unauthenticated** client — Task 9's `authed_client`
+is the wrong tool, and there is no shared `client` fixture in `conftest.py`
+(the ones by that name in other modules are module-local, so borrowing the name
+gives "fixture 'client' not found"). Define one here, with `tmp_path` settings
+so it never reaches the live database:
+
+```python
+@pytest.fixture()
+def anon_client(tmp_path):
+    settings = Settings(db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules")
+    return TestClient(create_app(settings))
+```
+
+Use it for both the route walk and the preflight test below.
+
 For each remaining route, issue an unauthenticated request and assert **401**.
 Substitute `1` for every `{param}` segment (routes use `{check_id}`, `{document_id}`, `{domain_id}`, `{term_id}`, `{profile_id}`, `{folder_id}` — there is no `{id}`); a 404 or 422 from a
 nonexistent id would mean the request got past auth, so assert specifically on
@@ -1730,8 +1780,8 @@ Add the preflight test spec §7.4 requires, which Task 1's could not provide —
 it used `/api/health`, which stays public and therefore can never regress:
 
 ```python
-def test_preflight_to_an_authenticated_route_is_not_401(client):
-    response = client.options(
+def test_preflight_to_an_authenticated_route_is_not_401(anon_client):
+    response = anon_client.options(
         "/api/documents",
         headers={
             "Origin": "http://localhost:5173",
