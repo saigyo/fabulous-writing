@@ -1,3 +1,4 @@
+import io
 import sqlite3
 from pathlib import Path
 
@@ -35,6 +36,20 @@ def test_set_password_lets_the_account_log_in_again(db):
     assert run(db, "set-password", "ada@example.com", password="a recovered password") == 0
     store = UserStore(db)
     assert store.verify_credentials("ada@example.com", "a recovered password") is not None
+
+
+def test_set_password_strips_a_crlf_line_ending_from_a_piped_password(db, monkeypatch):
+    # A password piped in from a CRLF-terminated stream — a file written on
+    # Windows, or any \r\n-terminated input — must not carry a trailing \r
+    # into the stored password. Left in, it fails validation or
+    # authentication with no visible reason why: a miserable failure mode
+    # for a tool used mid-incident. Trailing spaces, in contrast, must
+    # survive: only \r and \n are stripped, not "whitespace" generally.
+    monkeypatch.setattr("sys.stdin", io.StringIO("a recovered password\r\n"))
+    assert main(["--db", str(db), "set-password", "ada@example.com"]) == 0
+    store = UserStore(db)
+    assert store.verify_credentials("ada@example.com", "a recovered password") is not None
+    assert store.verify_credentials("ada@example.com", "a recovered password\r") is None
 
 
 # A password in argv lands in shell history and in `ps` output for every
@@ -160,6 +175,21 @@ def test_a_corrupt_database_file_is_reported_cleanly_not_as_a_traceback(tmp_path
     assert run(bad, "list-users") == 1
     err = capsys.readouterr().err.lower()
     assert "corrupt" in err or "unreadable" in err
+
+
+def test_an_unopenable_database_path_is_reported_distinctly_from_busy(tmp_path, capsys):
+    # sqlite3.OperationalError also covers "unable to open database file" —
+    # --db pointed at a directory, a read-only file, or a parent directory
+    # that couldn't be created — which has nothing to do with lock
+    # contention. Mislabeling it "busy" would send an operator to wait out
+    # a lock that does not exist. A directory is a clean, deterministic way
+    # to provoke this without touching permissions.
+    a_directory = tmp_path / "not-a-file"
+    a_directory.mkdir()
+    assert run(a_directory, "list-users") == 1
+    err = capsys.readouterr().err.lower()
+    assert "busy" not in err
+    assert "could not open" in err
 
 
 def test_a_non_lock_operational_error_in_a_handler_is_not_mislabeled_as_busy(db, monkeypatch):
