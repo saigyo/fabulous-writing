@@ -2810,3 +2810,63 @@ two defects before implementation: an HS512 test token signed with a
 login throttle's table was unbounded against attacker-supplied keys.
 
 **Next**: M1 implementation on branch `multi-user-auth-core`.
+
+## 2026-07-25 — M1: multi-user auth core (users, local login, admin API, operator CLI)
+Commits: `e7f19ec`..`8a83b76`
+
+Implemented the ten-task plan from the previous entry on branch
+`multi-user-auth-core`. **This milestone authenticates no existing
+endpoint** — `documents`, `folders`, `checks`, `profiles`, `terminology`,
+`rules`, `providers`, `routing`, `suggestions`, and `languages` all stay
+exactly as unauthenticated as before, so `main` keeps working against the
+current frontend unchanged. Enforcement, together with the frontend that can
+satisfy it, is M2.
+
+Delivered: `users`/`admin_audit` SQLite tables and a `UserStore`
+(`app/services/users.py`), emails unique and looked up case-insensitively
+via `COLLATE NOCASE`; `app/core/auth.py` — fail-closed `FW_AUTH_SECRET`
+resolution (min 32 chars, optional dev-only ephemeral secret), bcrypt
+password hashing with a dummy-hash timing equalisation so an unknown email
+costs the same as a wrong password, a 72-byte bcrypt input ceiling enforced
+by raising on the write path and returning `False` on the read path, HS256
+token issue/verify pinned to exactly one algorithm and validating
+`exp`/`iss`/`aud`/`iat` (60s future leeway), and a `TokenVerifier` protocol
+that returns the local `users.id` in every mode — the seam Supabase Auth
+will later slot into without touching the request path. `app/api/deps.py`
+re-reads the user row on every request rather than trusting token claims,
+so deactivation and de-admin take effect immediately with no token
+revocation machinery; every auth failure collapses to one generic 401.
+`app/api/auth.py` — `/api/auth/login|me|password` plus `LoginThrottle`,
+thread-safe per-(email, client IP) exponential backoff with forwarded
+headers deliberately ignored and a soft size cap that exempts actively-
+blocked entries so an attacker can't spray throwaway emails to reset a
+victim's backoff. `app/api/admin.py` — `/api/admin/users` list/create/patch
+with `require_admin` attached at router level (so future admin endpoints
+inherit the check by construction), one audit row per changed field, and
+the config-only `auth.allow_additional_admins` switch never reachable
+through the API. `app/services/seed_admin.py` plus `create_app` wiring
+bootstrap the first admin from `FW_ADMIN_EMAIL`/`FW_ADMIN_PASSWORD` only
+while `users` is empty; startup fails closed on a missing/short secret,
+missing/short bootstrap credentials, or a non-local `auth.mode`, checked
+before any table is created. `app/manage.py` — the operator CLI (`python -m
+app.manage`) for password and access recovery without a working web
+session; passwords are never accepted as argv arguments; every CLI mutation
+is audited with `actor_id=None`.
+
+One deviation worth recording: `app/main.py`'s module-level `app` is now
+built lazily via a PEP 562 `__getattr__` rather than eagerly, because the
+eager form ran fail-closed startup checks as a side effect of merely
+importing the module (including in test files, before fixtures set a test
+secret). `uvicorn app.main:app` is unaffected.
+
+**Gates**: backend `uv run pytest -q` → 817 passed (up from 711 at the
+branch point), zero warnings. Frontend regression check (`npx vitest run &&
+npx tsc --noEmit && npm run lint && npm run build`) → 238 passed, no type
+errors, no lint findings, build succeeded — this milestone did not touch
+the frontend, so this was confirmation of no regression, not new coverage.
+
+Documentation for this milestone (this entry, `docs/backend-architecture.md`,
+and the root `README.md`) closes the loop `app/core/auth.py`'s
+`resolve_auth_secret` docstring already promised: the `openssl rand -base64
+32` guidance now lives in both `config.example.yaml` (Task 7) and the
+README (this task).
