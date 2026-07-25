@@ -293,6 +293,12 @@ def test_concurrent_failures_on_one_key_produce_an_exact_count():
     # independent checks against the unlocked class (worst case, one check
     # took 43 of the 60 repeats to trigger), while the locked implementation
     # below passed all 60 repeats with zero failures across dozens of runs.
+    #
+    # The 24 / 40 / 60 numbers were fit empirically on one machine (CPython
+    # 3.13, macOS, 12 cores) and are not principled. If this test behaves
+    # differently on other CI hardware (flakes, or stops catching a real
+    # regression), re-measure the detection rate there rather than just
+    # raising `trials` — the right numbers may differ, not just be bigger.
     thread_count = 24
     iterations = 40
     total = thread_count * iterations
