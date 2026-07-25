@@ -1,8 +1,11 @@
+import sqlite3
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
-from app.core.config import Settings
+from app.core.auth import AuthConfigError
+from app.core.config import AuthSettings, Settings
 from app.main import create_app
 
 
@@ -17,3 +20,30 @@ def test_health_returns_ok(tmp_path: Path) -> None:
     response = client.get("/api/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "name": "Fabulous Writing"}
+
+
+def test_create_app_refuses_supabase_mode_before_writing_user_tables(tmp_path: Path) -> None:
+    """auth.mode != 'local' must fail closed before UserStore ever touches
+    the database, not just before an admin gets seeded into it. Merely
+    asserting the exception would also pass with UserStore constructed
+    ahead of the guard: the `users`/`admin_audit` tables would already
+    exist by the time the check ran, they would just stay empty. Other
+    stores (terminology, documents, folders, profiles) legitimately create
+    the db file itself regardless of auth mode, so the file existing is
+    not the signal — the absence of the auth-owned tables is.
+    """
+    db_path = tmp_path / "test.db"
+    settings = Settings(
+        db_path=db_path, rules_dir=tmp_path / "rules", auth=AuthSettings(mode="supabase")
+    )
+    with pytest.raises(AuthConfigError, match="supabase"):
+        create_app(settings)
+    conn = sqlite3.connect(db_path)
+    try:
+        tables = {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+    finally:
+        conn.close()
+    assert "users" not in tables
+    assert "admin_audit" not in tables
