@@ -704,6 +704,19 @@ turn an expired token into data loss. The three paths differ:
 | **401 / session expiry** | cleared | **kept** — the same user is almost certainly coming back |
 | **Login** | cleared | cleared **only if it belongs to someone else** |
 
+**And a third content-bearing key, which nothing currently clears.**
+`LEGACY_TEXT_KEY = 'fabulous-writing-text'` (`documents.ts:23`) is the
+pre-multi-document editor buffer. It is removed after a successful migration
+but **deliberately kept when the legacy import cannot reach the backend**
+(`documents.ts:193-211`) — so it survives exactly in the situation where nobody
+has looked at it, and a later account with no documents would import the
+previous user's text.
+
+It carries no owner marker, so treat it as unowned: clear it on **explicit
+logout**, and on **login** whenever the document snapshot is foreign or
+unowned. Test the failed-migration handoff — leave the key in place, log out,
+log in as another user, and assert the text does not appear.
+
 To make that last row decidable, add `ownerId: number | undefined` to
 `DocSnapshot`. A snapshot written by an older build has no `ownerId`; treat
 that as unknown and clear it — failing safe costs one unsaved buffer once,
@@ -725,6 +738,28 @@ Making the field required would break `tsc --noEmit` at roughly seven
 object-literal `writeSnapshot({…})` calls across `documents.test.ts` and
 `autosave.test.ts`; declaring it optional avoids that churn, and the
 clear-if-not-mine rule already treats `undefined` as "not mine".
+
+**Clearing storage is not enough: pending document work can write it back.**
+`clearSnapshot()` removes the buffer, but `autosave.ts` keeps a debounce timer,
+a retry timer and an `inFlight` promise whose completions call
+`writeSnapshot()` (`:146`, `:172`), and `documents.ts` holds `initInFlight`
+work that writes or hydrates after `await` points (`:133-160`). A retry or an
+in-flight push that lands *after* logout — or after the next user's
+`discardForeignBuffer()` — recreates the previous user's document text, and a
+stale `initInFlight` promise can be reused by the next mount.
+
+So the session actions must invalidate that work, not merely clear its output.
+Add a module-level session generation to the document layer: an exported
+`invalidateDocumentWork()` that cancels the debounce and retry timers (there is
+already `cancelRetry()`, `autosave.ts:222`) and bumps a counter. Every deferred
+write — the autosave push completion, the retry, `initDocuments`' post-`await`
+writes — captures the counter when it starts and no-ops if it has changed.
+`logout()` and `expireSession()` both call it, before clearing storage.
+
+Test the handoff with work genuinely in flight: start a save, log out before it
+resolves, and assert nothing is written afterwards; and start
+`initDocuments()`, log out mid-flight, log in as another user, and assert the
+first user's content never appears.
 
 **Also reset transient check state on logout.** The store is module-level and
 survives the gate swap, so a check that was running when the token expired
@@ -1597,6 +1632,14 @@ silently.** On 204, call `login(currentUserEmail, newPassword)` before showing
 change is needed, and sessions on *other* devices still get evicted — which is
 the entire point of the revocation. If that re-login fails, fall through to the
 normal expiry path rather than leaving the UI claiming success.
+
+**Guard the completion against a session that changed underneath it.** The
+popover stays dismissible while the request is in flight, so a user can dismiss
+it, reopen the menu and log out — and the original handler still receives its
+204 and calls `login()`, signing a deliberately logged-out user back in.
+Capture the current user id before sending, and abandon the whole completion
+(no re-login, no success message) if the session no longer matches when the
+response arrives. Test logging out during a pending password change.
 
 - [ ] **Step 2: Run it and watch it fail**
 - [ ] **Step 3: Implement**
