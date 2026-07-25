@@ -85,6 +85,7 @@ class UserStore:
     def __init__(self, db_path: Path, *, timeout: float | None = None) -> None:
         self.db_path = db_path
         self.timeout = timeout
+        db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
 
@@ -151,9 +152,18 @@ class UserStore:
                 "SELECT * FROM users WHERE email = ? COLLATE NOCASE", (email,)
             ).fetchone()
         stored = row["password_hash"] if row is not None else None
-        if not check_password(password, stored):
-            return None
-        if not row["is_active"]:
+        # check_password runs unconditionally — even for an unknown email
+        # (row is None, stored is None) — so it always spends the same
+        # bcrypt time. Do NOT add an `if row is None: return None` before
+        # this call: that would skip bcrypt for unknown emails and let them
+        # answer measurably faster than a known email with a wrong
+        # password, reopening the account-enumeration timing oracle this
+        # function exists to close.
+        password_matches = check_password(password, stored)
+        # `row is None` is listed first so the type checker narrows `row` to
+        # non-None for the rest of this condition and for the return below;
+        # check_password has already run by this point regardless of order.
+        if row is None or not password_matches or not row["is_active"]:
             return None
         return _row_to_user(row)
 
@@ -171,6 +181,11 @@ class UserStore:
             raise ValueError(f"Not updatable: {sorted(unknown)}")
         if not fields:
             return self.get_user(user_id)
+        # Column names are interpolated (not parameterised — SQLite can't
+        # bind identifiers), which is safe only because the `unknown` check
+        # above already rejected any name outside `_UPDATABLE`. Values stay
+        # parameterised below. Do not reorder: the allowlist check must run
+        # before this line.
         assignments = ", ".join(f"{name} = ?" for name in fields)
         values: list[object] = [
             int(value) if isinstance(value, bool) else value for value in fields.values()
