@@ -63,3 +63,15 @@ reading other milestones' plans:
   tests, and any migration is rehearsed on a **copy** of it before the PR.
 - API keys come from the environment only; nothing is ever written to the
   repository or the database.
+
+## Backlog — deferred, not attached to a milestone
+
+Decisions made deliberately during milestone work, recorded so they are not
+rediscovered as bugs. None of these blocks a milestone.
+
+| # | Item | Deferred because | Earliest sensible point |
+|---|---|---|---|
+| B1 | **Per-user UI preference survival.** M2 purges the persisted settings blob on a user change. Switch it to a per-user namespace instead — `useStore.persist.setOptions({ name: 'fabulous-writing-settings:' + user.id })` then `rehydrate()`. **Note the trap:** switching the name and rehydrating is not sufficient. When the incoming user has no blob under the new key, zustand merges nothing and the *previous* user's in-memory preferences survive — and are then written into the new user's namespace on the next change. The implementation must reset the persisted slice to its declared defaults before awaiting rehydration, without deleting either namespace. | Purging is the simpler correct behaviour and creates no migration debt: going purge → namespaced later strands nothing, whereas the reverse would leave orphaned per-user blobs. | After M3, when data is actually per-user. `documents.ts` already falls back to the first document when a persisted `currentDocId` is not in the list, so the stale-id case is covered. |
+| B2 | **Informal UI register.** Move the seven locale catalogs from the current impersonal register to a friendlier one (*Du*, *tú*, *tu*). | A half-converted catalog reads worse than either register applied consistently. | A single deliberate pass over all seven files (~165 keys each). Substantial for de/fr/es/it; largely inert for ja/zh. |
+| B3 | **A proper dialog pattern.** M2 puts the change-password form inline in the account popover. | A scrim already exists — `FolderDefaultsDialog` renders `.dialog-overlay` (`App.css:1719`) with backdrop-click dismissal — but focus trap, Escape handling and scroll lock do not. Three short fields did not justify building those, and a half-accessible dialog is worse than a popover. | A UI polish phase: harden `.dialog-overlay` into a reusable accessible dialog, then move the password form onto it. |
+| B4 | **Landing-page treatment for the login gate.** M2 ships a centred card. A split layout with the wordmark beside the form was the alternative. | A sign-in screen is a door; M2's job is enforcement, not personality. | The same UI polish phase — and especially if the product ever gets a public landing page, since the two should look related. |
