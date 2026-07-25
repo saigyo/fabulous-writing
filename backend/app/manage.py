@@ -28,7 +28,14 @@ _BUSY_TIMEOUT_SECONDS = 10.0
 def _prompt_password(prompt: str) -> str:
     if sys.stdin.isatty():
         return getpass.getpass(prompt)
-    return sys.stdin.readline().rstrip("\n")
+    # `.rstrip("\r\n")`, not a bare `.rstrip()`: a trailing space can be a
+    # legitimate password character and must survive. This strips only the
+    # line ending readline() leaves behind — including the `\r` a
+    # CRLF-terminated stream (a file piped in from Windows, or any
+    # `\r\n`-terminated input) would otherwise leave stuck to the end of
+    # the password, which then fails validation or authentication with no
+    # visible reason why — a miserable failure mode for a recovery tool.
+    return sys.stdin.readline().rstrip("\r\n")
 
 
 def _is_lock_contention(exc: sqlite3.OperationalError) -> bool:
@@ -271,15 +278,26 @@ def main(
     db_path = args.db or load_settings().db_path
 
     # UserStore.__init__ writes the schema on every invocation, so this is
-    # the one place a locked or corrupt database can surface before any
-    # command-specific logic runs at all. The whole space of expected
-    # failure here is "the file is locked or corrupt" — there is no command
-    # logic yet that could raise an OperationalError for any other reason —
-    # so broad sqlite3 handling is appropriate.
+    # the one place a locked, corrupt, or unopenable database can surface
+    # before any command-specific logic runs at all. "Unopenable" is its
+    # own case, not folded into "busy": OperationalError also covers
+    # "unable to open database file" — --db pointed at a directory, a
+    # read-only file, or a parent directory that couldn't be created — none
+    # of which is lock contention, and mislabeling it "busy" would send an
+    # operator to wait out a lock that does not exist. Reuses
+    # _is_lock_contention (defined above for the same discrimination on the
+    # handler path below) to tell the two apart.
     try:
         store = UserStore(db_path, timeout=_BUSY_TIMEOUT_SECONDS)
     except sqlite3.OperationalError as exc:
-        print(f"Database is busy ({exc}). Is the server writing right now?", file=sys.stderr)
+        if _is_lock_contention(exc):
+            print(f"Database is busy ({exc}). Is the server writing right now?", file=sys.stderr)
+        else:
+            print(
+                f"Could not open the database at {db_path} ({exc}). Check "
+                "the path and its permissions.",
+                file=sys.stderr,
+            )
         return 1
     except sqlite3.DatabaseError as exc:
         # OperationalError (busy) is itself a DatabaseError subclass, so
