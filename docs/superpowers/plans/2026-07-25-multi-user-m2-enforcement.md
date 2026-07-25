@@ -466,8 +466,12 @@ EOF
 **Interfaces:**
 - Produces: on the store, `token: string | null`, `user: MeResponse | null`,
   `authStatus: 'unknown' | 'anonymous' | 'authenticated'`,
-  `sessionExpired: boolean`; `session.ts` exporting `login(email, password)`,
-  `logout()`, **`expireSession()`**, `restoreSession()`.
+  `sessionExpired: boolean`; `session.ts` exporting
+  **`login(email, password): Promise<boolean>`** — `false` means the session
+  changed while the request was in flight and the result was discarded —
+  `logout()`, **`expireSession()`**, `restoreSession()`, and
+  `sessionGeneration()`. Task 7's gate re-renders off `authStatus` and can
+  ignore the return value; Task 8's silent re-authentication cannot.
 - Consumes: `setUnauthorizedHandler(fn)` — which is defined and exported by
   `client.ts`, **not** by `session.ts`. `session.ts` registers `expireSession`
   through it at module load. Getting this backwards recreates the import cycle
@@ -548,13 +552,38 @@ bump whose `migrate` branch is admittedly a pass-through buys a diff marker at
 the cost of a branch that can never be exercised. Note the addition in the
 comment above `persistConfig` instead.
 
-`purgePersistedSettings()` must also reset the in-memory fields the blob owns,
-or the middleware writes them straight back on the next state change. Reset to
-the same initial values the store declares: `uiLocale` to `null` (so the next
-user gets browser-detected locale rather than the previous user's choice),
-`lastProfileByLanguage` to `{}`, `currentDocId` to `null`, and
-`rulesCollapsed` / `docSidebarCollapsed` / `docFoldersCollapsed` to their
-declared defaults.
+**`resetSessionState()` resets the whole data half of the store, not just the
+persisted blob.** Clearing `localStorage` alone leaves the in-memory fields
+untouched and the middleware writes them straight back on the next state
+change. Worse, most of the store is *not* persisted and is therefore invisible
+to `persist.clearStorage()`: `tracked` (findings, each carrying the flagged
+text), `scorecard`, `extraSuggestions`, `rewrites`, `documents` (titles),
+`docMeta` and `folders` (names) all live only in memory. The store is
+module-level and survives the gate swap, so the next account renders the
+previous one's document list, folders and findings until async initialisation
+replaces them — and indefinitely if that initialisation fails (`docListError`).
+
+Enumerating the fields to reset would leave the next field someone adds
+leaking, so do not enumerate. Extract the initial-state object literal inside
+`create()` (`store.ts:202-245`) into an exported `INITIAL_DATA` const, have
+`create()` spread it, and define:
+
+```ts
+export function resetSessionState(): void {
+  useStore.persist.clearStorage()
+  useStore.setState(INITIAL_DATA)   // shallow merge: the actions survive
+}
+```
+
+`INITIAL_DATA` holds data fields only — not the actions, and not the five auth
+fields added below (`token`, `user`, `authStatus`, `sessionExpired`,
+`restoreFailed`), which every caller sets explicitly right afterwards. Declare
+those outside the literal so the split is structural rather than a comment
+someone has to remember to obey.
+
+Test it by dirtying the store across the board — `tracked`, `documents`,
+`folders`, `docMeta`, `scorecard`, `rewrites`, `uiLocale`, `currentDocId` —
+calling `logout()`, and asserting each is back to its initial value.
 
 Keep exporting the same `persistConfig` object reference — `store.test.ts`
 asserts against it directly, as the comment above it explains.
@@ -578,7 +607,16 @@ Create `frontend/src/auth/session.test.ts` covering:
   the path Task 8's silent re-authentication takes after a password change, and
   purging there would reset locale, current document and collapse states for
   someone who never switched accounts;
-- `login()` as a *different* user purges them;
+- `login()` as a *different* user purges them, **including the runtime state
+  the persisted blob does not own** — dirty `tracked`, `documents`, `folders`
+  and `scorecard` first and assert the new user sees none of it;
+- **`login()` returns `false` and commits nothing when `logout()` runs while
+  `postLogin` is in flight** — assert the token, `user` and `authStatus` are
+  those of the logged-out session, not the returned ones;
+- **`logout()` and `expireSession()` both call `invalidateDocumentWork()`** so
+  a save or `initDocuments()` that resolves afterwards writes nothing;
+- **`logout()` clears `fabulous-writing-text`**, and so does a foreign or
+  unowned login — the failed-legacy-migration handoff;
 - a buffer with no `ownerId` (written by an older build) is cleared on login;
 - `restoreSession()` with no token sets `'anonymous'` without calling the API;
 - `restoreSession()` with a token the server rejects (401) calls
@@ -600,23 +638,37 @@ Create `frontend/src/auth/session.ts`. It is the only module that writes auth
 state; components call these functions rather than `setAuth` directly.
 
 ```ts
-export async function login(email: string, password: string): Promise<void> {
+/** Bumped by every session transition. A completion that started under an
+ *  older generation no longer speaks for anyone and must not commit. */
+let generation = 0
+export const sessionGeneration = (): number => generation
+
+export async function login(email: string, password: string): Promise<boolean> {
+  const startedAt = generation
   const previousUserId = useStore.getState().user?.id
   const { token, user } = await postLogin(email, password)
+  // Someone logged out while this was in flight — drop the token on the floor
+  // rather than signing a deliberately logged-out user back in.
+  if (startedAt !== generation) return false
+  generation++
   // Purge is for a *user change*, per Decision 1. Re-authenticating as the
   // same person — which Task 8 does silently after a password change — must
   // not wipe their locale, current document and collapse states.
-  if (previousUserId !== user.id) purgePersistedSettings()
+  if (previousUserId !== user.id) resetSessionState()
   discardForeignBuffer(user.id)   // keeps this user's own unsaved work
   useStore.setState({ sessionExpired: false, restoreFailed: false })
   useStore.getState().setAuth(token, user)
+  return true
 }
 
 /** Deliberate exit. The machine may be handed over, so nothing survives. */
 export function logout(): void {
+  generation++
+  invalidateDocumentWork()   // first: pending saves must not write the buffer back
   resetCheckState()
-  purgePersistedSettings()
+  resetSessionState()
   clearSnapshot()
+  clearLegacyText()
   useStore.getState().setAuth(null, null)
 }
 
@@ -624,8 +676,10 @@ export function logout(): void {
  *  so the document buffer is deliberately left alone — it is the only copy of
  *  their unsaved text, and Task 6's notice promises it in seven languages. */
 export function expireSession(): void {
+  generation++
+  invalidateDocumentWork()   // the buffer survives; the work that rewrites it must not
   resetCheckState()
-  purgePersistedSettings()
+  resetSessionState()
   useStore.setState({ sessionExpired: true })
   useStore.getState().setAuth(null, null)
 }
@@ -665,7 +719,11 @@ leave the Check button disabled after signing back in. **Do not import
 `controller.ts` to get `cancelCheck()`** — see the import-direction note below.
 
 `discardForeignBuffer(userId)` calls `clearSnapshot()` unless the stored
-snapshot's `ownerId` equals `userId`.
+snapshot's `ownerId` equals `userId` — and in that same foreign-or-unowned
+branch also calls `clearLegacyText()`, because `fabulous-writing-text` carries
+no owner marker and would otherwise be imported into the new account (see the
+legacy-key paragraph below). `clearLegacyText()` removes `LEGACY_TEXT_KEY` and
+is exported from `documents.ts`, which already owns the constant.
 
 **`restoreSession()` must be idempotent while in flight.** Hold the in-flight
 promise in a module-level variable and return it if a restore is already
@@ -690,16 +748,16 @@ export function setUnauthorizedHandler(fn: () => void): void { onUnauthorized = 
 `session.ts` registers `expireSession` at module load. Apply the same idiom for
 `resetCheckState()` rather than importing `controller.ts`.
 
-`purgePersistedSettings()` clears the persisted blob so a previous user's
+`resetSessionState()` clears the persisted blob so a previous user's
 `currentDocId`, `lastProfileByLanguage` and collapse states do not leak into
 the next session on a shared browser. Purge on **login** as well as logout:
 logout is not guaranteed to have happened — a token can simply expire, and the
 next person may log in on the same browser.
 
 Clearing must not fight the persist middleware, which re-writes on the next
-state change. Clear via zustand's `persist` API
-(`useStore.persist.clearStorage()`) rather than touching `localStorage`
-directly, and reset the in-memory fields the blob owns in the same action.
+state change. That is why `resetSessionState()` goes through zustand's
+`persist` API (`useStore.persist.clearStorage()`) rather than touching
+`localStorage` directly, and resets the in-memory fields in the same action.
 
 **There is a second localStorage key, and it is the one that actually matters.**
 `fabulous-writing-doc-buffer` (`documents/buffer.ts`) is a write-through cache
@@ -798,7 +856,9 @@ Expected: PASS.
 
 ```bash
 git add src/state/store.ts src/state/store.test.ts src/auth src/api/client.ts \
-        src/documents/buffer.ts src/documents/autosave.ts
+        src/documents/buffer.ts src/documents/autosave.ts \
+        src/documents/autosave.test.ts src/documents/documents.ts \
+        src/documents/documents.test.ts
 git commit -m "$(cat <<'EOF'
 feat(auth): frontend auth state and session actions
 
@@ -856,7 +916,10 @@ Create `frontend/src/api/client.test.ts`, stubbing `globalThis.fetch`:
   Task 8 that endpoint's 401 can only mean the bearer token was rejected, so
   it must flow through `expireSession()` like any other endpoint's;
 - a **429** does not clear auth state — it is transient (spec §8);
-- a 500 does not clear auth state.
+- a 500 does not clear auth state;
+- **a delayed 401 carrying a token that is no longer the current one does not
+  clear auth state** — start a request, expire the session, log in again, then
+  let the first request's 401 land, and assert the *new* token survives.
 
 - [ ] **Step 2: Run them and watch them fail**
 
@@ -900,6 +963,17 @@ Clearing state on 401 goes through **`session.expireSession()`** — not
 `logout()`, which would delete the document buffer and destroy unsaved work.
 `client.ts` reaches it through the `setUnauthorizedHandler` injection from
 Task 3, not by importing `session.ts`.
+
+**Scope the 401 to the token that produced it.** The app fires several requests
+in parallel on mount and the check stream outlives them, so a 401 can arrive
+long after the request that earned it. Once the first 401 has shown the gate
+and the user has signed back in, a straggler from the dead token would call
+`expireSession()` again and throw away the *fresh* token — logging the user
+straight back out with no explanation. Capture the token the request was sent
+with, and clear only if `useStore.getState().token` is still that same value
+when the response arrives. Put the check inside the shared handler both callers
+use, so Task 5's stream — which passes the token it opened with — inherits it
+rather than growing a second copy.
 
 - [ ] **Step 4: Run the tests**
 
@@ -991,6 +1065,9 @@ control framing precisely. Cover:
   and does **not** call it a second time if `done` had already arrived;
 - **a 401 response to the stream calls `expireSession()` and `onDone()` exactly
   once** — the case the spec rejected a whole library over;
+- a 401 on a stream opened with a token that is **no longer** the current one
+  calls `onDone()` but **not** `expireSession()` — same delayed-response guard
+  as Task 4, reached through the same shared handler;
 - the request carries the `Authorization` header.
 
 Do **not** re-test the library's own framing edge cases (`\r\n` separators,
@@ -1652,13 +1729,25 @@ change is needed, and sessions on *other* devices still get evicted — which is
 the entire point of the revocation. If that re-login fails, fall through to the
 normal expiry path rather than leaving the UI claiming success.
 
-**Guard the completion against a session that changed underneath it.** The
-popover stays dismissible while the request is in flight, so a user can dismiss
-it, reopen the menu and log out — and the original handler still receives its
-204 and calls `login()`, signing a deliberately logged-out user back in.
-Capture the current user id before sending, and abandon the whole completion
-(no re-login, no success message) if the session no longer matches when the
-response arrives. Test logging out during a pending password change.
+**Guard the completion against a session that changed underneath it — at both
+await points.** The popover stays dismissible while the request is in flight,
+so a user can dismiss it, reopen the menu and log out; the original handler
+still receives its 204 and calls `login()`, signing a deliberately logged-out
+user back in. Checking only after the password request resolves is not enough,
+because `login()` commits auth *after* its own await — a logout during the
+silent re-login window slips through the same hole one step later.
+
+Use Task 3's session generation, not the user id: logging out and back in as
+the same person must also abandon the completion, and an id comparison cannot
+see that. Read `sessionGeneration()` before sending, compare it after the 204,
+and rely on `login()`'s own guard for the second window — it returns `false`
+when the session moved while `postLogin` was in flight, having discarded the
+token rather than committing it. Show `passwordChanged` only when it returns
+`true`; otherwise abandon the completion silently — no re-login, no success
+message, no error, because the session it belonged to is gone.
+
+Test both windows: log out while the password request is pending, and log out
+while the silent `login()` is pending.
 
 - [ ] **Step 2: Run it and watch it fail**
 - [ ] **Step 3: Implement**
