@@ -2915,8 +2915,7 @@ sentinel factory so it never constructs a real app; and this entry plus the
 one above account for the docs commit (`8ac966b`) and this fix commit that
 the milestone's original commit-range note omitted.
 
-**Gates**: backend `uv run pytest -q` → all green, zero warnings (see
-report for the exact count). Documentation-only changes, so the frontend
-gate was not re-run.
+**Gates**: backend `uv run pytest -q` → 822 passed, zero warnings.
+Documentation-only changes, so the frontend gate was not re-run.
 
 Full detail: `.superpowers/sdd/m1-final-review-fixes-report.md`.

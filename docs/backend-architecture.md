@@ -542,9 +542,9 @@ All five SQLite-backed stores (`terminology.py`, `profiles.py`, `documents.py`,
 context manager, which only commits/rolls back — also guarantees the connection itself
 is closed afterward; `migrate_columns(conn, table, columns)` adds any missing
 `(name, declaration)` columns via `PRAGMA table_info` + `ALTER TABLE ... ADD COLUMN`,
-the same idempotent phased-in-column pattern every store already used for things like
-`documents.folder_id` and `profiles.packs_on`/`llm_tier`, now with one implementation
-instead of four copies. Each store keeps a thin `_connect()` delegate for its own
+the same idempotent phased-in-column pattern those three stores already used for things
+like `documents.folder_id` and `profiles.packs_on`/`llm_tier`, now with one
+implementation instead of three copies. Each store keeps a thin `_connect()` delegate for its own
 docstring/type-hint purposes but forwards straight to the shared `connect()`.
 
 - **Storage** (`app/services/documents.py`): a single `documents` table — `id`, `owner_id`,
