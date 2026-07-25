@@ -57,8 +57,13 @@ def test_list_and_create(client):
     assert created["email"] == "ada@example.com" and created["tier"] == "premium"
     # "password" alone would also match the new password_changed_at field,
     # which is just a timestamp, not credential material; password_hash is
-    # what must never leak (same convention as test_auth_api.py).
+    # what must never leak (same convention as test_auth_api.py). That
+    # substring check also used to catch the plaintext password echoing
+    # back in the response (make_user submits "an initial password") — a
+    # separate property from the hash never leaking, so it is asserted here
+    # explicitly rather than folded into the hash check.
     assert "password_hash" not in str(created)
+    assert "an initial password" not in str(created)
     listing = client.get("/api/admin/users", headers=admin_headers(client)).json()
     assert [u["email"] for u in listing] == ["ada@example.com", "root@example.com"]
 
