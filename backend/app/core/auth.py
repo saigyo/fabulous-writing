@@ -9,9 +9,12 @@ import logging
 import os
 import secrets
 from collections.abc import Mapping
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
+from typing import Protocol
 
 import bcrypt
+import jwt
 
 logger = logging.getLogger(__name__)
 
@@ -126,3 +129,79 @@ def validate_password(password: str, *, min_length: int) -> str:
     if len(password.encode()) > MAX_PASSWORD_BYTES:
         raise ValueError(f"Password must be at most {MAX_PASSWORD_BYTES} bytes")
     return password
+
+
+TOKEN_ISSUER = "fabulous-writing"
+TOKEN_AUDIENCE = "fabulous-writing"
+TOKEN_TTL = timedelta(hours=24)
+# Tolerated clock drift between this server and the token issuer. Without
+# it, a slightly fast issuer (notably Supabase's signing service later)
+# would cause intermittent 401s.
+IAT_LEEWAY_SECONDS = 60
+
+
+class InvalidToken(Exception):
+    """The token is absent, malformed, expired, or not ours."""
+
+
+class TokenVerifier(Protocol):
+    def verify(self, token: str) -> int:
+        """Return the LOCAL users.id, or raise InvalidToken.
+
+        Every implementation returns a local id — the Supabase verifier
+        will resolve its subject UUID to users.external_id internally and
+        fail closed when unlinked — so the request path never changes
+        lookup keys between auth modes.
+        """
+
+
+def issue_token(user_id: int, secret: str, *, now: datetime | None = None) -> str:
+    issued = now or datetime.now(UTC)
+    return jwt.encode(
+        {
+            "sub": str(user_id),
+            "iat": int(issued.timestamp()),
+            "exp": int((issued + TOKEN_TTL).timestamp()),
+            "iss": TOKEN_ISSUER,
+            "aud": TOKEN_AUDIENCE,
+        },
+        secret,
+        algorithm="HS256",
+    )
+
+
+class LocalTokenVerifier:
+    """Verifies tokens this backend issued (auth.mode: local)."""
+
+    def __init__(self, secret: str) -> None:
+        self._secret = secret
+
+    def verify(self, token: str) -> int:
+        try:
+            claims = jwt.decode(
+                token,
+                self._secret,
+                algorithms=["HS256"],  # exactly one: never 'none', never asymmetric
+                issuer=TOKEN_ISSUER,
+                audience=TOKEN_AUDIENCE,
+                options={
+                    "require": ["sub", "exp", "iat", "iss", "aud"],
+                    # PyJWT >= 2.10 validates iat itself with 0 leeway,
+                    # which would reject the tolerated clock drift below
+                    # before this method ever saw the claims. Disabled so
+                    # the explicit leeway check is the only iat check.
+                    "verify_iat": False,
+                },
+            )
+        except jwt.PyJWTError as exc:
+            raise InvalidToken(str(exc)) from exc
+        # iat is checked here rather than left to the library so the leeway
+        # is explicit and does not depend on PyJWT's version-specific
+        # treatment of future issue times.
+        drift = float(claims["iat"]) - datetime.now(UTC).timestamp()
+        if drift > IAT_LEEWAY_SECONDS:
+            raise InvalidToken("token issued too far in the future")
+        try:
+            return int(claims["sub"])
+        except (TypeError, ValueError) as exc:
+            raise InvalidToken("sub is not a user id") from exc
