@@ -1,3 +1,4 @@
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -36,11 +37,14 @@ def test_set_password_lets_the_account_log_in_again(db):
     assert store.verify_credentials("ada@example.com", "a recovered password") is not None
 
 
-def test_set_password_never_accepts_the_password_as_an_argument(db):
+def test_set_password_never_accepts_the_password_as_an_argument(db, capsys):
     # A password in argv lands in shell history and in `ps` output for every
-    # other process on the machine.
+    # other process on the machine — and it must not *also* land in stderr,
+    # which is routinely logged or `tee`d for an audit trail. argparse's own
+    # "unrecognized arguments" error would otherwise echo the token back.
     with pytest.raises(SystemExit):
         main(["--db", str(db), "set-password", "ada@example.com", "hunter2hunter2"])
+    assert "hunter2hunter2" not in capsys.readouterr().err
 
 
 def test_set_password_enforces_the_admin_minimum(db, capsys):
@@ -96,3 +100,52 @@ def test_every_mutation_is_audited_as_an_out_of_band_action(db):
     assert rows, "CLI mutations must be recorded"
     assert all(row["actor_id"] is None for row in rows)
     assert {row["field"] for row in rows} == {"is_admin"}
+
+
+def test_a_database_locked_by_a_running_server_is_reported_cleanly(db, capsys, monkeypatch):
+    # UserStore.__init__ writes the schema on every single invocation, so a
+    # lock held at that point — the exact moment a running server would hold
+    # one — must be caught too, not just a lock hit mid-command.
+    monkeypatch.setattr("app.manage._BUSY_TIMEOUT_SECONDS", 0.2)
+    locker = sqlite3.connect(db)
+    locker.execute("BEGIN EXCLUSIVE")
+    try:
+        assert run(db, "list-users") == 1
+    finally:
+        locker.rollback()
+        locker.close()
+    assert "busy" in capsys.readouterr().err.lower()
+
+
+def test_a_corrupt_database_file_is_reported_cleanly_not_as_a_traceback(tmp_path, capsys):
+    bad = tmp_path / "corrupt.db"
+    bad.write_bytes(b"not a real sqlite database file, just garbage bytes")
+    assert run(bad, "list-users") == 1
+    err = capsys.readouterr().err.lower()
+    assert "corrupt" in err or "unreadable" in err
+
+
+def test_make_admin_on_an_already_active_admin_is_a_true_no_op(db, capsys):
+    assert run(db, "make-admin", "root@example.com") == 0
+    assert UserStore(db).list_audit() == []
+    assert "already" in capsys.readouterr().out.lower()
+
+
+def test_revoke_admin_on_a_non_admin_is_a_true_no_op(db, capsys):
+    assert run(db, "revoke-admin", "ada@example.com") == 0
+    assert UserStore(db).list_audit() == []
+    assert "already" in capsys.readouterr().out.lower()
+
+
+def test_deactivate_an_already_inactive_user_is_a_true_no_op(db, capsys):
+    store = UserStore(db)
+    store.update_user(2, is_active=False)
+    assert run(db, "deactivate", "ada@example.com") == 0
+    assert UserStore(db).list_audit() == []
+    assert "already" in capsys.readouterr().out.lower()
+
+
+def test_activate_an_already_active_user_is_a_true_no_op(db, capsys):
+    assert run(db, "activate", "ada@example.com") == 0
+    assert UserStore(db).list_audit() == []
+    assert "already" in capsys.readouterr().out.lower()
