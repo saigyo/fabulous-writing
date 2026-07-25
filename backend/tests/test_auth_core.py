@@ -1,6 +1,14 @@
 import pytest
 
-from app.core.auth import AuthConfigError, resolve_auth_secret
+from app.core.auth import (
+    ADMIN_SET_MIN_PASSWORD_LENGTH,
+    SELF_MIN_PASSWORD_LENGTH,
+    AuthConfigError,
+    check_password,
+    hash_password,
+    resolve_auth_secret,
+    validate_password,
+)
 from app.core.config import Settings
 
 
@@ -41,3 +49,25 @@ def test_auth_settings_load_from_mapping():
     )
     assert settings.auth.ephemeral_secret is True
     assert settings.auth.allow_additional_admins is True
+
+
+def test_hash_and_check_roundtrip():
+    stored = hash_password("correct horse battery")
+    assert stored != "correct horse battery"  # never stored in the clear
+    assert check_password("correct horse battery", stored) is True
+    assert check_password("wrong password", stored) is False
+
+
+def test_check_password_against_missing_hash_is_false():
+    # An account with no local password (Supabase-managed, or never set)
+    # must not authenticate, and must still cost bcrypt time so response
+    # timing cannot distinguish it from a wrong password.
+    assert check_password("anything", None) is False
+
+
+def test_password_length_rules():
+    assert validate_password("12345678", min_length=SELF_MIN_PASSWORD_LENGTH) == "12345678"
+    with pytest.raises(ValueError, match="at least 8"):
+        validate_password("1234567", min_length=SELF_MIN_PASSWORD_LENGTH)
+    with pytest.raises(ValueError, match="at least 12"):
+        validate_password("12345678", min_length=ADMIN_SET_MIN_PASSWORD_LENGTH)
