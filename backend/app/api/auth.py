@@ -45,21 +45,34 @@ class LoginThrottle:
     must already hold `self._lock` before calling them, which every public
     method here does. Do not add a call to either from outside this class.
 
-    The table is deliberately bounded. Its keys come from unauthenticated
-    input, so an attacker who sends one failed login each for a million
-    distinct addresses would otherwise grow it without limit — turning a
-    brute-force defense into a memory-exhaustion vector. Entries also expire:
-    a failure from an hour ago says nothing about the current attempt.
+    The table is bounded, but the cap is a soft ceiling: an entry whose
+    block is still active (`blocked_until` in the future) is exempt from
+    both the TTL sweep and the size cap, so `entry_count()` can exceed
+    `max_entries`. Every other entry is hard-bounded as before — expired by
+    `entry_ttl` or evicted under the cap — since its keys come from
+    unauthenticated input and an attacker spraying one failed login per
+    address would otherwise grow the table without limit.
 
-    An entry whose block is still active (`blocked_until` in the future) is
-    never evicted by the size cap, and never ages out via the TTL as long as
-    the caller reports rejected attempts with `record_blocked_attempt`.
-    Without both of those, an attacker who has already triggered a block
-    against one victim key could spray `max_entries` failed logins from
-    disposable, unrelated addresses (no IP spoofing needed — the key varies
-    by email) to evict the victim's entry and discard its accumulated
-    backoff, or simply wait out the TTL against a victim nobody is
-    "refreshing" the record for.
+    The exemption exists to close a bypass, not to reopen one: without it,
+    an attacker who has already triggered a block on one victim key could
+    spray roughly `max_entries` cheap failed logins from disposable,
+    unrelated addresses on the same IP (no IP spoofing needed — the key
+    varies by email) to evict the victim's entry and discard its
+    accumulated backoff.
+
+    What actually limits growth of the exempt set is bcrypt cost, not the
+    cap: every entry that becomes exempt first had to reach `threshold`
+    failed logins, and `record_failure` only runs after `verify_credentials`
+    has already spent a full bcrypt hash on that attempt — there is no way
+    to make an entry exempt without paying that cost `threshold` times over.
+    Sustaining a large exempt set means renewing roughly
+    `exempt_entries / max_delay` blocks per second, each a bcrypt call: a
+    rate high enough to pin a large table is a rate the server's own bcrypt
+    throughput cannot absorb anyway. That traffic is still CPU load on an
+    unauthenticated endpoint — true of any bcrypt-backed login endpoint, not
+    a cost this exemption introduces — and it is per-IP or global rate
+    limiting at the deployment layer, not this table, that is meant to
+    address it.
     """
 
     threshold: int = 5
