@@ -147,7 +147,7 @@ SECRET = "s" * 64
 
 def test_issued_token_verifies_to_the_local_user_id():
     verifier = LocalTokenVerifier(SECRET)
-    assert verifier.verify(issue_token(42, SECRET)) == 42
+    assert verifier.verify(issue_token(42, SECRET)).user_id == 42
 
 
 def test_token_signed_with_another_secret_is_rejected():
@@ -195,7 +195,7 @@ def test_token_issued_far_in_the_future_is_rejected_but_small_skew_is_tolerated(
     verifier = LocalTokenVerifier(SECRET)
     # 30s of clock drift must still work; 10 minutes must not.
     near = datetime.now(UTC) + timedelta(seconds=30)
-    assert verifier.verify(issue_token(7, SECRET, now=near)) == 7
+    assert verifier.verify(issue_token(7, SECRET, now=near)).user_id == 7
     far = datetime.now(UTC) + timedelta(minutes=10)
     with pytest.raises(InvalidToken):
         verifier.verify(issue_token(7, SECRET, now=far))

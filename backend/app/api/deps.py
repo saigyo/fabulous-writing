@@ -1,6 +1,7 @@
 """Request identity: one dependency every authenticated route goes through."""
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from fastapi import Depends, HTTPException, Request
 
@@ -34,14 +35,25 @@ def get_current_user(request: Request) -> CurrentUser:
     if len(token) > MAX_TOKEN_BYTES:
         raise HTTPException(401, _UNAUTHENTICATED)
     try:
-        user_id = request.app.state.token_verifier.verify(token)
+        verified = request.app.state.token_verifier.verify(token)
     except InvalidToken:
         raise HTTPException(401, _UNAUTHENTICATED) from None
     # Re-read per request rather than trusting the token's claims: this is
     # what makes deactivation and de-admin effective immediately, without
     # any token revocation machinery.
-    user = request.app.state.user_store.get_user(user_id)
+    user = request.app.state.user_store.get_user(verified.user_id)
     if user is None or not user.is_active:
+        raise HTTPException(401, _UNAUTHENTICATED)
+    # A password change is the other revocation lever, alongside
+    # deactivation above: any token issued before the change is stale, even
+    # though it has not expired. Both sides are tz-aware UTC at second
+    # granularity (issued_at from fromtimestamp(..., UTC); password_changed_at
+    # from _utcnow()), which is what makes the strict `<` correct on both
+    # sides of a change, including a replacement token minted in the same
+    # second as the change.
+    if user.password_changed_at and verified.issued_at < datetime.fromisoformat(
+        user.password_changed_at
+    ):
         raise HTTPException(401, _UNAUTHENTICATED)
     return CurrentUser(
         id=user.id,

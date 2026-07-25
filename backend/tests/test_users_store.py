@@ -101,6 +101,14 @@ def test_set_password_replaces_the_credential(store):
     assert store.set_password(999, "irrelevant") is False
 
 
+def test_set_password_records_when_it_changed(store):
+    user = store.create_user("ada@example.com", "old password here")
+    assert store.get_user(user.id).password_changed_at is None
+    assert store.set_password(user.id, "new password here") is True
+    changed = store.get_user(user.id).password_changed_at
+    assert changed  # ISO 8601 UTC, same convention as created_at
+
+
 def test_count_and_list(store):
     assert store.count() == 0
     store.create_user("b@example.com", "correct horse battery")

@@ -2,6 +2,7 @@ import base64
 import sys
 import threading
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -108,6 +109,30 @@ def test_deactivation_takes_effect_on_the_next_request(probe):
     assert client.get("/probe/user", headers=headers).status_code == 200
     probe.state.user_store.update_user(user.id, is_active=False)
     assert client.get("/probe/user", headers=headers).status_code == 401
+
+
+def test_changing_the_password_invalidates_tokens_issued_before_it(probe):
+    store = probe.state.user_store
+    user = store.create_user("ada@example.com", "correct horse battery")
+    client = TestClient(probe)
+    # Mint the "before" token explicitly in the past rather than relying on
+    # wall-clock ordering: iat is floored to the second, so a token minted in
+    # the same second as the change would not be provably older.
+    old = issue_token(user.id, SECRET, now=datetime.now(UTC) - timedelta(seconds=2))
+    stale = {"Authorization": f"Bearer {old}"}
+    assert client.get("/probe/user", headers=stale).status_code == 200
+    store.set_password(user.id, "a replacement password")
+    assert client.get("/probe/user", headers=stale).status_code == 401
+    # The replacement token is minted at the recorded change timestamp, not at
+    # "now" — this is the same-second equality case that makes Task 8's silent
+    # re-login work, and minting at wall-clock time could drift into the next
+    # second and stop exercising it. A regression to a sub-second
+    # password_changed_at fails here.
+    changed_at = datetime.fromisoformat(store.get_user(user.id).password_changed_at)
+    fresh = issue_token(user.id, SECRET, now=changed_at)
+    assert client.get(
+        "/probe/user", headers={"Authorization": f"Bearer {fresh}"}
+    ).status_code == 200
 
 
 def test_require_admin_rejects_a_normal_user_and_admits_an_admin(probe):
