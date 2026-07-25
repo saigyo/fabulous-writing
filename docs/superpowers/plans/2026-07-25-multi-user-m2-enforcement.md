@@ -151,30 +151,34 @@ reading the tasks:
 Append to `backend/tests/test_health.py`:
 
 ```python
-def test_cors_allows_the_configured_origin_only(tmp_path):
-    app = create_app(_settings(tmp_path))
-    client = TestClient(app)
-    allowed = client.options(
-        "/api/health",
-        headers={
-            "Origin": "http://localhost:5173",
-            "Access-Control-Request-Method": "GET",
-        },
+def test_cors_allows_only_the_configured_origin(tmp_path):
+    # A deliberately NON-default origin. Testing with the default
+    # http://localhost:5173 would pass against an implementation that simply
+    # hard-codes that string in place of "*" and never reads settings.cors —
+    # which is the entire point of this task.
+    configured = "https://writing.example.test"
+    settings = Settings(
+        db_path=tmp_path / "test.db",
+        rules_dir=tmp_path / "rules",
+        cors={"origins": [configured]},
     )
-    assert allowed.headers["access-control-allow-origin"] == "http://localhost:5173"
-    denied = client.options(
-        "/api/health",
-        headers={
-            "Origin": "https://evil.example.com",
-            "Access-Control-Request-Method": "GET",
-        },
-    )
-    assert "access-control-allow-origin" not in denied.headers
+    client = TestClient(create_app(settings))
+
+    def preflight(origin: str):
+        return client.options(
+            "/api/health",
+            headers={"Origin": origin, "Access-Control-Request-Method": "GET"},
+        )
+
+    assert preflight(configured).headers["access-control-allow-origin"] == configured
+    # The default is denied when it is not the configured value — this is the
+    # assertion a hard-coded implementation fails.
+    assert "access-control-allow-origin" not in preflight("http://localhost:5173").headers
+    assert "access-control-allow-origin" not in preflight("https://evil.example.com").headers
 ```
 
-Use whatever helper the file already has for building `Settings` with
-`tmp_path`; if it builds them inline, follow that shape instead of adding a
-helper.
+`test_health.py` builds `Settings` inline rather than via a helper
+(`tests/test_health.py:18-19`); this follows that shape.
 
 - [ ] **Step 2: Run it and watch it fail**
 
@@ -490,9 +494,18 @@ In `frontend/src/state/store.ts`, add to `AppState`:
 with initial values `null`, `null`, `'unknown'`, `false`, `false`, and a setter
 `setAuth(token: string | null, user: MeResponse | null)` that sets the first
 three consistently (`authStatus` derived: `'authenticated'` when both are
-present, `'anonymous'` otherwise). **`setAuth` leaves `sessionExpired`
-untouched** — only `expireSession()` sets it and only `login()` clears it,
-so a re-login after an expiry does not have to race the setter.
+present, `'anonymous'` otherwise).
+
+Two flags, two different rules, and they are not symmetric:
+
+- **`setAuth` leaves `sessionExpired` untouched.** Only `expireSession()` sets
+  it and only `login()` clears it, so a re-login after an expiry does not race
+  the setter.
+- **`setAuth` always clears `restoreFailed`.** Reaching a resolved auth state
+  at all means the server answered, so the connection-failure branch is stale
+  by definition. Without this the flag is set once and never cleared —
+  `restoreSession()`'s success path only calls `setAuth`, so a later
+  successful restore would still render the connection message.
 
 Add `token` — and only `token` — to `partialize`. **Leave `version` at `2`.**
 Adding a key to the `partialize` allowlist needs no migration (an older blob
@@ -858,6 +871,11 @@ control framing precisely. Cover:
 
 - each of the five events dispatches to the right handler with parsed data;
 - an event split across two chunks mid-frame is assembled correctly;
+- **a multi-byte character split across a chunk boundary survives intact** —
+  encode a payload containing e.g. `„Größe"` or `日本語`, cut the byte array
+  mid-character, push the halves as separate chunks, and assert the handler
+  receives the original string with no U+FFFD. This is the test that fails
+  against a per-chunk `decoder.decode(chunk)`;
 - `done` calls `onDone()` **exactly once** and stops reading;
 - the unsubscribe function aborts the fetch, and calling it twice does not
   throw;
@@ -900,7 +918,23 @@ export function subscribeCheck(
 `readEvents` opens the request with the Bearer header and
 `Accept: text/event-stream`, creates a parser with an `onEvent` callback that
 dispatches on `event.event` to the five handlers, then reads `response.body`
-through a `TextDecoder` and calls `parser.feed(chunk)` for each chunk.
+and feeds each decoded chunk to `parser.feed()`.
+
+**Decode with `{ stream: true }`, and flush at the end.** A `ReadableStream`
+splits on byte boundaries, not code points, so a multi-byte character can
+straddle two chunks. `decoder.decode(chunk)` called independently per chunk
+replaces the split character with U+FFFD *before* the parser ever sees it —
+silently corrupting text. This app is not hypothetically multilingual: findings
+and error messages carry German, French, Japanese and Chinese content, so the
+corruption would be routine rather than exotic.
+
+```ts
+const decoder = new TextDecoder()
+// ... per chunk:
+parser.feed(decoder.decode(chunk, { stream: true }))
+// ... after the loop:
+parser.feed(decoder.decode())   // flush any trailing partial sequence
+```
 
 Four things are yours to get right, and each has a test above:
 
@@ -1312,6 +1346,9 @@ Create `frontend/src/auth/LoginGate.test.tsx`:
   rendered;
 - while `'authenticated'`, children are rendered and the form is not;
 - submitting valid credentials calls `login()`;
+- **under `<StrictMode>`, mounting the gate issues exactly one `/api/auth/me`
+  request** — wrap the render in `<StrictMode>` in this test specifically, so
+  the double-invocation is exercised rather than assumed away;
 - a rejected `login()` renders the invalid-credentials message and leaves the
   form visible.
 
@@ -1325,9 +1362,21 @@ Expected: FAIL — the module does not exist.
 
 - [ ] **Step 4: Implement**
 
-`LoginGate` calls `restoreSession()` once on mount and switches on
-`authStatus`: render nothing while `'unknown'`, `<LoginForm/>` while
-`'anonymous'`, `children` while `'authenticated'`.
+`LoginGate` calls `restoreSession()` on mount and switches on `authStatus`:
+render nothing while `'unknown'`, `<LoginForm/>` while `'anonymous'`,
+`children` while `'authenticated'` — plus the `restoreFailed` branch above.
+
+**`main.tsx` keeps `<StrictMode>`, which double-invokes mount effects in
+development**, so a plain empty-dependency effect fires `restoreSession()`
+twice and sends two concurrent `/api/auth/me` requests. Make
+`restoreSession()` itself idempotent rather than guarding at the call site:
+hold the in-flight promise in a module-level variable and return it if a
+restore is already running, clearing it when it settles. That way any caller —
+the gate's effect, the retry button, a future one — gets one request.
+
+This codebase has been bitten by StrictMode before and solves it the same way:
+`Header()` compares a `prevLanguage` ref rather than consuming a boolean,
+precisely so the double invocation stays correct (`App.tsx:97-105`).
 
 `LoginForm` is a controlled email/password form that calls `login()` on submit,
 shows the invalid-credentials message for an `HttpError` with status 401 and
@@ -1439,6 +1488,15 @@ generic `passwordFailed`, and any unrecognised code → `passwordFailed`.
 **Do not map bare status 422 to "too short"** — that is actively misleading for
 a multibyte password that tripped the byte ceiling.
 
+**When the silent re-login fails, run the expiry path — do not just show an
+error.** `postLogin` deliberately bypasses central 401 handling (Task 4), so
+nothing else will correct the state: the password change has already revoked
+the current token, and leaving the store `authenticated` means every
+subsequent request 401s while the UI insists the user is signed in. On a failed
+re-authentication, call `expireSession()` so the gate takes over with the
+session-expired notice — the password *was* changed, and signing in again with
+the new one is the honest next step.
+
 Without this, `POST /api/auth/password` and logging out have no entry point in
 the UI at all.
 
@@ -1459,6 +1517,8 @@ Cover:
   bearer token was rejected;
 - mismatched new/confirm shows `passwordMismatch` and sends no request;
 - **a successful change leaves the user signed in** — see below;
+- **when the silent re-login itself fails, `expireSession()` runs** and the
+  store does not stay `authenticated` holding a token the change just revoked;
 - reopening the menu after each dismissal path shows the menu, not the
   password form.
 
