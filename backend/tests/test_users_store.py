@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from app.services import users as users_module
 from app.services.users import DuplicateEmailError, UserStore
 
 
@@ -66,6 +67,38 @@ def test_count_and_list(store):
     store.create_user("a@example.com", "correct horse battery")
     assert store.count() == 2
     assert [u.email for u in store.list_users()] == ["a@example.com", "b@example.com"]
+
+
+def test_verify_credentials_spends_bcrypt_time_on_unknown_email(store, monkeypatch):
+    """Regression test for a timing oracle: verify_credentials must call
+    check_password on every path, including an unknown email, so that an
+    unknown account cannot be distinguished from a known account with a
+    wrong password by response timing. A naive `if row is None: return
+    None` added before the check_password call would skip it for unknown
+    emails and reintroduce exactly that oracle — this test would then see
+    zero calls for the unknown-email case while the known-wrong-password
+    case still shows one.
+    """
+    store.create_user("ada@example.com", "correct horse battery")
+
+    calls: list[str | None] = []
+    real_check_password = users_module.check_password
+
+    def counting_check_password(password: str, password_hash: str | None) -> bool:
+        calls.append(password_hash)
+        return real_check_password(password, password_hash)
+
+    monkeypatch.setattr(users_module, "check_password", counting_check_password)
+
+    calls.clear()
+    store.verify_credentials("ada@example.com", "wrong password here")
+    known_wrong_password_calls = len(calls)
+
+    calls.clear()
+    store.verify_credentials("nobody@example.com", "correct horse battery")
+    unknown_email_calls = len(calls)
+
+    assert known_wrong_password_calls == unknown_email_calls == 1
 
 
 def test_audit_rows_record_the_actor_or_none_for_cli(store):
