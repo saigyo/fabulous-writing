@@ -1,4 +1,4 @@
-"""Shared SQLite plumbing for the service stores (one DB file, four stores)."""
+"""Shared SQLite plumbing for the service stores (one DB file, five stores)."""
 
 import sqlite3
 from collections.abc import Iterator, Sequence
