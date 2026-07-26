@@ -14,7 +14,7 @@ from app.checkers.pipeline import drop_duplicates
 from app.checkers.rules.engine import RuleConfig
 from app.checkers.terminology import TerminologyChecker
 from app.core.models import Finding, Language, Scorecard
-from app.services.jobs import CheckJob
+from app.services.jobs import CheckJob, JobsAtCapacity
 
 router = APIRouter(prefix="/api", tags=["checks"])
 
@@ -54,7 +54,10 @@ async def create_check(
     user: CurrentUser = Depends(get_current_user),
 ) -> CheckStatus:
     app = request.app
-    job: CheckJob = app.state.jobs.create(user.id)
+    try:
+        job: CheckJob = app.state.jobs.create(user.id)
+    except JobsAtCapacity as exc:
+        raise HTTPException(429, "Too many checks in progress; try again shortly.") from exc
 
     if "rules" in body.checkers:
         doc = app.state.nlp.analyze(body.text, body.language.value)

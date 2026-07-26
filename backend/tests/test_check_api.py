@@ -1,3 +1,4 @@
+import asyncio
 import json
 import uuid
 from pathlib import Path
@@ -463,3 +464,44 @@ def test_job_retention_is_per_owner_not_global_fifo(tmp_path: Path) -> None:
         client.get(f"/api/checks/{b_check['check_id']}", headers=other).status_code
         == 200
     )
+
+
+def test_at_capacity_with_all_jobs_running_refuses_new_check_with_429(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Router-level companion to the JobManager unit tests in test_jobs.py:
+    # confirms JobsAtCapacity actually surfaces as a 429 through the API,
+    # not just as an internal exception.
+    from app.services import jobs as jobs_module
+
+    monkeypatch.setattr(jobs_module, "MAX_JOBS", 1)
+    monkeypatch.setattr(jobs_module, "MAX_JOBS_PER_OWNER", 1)
+
+    class HangingProvider:
+        """Never resolves, so its job's status stays 'running' forever."""
+
+        name = "hanging"
+
+        async def generate(self, system: str, user: str, on_progress=None) -> str:
+            await asyncio.Event().wait()
+
+    settings = Settings(db_path=tmp_path / "t.db", rules_dir=RULES_DIR)
+    app = create_app(settings)
+    app.state.provider_factory = lambda name=None, model=None: HangingProvider()
+    with TestClient(app) as client:
+        admin = auth_headers(client)
+        other = second_user_headers(client)
+
+        first = client.post(
+            "/api/checks",
+            json={"text": "a's job", "language": "en", "checkers": ["llm"]},
+            headers=admin,
+        )
+        assert first.json()["status"] == "running"  # store now at MAX_JOBS (1)
+
+        second = client.post(
+            "/api/checks",
+            json={"text": "b's job", "language": "en", "checkers": ["llm"]},
+            headers=other,
+        )
+        assert second.status_code == 429
