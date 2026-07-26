@@ -302,8 +302,11 @@ async function readEvents(
       // in one chunk. If a handler calls the unsubscribe function returned
       // by subscribeCheck (aborting `signal`) partway through that chunk,
       // later events in the same chunk must not still reach a handler the
-      // caller just tore down.
-      if (signal.aborted) return
+      // caller just tore down. `settled` covers the mirror case: a `done`
+      // frame earlier in the same chunk sets it but does not abort
+      // `signal`, so a later frame in that chunk would otherwise still
+      // reach its handler after the stream has already been told it's over.
+      if (signal.aborted || settled) return
       if (event.event === 'done') {
         // "done" closes the stream: stop reading and settle, matching
         // EventSource's own close-on-done behaviour above. cancel() rejects

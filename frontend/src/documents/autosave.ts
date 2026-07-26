@@ -65,6 +65,26 @@ export function cancelDebounce(): void {
   }
 }
 
+/** Releases the coordination locks a push() in flight holds — `saving`,
+ * `pending` and `inFlight` — so a save genuinely in flight when the session
+ * ends cannot affect the incoming session: without this, `saving` stays
+ * true until the stale push's own completion clears it, so every flush()
+ * in the next session would wait on that stale request (forever if it
+ * hangs) instead of pushing the incoming user's edits, and a `pending`
+ * flush queued in the meantime would get silently cleared with
+ * `succeeded === false` when the stale push finally settles. The stale
+ * push's own finally block (see push() below) checks its captured
+ * generation before touching this state again, so it cannot re-set what
+ * this just cleared. Called by documents.ts' invalidateDocumentWork()
+ * alongside the generation bump — the existing per-write generation guards
+ * already stop stale *writes*; this stops the stale *coordination state*
+ * from starving or clobbering the next session. */
+export function resetCoordinationState(): void {
+  saving = false
+  pending = false
+  inFlight = null
+}
+
 export function setConflictHandler(
   handler: (snapshot: DocSnapshot, gen: number) => Promise<void>,
 ): void {
@@ -234,18 +254,26 @@ async function push(snapshot: DocSnapshot): Promise<void> {
       scheduleRetry()
     }
   } finally {
-    saving = false
-    if (pending) {
-      pending = false
-      // A failed push already scheduled a backoff retry timer (or handed
-      // off to the conflict handler); firing an immediate flush here would
-      // bypass that backoff. The already-scheduled retry re-collects the
-      // latest snapshot, so no edits are lost.
-      if (succeeded) {
-        // Awaited (not fire-and-forget): keeps `inFlight` — and hence any
-        // flush() callers waiting on it — pending until this follow-up
-        // push has also settled.
-        await flush()
+    // Guarded by the captured generation: invalidateDocumentWork() may have
+    // already reset `saving`/`pending`/`inFlight` for the incoming session
+    // (resetCoordinationState() above) while this push was still awaiting
+    // its request. If so, this push's own generation no longer matches and
+    // this block must leave that state alone rather than clobbering
+    // whatever the incoming session has since done with it.
+    if (gen === currentGeneration()) {
+      saving = false
+      if (pending) {
+        pending = false
+        // A failed push already scheduled a backoff retry timer (or handed
+        // off to the conflict handler); firing an immediate flush here would
+        // bypass that backoff. The already-scheduled retry re-collects the
+        // latest snapshot, so no edits are lost.
+        if (succeeded) {
+          // Awaited (not fire-and-forget): keeps `inFlight` — and hence any
+          // flush() callers waiting on it — pending until this follow-up
+          // push has also settled.
+          await flush()
+        }
       }
     }
   }

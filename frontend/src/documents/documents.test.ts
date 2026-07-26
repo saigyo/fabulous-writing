@@ -59,8 +59,9 @@ import {
 } from '../api/client'
 
 const dispatched: unknown[] = []
+let viewText = 'view text'
 const fakeView = {
-  state: { doc: { toString: () => 'view text', length: 9 } },
+  state: { doc: { toString: () => viewText, length: 9 } },
   dispatch: (tr: unknown) => dispatched.push(tr),
 }
 
@@ -109,6 +110,7 @@ beforeEach(() => {
   resetAutosaveForTests()
   clearSnapshot()
   dispatched.length = 0
+  viewText = 'view text'
   localStorage.clear()
   useStore.getState().setDocMeta(null)
   useStore.getState().setDocuments([])
@@ -610,6 +612,124 @@ describe('invalidateDocumentWork', () => {
       revision: 0,
     })
     expect(dispatched).toHaveLength(0)
+  })
+
+  it('a next-session flush() is neither blocked by, nor has its work dropped by, a save still in flight when the session ends (liveness)', async () => {
+    // Outgoing session: a save genuinely in flight when invalidateDocumentWork()
+    // fires (logout()/expireSession()). Before the fix, autosave's `saving`
+    // flag stays true until this stale request's own completion clears it —
+    // so the very next flush() (a different user, a different document)
+    // would queue behind it via `pending` and wait on the same `inFlight`
+    // promise, forever if the stale request hangs.
+    useStore.getState().setDocMeta({ id: 1, name: 'Doc 1', nameSource: 'user', revision: 4 })
+    let resolveStale!: (value: unknown) => void
+    vi.mocked(updateDocument).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveStale = resolve
+        }) as never,
+    )
+
+    void flush() // outgoing session's save starts and is now in flight
+    expect(updateDocument).toHaveBeenCalledTimes(1)
+
+    invalidateDocumentWork() // outgoing session ends mid-flight
+
+    // Incoming session: a different user opens a different document.
+    useStore.setState({ user: { ...USER, id: 2 } })
+    useStore.getState().setDocMeta({ id: 2, name: 'Doc 2', nameSource: 'user', revision: 0 })
+    vi.mocked(updateDocument).mockResolvedValueOnce(doc(2, { revision: 1 }))
+
+    let nextFlushSettled = false
+    const nextFlush = flush().then(() => {
+      nextFlushSettled = true
+    })
+
+    // Must not hang waiting on the stale in-flight push: a real-time race
+    // against a short timeout stands in for "forever" — if the fix regresses
+    // and flush() blocks on the stale request, this timeout wins instead.
+    await Promise.race([
+      nextFlush,
+      new Promise((resolve) => setTimeout(resolve, 50)),
+    ])
+    expect(nextFlushSettled).toBe(true)
+    // The incoming session's own edit must actually have been pushed, not
+    // silently queued-then-dropped behind the stale request.
+    expect(updateDocument).toHaveBeenCalledWith(
+      2,
+      expect.objectContaining({ revision: 0 }),
+    )
+
+    // The stale request resolving afterwards must not clobber the incoming
+    // session's now-successfully-saved state.
+    resolveStale(doc(1, { revision: 5 }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(useStore.getState().docMeta?.id).toBe(2)
+    expect(useStore.getState().docMeta?.revision).toBe(1)
+  })
+
+  it("an outgoing session's stale push settling while the incoming session's own push is still in flight does not drop the incoming session's queued follow-up edit", async () => {
+    // Distinguishes resetCoordinationState() (session 2 never has to wait on
+    // session 1's stale push at all) from the separate guard this test
+    // pins: push()'s own `finally` block must also check its captured
+    // generation before touching `saving`/`pending`, because session 2 can
+    // start (and still be awaiting) its *own* push by the time session 1's
+    // stale push finally settles.
+    useStore.getState().setDocMeta({ id: 1, name: 'Doc 1', nameSource: 'user', revision: 4 })
+    let rejectStale!: (reason?: unknown) => void
+    vi.mocked(updateDocument).mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectStale = reject
+        }) as never,
+    )
+    void flush() // outgoing session's push #1 starts, in flight
+    expect(updateDocument).toHaveBeenCalledTimes(1)
+
+    invalidateDocumentWork() // outgoing session ends mid-flight
+
+    // Incoming session opens its own document and starts its own push.
+    useStore.setState({ user: { ...USER, id: 2 } })
+    useStore.getState().setDocMeta({ id: 2, name: 'Doc 2', nameSource: 'user', revision: 0 })
+    let resolveIncoming!: (value: unknown) => void
+    vi.mocked(updateDocument).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveIncoming = resolve
+        }) as never,
+    )
+    void flush() // incoming session's own push #2 starts, also in flight
+    expect(updateDocument).toHaveBeenCalledTimes(2)
+
+    // A further edit arrives while push #2 is still in flight: this must
+    // queue a follow-up (`pending`), not start a concurrent third PUT.
+    viewText = 'view text, edited by session 2'
+    void flush()
+
+    // The outgoing session's stale push #1 now settles — well after the
+    // generation has moved on to session 2 — and fails.
+    vi.mocked(updateDocument).mockResolvedValueOnce(doc(2, { revision: 2 }))
+    rejectStale(new TypeError('offline'))
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // Session 2's own push #2 now completes successfully.
+    resolveIncoming(doc(2, { revision: 1 }))
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // The queued edit must still have been pushed as its own PUT — not
+    // silently dropped by push #1's completion clearing `pending` first
+    // (push #1 belongs to a generation that ended before push #2 even
+    // started).
+    expect(updateDocument).toHaveBeenCalledTimes(3)
+    expect(vi.mocked(updateDocument).mock.calls[2][1].content?.text).toBe(
+      'view text, edited by session 2',
+    )
   })
 })
 

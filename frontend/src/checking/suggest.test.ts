@@ -132,6 +132,62 @@ describe('fetchSuggestions', () => {
     // leave it exactly there, not overwrite it with the stale suggestions.
     expect(useStore.getState().extraSuggestions.f1).toEqual([])
   })
+
+  it("an outgoing session's stale completion does not clear the incoming session's own in-flight pending marker", async () => {
+    let resolveStale!: (value: Awaited<ReturnType<typeof postSuggestions>>) => void
+    vi.mocked(postSuggestions).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveStale = resolve
+        }),
+    )
+
+    const staleCall = fetchSuggestions('f1') // outgoing session's call: now in flight
+    expect(useStore.getState().suggestPendingId).toBe('f1')
+
+    bumpGeneration() // simulates logout()/expireSession() firing mid-flight
+    // Mirrors what a real logout's resetSessionState() does to this field —
+    // exercised directly since this test is scoped to suggest.ts alone.
+    useStore.getState().setSuggestPending(null)
+
+    let resolveIncoming!: (value: Awaited<ReturnType<typeof postSuggestions>>) => void
+    vi.mocked(postSuggestions).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveIncoming = resolve
+        }),
+    )
+    const incomingCall = fetchSuggestions('f1') // incoming session's own call: also in flight
+    expect(useStore.getState().suggestPendingId).toBe('f1') // the incoming session's own marker
+
+    // The outgoing session's stale request now resolves.
+    resolveStale({
+      suggestions: ['stale'],
+      span: { start: 0, end: 4 },
+      original: 'orig',
+      rejected: 0,
+      held_back: [],
+      advice: [],
+    })
+    await staleCall
+
+    // The incoming session's request is still genuinely in flight; its
+    // pending marker must survive the outgoing session's stale completion.
+    expect(useStore.getState().suggestPendingId).toBe('f1')
+
+    resolveIncoming({
+      suggestions: ['fresh'],
+      span: { start: 0, end: 4 },
+      original: 'orig',
+      rejected: 0,
+      held_back: [],
+      advice: [],
+    })
+    await incomingCall
+
+    // The incoming session's own completion still clears it normally.
+    expect(useStore.getState().suggestPendingId).toBeNull()
+  })
 })
 
 describe('fetchRewrite', () => {
@@ -157,5 +213,55 @@ describe('fetchRewrite', () => {
     await call
 
     expect(useStore.getState().rewrites.f1).toBeUndefined()
+  })
+
+  it("an outgoing session's stale completion does not clear the incoming session's own in-flight pending marker", async () => {
+    let resolveStale!: (value: Awaited<ReturnType<typeof postSuggestions>>) => void
+    vi.mocked(postSuggestions).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveStale = resolve
+        }),
+    )
+
+    const staleCall = fetchRewrite('f1') // outgoing session's call: now in flight
+    expect(useStore.getState().rewritePendingId).toBe('f1')
+
+    bumpGeneration() // simulates logout()/expireSession() firing mid-flight
+    useStore.getState().setRewritePending(null) // mirrors resetSessionState()
+
+    let resolveIncoming!: (value: Awaited<ReturnType<typeof postSuggestions>>) => void
+    vi.mocked(postSuggestions).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveIncoming = resolve
+        }),
+    )
+    const incomingCall = fetchRewrite('f1') // incoming session's own call: also in flight
+    expect(useStore.getState().rewritePendingId).toBe('f1')
+
+    resolveStale({
+      suggestions: ['stale rewrite'],
+      span: { start: 0, end: 4 },
+      original: 'orig',
+      rejected: 0,
+      held_back: [],
+      advice: [],
+    })
+    await staleCall
+
+    expect(useStore.getState().rewritePendingId).toBe('f1')
+
+    resolveIncoming({
+      suggestions: ['fresh rewrite'],
+      span: { start: 0, end: 4 },
+      original: 'orig',
+      rejected: 0,
+      held_back: [],
+      advice: [],
+    })
+    await incomingCall
+
+    expect(useStore.getState().rewritePendingId).toBeNull()
   })
 })
