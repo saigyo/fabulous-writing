@@ -151,13 +151,21 @@ describe('401 handling', () => {
 
   it('a 401 from postLogin does not clear auth state and the HttpError reaches the caller', async () => {
     useStore.setState({ token: 'tok', user: user(1), authStatus: 'authenticated' })
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(401, {}))
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(jsonResponse(401, {}))
 
     await expect(postLogin('a@example.com', 'wrong')).rejects.toBeInstanceOf(HttpError)
 
     const state = useStore.getState()
     expect(state.authStatus).toBe('authenticated')
     expect(state.sessionExpired).toBe(false)
+    // keepSessionOn401 must have exactly one effect (skipping the
+    // clear-auth branch) and never touch header construction — a call that
+    // happens to carry a token (as this one does, mid-session) must still
+    // send it, even though this endpoint is exempt from the 401 handling.
+    const init = fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
+    expect(init.headers.Authorization).toBe('Bearer tok')
   })
 
   it('a 401 from POST /api/auth/password clears auth state (not exempt)', async () => {
@@ -222,4 +230,35 @@ describe('401 handling', () => {
     expect(state.authStatus).toBe('authenticated')
     expect(state.sessionExpired).toBe(false)
   })
+
+  it('a 401 with no token in flight does not expire a session that never existed', async () => {
+    // A visitor who never signed in: no token was ever sent, and the store
+    // has none either. A mount-time request (providers, languages, ...)
+    // 401ing here must not raise the "your session has ended" notice for
+    // someone who was never signed in to begin with.
+    useStore.setState({ token: null, user: null, authStatus: 'anonymous' })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(401, {}))
+
+    await expect(request('/api/providers')).rejects.toBeInstanceOf(HttpError)
+
+    const state = useStore.getState()
+    expect(state.authStatus).toBe('anonymous')
+    expect(state.sessionExpired).toBe(false)
+  })
 })
+
+// Compile-time regression check, not a runtime test: keepSessionOn401 must
+// stay unreachable through the exported request() — only requestWithOptions
+// (internal to client.ts, postLogin's sole caller) accepts it. The function
+// below is never called (a real invocation would hit an unmocked fetch);
+// its only job is to fail `tsc -b` two ways — as a real type error if
+// RequestOptions is ever widened to include this flag (the suppression
+// directive just below stops matching anything and TypeScript reports it
+// as unused), and right now via that same directive, confirming the
+// property genuinely isn't there.
+function _keepSessionOn401IsNotPublic(): void {
+  // @ts-expect-error keepSessionOn401 only exists on client.ts's internal
+  // RequestOptionsInternal, not on the RequestOptions request() accepts.
+  void request('/api/whatever', { keepSessionOn401: true })
+}
+void _keepSessionOn401IsNotPublic

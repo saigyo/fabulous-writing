@@ -33,15 +33,30 @@ export class HttpError extends Error {
   }
 }
 
-interface RequestOptions extends RequestInit {
-  // Skips the clear-auth branch when (and only when) the response is 401.
-  // A property of the *call*, not a URL match, so a future endpoint that
-  // also must not clear state opts in explicitly instead of being
-  // special-cased by path. Its only caller is postLogin — a wrong password
-  // must reach the caller as an HttpError, not trigger a state-clearing
-  // loop. This must never influence header construction (in particular, it
-  // must never suppress the Authorization header) — it has exactly the one
-  // effect described above.
+// headers is narrowed from RequestInit's HeadersInit (Record<string,string>
+// | string[][] | Headers) to a plain object: a Headers instance spreads to
+// {} (its properties are not own-enumerable) and a string[][] spreads to
+// {0: [...], 1: [...]} — both silently wrong, and a cast to
+// Record<string, string> at the spread site would compile either one
+// straight through. No caller passes the other two forms today, so nothing
+// is lost by disallowing them here; a real need would surface as a type
+// error instead of a runtime bug.
+interface RequestOptions extends Omit<RequestInit, 'headers'> {
+  headers?: Record<string, string>
+}
+
+// keepSessionOn401 lives only on this internal type, never on the exported
+// RequestOptions — so it is reachable exclusively through requestWithOptions
+// below, whose only caller is postLogin. Anything importing the public
+// request() gets a type that has no such property at all: passing
+// { keepSessionOn401: true } as an object literal to request() is a compile
+// error, not a convention someone has to remember. This is a property of
+// the *call*, not a URL match, so a future endpoint that also must not
+// clear state opts in by calling requestWithOptions explicitly rather than
+// being special-cased by path. It must never influence header construction
+// (in particular, it must never suppress the Authorization header) — it
+// has exactly the one effect: skip the clear-auth branch on a 401.
+interface RequestOptionsInternal extends RequestOptions {
   keepSessionOn401?: boolean
 }
 
@@ -76,11 +91,17 @@ async function extractErrorCode(response: Response): Promise<string | undefined>
 // token. Clearing only when the store's current token still matches the
 // one the rejected request was sent with prevents that.
 export function handleUnauthorized(tokenUsed: string | null): void {
+  // A visitor who never signed in has tokenUsed === null and the store's
+  // token is also null, so the equality check below would otherwise pass
+  // and expire a session that never existed — surfacing Task 6's "your
+  // session has ended" notice on an anonymous visitor's first paint once
+  // Task 10's enforcement lands and every mount-time request starts 401ing.
+  if (!tokenUsed) return
   if (useStore.getState().token !== tokenUsed) return
   getUnauthorizedHandler()?.()
 }
 
-export async function request<T>(path: string, init?: RequestOptions): Promise<T> {
+async function requestWithOptions<T>(path: string, init?: RequestOptionsInternal): Promise<T> {
   const { keepSessionOn401, headers: callerHeaders, ...rest } = init ?? {}
   // Read at fetch time, not captured earlier: an in-flight request that
   // turns stale is safe only because it still carries the *outgoing*
@@ -91,8 +112,12 @@ export async function request<T>(path: string, init?: RequestOptions): Promise<T
   const token = useStore.getState().token
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(callerHeaders as Record<string, string> | undefined),
+    ...callerHeaders,
   }
+  // Deliberately unconditional on keepSessionOn401: that flag has exactly
+  // one effect (skipping the clear-auth branch below) and must never touch
+  // header construction, or the first exempt endpoint that actually
+  // carries a token would silently lose its Authorization header.
   if (token) headers.Authorization = `Bearer ${token}`
 
   const response = await fetch(`${BASE}${path}`, { ...rest, headers })
@@ -109,6 +134,10 @@ export async function request<T>(path: string, init?: RequestOptions): Promise<T
   }
   if (response.status === 204) return undefined as T
   return response.json()
+}
+
+export async function request<T>(path: string, init?: RequestOptions): Promise<T> {
+  return requestWithOptions<T>(path, init)
 }
 
 /** Mirrors the backend's own response (`backend/app/api/auth.py`). M4 and M5
@@ -135,7 +164,7 @@ export interface LoginResponse {
 // ambiguity with get_current_user at the source), so it must flow through
 // expireSession() like any other endpoint.
 export const postLogin = (email: string, password: string) =>
-  request<LoginResponse>('/api/auth/login', {
+  requestWithOptions<LoginResponse>('/api/auth/login', {
     method: 'POST',
     body: JSON.stringify({ email, password }),
     keepSessionOn401: true,

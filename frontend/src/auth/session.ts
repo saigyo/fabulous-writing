@@ -95,6 +95,15 @@ async function runRestore(): Promise<void> {
     if (startedAt !== generation) return
     useStore.getState().setAuth(token, user)
   } catch (error) {
+    // Not the live path for a 401 as of Task 4: getMe()'s own request()
+    // call already routed that 401 through handleUnauthorized() ->
+    // expireSession() before rejecting, which bumped `generation` — so
+    // `startedAt !== generation` is normally true here and this whole catch
+    // body returns on the line above without re-running expireSession().
+    // The branch below is a correct fallback, not dead code: it is what
+    // actually fires 401 handling when client.ts's request() isn't the one
+    // producing the error — e.g. session.test.ts, which mocks getMe()
+    // directly and so bypasses request() and its handler entirely.
     if (startedAt !== generation) return
     // Only an authentication rejection ends the session. A 500 or a dropped
     // connection during startup must NOT discard a perfectly good token —
