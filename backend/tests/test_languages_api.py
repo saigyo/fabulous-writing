@@ -1,23 +1,8 @@
-from pathlib import Path
-
-import pytest
 from fastapi.testclient import TestClient
 
-from app.core.config import Settings
-from app.main import create_app
 
-RULES_DIR = Path(__file__).parent.parent / "rules"
-
-
-@pytest.fixture
-def client(tmp_path: Path):
-    settings = Settings(db_path=tmp_path / "test.db", rules_dir=RULES_DIR)
-    with TestClient(create_app(settings)) as client:
-        yield client
-
-
-def test_languages_endpoint_lists_all_seven(client: TestClient) -> None:
-    data = client.get("/api/languages").json()
+def test_languages_endpoint_lists_all_seven(authed_client: TestClient) -> None:
+    data = authed_client.get("/api/languages").json()
     assert [item["code"] for item in data] == ["en", "de", "fr", "es", "it", "ja", "zh"]
     by_code = {item["code"]: item for item in data}
     assert by_code["en"] == {
