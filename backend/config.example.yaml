@@ -6,6 +6,11 @@
 #   bedrock -> standard AWS credential chain (env vars, profile, role)
 #   extra_providers entries -> <NAME>_API_KEY (deepseek -> DEEPSEEK_API_KEY)
 
+# environment: production  # dev | staging | production. Default: production
+#                           # (fails closed if unset). Controls whether the API
+#                           # docs endpoints (/docs, /redoc, /openapi.json) are
+#                           # registered at all: only in "dev" -- staging and
+#                           # production don't expose them, not even behind auth.
 # db_path: data/fabulous.db
 # rules_dir: rules
 # seed_terminology: true   # seed an example domain into an empty terminology DB

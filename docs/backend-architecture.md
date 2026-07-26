@@ -171,6 +171,16 @@ construction. A deployment serving the frontend from anywhere other than
 `load_settings()` only reads YAML (`config_file` param aside, used by tests and
 one-off scripts, never by `main.py`'s own `app` attribute).
 
+**`environment` gates the API docs routes** (`dev` | `staging` | `production`,
+default `production` — YAML-only, same as `cors.origins`, no environment-variable
+override). `create_app()` passes `docs_url=None, redoc_url=None, openapi_url=None`
+to the `FastAPI(...)` constructor whenever `environment` is not `"dev"`, so `/docs`,
+`/redoc`, and `/openapi.json` are not registered as routes at all outside dev — not
+merely gated behind auth. The default is fail-closed on purpose: a deployment that
+forgets to set `environment` gets `production` (docs off), not an anonymously
+reachable API surface; a developer who forgets gets their own docs turned off,
+which is visible and harmless by comparison.
+
 ## The check flow
 
 A check is a **job**: rules and terminology run synchronously (they are fast), the LLM
@@ -1087,12 +1097,13 @@ Every endpoint below requires a valid `Authorization: Bearer <token>` caller **e
 | `GET /api/health` | liveness |
 
 FastAPI serves the OpenAPI schema at `/docs` — that is the contract for any future
-non-browser client. **Accepted residual**: `/docs`, `/redoc`, and `/openapi.json` are
-FastAPI-internal routes, not `APIRoute`s registered through the routers above, so they
-sit outside both the enforcement loop in `create_app()` and the route-tree walk in
-`test_auth_enforcement.py` — they remain anonymously reachable. They expose the shape
-of the API, not any data or capability an anonymous request couldn't already
-discover by reading this repository, so this is accepted rather than fixed.
+non-browser client. `/docs`, `/redoc`, and `/openapi.json` are FastAPI-internal
+routes, not `APIRoute`s registered through the routers above, so they sit outside
+both the enforcement loop in `create_app()` and the route-tree walk in
+`test_auth_enforcement.py`. They are anonymously reachable **only in the `dev`
+environment** (see `environment` above): outside dev, `create_app()` passes
+`docs_url=None, redoc_url=None, openapi_url=None` to `FastAPI(...)`, so the routes
+are never registered and all three 404 for every caller, authenticated or not.
 
 ## Testing
 
