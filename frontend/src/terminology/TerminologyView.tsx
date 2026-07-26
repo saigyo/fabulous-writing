@@ -30,6 +30,14 @@ export function TerminologyView() {
   const domains = useStore((s) => s.domains)
   const setDomains = useStore((s) => s.setDomains)
   const isAdmin = useStore((s) => s.user?.is_admin ?? false)
+  // Bumped only by login() committing (see its own comment in
+  // state/store.ts) — including the silent same-user re-login the
+  // password-change flow performs (auth/AccountMenu.tsx). Depending on it
+  // below re-fires the mount effect on that re-login, so a pre-login
+  // refreshDomains() call still in flight at that moment gets a replacement
+  // instead of being discarded with nothing to follow it (Copilot round-9
+  // U2, same mechanism as Header's domains fetch in App.tsx).
+  const authGeneration = useStore((s) => s.authGeneration)
   const [activeDomainId, setActiveDomainId] = useState<number | null>(null)
   const [terms, setTerms] = useState<Term[]>([])
   const [newDomain, setNewDomain] = useState('')
@@ -45,7 +53,7 @@ export function TerminologyView() {
 
   useEffect(() => {
     void refreshDomains()
-  }, [refreshDomains])
+  }, [refreshDomains, authGeneration])
 
   useEffect(() => {
     if (activeDomainId === null && domains.length > 0) {

@@ -18,6 +18,7 @@ vi.mock('../api/client', async (importOriginal) => ({
   createTerm: vi.fn(),
   updateTerm: vi.fn(),
   deleteTerm: vi.fn(),
+  postLogin: vi.fn(),
 }))
 // documents.ts pulls in hydration.ts -> checking/controller.ts; logout()
 // (via auth/session.ts) only needs these two exports, so the module is
@@ -27,8 +28,8 @@ vi.mock('../documents/documents', () => ({
   clearLegacyText: vi.fn(),
 }))
 
-import { deleteTerm, getDomains, getTerms, updateTerm } from '../api/client'
-import { logout } from '../auth/session'
+import { deleteTerm, getDomains, getTerms, postLogin, updateTerm } from '../api/client'
+import { login, logout } from '../auth/session'
 import { TerminologyView } from './TerminologyView'
 
 function user(overrides: Partial<MeResponse> = {}): MeResponse {
@@ -68,6 +69,8 @@ beforeEach(() => {
     languages: FALLBACK_LANGUAGES,
     domains: [globalDomain, privateDomain],
     user: user({ is_admin: false }),
+    token: 'old-token',
+    authStatus: 'authenticated',
   })
 })
 
@@ -287,5 +290,54 @@ describe('TerminologyView refreshDomains generation guard', () => {
     // for why a waitFor here would pass before the stale write even lands.
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(useStore.getState().domains).toEqual([]) // nothing landed
+  })
+})
+
+describe('TerminologyView refreshDomains re-fires on same-user re-login (Copilot round-9 U2)', () => {
+  it('issues and applies a replacement domains fetch after the password-change silent re-login, while the stale pre-login fetch stays discarded', async () => {
+    let resolveFirst!: (domains: Domain[]) => void
+    const firstFetch = new Promise<Domain[]>((resolve) => {
+      resolveFirst = resolve
+    })
+    let resolveSecond!: (domains: Domain[]) => void
+    const secondFetch = new Promise<Domain[]>((resolve) => {
+      resolveSecond = resolve
+    })
+    let getDomainsCalls = 0
+    vi.mocked(getDomains).mockImplementation(() => {
+      getDomainsCalls += 1
+      return getDomainsCalls === 1 ? firstFetch : secondFetch
+    })
+    // login() always returns a fresh `user` object (see auth/session.ts) —
+    // a brand-new object literal here mirrors that, even though every field
+    // is identical to the pre-login user (same-user re-login).
+    vi.mocked(postLogin).mockResolvedValue({
+      token: 'new-token',
+      user: user({ is_admin: false }),
+    })
+
+    render(<TerminologyView />) // mount fires the first (pre-login) refreshDomains()
+    await waitFor(() => expect(getDomainsCalls).toBe(1))
+
+    // The password-change flow (auth/AccountMenu.tsx handleSubmit) silently
+    // re-authenticates the SAME user via login(email, newPassword) while
+    // TerminologyView stays mounted — authStatus never leaves
+    // 'authenticated', so LoginGate does not unmount/remount it.
+    const reauthenticated = await login('ada@example.com', 'new-password-123')
+    expect(reauthenticated).toBe(true)
+
+    // A replacement fetch must be issued for the new session.
+    await waitFor(() => expect(getDomainsCalls).toBe(2))
+
+    // The pre-login fetch, still pending, must stay discarded when it lands.
+    resolveFirst([{ id: 9, name: 'Foreign', description: '', is_global: false }])
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(useStore.getState().domains).toEqual([globalDomain, privateDomain])
+
+    // The replacement fetch's result IS applied — the domain picker must
+    // not stay stuck on stale data for the rest of the session.
+    const freshDomain: Domain = { id: 3, name: 'Fresh', description: '', is_global: true }
+    resolveSecond([freshDomain])
+    await waitFor(() => expect(useStore.getState().domains).toEqual([freshDomain]))
   })
 })

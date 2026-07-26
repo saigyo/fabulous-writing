@@ -86,14 +86,28 @@ export function Header() {
   const m = useMessages()
 
   useEffect(() => {
-    // Mount-only fetch; grab the actions off the store object directly so
-    // the effect has no reactive dependencies. providers/languages/routing
+    // Re-runs on mount AND on every login() commit — depending on
+    // authGeneration, which login() bumps unconditionally (see its own
+    // comment in state/store.ts and the bump site in auth/session.ts),
+    // including the silent same-user re-login the password-change flow
+    // performs (auth/AccountMenu.tsx handleSubmit -> login(email, next)).
+    // That flow bumps sessionGeneration() while Header stays mounted
+    // (authStatus never leaves 'authenticated', so LoginGate never unmounts
+    // it). Without this, a mount-time domains fetch still in flight at that
+    // moment gets discarded by the generation guard below with no
+    // replacement ever issued, leaving the domain picker empty for the rest
+    // of the session (Copilot round-9 U1). authGeneration is deliberately
+    // NOT bumped by logout()/expireSession() (unlike store.user, which also
+    // goes null on those) — see App.domains-guard.test.tsx's session-turnover
+    // test, which relies on this effect NOT re-firing on logout while Header
+    // stays mounted only for the test's sake. providers/languages/routing
     // are app-wide catalogs (app/api/providers.py, languages.py,
-    // routing.py) — a write landing after a session turnover writes the
-    // same data the incoming session would fetch, so they stay unguarded.
-    // domains are per-user since M3 (owner-scoped in
-    // app/services/terminology.py): a fetch started under user A must not
-    // land in user B's store.
+    // routing.py) — refetching them on a same-user re-login is harmless, and
+    // a write landing after a session turnover writes the same data the
+    // incoming session would fetch, so they stay unguarded. domains are
+    // per-user since M3 (owner-scoped in app/services/terminology.py): a
+    // fetch started under user A must not land in user B's store — the
+    // guard below stays.
     const { setProviders, setDomains, setLanguages, setRouting } = useStore.getState()
     const gen = sessionGeneration()
     getProviders().then(setProviders).catch(() => setProviders([]))
@@ -102,7 +116,7 @@ export function Header() {
       .catch(() => { if (sessionGeneration() === gen) setDomains([]) })
     getLanguages().then(setLanguages).catch(() => {})
     getRouting().then(setRouting).catch(() => setRouting(null))
-  }, [])
+  }, [store.authGeneration])
 
   const prevLanguage = useRef<Language | null>(null)
   useEffect(() => {

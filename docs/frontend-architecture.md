@@ -452,19 +452,39 @@ i18n keys, `globalBadge`/`globalBadgeTitle`, are defined once per locale across 
 seven catalogs.
 
 **The domains-fetch guard**: `getDomains()` populates `store.domains` from two call
-sites — `App.tsx`'s `Header` mount effect and `TerminologyView.tsx`'s `refreshDomains()`
-— and both now capture `sessionGeneration()` before the fetch and only commit the result
-if the session hasn't turned over by the time it resolves (or rejects); see this
-document's [Authentication](#authentication) section ("Purge-on-user-change") for why
-this uses the **auth** counter rather than the document one. Before M3, domains were
-shared, unowned data, so a stale write
-here was harmless by construction — the in-code comment on `App.tsx`'s effect used to
-say exactly that ("no generation guard needed"). M3 made that reasoning obsolete the
-moment domains gained an `owner_id`: an unguarded write landing after a user change
-would show the *previous* account's private domain names to whoever is now logged in.
-The stale comment was the trigger for a wider audit (`grep -rn "getDomains("` and `grep
--rn "No generation guard"` across `frontend/src`) that confirmed these were the only two
-call sites and the only stale comment of that shape in the tree.
+sites, and both capture `sessionGeneration()` before the fetch and check it again before
+writing — see this document's [Authentication](#authentication) section
+("Purge-on-user-change") for why this uses the **auth** counter rather than the document
+one — but the two sites are not identical, and are documented separately below rather
+than as one symmetric pair:
+
+- `App.tsx`'s `Header` mount effect guards **both** paths: the resolve writes
+  `setDomains(domains)` only if `sessionGeneration()` still matches, and the `.catch`
+  fallback writes `setDomains([])` under the same check, so a session turnover discards
+  a late rejection exactly like a late success.
+- `TerminologyView.tsx`'s `refreshDomains()` has only a `.then(...)` — no `.catch` at
+  all. Its success write is guarded the same way as `Header`'s, but a rejection is
+  simply left unhandled: nothing resets `store.domains` on that path, guarded or not,
+  because there is no fallback write there to guard.
+
+Before M3, domains were shared, unowned data, so a stale write here was harmless by
+construction — the in-code comment on `App.tsx`'s effect used to say exactly that ("no
+generation guard needed"). M3 made that reasoning obsolete the moment domains gained an
+`owner_id`: an unguarded write landing after a user change would show the *previous*
+account's private domain names to whoever is now logged in. The stale comment was the
+trigger for a wider audit (`grep -rn "getDomains("` and `grep -rn "No generation guard"`
+across `frontend/src`) that confirmed these were the only two call sites and the only
+stale comment of that shape in the tree.
+
+Both mount effects also re-run on more than just mount: each depends on `store`'s
+`authGeneration` counter (`state/store.ts`) — bumped only by `login()` on every commit,
+same-user re-login included (`auth/session.ts`) — so a fetch still in flight when the
+password-change flow's silent re-login lands gets discarded by the `sessionGeneration()`
+check above exactly as before, but a **replacement** fetch is issued right behind it
+instead of leaving the picker empty for the rest of the session (Copilot round-9
+U1/U2). `authGeneration` is deliberately not bumped by `logout()`/`expireSession()`:
+both already unmount these components via `LoginGate`, so re-firing on the way to a
+logged-out state would only fire fetches nothing is listening for.
 
 ## Documents
 
@@ -949,9 +969,12 @@ either — nothing about it belongs to the currently open document — so it is 
 the separate **auth** counter (`sessionGeneration()`, above) rather than this one: both
 `App.tsx`'s `Header` mount effect and `terminology/TerminologyView.tsx`'s
 `refreshDomains()` capture `gen = sessionGeneration()` before the `GET /api/domains`
-call and only call `setDomains(...)` if `sessionGeneration() === gen` still holds on
-both the resolve and reject paths — see [`is_global` affordances and the domains-fetch
-guard](#is_global-affordances-and-the-domains-fetch-guard) above.
+call and only call `setDomains(...)` if `sessionGeneration() === gen` still holds — on
+`Header`'s resolve *and* its `.catch` fallback, but `refreshDomains()` has no `.catch`
+to guard in the first place, so its check applies to the resolve path alone; see
+[`is_global` affordances and the domains-fetch
+guard](#is_global-affordances-and-the-domains-fetch-guard) above for the full picture,
+including why both effects also re-fire on a same-user re-login.
 
 `login()` leaving the **document** counter alone is deliberate, not an oversight:
 in-flight document work must survive a same-user re-login, which is exactly what the
