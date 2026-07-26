@@ -108,7 +108,8 @@ async function runRestore(): Promise<void> {
   }
 }
 
-// Registers expireSession as the handler client.ts calls on a 401 (wired up
-// starting Task 4). client.ts must not import session.ts back — see its own
+// Registers expireSession as the handler request()'s 401 branch calls
+// (client.ts:handleUnauthorized), scoped there to the token that produced
+// the 401. client.ts must not import session.ts back — see its own
 // setUnauthorizedHandler comment.
 setUnauthorizedHandler(expireSession)
