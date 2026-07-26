@@ -3064,7 +3064,7 @@ PR: [#26](https://github.com/saigyo/fabulous-writing/pull/26), branch
 **Why.** M2 authenticated every endpoint but scoped nothing: any logged-in
 account saw every document, folder, profile, and terminology domain. M3
 closes that — a caller now sees exactly what they created, plus whatever a
-seeder or an admin made global.
+seeder made global.
 
 **What.** A per-user `token_epoch` counter closes M2's documented same-second
 revocation residual exactly (equality check against a JWT `epoch` claim,
@@ -3076,10 +3076,10 @@ like a missing one — never 403, which would leak that the id exists.
 `folders` needed a guarded table rebuild to drop its legacy global
 `UNIQUE(name)` and the inert `owner_id DEFAULT 1`, replaced by a per-owner
 case-insensitive index. `profiles` and `domains` gained a *nullable*
-`owner_id` instead: `NULL` is global (seeded built-ins, or anything an admin
-explicitly creates as global), visible to every caller but mutable only by
-an admin (`GlobalReadOnlyError` → 403, one shared exception across both
-stores). `profiles` got the same guarded-rebuild treatment for its legacy
+`owner_id` instead: `NULL` is global — written only by the startup seeders,
+never by an API create (which always assigns `owner_id=user.id`) — visible
+to every caller but mutable only by an admin (`GlobalReadOnlyError` → 403,
+one shared exception across both stores). `profiles` got the same guarded-rebuild treatment for its legacy
 `UNIQUE(language, name)`, replaced by two partial unique indexes (SQLite
 treats every `NULL` as distinct, so one composite index can't enforce global
 uniqueness); `domains` never had a `UNIQUE` to drop but gained the matching
