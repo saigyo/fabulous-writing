@@ -26,7 +26,13 @@ export function LoginGate({ children }: { children: ReactNode }) {
       <div className="login-gate">
         <div className="login-card">
           <Wordmark />
-          <p className="llm-error">{m.connectionFailed}</p>
+          {/* role="alert": this text replaces the whole gate asynchronously
+              (after the mount effect's restoreSession() fails), so without a
+              live-region role assistive technology may never announce that
+              loading failed. */}
+          <p className="llm-error" role="alert">
+            {m.connectionFailed}
+          </p>
           <button
             type="button"
             className="login-submit"

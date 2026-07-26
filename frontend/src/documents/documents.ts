@@ -124,6 +124,10 @@ export async function moveDocumentToFolder(
 // "whatever is current when this function happens to run".
 export async function openDocument(id: number, gen: number = currentGeneration()): Promise<void> {
   await flush()
+  // flush() can await a save left in flight by the outgoing session; a
+  // logout or expiry landing inside that await must stop this before it
+  // fetches the outgoing user's document under the incoming session.
+  if (gen !== currentGeneration()) return // session ended while flush() was in flight
   const doc = await getDocument(id)
   if (gen !== currentGeneration()) return // session ended while fetching the document
   await hydrateFromDocument(doc, gen)
@@ -134,6 +138,12 @@ export async function createNewDocument(
   gen: number = currentGeneration(),
 ): Promise<void> {
   await flush()
+  // flush() can await a save left in flight by the outgoing session; a
+  // logout or expiry landing inside that await must stop this here, before
+  // the POST below — the post-request check further down is too late to
+  // prevent the server-side write, it only hides the already-created
+  // document from the UI.
+  if (gen !== currentGeneration()) return // session ended while flush() was in flight
   const state = useStore.getState()
   const base: DocumentCreatePayload = {
     name: currentMessages().docUntitled,

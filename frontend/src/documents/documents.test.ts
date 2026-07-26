@@ -528,6 +528,74 @@ describe('invalidateDocumentWork', () => {
     expect(useStore.getState().documents.map((d) => d.id)).toEqual([2])
   })
 
+  it('createNewDocument() does not POST at all when the session ends while flush() is awaiting a save left in flight by the outgoing session', async () => {
+    // Distinct from the existing "does not resurrect the outgoing user's
+    // stale document list" test above, which starts createNewDocument()
+    // already past its own await flush() (createDocument itself in flight).
+    // This one puts a *different* session's save in flight first, so that
+    // createNewDocument()'s own `await flush()` takes the `while (saving &&
+    // inFlight)` branch and is still suspended there when the session ends —
+    // exactly the hazard described in review round 2: flush() resuming after
+    // a turnover must not let the POST happen at all, since the existing
+    // post-request check only hides the result, it does not prevent the
+    // server-side write.
+    useStore.getState().setDocMeta({ id: 1, name: 'Doc 1', nameSource: 'user', revision: 4 })
+    let resolveOutgoing!: (v: unknown) => void
+    vi.mocked(updateDocument).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveOutgoing = resolve
+        }) as never,
+    )
+
+    void flush() // outgoing session's own save starts and is now in flight
+    expect(updateDocument).toHaveBeenCalledTimes(1)
+
+    const pending = createNewDocument() // reaches `await flush()`, joins the in-flight save
+
+    invalidateDocumentWork() // the session that started createNewDocument() ends mid-flush()
+
+    vi.mocked(createDocument).mockResolvedValue(doc(9)) // in case the guard regresses
+    resolveOutgoing(doc(1, { revision: 5 })) // lets flush()'s wait resolve
+    await pending
+
+    // The critical assertion: no document was ever created on the server —
+    // not merely "the UI doesn't show it".
+    expect(createDocument).not.toHaveBeenCalled()
+  })
+
+  it('openDocument() does not fetch at all when the session ends while flush() is awaiting a save left in flight by the outgoing session', async () => {
+    useStore.getState().setDocMeta({ id: 1, name: 'Doc 1', nameSource: 'user', revision: 4 })
+    let resolveOutgoing!: (v: unknown) => void
+    vi.mocked(updateDocument).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveOutgoing = resolve
+        }) as never,
+    )
+
+    void flush() // outgoing session's own save starts and is now in flight
+    expect(updateDocument).toHaveBeenCalledTimes(1)
+
+    const pending = openDocument(2) // reaches `await flush()`, joins the in-flight save
+
+    invalidateDocumentWork() // the session that started openDocument() ends mid-flush()
+
+    vi.mocked(getDocument).mockResolvedValue(doc(2)) // in case the guard regresses
+    resolveOutgoing(doc(1, { revision: 5 })) // lets flush()'s wait resolve
+    await pending
+
+    // The outgoing user's document must never have been fetched under the
+    // incoming session.
+    expect(getDocument).not.toHaveBeenCalled()
+    expect(useStore.getState().docMeta).toEqual({
+      id: 1,
+      name: 'Doc 1',
+      nameSource: 'user',
+      revision: 4,
+    })
+  })
+
   it('recoverSnapshot() does not create a recovered copy once the session has ended while checking the server', async () => {
     // The most sensitive write in the module: on a 404, this POSTs
     // `snapshot.text` to create a brand-new document. A session turnover

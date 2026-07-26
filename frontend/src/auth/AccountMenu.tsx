@@ -209,11 +209,17 @@ function PasswordForm({ email, onCancel }: { email: string; onCancel: () => void
     <form onSubmit={handleSubmit}>
       <label className="login-field">
         {m.passwordCurrent}
+        {/* autoFocus: switching to this view unmounts the "Change password"
+            button that had focus, which would otherwise drop focus to
+            <body> and strand keyboard/screen-reader users. Same mechanism
+            DocumentSidebar.tsx and TerminologyView.tsx already use for
+            focus-on-mount elsewhere in this codebase. */}
         <input
           type="password"
           autoComplete="current-password"
           value={current}
           onChange={editField(setCurrent)}
+          autoFocus
           required
         />
       </label>
@@ -238,7 +244,17 @@ function PasswordForm({ email, onCancel }: { email: string; onCancel: () => void
         />
       </label>
       {result && (
-        <p className={result.kind === 'error' ? 'llm-error' : 'all-clear'}>{result.text}</p>
+        // Inserted asynchronously once the request settles: an error needs
+        // the assertive role so it interrupts and is announced immediately,
+        // while the success confirmation only needs role="status" (polite) —
+        // using "alert" for both would make the success message barge in
+        // the same way a failure should.
+        <p
+          className={result.kind === 'error' ? 'llm-error' : 'all-clear'}
+          role={result.kind === 'error' ? 'alert' : 'status'}
+        >
+          {result.text}
+        </p>
       )}
       <div className="account-password-actions">
         <button type="button" className="account-password-cancel" onClick={onCancel}>

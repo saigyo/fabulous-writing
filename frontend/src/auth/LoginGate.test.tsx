@@ -81,7 +81,7 @@ describe('LoginGate', () => {
     await waitFor(() => expect(getMe).toHaveBeenCalledTimes(1))
   })
 
-  it('shows the sessionExpired notice above the form when set', () => {
+  it('shows the sessionExpired notice above the form when set, as a live-region alert', () => {
     useStore.setState({ authStatus: 'anonymous', sessionExpired: true })
     render(
       <LoginGate>
@@ -91,6 +91,9 @@ describe('LoginGate', () => {
     screen.getByText(en.sessionExpired)
     screen.getByLabelText(en.signInEmail)
     expect(screen.queryByTestId('app-sentinel')).toBeNull()
+    // Direct attribute assertion, no mutation verification needed: a
+    // screen-reader user must be told why this form suddenly appeared.
+    expect(screen.getByRole('alert').textContent).toBe(en.sessionExpired)
   })
 
   it('does not show the sessionExpired notice after a plain log-out', () => {
@@ -117,6 +120,10 @@ describe('LoginGate', () => {
     screen.getByText(en.connectionFailed)
     expect(screen.queryByTestId('app-sentinel')).toBeNull()
     expect(screen.queryByLabelText(en.signInEmail)).toBeNull()
+    // Direct attribute assertion, no mutation verification needed: this text
+    // replaces the whole gate asynchronously, so assistive technology needs
+    // a live-region role to announce that loading failed.
+    expect(screen.getByRole('alert').textContent).toBe(en.connectionFailed)
 
     const u = userEvent.setup()
     await u.click(screen.getByRole('button', { name: en.connectionRetry }))
@@ -185,6 +192,9 @@ describe('LoginGate', () => {
     await waitFor(() => screen.getByText(en.signInInvalid))
     screen.getByLabelText(en.signInEmail)
     expect(useStore.getState().authStatus).toBe('anonymous')
+    // Direct attribute assertion, no mutation verification needed: a
+    // screen-reader user must be told why sign-in failed.
+    expect(screen.getByRole('alert').textContent).toBe(en.signInInvalid)
   })
 
   it('a rejected login() with a non-401 error shows the generic failure message', async () => {

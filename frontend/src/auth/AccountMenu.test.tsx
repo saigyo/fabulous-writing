@@ -137,6 +137,9 @@ describe('AccountMenu', () => {
     await waitFor(() => screen.getByText(en.passwordCurrentWrong))
     expect(useStore.getState().authStatus).toBe('authenticated')
     expect(postLogin).not.toHaveBeenCalled()
+    // Direct attribute assertion, no mutation verification needed: an error
+    // needs the assertive live-region role.
+    expect(screen.getByRole('alert').textContent).toBe(en.passwordCurrentWrong)
   })
 
   it('the form pre-validates against MIN_PASSWORD_LENGTH so the common case never reaches the server', async () => {
@@ -233,6 +236,11 @@ describe('AccountMenu', () => {
     const state = useStore.getState()
     expect(state.authStatus).toBe('authenticated')
     expect(state.token).toBe('new-tok')
+    // Direct attribute assertion, no mutation verification needed: success
+    // uses the polite role="status", not "alert" — the two must not share
+    // the same assertive role.
+    expect(screen.getByRole('status').textContent).toBe(en.passwordChanged)
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('when the silent re-login itself fails, expireSession() runs instead of showing an error', async () => {
@@ -386,6 +394,17 @@ describe('AccountMenu', () => {
 
     expect(screen.queryByRole('button', { name: en.accountChangePassword })).toBeNull()
     expect(screen.queryByText('ada@example.com')).toBeNull()
+  })
+
+  it('moves focus to the current-password field when switching to the password view', async () => {
+    // Direct attribute assertion, no mutation verification needed: switching
+    // views unmounts the focused "Change password" button, which would
+    // otherwise drop focus to <body> and strand keyboard/screen-reader
+    // users inside the popover.
+    const u = userEvent.setup()
+    render(<AccountMenu />)
+    await openPasswordForm(u)
+    expect(document.activeElement).toBe(screen.getByLabelText(en.passwordCurrent))
   })
 
   it('an outside click dismisses the popover; reopening shows the menu, not the password form', async () => {
