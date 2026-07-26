@@ -1410,6 +1410,9 @@ FOREIGN_404 = [
     ("DELETE", "/api/folders/{folder}", None),
     ("PUT",    "/api/profiles/{profile}", "profile_body"),
     ("DELETE", "/api/profiles/{profile}", None),
+    # Reset on a foreign PRIVATE profile must be 404 (invisible), not the
+    # 409 "not Standard" an unscoped lookup would answer with.
+    ("POST",   "/api/profiles/{profile}/reset", None),
     ("PUT",    "/api/domains/{domain}", {"name": "X"}),
     ("DELETE", "/api/domains/{domain}", None),
     ("GET",    "/api/domains/{domain}/terms", None),
@@ -1449,21 +1452,63 @@ def test_listings_never_leak(two_users):
     )
 
 
-def test_403_appears_exactly_for_global_mutation(two_users):
+def test_global_mutation_as_non_admin_is_403_everywhere(two_users):
+    """Every global-mutation route, not a sample: profile PUT/DELETE/reset,
+    domain PUT/DELETE, term POST/PUT/DELETE. The two pinned exceptions are
+    below the loop."""
     client, admin, other, items = two_users
-    globals_ = [d for d in client.get("/api/domains", headers=other).json() if d["is_global"]]
-    profiles = [p for p in client.get("/api/profiles?language=en", headers=other).json() if p["is_global"]]
-    assert globals_ and profiles
+    g_profiles = {
+        p["name"]: p
+        for p in client.get("/api/profiles?language=en", headers=other).json()
+        if p["is_global"]
+    }
+    standard = g_profiles["Standard"]
+    marketing = g_profiles["Marketing"]  # seed_example_profiles defaults on
+    g_domain = next(
+        d for d in client.get("/api/domains", headers=other).json() if d["is_global"]
+    )
+    g_term = client.post(
+        f"/api/domains/{g_domain['id']}/terms",
+        json={"language": "en", "preferred": "gterm"},
+        headers=admin,
+    ).json()
+    same_name_edit = dict(items["profile_body"], name=standard["name"])
+    cases = [
+        # (method, path, body) — every route that can mutate a global row.
+        ("PUT",    f"/api/profiles/{standard['id']}", same_name_edit),
+        ("DELETE", f"/api/profiles/{marketing['id']}", None),
+        ("POST",   f"/api/profiles/{standard['id']}/reset", None),
+        ("PUT",    f"/api/domains/{g_domain['id']}", {"name": "X"}),
+        ("DELETE", f"/api/domains/{g_domain['id']}", None),
+        ("POST",   f"/api/domains/{g_domain['id']}/terms",
+                   {"language": "en", "preferred": "x"}),
+        ("PUT",    f"/api/terms/{g_term['id']}", {"preferred": "x"}),
+        ("DELETE", f"/api/terms/{g_term['id']}", None),
+    ]
+    for method, path, body in cases:
+        response = client.request(method, path, json=body, headers=other)
+        assert response.status_code == 403, (method, path, response.status_code)
+    # Pinned exceptions: for Standard, the router's own guards fire before
+    # the store's admin check, so rename and delete answer 409 for EVERY
+    # caller. That ordering is deliberate and leaks nothing — Standard is
+    # global and visible to all, and the refusal reason ("cannot be
+    # renamed/deleted") is equally true for admins.
+    rename = dict(items["profile_body"], name="Renamed Standard")
     assert client.put(
-        f"/api/domains/{globals_[0]['id']}", json={"name": "X"}, headers=other
-    ).status_code == 403
-    body = dict(items["profile_body"], name=profiles[0]["name"])
+        f"/api/profiles/{standard['id']}", json=rename, headers=other
+    ).status_code == 409
+    assert client.delete(
+        f"/api/profiles/{standard['id']}", headers=other
+    ).status_code == 409
+    # And the same mutations as admin are permitted, not 403.
     assert client.put(
-        f"/api/profiles/{profiles[0]['id']}", json=body, headers=other
-    ).status_code == 403
-    # And the same requests as admin are NOT 403.
+        f"/api/terms/{g_term['id']}", json={"preferred": "y"}, headers=admin
+    ).status_code == 200
     assert client.put(
-        f"/api/domains/{globals_[0]['id']}", json={"name": "Renamed"}, headers=admin
+        f"/api/domains/{g_domain['id']}", json={"name": "Renamed"}, headers=admin
+    ).status_code == 200
+    assert client.post(
+        f"/api/profiles/{standard['id']}/reset", headers=admin
     ).status_code == 200
 ```
 
