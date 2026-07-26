@@ -59,52 +59,56 @@ async def create_check(
     except JobsAtCapacity as exc:
         raise HTTPException(429, "Too many checks in progress; try again shortly.") from exc
 
-    if "rules" in body.checkers:
-        doc = app.state.nlp.analyze(body.text, body.language.value)
-        if doc is None:
-            job.skipped_rules = app.state.rule_engine.nlp_rule_ids(body.language)
-        findings = app.state.rule_engine.check(
-            body.text, body.language, doc=doc, config=body.rule_config
-        )
-        job.add_findings("rules", findings)
-    if "terminology" in body.checkers and body.domain_ids:
-        checker = TerminologyChecker(app.state.terminology_store, nlp=app.state.nlp)
-        findings: list[Finding] = []
-        for domain_id in body.domain_ids:
-            # A foreign or deleted domain id yields no findings: the
-            # checker's store read is owner-scoped (spec §5.2), so there is
-            # no id vetting to do here and no existence leak to cause.
-            more = checker.check(body.text, body.language, domain_id, owner_id=user.id)
-            findings.extend(drop_duplicates(more, findings))
-        job.add_findings("terminology", findings)
+    try:
+        if "rules" in body.checkers:
+            doc = app.state.nlp.analyze(body.text, body.language.value)
+            if doc is None:
+                job.skipped_rules = app.state.rule_engine.nlp_rule_ids(body.language)
+            findings = app.state.rule_engine.check(
+                body.text, body.language, doc=doc, config=body.rule_config
+            )
+            job.add_findings("rules", findings)
+        if "terminology" in body.checkers and body.domain_ids:
+            checker = TerminologyChecker(app.state.terminology_store, nlp=app.state.nlp)
+            findings: list[Finding] = []
+            for domain_id in body.domain_ids:
+                # A foreign or deleted domain id yields no findings: the
+                # checker's store read is owner-scoped (spec §5.2), so there is
+                # no id vetting to do here and no existence leak to cause.
+                more = checker.check(body.text, body.language, domain_id, owner_id=user.id)
+                findings.extend(drop_duplicates(more, findings))
+            job.add_findings("terminology", findings)
 
-    if "llm" in body.checkers:
-        provider: LLMProvider = app.state.provider_factory(
-            body.llm_provider, body.llm_model
-        )
-        job.attach_task(
-            asyncio.create_task(
-                _run_llm(
-                    job,
-                    provider,
-                    body.text,
-                    body.language,
-                    vet=app.state.settings.vet_suggestions,
-                    dictionaries_dir=app.state.settings.dictionaries_dir,
-                    instructions=body.llm_instructions,
+        if "llm" in body.checkers:
+            provider: LLMProvider = app.state.provider_factory(
+                body.llm_provider, body.llm_model
+            )
+            job.attach_task(
+                asyncio.create_task(
+                    _run_llm(
+                        job,
+                        provider,
+                        body.text,
+                        body.language,
+                        vet=app.state.settings.vet_suggestions,
+                        dictionaries_dir=app.state.settings.dictionaries_dir,
+                        instructions=body.llm_instructions,
+                    )
                 )
             )
-        )
-    else:
-        job.finish()
+        else:
+            job.finish()
 
-    return CheckStatus(
-        check_id=job.id,
-        status=job.status,
-        findings=job.findings,
-        skipped_rules=job.skipped_rules,
-        scorecard=job.scorecard,
-    )
+        return CheckStatus(
+            check_id=job.id,
+            status=job.status,
+            findings=job.findings,
+            skipped_rules=job.skipped_rules,
+            scorecard=job.scorecard,
+        )
+    except Exception:
+        app.state.jobs.discard(job.id)
+        raise
 
 
 async def _run_llm(

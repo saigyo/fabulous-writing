@@ -121,3 +121,10 @@ class JobManager:
         if job is None or job.owner_id != owner_id:
             return None
         return job
+
+    def discard(self, job_id: str) -> None:
+        """Remove a job if present (silently no-op if absent).
+
+        Exists so a failed request setup never leaks a permanently-running entry.
+        """
+        self._jobs.pop(job_id, None)
