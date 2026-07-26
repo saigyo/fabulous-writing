@@ -1577,7 +1577,9 @@ def test_global_mutation_as_non_admin_is_403_everywhere(two_users):
 Run: `uv run pytest -q` (zero warnings).
 
 ```bash
-git add backend/tests/test_ownership.py
+# -A: Step 2 reconciliation fixes to stores/routers belong to this task's
+# commit, not left uncommitted for a later docs commit to sweep up.
+git add -A backend
 git commit -m "test(ownership): cross-user sweep over every id-addressable endpoint"
 ```
 
@@ -1709,7 +1711,7 @@ git commit -m "feat(ownership): is_global affordances, per-user domain fetch gua
   - `folders`: DDL free of `UNIQUE` and `DEFAULT 1`; `idx_folders_owner_name` exists or a logged skip (same rule); row count unchanged;
   - `documents`: row count and per-row `owner_id = 1` unchanged;
   - `PRAGMA integrity_check` → ok; **run the app factory a second time** against the copy → no changes (idempotence);
-  - row counts per table identical before/after except for schema objects.
+  - row counts: **no existing row is lost**, and every added row is classified as an expected bootstrap/seeder addition. Strict equality is wrong: `create_app()` runs the now global-scoped seeders, so a legacy DB whose global seed rows are absent legitimately gains them (e.g. a deleted `Product docs` returns as a global row — spec §5.2's global-only presence check makes that re-seed deliberate; domain deletions no longer stick the way profile deletions do via the marker table). Record each addition with its explanation; an unexplained addition fails the rehearsal.
   Record every command and output in the report and the ledger. If any assertion fails, stop: fix the migration task, re-run the rehearsal from a fresh copy.
 - [ ] **Step 2: Roadmap contract update.** In `2026-07-25-multi-user-roadmap.md` Cross-milestone interfaces, update **both** changed signatures: `VerifiedToken` is now `user_id: int`, `issued_at: datetime`, **`epoch: int | None`** — local tokens always carry an integer epoch (equality-checked against `users.token_epoch`); `None` is reserved for verifiers without an epoch concept, which fall back to the `password_changed_at` comparison. And `issue_token` (roadmap line 72) becomes `issue_token(user_id: int, secret: str, *, epoch: int) -> str`. Keep the M2 history note; append rather than rewrite.
 - [ ] **Step 3: Architecture docs.** `backend-architecture.md`: ownership semantics (owner-scoped stores, global rows, `GlobalReadOnlyError`, job ownership, the two rebuilds, epoch revocation). `frontend-architecture.md`: `is_global` affordances and the domains-fetch guard. Update, don't append-only — stale text is worse than none.
