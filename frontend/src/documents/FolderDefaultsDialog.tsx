@@ -7,6 +7,7 @@ import {
 } from '../api/client'
 import { useMessages } from '../i18n'
 import { languageLabel } from '../languages'
+import { ownershipLabel } from '../ownership'
 import { useStore } from '../state/store'
 import { TIERS, type Language, type Profile, type Tier } from '../types'
 import { saveFolderDefaults } from './folders'
@@ -188,7 +189,7 @@ export function FolderDefaultsDialog({
             <option value="none">{m.folderDefaultsNone}</option>
             {profiles.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.name}
+                {ownershipLabel(p.name, p.is_global, m)}
               </option>
             ))}
           </select>
@@ -216,7 +217,7 @@ export function FolderDefaultsDialog({
                   checked={domainIds.includes(domain.id)}
                   onChange={() => toggleDomain(domain.id)}
                 />
-                {domain.name}
+                {ownershipLabel(domain.name, domain.is_global, m)}
               </label>
             ))}
             {domains.length === 0 && <span className="dim">{m.domainNone}</span>}

@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { useDismissOnOutsideClick } from '../hooks/useDismissOnOutsideClick'
 import { useMessages } from '../i18n'
+import { ownershipLabel } from '../ownership'
 import { useStore } from '../state/store'
 
 /** Compact checkbox dropdown for selecting terminology domains. */
@@ -44,7 +45,7 @@ export function DomainMultiSelect() {
                 checked={domainIds.includes(domain.id)}
                 onChange={() => toggle(domain.id)}
               />
-              {domain.name}
+              {ownershipLabel(domain.name, domain.is_global, m)}
             </label>
           ))}
           {domains.length === 0 && <span className="dim">{m.domainNone}</span>}

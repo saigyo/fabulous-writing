@@ -100,8 +100,8 @@ export const ja: Messages = {
       structure: '構成',
     })[d],
 
-  globalBadge: '標準',
-  globalBadgeTitle: '標準項目 — 変更できるのは管理者のみ',
+  globalBadge: '組み込み',
+  globalBadgeTitle: '組み込み項目 — 変更できるのは管理者のみ',
 
   domains: 'ドメイン',
   newDomainPlaceholder: '新しいドメイン…',
