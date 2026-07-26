@@ -168,26 +168,40 @@ def test_standard_defaults_reads_demo(store):
 
 
 def test_seed_survives_name_collisions(store):
-    # A user-created profile occupying a seeded name must not crash seeding,
-    # and must not cause a retry loop on the next run.
+    # A private profile occupying a seeded name must not crash seeding, and
+    # must not suppress seeding the global row under the same name: private
+    # and global names live in different partial-unique-index scopes, so
+    # this is not actually a collision from the global seeder's point of view.
     store.create_profile(
-        L.EN, "Technical Documentation", owner_id=None, llm_provider="ollama"
+        L.EN, "Technical Documentation", owner_id=1, llm_provider="ollama"
     )
     seed_profiles(store, DEMOS, seed_examples=True)
-    names = [p.name for p in store.list_profiles(L.EN, owner_id=1)]
+    profiles = store.list_profiles(L.EN, owner_id=1)
+    names = [p.name for p in profiles]
     assert names.count("Marketing") == 1
-    assert names.count("Technical Documentation") == 1
+    techdocs = [p for p in profiles if p.name == "Technical Documentation"]
+    assert len(techdocs) == 2
+    assert any(not p.is_global for p in techdocs)  # the private shadow survives
+    assert any(p.is_global for p in techdocs)  # the global row still gets seeded
     assert store.is_example_seeded(L.EN)
     seed_profiles(store, DEMOS, seed_examples=True)
     names = [p.name for p in store.list_profiles(L.EN, owner_id=1)]
     assert names.count("Marketing") == 1
+    assert names.count("Technical Documentation") == 2  # stable across reseed
 
 
 def test_seed_survives_user_profile_named_standard(store):
-    store.create_profile(L.EN, "Standard", owner_id=None, llm_provider="ollama")
+    # A private profile named "Standard" must not suppress seeding the
+    # global Standard row (different partial-unique-index scopes).
+    store.create_profile(L.EN, "Standard", owner_id=1, llm_provider="ollama")
     seed_profiles(store, DEMOS, seed_examples=False)
-    # The colliding user profile blocks the seeded Standard for EN; seeding
-    # must not crash and must still seed the other languages.
+    assert store.standard_profile(L.EN) is not None  # the seeded global row exists
+    private_standard = [
+        p for p in store.list_profiles(L.EN, owner_id=1)
+        if p.name == "Standard" and not p.is_global
+    ]
+    assert len(private_standard) == 1  # the private shadow survives
+    # Seeding must still proceed for other languages too.
     assert store.standard_profile(L.DE) is not None
 
 

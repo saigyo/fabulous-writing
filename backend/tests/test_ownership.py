@@ -99,7 +99,7 @@ def test_listings_never_leak(two_users):
         for p in client.get("/api/profiles?language=en", headers=other).json()
     )
     assert all(
-        d["is_global"] or d["name"] != "Dom"
+        d["is_global"]
         for d in client.get("/api/domains", headers=other).json()
     )
 
@@ -130,6 +130,11 @@ def test_global_mutation_as_non_admin_is_403_everywhere(two_users):
         ("PUT",    f"/api/profiles/{standard['id']}", same_name_edit),
         ("DELETE", f"/api/profiles/{marketing['id']}", None),
         ("POST",   f"/api/profiles/{standard['id']}/reset", None),
+        # F2: reset on a global non-Standard profile — the global-mutation
+        # guard must fire before the is-Standard business rule, so a
+        # non-admin gets 403 here too, not the 409 an unscoped is_standard
+        # check would answer with.
+        ("POST",   f"/api/profiles/{marketing['id']}/reset", None),
         ("PUT",    f"/api/domains/{g_domain['id']}", {"name": "X"}),
         ("DELETE", f"/api/domains/{g_domain['id']}", None),
         ("POST",   f"/api/domains/{g_domain['id']}/terms",
@@ -172,3 +177,9 @@ def test_global_mutation_as_non_admin_is_403_everywhere(two_users):
     assert client.post(
         f"/api/profiles/{standard['id']}/reset", headers=admin
     ).status_code == 200
+    # F2: an admin reaches the is-Standard business rule for a global
+    # non-Standard profile and gets 409 (never 403 — they're allowed to
+    # touch the row, they're just resetting one that has no seed defaults).
+    assert client.post(
+        f"/api/profiles/{marketing['id']}/reset", headers=admin
+    ).status_code == 409

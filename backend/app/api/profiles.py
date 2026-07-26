@@ -140,6 +140,10 @@ def update_profile(
             llm_instructions=body.llm_instructions,
             example_text=body.example_text,
         )
+    # Unreachable given the pre-check above; a safety net in case a future
+    # refactor removes it, matching the other routers' guard idiom.
+    except GlobalReadOnlyError:
+        raise HTTPException(403, "Only admins can change built-in items") from None
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     assert updated is not None
@@ -163,7 +167,12 @@ def delete_profile(
         raise HTTPException(403, "Only admins can change built-in items")
     if profile.is_standard:
         raise HTTPException(409, "The Standard profile cannot be deleted")
-    store.delete_profile(profile_id, owner_id=user.id, is_admin=user.is_admin)
+    try:
+        store.delete_profile(profile_id, owner_id=user.id, is_admin=user.is_admin)
+    # Unreachable given the pre-check above; a safety net in case a future
+    # refactor removes it, matching the other routers' guard idiom.
+    except GlobalReadOnlyError:
+        raise HTTPException(403, "Only admins can change built-in items") from None
     return Response(status_code=204)
 
 
@@ -177,6 +186,12 @@ def reset_profile(
     profile = store.get_profile(profile_id, owner_id=user.id)
     if profile is None:
         raise HTTPException(404, "Profile not found")
+    # As in update/delete: the global-mutation guard fires before the
+    # is-Standard business rule, so a non-admin resetting any global profile
+    # (Standard or not) gets 403, never a 409 about a reset they were never
+    # going to be allowed to make.
+    if profile.is_global and not user.is_admin:
+        raise HTTPException(403, "Only admins can change built-in items")
     if not profile.is_standard:
         raise HTTPException(409, "Only the Standard profile can be reset")
     settings = request.app.state.settings
@@ -185,6 +200,8 @@ def reset_profile(
         updated = store.update_profile(
             profile_id, owner_id=user.id, is_admin=user.is_admin, **defaults
         )
+    # Unreachable given the pre-check above; a safety net in case a future
+    # refactor removes it, matching the other routers' guard idiom.
     except GlobalReadOnlyError:
         raise HTTPException(403, "Only admins can change built-in items") from None
     assert updated is not None
