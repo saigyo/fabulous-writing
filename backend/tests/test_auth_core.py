@@ -9,6 +9,7 @@ from app.core.auth import (
     SELF_MIN_PASSWORD_LENGTH,
     TOKEN_AUDIENCE,
     TOKEN_ISSUER,
+    TOKEN_TTL,
     AuthConfigError,
     InvalidToken,
     LocalTokenVerifier,
@@ -147,18 +148,18 @@ SECRET = "s" * 64
 
 def test_issued_token_verifies_to_the_local_user_id():
     verifier = LocalTokenVerifier(SECRET)
-    assert verifier.verify(issue_token(42, SECRET)).user_id == 42
+    assert verifier.verify(issue_token(42, SECRET, epoch=0)).user_id == 42
 
 
 def test_token_signed_with_another_secret_is_rejected():
     with pytest.raises(InvalidToken):
-        LocalTokenVerifier(SECRET).verify(issue_token(1, "other" * 10))
+        LocalTokenVerifier(SECRET).verify(issue_token(1, "other" * 10, epoch=0))
 
 
 def test_expired_token_is_rejected():
     long_ago = datetime.now(UTC) - timedelta(hours=25)
     with pytest.raises(InvalidToken):
-        LocalTokenVerifier(SECRET).verify(issue_token(1, SECRET, now=long_ago))
+        LocalTokenVerifier(SECRET).verify(issue_token(1, SECRET, epoch=0, now=long_ago))
 
 
 def test_token_with_foreign_algorithm_is_rejected():
@@ -168,7 +169,8 @@ def test_token_with_foreign_algorithm_is_rejected():
     forged = jwt.encode(
         {"sub": "1", "iss": TOKEN_ISSUER, "aud": TOKEN_AUDIENCE,
          "iat": int(datetime.now(UTC).timestamp()),
-         "exp": int((datetime.now(UTC) + timedelta(hours=1)).timestamp())},
+         "exp": int((datetime.now(UTC) + timedelta(hours=1)).timestamp()),
+         "epoch": 0},
         SECRET,
         algorithm="HS512",
     )
@@ -184,6 +186,7 @@ def test_token_for_another_project_is_rejected(claim):
         "aud": TOKEN_AUDIENCE,
         "iat": int(datetime.now(UTC).timestamp()),
         "exp": int((datetime.now(UTC) + timedelta(hours=1)).timestamp()),
+        "epoch": 0,
     }
     payload[claim] = "some-other-project"
     forged = jwt.encode(payload, SECRET, algorithm="HS256")
@@ -195,10 +198,57 @@ def test_token_issued_far_in_the_future_is_rejected_but_small_skew_is_tolerated(
     verifier = LocalTokenVerifier(SECRET)
     # 30s of clock drift must still work; 10 minutes must not.
     near = datetime.now(UTC) + timedelta(seconds=30)
-    assert verifier.verify(issue_token(7, SECRET, now=near)).user_id == 7
+    assert verifier.verify(issue_token(7, SECRET, epoch=0, now=near)).user_id == 7
     far = datetime.now(UTC) + timedelta(minutes=10)
     with pytest.raises(InvalidToken):
-        verifier.verify(issue_token(7, SECRET, now=far))
+        verifier.verify(issue_token(7, SECRET, epoch=0, now=far))
+
+
+def test_issue_token_carries_epoch_and_verify_returns_it():
+    token = issue_token(7, SECRET, epoch=3)
+    verified = LocalTokenVerifier(SECRET).verify(token)
+    assert verified.user_id == 7
+    assert verified.epoch == 3
+
+
+def test_token_without_epoch_claim_is_rejected():
+    # A pre-M3 token: same claims minus epoch. Must die at 'require'.
+    issued = datetime.now(UTC)
+    legacy = jwt.encode(
+        {
+            "sub": "7",
+            "iat": int(issued.timestamp()),
+            "exp": int((issued + TOKEN_TTL).timestamp()),
+            "iss": TOKEN_ISSUER,
+            "aud": TOKEN_AUDIENCE,
+        },
+        SECRET,
+        algorithm="HS256",
+    )
+    with pytest.raises(InvalidToken):
+        LocalTokenVerifier(SECRET).verify(legacy)
+
+
+def test_malformed_epoch_claim_is_rejected():
+    issued = datetime.now(UTC)
+    # True/False are load-bearing cases: bool is an int subclass, so
+    # without the implementation's explicit bool guard they would pass an
+    # isinstance check and compare equal to epochs 1/0.
+    for bad in (["1"], {"n": 1}, "not-a-number", None, True, False):
+        token = jwt.encode(
+            {
+                "sub": "7",
+                "iat": int(issued.timestamp()),
+                "exp": int((issued + TOKEN_TTL).timestamp()),
+                "iss": TOKEN_ISSUER,
+                "aud": TOKEN_AUDIENCE,
+                "epoch": bad,
+            },
+            SECRET,
+            algorithm="HS256",
+        )
+        with pytest.raises(InvalidToken):
+            LocalTokenVerifier(SECRET).verify(token)
 
 
 def test_garbage_token_is_rejected():
@@ -231,6 +281,7 @@ def test_malformed_iat_is_rejected_not_leaked(bad_iat):
         "aud": TOKEN_AUDIENCE,
         "iat": bad_iat,
         "exp": int((datetime.now(UTC) + timedelta(hours=1)).timestamp()),
+        "epoch": 0,
     }
     forged = jwt.encode(payload, SECRET, algorithm="HS256")
     with pytest.raises(InvalidToken):

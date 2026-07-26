@@ -317,7 +317,7 @@ def login(request: Request, body: LoginRequest) -> LoginResponse:
         raise HTTPException(401, _INVALID_LOGIN)
     app.state.login_throttle.record_success(key)
     return LoginResponse(
-        token=issue_token(user.id, app.state.auth_secret),
+        token=issue_token(user.id, app.state.auth_secret, epoch=user.token_epoch),
         user=MeResponse.from_user(user),
     )
 

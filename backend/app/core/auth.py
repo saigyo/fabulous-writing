@@ -168,6 +168,10 @@ class VerifiedToken:
 
     user_id: int          # always the LOCAL users.id, in every auth mode
     issued_at: datetime   # tz-aware UTC
+    epoch: int | None    # per-user token epoch; None = this verifier has no
+                         # epoch concept (the future Supabase verifier), in
+                         # which case get_current_user falls back to the
+                         # password_changed_at comparison.
 
 
 class TokenVerifier(Protocol):
@@ -183,7 +187,9 @@ class TokenVerifier(Protocol):
         ...
 
 
-def issue_token(user_id: int, secret: str, *, now: datetime | None = None) -> str:
+def issue_token(
+    user_id: int, secret: str, *, epoch: int, now: datetime | None = None
+) -> str:
     issued = now or datetime.now(UTC)
     return jwt.encode(
         {
@@ -192,6 +198,7 @@ def issue_token(user_id: int, secret: str, *, now: datetime | None = None) -> st
             "exp": int((issued + TOKEN_TTL).timestamp()),
             "iss": TOKEN_ISSUER,
             "aud": TOKEN_AUDIENCE,
+            "epoch": epoch,
         },
         secret,
         algorithm="HS256",
@@ -213,7 +220,7 @@ class LocalTokenVerifier:
                 issuer=TOKEN_ISSUER,
                 audience=TOKEN_AUDIENCE,
                 options={
-                    "require": ["sub", "exp", "iat", "iss", "aud"],
+                    "require": ["sub", "exp", "iat", "iss", "aud", "epoch"],
                     # PyJWT >= 2.10 validates iat itself with 0 leeway,
                     # which would reject the tolerated clock drift below
                     # before this method ever saw the claims. Disabled so
@@ -253,4 +260,9 @@ class LocalTokenVerifier:
             user_id = int(claims["sub"])
         except (TypeError, ValueError) as exc:
             raise InvalidToken("sub is not a user id") from exc
-        return VerifiedToken(user_id=user_id, issued_at=issued_at)
+        raw_epoch = claims["epoch"]
+        # bool is an int subclass; True would silently pass an isinstance
+        # check and compare equal to epoch 1.
+        if isinstance(raw_epoch, bool) or not isinstance(raw_epoch, int):
+            raise InvalidToken("epoch is not an integer")
+        return VerifiedToken(user_id=user_id, issued_at=issued_at, epoch=raw_epoch)

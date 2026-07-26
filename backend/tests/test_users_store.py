@@ -161,3 +161,19 @@ def test_audit_rows_record_the_actor_or_none_for_cli(store):
         (None, "password"),  # None marks an out-of-band operator CLI action
     ]
     assert all(r["created_at"] for r in rows)
+
+
+def test_set_password_bumps_token_epoch(tmp_path):
+    store = UserStore(tmp_path / "u.db")
+    user = store.create_user("epoch@example.com", "password-one")
+    assert user.token_epoch == 0
+    store.set_password(user.id, "password-two")
+    assert store.get_user(user.id).token_epoch == 1
+    store.set_password(user.id, "password-three")
+    assert store.get_user(user.id).token_epoch == 2
+
+
+def test_token_epoch_is_not_serialized(tmp_path):
+    store = UserStore(tmp_path / "u.db")
+    user = store.create_user("epoch2@example.com", "password-one")
+    assert "token_epoch" not in user.model_dump()
