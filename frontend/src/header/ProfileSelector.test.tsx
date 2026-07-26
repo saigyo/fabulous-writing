@@ -139,4 +139,23 @@ describe('ProfileSelector ownership affordances (non-admin)', () => {
       expect(screen.getByTitle(en.profileChangeFailed('boom'))).toBeTruthy(),
     )
   })
+
+  it('exposes the saveOverrides failure to assistive tech via role="alert"', async () => {
+    // Pins the fix: the warning used to be surfaced only via a mouse-hover
+    // `title`, so keyboard/screen-reader users got no notification at all.
+    useStore.setState({
+      user: user({ is_admin: true }),
+      profiles: [profile({ is_global: false })],
+    })
+    vi.mocked(updateProfile).mockRejectedValueOnce(new Error('boom'))
+    const u = userEvent.setup()
+    render(<ProfileSelector />)
+    await u.click(screen.getByTitle(en.saveToProfile))
+
+    await waitFor(() =>
+      expect(screen.getByRole('alert').getAttribute('aria-label')).toBe(
+        en.profileChangeFailed('boom'),
+      ),
+    )
+  })
 })
