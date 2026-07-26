@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from app.core.auth import AuthConfigError
 from app.core.config import AuthSettings, Settings
 from app.main import create_app
+from tests.conftest import auth_headers
 
 DOC_ENDPOINTS = ("/docs", "/redoc", "/openapi.json")
 
@@ -117,3 +118,54 @@ def test_docs_endpoints_not_registered_outside_dev(tmp_path: Path, environment: 
             f"{path} returned {response.status_code} in {environment!r}, expected 404 "
             "-- the route must not be registered at all outside dev"
         )
+
+
+def test_anonymous_request_to_protected_route_is_401_not_403(tmp_path: Path) -> None:
+    # HTTPBearer's default (auto_error=True) raises 403 on a missing header.
+    # This is the regression guard for the auto_error=False choice: a 403
+    # here would both fail test_auth_enforcement.py's exact-401 assertions
+    # and leave the frontend's central 401 handler unfired.
+    settings = Settings(db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules")
+    client = TestClient(create_app(settings))
+    response = client.get("/api/auth/me")
+    assert response.status_code == 401
+
+
+def test_openapi_document_carries_a_bearer_security_scheme(tmp_path: Path) -> None:
+    # Asserted on dev settings, since outside dev the OpenAPI route (and
+    # therefore app.openapi()'s usual consumer, Swagger UI) is not even
+    # reachable -- but app.openapi() itself is just a schema build and works
+    # regardless of environment; dev is used here to match the environment
+    # the owner actually opens /docs in.
+    settings = Settings(
+        db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules", environment="dev"
+    )
+    client = TestClient(create_app(settings))
+    schema = client.app.openapi()
+    schemes = schema["components"]["securitySchemes"]
+    assert any(
+        scheme.get("type") == "http" and scheme.get("scheme") == "bearer"
+        for scheme in schemes.values()
+    ), f"no bearer HTTP securityScheme found in {schemes!r}"
+
+
+def test_protected_operation_requires_security_login_does_not(tmp_path: Path) -> None:
+    settings = Settings(
+        db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules", environment="dev"
+    )
+    client = TestClient(create_app(settings))
+    schema = client.app.openapi()
+    me_op = schema["paths"]["/api/auth/me"]["get"]
+    assert me_op.get("security"), "GET /api/auth/me should carry a security requirement"
+    login_op = schema["paths"]["/api/auth/login"]["post"]
+    assert not login_op.get("security"), (
+        "POST /api/auth/login must stay public and carry no security "
+        "requirement in the schema"
+    )
+
+
+def test_valid_token_still_succeeds_against_protected_route(tmp_path: Path) -> None:
+    settings = Settings(db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules")
+    client = TestClient(create_app(settings))
+    response = client.get("/api/auth/me", headers=auth_headers(client))
+    assert response.status_code == 200
