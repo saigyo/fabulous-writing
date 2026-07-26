@@ -53,8 +53,15 @@ export function ProfileSelector() {
     <label className="profile-select" title={dirty ? m.profileModifiedTitle : undefined}>
       {m.profile}
       <span className="profile-select-row">
+        {/* role="alert": the save failure is shown asynchronously (after the
+            await in saveOverrides), so without a live-region role a
+            keyboard/screen-reader user gets no notification at all — only a
+            mouse-hover title. aria-label carries the actual error text as
+            the accessible name (the icon stays the only visible glyph, kept
+            compact per the header's design), matching the LoginGate/
+            LoginForm alert idiom. */}
         {error && (
-          <span className="profile-select-error" title={error}>
+          <span className="profile-select-error" title={error} role="alert" aria-label={error}>
             ⚠
           </span>
         )}
