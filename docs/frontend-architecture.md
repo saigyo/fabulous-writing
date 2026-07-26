@@ -7,11 +7,13 @@ main ingredients:
   finding positions* (a CodeMirror `StateField` keeps spans correct while the user
   keeps typing);
 - **zustand** for application state (one store, a small persisted slice);
-- a thin typed **API client** over `fetch` + `EventSource` against the backend
-  (`VITE_API_URL`, default `http://localhost:8000`).
+- a thin typed **API client** over `fetch`, including its own hand-rolled SSE reader
+  for the check stream (`VITE_API_URL`, default `http://localhost:8000`).
 
 There is no router; four views (editor, rules, terminology, profiles) are switched by a
-store field. The editor workspace is special-cased: it is hidden (`hidden` attribute)
+store field, and all four sit behind a **login gate** (see
+[Authentication](#authentication)) — the app requires a signed-in caller as of M2. The
+editor workspace is special-cased: it is hidden (`hidden` attribute)
 rather than unmounted while another view is shown, because the findings — including
 paid-for LLM results — live in the CodeMirror instance and would be discarded by a
 remount; hiding also lets an in-flight LLM check deliver while the user reads another
@@ -24,8 +26,13 @@ components stay thin.
 frontend/src/
 ├── main.tsx / App.tsx        # bootstrap; header, view switch, data-loading effects
 ├── types.ts                  # shared API types (Finding, Profile, ...) — mirrors backend models
-├── api/client.ts             # typed fetch wrappers + SSE subscription
+├── api/client.ts             # typed fetch wrappers, Bearer attachment, fetch-based SSE reader
 ├── state/store.ts            # the zustand store (single source of app state)
+├── auth/
+│   ├── session.ts             # login/logout/expireSession/restoreSession, generation counter
+│   ├── LoginGate.tsx          # renders LoginForm while anonymous, children once authStatus is ok
+│   ├── LoginForm.tsx          # email/password form, posts to login()
+│   └── AccountMenu.tsx        # signed-in email, password-change dialog, log out
 ├── editor/
 │   ├── Editor.tsx             # CodeMirror setup, update listener, click-to-select
 │   ├── findings.ts            # findingsField StateField: tracked findings + decorations
@@ -83,8 +90,14 @@ frontend/src/
 
 ## State management
 
-`state/store.ts` defines one zustand store. Three kinds of state live there:
+`state/store.ts` defines one zustand store. Four kinds of state live there:
 
+- **Auth** — `token` (persisted, see below), `user` (never persisted — re-fetched via
+  `GET /api/auth/me` on every fresh page load instead, so a stale cached profile can
+  never diverge from what the server currently thinks is true), `authStatus`
+  (`'unknown' | 'anonymous' | 'authenticated'`, what `LoginGate` renders off),
+  `sessionExpired` and `restoreFailed` (which notice, if any, the gate/login form
+  shows). See [Authentication](#authentication) below.
 - **Checking context** — `language`, `domainIds`, `tier`, `provider`, `model`,
   `llmAuto`, `profiles`, `profileId`. This is what a check request is built from.
 - **Check results & UI** — `tracked` findings (mirrored out of the editor),
@@ -106,10 +119,11 @@ re-declaring their own literal, so the persisted-shape contract used by the runn
 store and the one exercised by tests can never silently drift apart. `persistConfig`
 (v2) saves a small cross-document slice to localStorage:
 `uiLocale`, `lastProfileByLanguage`, `rulesCollapsed`, `currentDocId`,
-`docSidebarCollapsed`, and `docFoldersCollapsed` (the sidebar's per-folder collapsed
+`docSidebarCollapsed`, `docFoldersCollapsed` (the sidebar's per-folder collapsed
 state, added additively to v2 — a `number[]` of collapsed folder ids, no version bump
 needed since it's a new key on an existing persisted shape rather than a change to an
-existing one). Everything that used to live here in v1 — `language`,
+existing one), and `token` (added without a version bump too — an older blob simply
+lacks the key, and `token: null` is the correct initial value regardless). Everything that used to live here in v1 — `language`,
 `domainIds`, `provider`, `model`, `tier`, `llmAuto` — moved into per-document storage
 (the backend's `settings` columns; see [Documents](#documents)) once multiple documents
 each needed their own header configuration. Results, caches, and `routing` stay
@@ -781,6 +795,76 @@ remaining piece of document content in localStorage is the write-through buffer
 (`fabulous-writing-doc-buffer`, above) — a cache of the *currently open* document only,
 never a second source of truth for the list.
 
+## Authentication
+
+M2 puts the whole app behind a login gate — every backend feature router now requires
+a caller (see `docs/backend-architecture.md`'s
+[Authentication](backend-architecture.md#authentication-and-user-accounts)). **This is
+enforcement, not ownership**: every document, folder, profile, and terminology domain
+is still shared across every account — M3 is what scopes data to the caller who
+created it.
+
+**The gate** (`auth/LoginGate.tsx`) renders `LoginForm` while `authStatus` is
+`'anonymous'` or `'unknown'`, and the app (children) only once it is
+`'authenticated'`. `authStatus` starts `'unknown'`; `restoreSession()` (called once at
+mount) resolves it before anything else renders. With no stored token,
+`restoreSession()` returns immediately without calling the API at all — a first-time
+anonymous visit makes **zero** `/api/*` requests. With a stored token it calls `GET
+/api/auth/me` — **exactly one** request — and sets `authStatus` from the result: `ok`
+→ `'authenticated'`, a 401 → `'anonymous'` (via `expireSession()`, which also shows the
+session-expired notice), anything else (a dropped connection, a 500) → leaves
+`authStatus: 'unknown'` and sets `restoreFailed`, deliberately **not** clearing a
+perfectly good token over a backend hiccup.
+
+**Where the Bearer header is attached.** `api/client.ts` builds `Authorization: Bearer
+<token>` in exactly one place, `authHeader()`, reading `useStore.getState().token` at
+fetch time (not captured earlier — an in-flight request that turns stale during a
+session change still carries the token of the session that sent it, never a token
+that arrived after). Both `requestWithOptions()` (every plain JSON call) and the SSE
+reader (below) call `authHeader()` — the string is assembled once, not grown a second
+copy anywhere headers are built. Any 401 response — from either path — is routed
+through the same `handleUnauthorized()`, which calls the handler `auth/session.ts`
+registers (`expireSession`) **only if the token that produced the 401 is still the
+store's current token** — a straggler response from a session that has already ended
+(logged out, or a fresher login already succeeded) must not tear down the session
+that replaced it.
+
+**The fetch-based SSE reader and why `EventSource` was replaced.** `EventSource` has no
+way to attach an `Authorization` header — it is a browser API with a fixed request
+shape, cookies only. Task 5 replaced it with a hand-rolled reader over
+`fetch()` + `ReadableStream` + `AbortController`, using `eventsource-parser` only for
+wire-format framing (chunk boundaries, `\r\n` vs `\n`, multi-line `data:` fields,
+comments) — not for transport. This also fixed two behaviors a full SSE client would
+have gotten wrong for a one-shot check stream: both alternatives considered reconnect
+automatically (wrong — a finished or errored check must not silently resume), and one
+of them treats only an HTTP 204 as a terminal signal, so a 401 from an expired token
+mid-stream would have looped invisibly back into the same 401 handler instead of
+ending the stream. The reader now checks `response.ok` itself before ever handing
+bytes to the parser, so a 401 body (which `fetch()` resolves "successfully," unlike
+`EventSource`, which would just silently fail to connect) is caught and routed to
+`handleUnauthorized()` rather than parsed as zero events and treated as a quiet,
+successful end of stream.
+
+**Purge-on-user-change.** `login()` and `logout()` both bump a module-level
+`generation` counter (`sessionGeneration()`), which every in-flight async operation
+captures at its start and re-checks before committing — a completion that started
+under an older generation no longer speaks for anyone. `resetSessionState()` (called
+by `logout()`, `expireSession()`, and by `login()` **only when the signing-in user's
+id differs from the previous one**) clears the persisted zustand blob and every
+non-persisted data field (tracked findings, documents, folders, scorecard, …), then
+lets the caller's own `setAuth()` write the new session's values back in. The `only
+when the user differs` qualifier is deliberate: Task 8's silent re-authentication
+after a password change signs the *same* person back in, and must not discard their
+locale, current document, or collapse state just because the token changed.
+`discardForeignBuffer()` applies the same rule to the write-through document buffer
+(`documents/buffer.ts`) — a buffer with no `ownerId`, or one belonging to a different
+user, is discarded on login; a buffer belonging to the incoming user's own unsaved
+work survives. `logout()` additionally cancels any in-flight check
+(`cancelInFlightCheck()`, which the checking controller registers a handler for) and
+invalidates pending document writes before clearing state, so a check or a save that
+was mid-flight when the user logged out cannot land after the session that started it
+is gone.
+
 ## Internationalization
 
 The UI ships seven locales (`i18n/{en,de,fr,es,it,ja,zh}.ts`) — independent of the
@@ -794,9 +878,12 @@ key equality across all catalogs, so a missing translation fails CI.
 ## API client
 
 `api/client.ts` is the only module that talks to the network: small typed wrappers
-around `fetch` for every endpoint, and `subscribeCheck()` wrapping an `EventSource`
-for the SSE stream (returns an unsubscribe function; the `done` event and errors both
-close the connection). The request/response types are defined in `types.ts` and match
+around `fetch` for every endpoint, each carrying the caller's bearer token via
+`authHeader()`, and `subscribeCheck()` — a hand-rolled `fetch()`-based SSE reader for
+the check stream, not `EventSource` (see [Authentication](#authentication) for why).
+`subscribeCheck()` returns an unsubscribe function that aborts the underlying request;
+the `done` event, a non-OK response, and a stream error all close it and settle
+exactly once. The request/response types are defined in `types.ts` and match
 the backend's pydantic models field-for-field — the shared contract is structural, not
 generated.
 
@@ -817,3 +904,6 @@ generated.
   badge.
 - **Screenshots**: `npm run screenshots` (`scripts/capture-screenshots.mjs`,
   playwright-core against the running dev servers) regenerates the README images.
+  Since M2 requires a caller, the script needs `FW_ADMIN_EMAIL`/`FW_ADMIN_PASSWORD` in
+  its environment: it logs in once via `POST /api/auth/login` for its own API staging
+  calls, and drives the same login form in the browser before taking any shot.

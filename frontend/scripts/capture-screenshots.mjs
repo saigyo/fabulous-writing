@@ -9,6 +9,11 @@
 //      the "Checking…" button visible long enough to capture (the profile's
 //      original tier is restored via the API afterwards); the scorecard shot
 //      waits for that same check to finish.
+//   4. Every feature router requires a logged-in caller (M2). FW_ADMIN_EMAIL
+//      and FW_ADMIN_PASSWORD must be set in the environment this script runs
+//      in and must match the bootstrap admin the target backend seeded —
+//      the script logs in as that admin, both for its own API staging calls
+//      and to drive the browser past the login gate.
 //
 // The script stages its own scratch documents and project folders through
 // the API (distinctive names; it ABORTS on a 409 rather than reuse yours)
@@ -20,7 +25,8 @@
 //   cd backend && PYTHONPATH=$PWD uv run python <scratch-backend.py>   # :8001, temp DB
 //   cd frontend && VITE_API_URL=http://127.0.0.1:8001 npm run build \
 //     && npx vite preview --port 4199 --strictPort &
-//   SHOTS_API=http://127.0.0.1:8001 SHOTS_APP=http://localhost:4199 npm run screenshots
+//   FW_ADMIN_EMAIL=... FW_ADMIN_PASSWORD=... \
+//     SHOTS_API=http://127.0.0.1:8001 SHOTS_APP=http://localhost:4199 npm run screenshots
 //   cd frontend && npm run build   # restore the production dist afterwards
 //
 // Run from frontend/:  npm run screenshots
@@ -62,11 +68,50 @@ function chromiumExecutable() {
 const API = process.env.SHOTS_API ?? 'http://localhost:8000'
 const APP = process.env.SHOTS_APP ?? 'http://localhost:5173'
 
-async function api(pathname, init = {}) {
-  const res = await fetch(`${API}${pathname}`, {
+const ADMIN_EMAIL = process.env.FW_ADMIN_EMAIL
+const ADMIN_PASSWORD = process.env.FW_ADMIN_PASSWORD
+if (!ADMIN_EMAIL || !ADMIN_PASSWORD) {
+  throw new Error(
+    'FW_ADMIN_EMAIL and FW_ADMIN_PASSWORD must be set — every feature ' +
+      'router requires a logged-in caller as of M2, and this script logs ' +
+      "in as the target backend's bootstrap admin to drive both its own " +
+      'API staging calls and the browser.',
+  )
+}
+
+// The one unauthenticated call this script makes. Every other request —
+// staging, cleanup, and the profile switch/restore — goes through api()
+// below so the bearer token is never attached in more than one place.
+async function login() {
+  const res = await fetch(`${API}/api/auth/login`, {
+    method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }),
+  })
+  if (!res.ok) {
+    throw new Error(`POST /api/auth/login: ${res.status} (check FW_ADMIN_EMAIL/FW_ADMIN_PASSWORD)`)
+  }
+  const { token } = await res.json()
+  return token
+}
+
+const token = await login()
+
+// The single authenticated request helper. Every API call in this script —
+// staging, cleanup, folder creation, and the profile switch/restore — routes
+// through this one function so the bearer header is attached in exactly one
+// place; nothing here reaches for a bare fetch() of its own. `raw: true`
+// returns the unparsed Response instead of throwing on a non-OK status, for
+// the one caller (makeFolder) that needs to distinguish a 409 from the rest.
+async function api(pathname, init = {}, { raw = false } = {}) {
+  const res = await fetch(`${API}${pathname}`, {
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
     ...init,
   })
+  if (raw) return res
   if (!res.ok) {
     throw new Error(`${init.method ?? 'GET'} ${pathname}: ${res.status}`)
   }
@@ -88,11 +133,11 @@ const standardProfile = (await api('/api/profiles?language=en')).find(
 const scratch = { folderIds: [], docIds: [] }
 
 async function makeFolder(name) {
-  const res = await fetch(`${API}/api/folders`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
-  })
+  const res = await api(
+    '/api/folders',
+    { method: 'POST', body: JSON.stringify({ name }) },
+    { raw: true },
+  )
   if (res.status === 409) {
     throw new Error(
       `A folder named '${name}' already exists — refusing to touch it. ` +
@@ -179,6 +224,16 @@ try {
   await page.goto(`${APP}/`, { waitUntil: 'networkidle' })
   await page.evaluate(() => localStorage.clear())
   await page.reload({ waitUntil: 'networkidle' })
+
+  // Task 7 gates the whole app behind a login screen: the reload above now
+  // lands on it rather than the editor. Drive it with the same admin
+  // credentials used for the API staging calls (selectors are the input
+  // type and the form's own class, not translated label text, so this does
+  // not depend on the UI locale the app happens to pick).
+  await page.locator('input[type="email"]').fill(ADMIN_EMAIL)
+  await page.locator('input[type="password"]').fill(ADMIN_PASSWORD)
+  await page.locator('.login-submit').click()
+  await page.locator('.view-switch').waitFor()
   await page.waitForTimeout(800)
 
   const languageSelect = page.locator(
@@ -356,11 +411,11 @@ try {
       llm_provider: standardProfile.llm_provider,
       llm_model: standardProfile.llm_model,
     }
-    const res = await fetch(`${API}/api/profiles/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
+    const res = await api(
+      `/api/profiles/${id}`,
+      { method: 'PUT', body: JSON.stringify(payload) },
+      { raw: true },
+    )
     console.log(`Standard profile restored (llm_tier=${standardProfile.llm_tier}): ${res.status}`)
   }
 }
