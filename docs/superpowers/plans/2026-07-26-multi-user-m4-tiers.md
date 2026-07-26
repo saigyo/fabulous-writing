@@ -198,6 +198,8 @@ class TestTiersConfig:
             Settings.model_validate(
                 {"tiers": {"basic": {"limits": {"llm_checks_per_dya": 5}}}}
             )
+        with pytest.raises(ValidationError):  # top-level: 'tier' for 'tiers'
+            Settings.model_validate({"tier": {"basic": {}}})
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -290,9 +292,11 @@ class TierSettings(BaseModel):
         return value
 ```
 
-On `Settings`, add the field and the cross-validator (provider names can only be checked once `providers` is parsed):
+On `Settings`, add the field and the cross-validator (provider names can only be checked once `providers` is parsed) — and forbid unknown top-level keys, since a top-level `tier:` typo would otherwise be silently dropped and leave `settings.tiers == {}`, which `policy_for` reads as unrestricted (the same fail-open the nested `extra="forbid"` exists to prevent; every key in `config.example.yaml` is modeled, so this breaks no valid config):
 
 ```python
+    model_config = ConfigDict(extra="forbid")
+
     # User tiers (spec §6.1): policy per tiers-of-service name. Distinct from
     # the quality tiers in TIERS. Empty (the default) = no policy anywhere —
     # every user unrestricted, behavior identical to pre-M4.
@@ -1145,21 +1149,25 @@ Write real bodies; the `...` only abbreviates this plan.
     # document that will not generate — and once M5 adds reservation to the
     # gate, an empty document must not consume quota either.
     if document.text.strip():
-        requested = RequestedLLM(tier="cheap")  # naming hard-selects the cheap route
-        effective, provider = get_effective_provider(
-            request.app, user, requested, document.language.value
-        )
-        if provider is not None:
-            try:
+        try:
+            # Acquisition sits INSIDE the fallback try: naming is silent-
+            # fallback for any failure (spec §7.2), including a provider
+            # constructor raising something get_effective_provider does not
+            # translate (a tier-only request cannot produce its 422).
+            requested = RequestedLLM(tier="cheap")  # naming hard-selects the cheap route
+            effective, provider = get_effective_provider(
+                request.app, user, requested, document.language.value
+            )
+            if provider is not None:
                 system, prompt = build_title_prompt(document.text, document.language)
                 title = clean_title(await provider.generate(system, prompt))
-            except Exception:
-                logger.warning(
-                    "auto-title generation failed for document %s",
-                    document_id,
-                    exc_info=True,
-                )
-                title = None  # silent per spec; the fallback below still applies
+        except Exception:
+            logger.warning(
+                "auto-title generation failed for document %s",
+                document_id,
+                exc_info=True,
+            )
+            title = None  # silent per spec; the fallback below still applies
 ```
 
 Note this renames the prompt's user-message variable from `user` to `prompt` — removing the existing shadowing of the `CurrentUser` (the `owner_id` capture above it stays but its shadowing rationale comment can now go).
@@ -1620,9 +1628,11 @@ Known fixture sites to update (give tests a full-policy `policy` and `allowed: t
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/types.ts src/api/client.ts src/auth/ src/checking/ src/header/ src/i18n/ src/App.tsx src/App.test.tsx
+git add src/
 git commit -m "feat(frontend): plan-gated LLM selector from /me policy (M4)"
 ```
+
+(`git add src/`, not a directory list: Step 3a's fixture sweep touches files across `src/api`, `src/profiles`, `src/rules`, `src/terminology` and more — a hand-maintained list under-stages, and the commit would not type-check on checkout even though the working tree did.)
 
 ---
 
@@ -1649,7 +1659,7 @@ git commit -m "feat(frontend): plan-gated LLM selector from /me policy (M4)"
 - a floor user (policy with empty lists) never includes `'llm'` in `checkers` even when `includeLlm` is true;
 - **off-plan tier with offline route still sends the request**: a user whose policy disallows the selected tier, with that tier's routing entry unavailable, still gets `'llm'` in `checkers` and `llm_tier` in the body — the server, not the client's availability check, owns degradation for off-plan tiers (and no `llmSkipped` error is set);
 - an allowed-but-offline tier still skips client-side, as today;
-- a new `runCheck` resets `llmEffective` to null.
+- a new `runCheck` resets `llmEffective` to null — **including via the empty-text early return** (seed a note, run with whitespace-only text, note gone).
 
 For `suggest.ts`, mirror the off-plan case in its test module: `requestForFinding` with an off-plan, offline tier does not throw and posts `llm_tier`; an allowed offline tier still throws `llmSkipped` — covered for both `fetchSuggestions` and `fetchRewrite`.
 
@@ -1686,7 +1696,7 @@ export function effectiveLabel(sel: LlmSelectionInfo, m: Messages): string {
       llm_model: state.tier === null && resolution.ok ? resolution.model : null,
 ```
 
-Add `llmEffective: null` to the `useStore.setState` reset at the top of `runCheck` and in `cancelCheck`. Compute (imports from `auth/policy`):
+Add `llmEffective: null` to the `useStore.setState` reset in `runCheck`, in `cancelCheck`, **and in `runCheck`'s empty-text early-return branch** (`controller.ts:61-68`), which returns before the main reset block — without it, clearing the document leaves the previous check's degradation/skip note standing. Compute (imports from `auth/policy`):
 
 ```typescript
   // An off-plan tier's local availability is irrelevant: the server will
