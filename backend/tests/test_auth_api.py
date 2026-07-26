@@ -13,10 +13,11 @@ from fastapi.testclient import TestClient
 
 from app.api.auth import LoginThrottle, _throttle_key
 from app.api.deps import MAX_TOKEN_BYTES, CurrentUser, get_current_user, require_admin
-from app.core.auth import LocalTokenVerifier, issue_token
+from app.core.auth import LocalTokenVerifier, VerifiedToken, issue_token
 from app.core.config import Settings
 from app.main import create_app
 from app.services.users import UserStore
+from tests.conftest import TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD, auth_headers
 
 # 64 bytes, not merely the 32-byte minimum: kept consistent with the secret
 # length used in tests/test_auth_core.py.
@@ -44,7 +45,21 @@ def probe(tmp_path: Path):
 
 
 def auth(user_id: int) -> dict:
-    return {"Authorization": f"Bearer {issue_token(user_id, SECRET)}"}
+    return {"Authorization": f"Bearer {issue_token(user_id, SECRET, epoch=0)}"}
+
+
+class _EpochlessVerifier:
+    """A stub standing in for the future Supabase verifier: it never sets an
+    epoch, so get_current_user must fall back to the password_changed_at
+    comparison for it — the only path left where that comparison, and its
+    malformed-value guards, still run."""
+
+    def __init__(self, user_id: int, issued_at: datetime) -> None:
+        self._user_id = user_id
+        self._issued_at = issued_at
+
+    def verify(self, token: str) -> VerifiedToken:
+        return VerifiedToken(user_id=self._user_id, issued_at=self._issued_at, epoch=None)
 
 
 def test_valid_token_resolves_the_user(probe):
@@ -115,21 +130,18 @@ def test_changing_the_password_invalidates_tokens_issued_before_it(probe):
     store = probe.state.user_store
     user = store.create_user("ada@example.com", "correct horse battery")
     client = TestClient(probe)
-    # Mint the "before" token explicitly in the past rather than relying on
-    # wall-clock ordering: iat is floored to the second, so a token minted in
-    # the same second as the change would not be provably older.
-    old = issue_token(user.id, SECRET, now=datetime.now(UTC) - timedelta(seconds=2))
+    # Mint the "before" token at the pre-change epoch. Revocation is now
+    # exact-epoch equality (Task 1), not a timing comparison, so the old
+    # token fails regardless of how close in time it was issued to the
+    # change — no same-second window to worry about here any more.
+    old = issue_token(user.id, SECRET, epoch=user.token_epoch)
     stale = {"Authorization": f"Bearer {old}"}
     assert client.get("/probe/user", headers=stale).status_code == 200
     store.set_password(user.id, "a replacement password")
     assert client.get("/probe/user", headers=stale).status_code == 401
-    # The replacement token is minted at the recorded change timestamp, not at
-    # "now" — this is the same-second equality case that makes Task 8's silent
-    # re-login work, and minting at wall-clock time could drift into the next
-    # second and stop exercising it. A regression to a sub-second
-    # password_changed_at fails here.
-    changed_at = datetime.fromisoformat(store.get_user(user.id).password_changed_at)
-    fresh = issue_token(user.id, SECRET, now=changed_at)
+    # The replacement token carries the post-change epoch, exactly as a real
+    # re-login would mint it.
+    fresh = issue_token(user.id, SECRET, epoch=store.get_user(user.id).token_epoch)
     assert client.get(
         "/probe/user", headers={"Authorization": f"Bearer {fresh}"}
     ).status_code == 200
@@ -142,6 +154,11 @@ def test_a_corrupt_stored_password_changed_at_is_401_not_500(probe):
     # core/auth.py already treats a malformed stored password hash and a
     # malformed token iat: a generic 401, never an unhandled 500 that would
     # 500 every request this user makes.
+    #
+    # The password_changed_at comparison only runs for an epoch-less verifier
+    # now (Task 1): a real LocalTokenVerifier token always carries a matching
+    # epoch and never reaches this code at all, so the stub below is what
+    # actually exercises it.
     store = probe.state.user_store
     user = store.create_user("ada@example.com", "correct horse battery")
     with store._connect() as conn:
@@ -149,7 +166,10 @@ def test_a_corrupt_stored_password_changed_at_is_401_not_500(probe):
             "UPDATE users SET password_changed_at = ? WHERE id = ?",
             ("not-a-timestamp", user.id),
         )
-    response = TestClient(probe).get("/probe/user", headers=auth(user.id))
+    probe.state.token_verifier = _EpochlessVerifier(user.id, datetime.now(UTC))
+    response = TestClient(probe).get(
+        "/probe/user", headers={"Authorization": "Bearer anything"}
+    )
     assert response.status_code == 401
 
 
@@ -159,6 +179,8 @@ def test_a_naive_stored_password_changed_at_is_401_not_500(probe):
     # issued_at raises TypeError, not ValueError, so the earlier ValueError
     # guard alone lets this one through as a 500. Same failure-closed
     # contract as the corrupt-value test above, reached by a different input.
+    #
+    # As above, this path is only reachable through an epoch-less verifier.
     store = probe.state.user_store
     user = store.create_user("ada@example.com", "correct horse battery")
     with store._connect() as conn:
@@ -166,7 +188,10 @@ def test_a_naive_stored_password_changed_at_is_401_not_500(probe):
             "UPDATE users SET password_changed_at = ? WHERE id = ?",
             ("2026-07-26T09:00:00", user.id),
         )
-    response = TestClient(probe).get("/probe/user", headers=auth(user.id))
+    probe.state.token_verifier = _EpochlessVerifier(user.id, datetime.now(UTC))
+    response = TestClient(probe).get(
+        "/probe/user", headers={"Authorization": "Bearer anything"}
+    )
     assert response.status_code == 401
 
 
@@ -325,6 +350,54 @@ def test_password_change_rejects_a_password_over_the_bcrypt_byte_ceiling(app_cli
     )
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "password_too_long"
+
+
+def test_password_change_revokes_old_token_immediately(tmp_path):
+    settings = Settings(db_path=tmp_path / "t.db", rules_dir=tmp_path / "rules")
+    client = TestClient(create_app(settings))
+    old_headers = auth_headers(client)
+    assert client.get("/api/auth/me", headers=old_headers).status_code == 200
+    response = client.post(
+        "/api/auth/password",
+        json={"current": TEST_ADMIN_PASSWORD, "new": "a-brand-new-password"},
+        headers=old_headers,
+    )
+    assert response.status_code == 204
+    # No sleep: the epoch makes revocation exact, same-second included.
+    assert client.get("/api/auth/me", headers=old_headers).status_code == 401
+    token = client.post(
+        "/api/auth/login",
+        json={"email": TEST_ADMIN_EMAIL, "password": "a-brand-new-password"},
+    ).json()["token"]
+    assert (
+        client.get(
+            "/api/auth/me", headers={"Authorization": f"Bearer {token}"}
+        ).status_code
+        == 200
+    )
+
+
+def test_epochless_verifier_falls_back_to_password_changed_at(tmp_path):
+    settings = Settings(db_path=tmp_path / "t.db", rules_dir=tmp_path / "rules")
+    app = create_app(settings)
+    client = TestClient(app)
+    auth_headers(client)  # forces admin bootstrap
+    admin = app.state.user_store.get_by_email(TEST_ADMIN_EMAIL)
+    app.state.user_store.set_password(admin.id, "changed-since-issuance")
+
+    class EpochlessVerifier:
+        def verify(self, token: str) -> VerifiedToken:
+            return VerifiedToken(
+                user_id=admin.id,
+                issued_at=datetime.now(UTC) - timedelta(hours=1),
+                epoch=None,
+            )
+
+    app.state.token_verifier = EpochlessVerifier()
+    response = client.get(
+        "/api/auth/me", headers={"Authorization": "Bearer anything"}
+    )
+    assert response.status_code == 401
 
 
 def test_throttle_blocks_after_repeated_failures_then_recovers():

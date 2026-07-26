@@ -69,12 +69,20 @@ def get_current_user(
         raise HTTPException(401, _UNAUTHENTICATED)
     # A password change is the other revocation lever, alongside
     # deactivation above: any token issued before the change is stale, even
-    # though it has not expired. Both sides are tz-aware UTC at second
-    # granularity (issued_at from fromtimestamp(..., UTC); password_changed_at
-    # from _utcnow()), which is what makes the strict `<` correct on both
-    # sides of a change, including a replacement token minted in the same
-    # second as the change.
-    if user.password_changed_at:
+    # though it has not expired.
+    if verified.epoch is not None:
+        # Local tokens always carry an epoch. Equality, not ordering: exact
+        # revocation with no clock or granularity coupling.
+        if verified.epoch != user.token_epoch:
+            raise HTTPException(401, _UNAUTHENTICATED)
+    elif user.password_changed_at:
+        # The revocation contract for epoch-less verifiers (the future
+        # Supabase verifier — pinned in the roadmap's interfaces). Both
+        # sides are tz-aware UTC at second granularity (issued_at from
+        # fromtimestamp(..., UTC); password_changed_at from _utcnow()),
+        # which is what makes the strict `<` correct on both sides of a
+        # change, including a replacement token minted in the same second
+        # as the change.
         try:
             changed_at = datetime.fromisoformat(user.password_changed_at)
         except ValueError:

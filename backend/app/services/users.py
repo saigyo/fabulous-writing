@@ -9,7 +9,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.auth import check_password, hash_password
 from app.services._sqlite import connect, migrate_columns
@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS users (
     is_admin INTEGER NOT NULL DEFAULT 0,
     is_active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
-    password_changed_at TEXT
+    password_changed_at TEXT,
+    token_epoch INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS admin_audit (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,6 +61,7 @@ class User(BaseModel):
     created_at: str
     external_id: str | None = None
     password_changed_at: str | None = None
+    token_epoch: int = Field(default=0, exclude=True)
 
 
 class DuplicateEmailError(ValueError):
@@ -93,6 +95,7 @@ def _row_to_user(row: sqlite3.Row) -> User:
         created_at=row["created_at"],
         external_id=row["external_id"],
         password_changed_at=row["password_changed_at"],
+        token_epoch=row["token_epoch"],
     )
 
 
@@ -113,7 +116,14 @@ class UserStore:
         field. A bare DDL change to `_SCHEMA` only applies via
         `CREATE TABLE IF NOT EXISTS`, which never touches an existing
         table."""
-        migrate_columns(conn, "users", [("password_changed_at", "TEXT")])
+        migrate_columns(
+            conn,
+            "users",
+            [
+                ("password_changed_at", "TEXT"),
+                ("token_epoch", "INTEGER NOT NULL DEFAULT 0"),
+            ],
+        )
 
     def create_user(
         self,
@@ -205,9 +215,14 @@ class UserStore:
         return _row_to_user(row)
 
     def set_password(self, user_id: int, password: str) -> bool:
+        # token_epoch bump = exact token revocation: every outstanding token
+        # carries the pre-change epoch and fails the equality check in
+        # get_current_user, with no same-second window (M2's documented
+        # residual with the iat comparison).
         with self._connect() as conn:
             cursor = conn.execute(
-                "UPDATE users SET password_hash = ?, password_changed_at = ? WHERE id = ?",
+                "UPDATE users SET password_hash = ?, password_changed_at = ?,"
+                " token_epoch = token_epoch + 1 WHERE id = ?",
                 (hash_password(password), _utcnow(), user_id),
             )
         return cursor.rowcount > 0
