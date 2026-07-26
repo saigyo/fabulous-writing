@@ -14,6 +14,8 @@ export function RulesView() {
   const profiles = useStore((s) => s.profiles)
   const profileId = useStore((s) => s.profileId)
   const profile = profiles.find((p) => p.id === profileId) ?? null
+  const isAdmin = useStore((s) => s.user?.is_admin ?? false)
+  const readOnly = profile !== null && profile.is_global && !isAdmin
   const m = useMessages()
   const [response, setResponse] = useState<RulesResponse | null>(null)
   const { error, run, fail, clear } = useCrudError(m.profileChangeFailed)
@@ -43,7 +45,10 @@ export function RulesView() {
     rule_exceptions?: string[]
     packs_on?: string[]
   }) {
-    if (!profile) return
+    // Belt for the `disabled` attributes below: a control that somehow still
+    // fires (or a future control that forgets `disabled`) can't reach the
+    // API — mirrors ProfilesView's guardedSave.
+    if (!profile || readOnly) return
     // Captured before the request goes out: a session ending mid-request
     // must not land this write in the incoming session's store.
     const gen = currentGeneration()
@@ -148,6 +153,11 @@ export function RulesView() {
         {profile && (
           <p className="rules-profile-banner">
             {m.editingRulesFor(profile.name, languageName)}
+            {profile.is_global && (
+              <span className="global-badge" title={m.globalBadgeTitle}>
+                {m.globalBadge}
+              </span>
+            )}
           </p>
         )}
       </header>
@@ -170,7 +180,7 @@ export function RulesView() {
                 type="checkbox"
                 title={m.categoryToggleTitle}
                 checked={!profile?.categories_off.includes(group.category)}
-                disabled={!profile}
+                disabled={!profile || readOnly}
                 onChange={() => toggleCategory(group.category, group.rules)}
               />
               <button
@@ -197,7 +207,7 @@ export function RulesView() {
                     : true
                 }
                 onToggle={() => toggleRule(rule.rule_id)}
-                canToggle={profile !== null}
+                canToggle={profile !== null && !readOnly}
               />
             ))}
           </section>
@@ -210,7 +220,7 @@ export function RulesView() {
                 type="checkbox"
                 title={m.packToggleTitle}
                 checked={profile?.packs_on.includes(section.pack) ?? false}
-                disabled={!profile}
+                disabled={!profile || readOnly}
                 onChange={() => togglePack(section.pack, section.rules)}
               />
               <button
@@ -238,7 +248,7 @@ export function RulesView() {
                     : false
                 }
                 onToggle={() => toggleRule(rule.rule_id)}
-                canToggle={profile !== null}
+                canToggle={profile !== null && !readOnly}
               />
             ))}
           </section>

@@ -358,6 +358,14 @@
   color: var(--accent);
 }
 
+/* A saveOverrides rejection (e.g. a stale 403 on a global profile) must not
+   fail silently — this is the header's only surfaced-error affordance, a
+   compact sibling to the CRUD views' `.profiles-error`/`.rules-error` text. */
+.profile-select-error {
+  color: #e5484d;
+  cursor: help;
+}
+
 /* Align the toggle like the native selects: pulled left by the header
    label-alignment offset, stretched so it is never narrower than the label
    text (label widths vary per locale). */

@@ -12,8 +12,20 @@ vi.mock('../api/client', async (importOriginal) => ({
   updateProfile: vi.fn(),
 }))
 
+import type { MeResponse } from '../api/client'
 import { updateProfile } from '../api/client'
 import { ProfileSelector } from './ProfileSelector'
+
+function user(overrides: Partial<MeResponse> = {}): MeResponse {
+  return {
+    id: 1,
+    email: 'ada@example.com',
+    display_name: null,
+    tier: 'basic',
+    is_admin: false,
+    ...overrides,
+  }
+}
 
 function profile(overrides: Partial<Profile> = {}): Profile {
   return {
@@ -43,6 +55,10 @@ beforeEach(() => {
   vi.clearAllMocks()
   resetAutosaveForTests()
   useStore.setState({
+    // Admin by default: these tests exercise the generation guard, not
+    // ownership, and the fixture profile is global — a non-admin would hit
+    // the new readOnly gate (see the ownership describe block below).
+    user: user({ is_admin: true }),
     profiles: [profile()],
     profileId: 1,
     // Differs from the stored profile's domain_ids ([7]) so isProfileDirty()
@@ -94,5 +110,33 @@ describe('ProfileSelector saveOverrides generation guard', () => {
     await new Promise((r) => setTimeout(r, 0))
 
     expect(useStore.getState().profiles).toEqual(incoming)
+  })
+})
+
+describe('ProfileSelector ownership affordances (non-admin)', () => {
+  it('hides the save-to-profile control on a global profile but keeps reset available', async () => {
+    useStore.setState({ user: user({ is_admin: false }) })
+    render(<ProfileSelector />)
+
+    expect(screen.queryByTitle(en.saveToProfile)).toBeNull()
+    screen.getByTitle(en.resetToProfile)
+  })
+
+  it('surfaces a saveOverrides rejection instead of an unhandled rejection', async () => {
+    // Pins the fix: saveOverrides used to be an un-caught `void`-called
+    // async function — a rejection (e.g. a stale 403) vanished into an
+    // unhandled promise rejection with no visible affordance.
+    useStore.setState({
+      user: user({ is_admin: true }),
+      profiles: [profile({ is_global: false })],
+    })
+    vi.mocked(updateProfile).mockRejectedValueOnce(new Error('boom'))
+    const u = userEvent.setup()
+    render(<ProfileSelector />)
+    await u.click(screen.getByTitle(en.saveToProfile))
+
+    await waitFor(() =>
+      expect(screen.getByTitle(en.profileChangeFailed('boom'))).toBeTruthy(),
+    )
   })
 })
