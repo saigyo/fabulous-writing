@@ -1568,6 +1568,14 @@ def test_global_mutation_as_non_admin_is_403_everywhere(two_users):
     ).status_code == 200
 ```
 
+> **Superseded during implementation**: the "Pinned exceptions" comment inside the
+> snippet above (rename/delete answering 409 for every caller) reflects an assumption
+> made before Task 3 was implemented. As built, a **non-admin** gets **403** (the
+> global-mutation guard fires first, spec §7.2, before the Standard-specific rule is
+> even consulted); an **admin** reaches that rule and gets **409**. See
+> `docs/backend-architecture.md`'s Checking-profiles and Ownership sections for the
+> adjudicated ordering.
+
 - [ ] **Step 2: Run and reconcile.** `uv run pytest tests/test_ownership.py -q`. Every failure here is a Task 2–5 gap: fix it in the store/router it belongs to (not by weakening the row), and note in the report which rows failed on first run — that list is the sweep's yield.
 
 - [ ] **Step 3: The audit table.** In the task report, list **every public method** of `DocumentStore`, `FolderStore`, `ProfileStore`, `TerminologyStore`, `JobManager` with one of: "scoped (owner param)" / "global-check (admin param)" / "safe because X" (e.g. `remove_domain_everywhere`, `has_global_domains`, `standard_profile` — each with its stated reason; `TerminologyChecker.check` belongs in the table as "scoped (owner threaded to list_terms)"). An audit that omits a method is a failed step; M2's `folders.ts` omission is the precedent.

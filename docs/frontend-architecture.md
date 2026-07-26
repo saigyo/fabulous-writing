@@ -407,9 +407,11 @@ already error-surfaced and now shares the same hook rather than its own copy.
 ## `is_global` affordances and the domains-fetch guard
 
 M3 gave the backend's `profiles` and `domains` tables a nullable `owner_id`: a row with
-`owner_id NULL` is **global** (a seeded built-in — Standard, the example profiles,
-"Product docs" — or anything an admin explicitly created as global), visible to every
-account but mutable only by an admin (see
+`owner_id NULL` is **global** — always a seeded built-in (Standard, the example
+profiles, "Product docs"), never something created through the API: both create
+endpoints always write `owner_id=user.id`, even for an admin caller, so a startup
+seeder is the only path to a global row. A global row is visible to every account but
+mutable only by an admin (see
 `docs/backend-architecture.md#ownership`). The frontend's job is narrower than the
 backend's: it never sees `owner_id` at all, only the derived `is_global: boolean` both
 `Domain` and `Profile` (`types.ts`) now carry, and it must render read-only affordances
