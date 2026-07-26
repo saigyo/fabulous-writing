@@ -77,12 +77,24 @@ class JobManager:
         job = CheckJob(str(uuid.uuid4()), owner_id)
         self._jobs[job.id] = job
         # Isolation must cover availability, not just visibility: trim the
-        # creator's own oldest jobs first, so flooding evicts only your own
-        # history. OrderedDict preserves insertion order, so the first
-        # matching entry is the creator's oldest.
+        # creator's own oldest *finished* jobs first, so flooding evicts
+        # only your own history (never a live check still running).
+        # OrderedDict preserves insertion order, so the first matching
+        # finished entry is the creator's oldest finished job. If the owner
+        # is at MAX_JOBS_PER_OWNER with only running jobs, new checks are
+        # refused rather than displacing a live one.
         owned = [jid for jid, j in self._jobs.items() if j.owner_id == owner_id]
         while len(owned) > MAX_JOBS_PER_OWNER:
-            del self._jobs[owned.pop(0)]
+            # Try to evict the owner's oldest finished job.
+            finished_id = next(
+                (jid for jid in owned if self._jobs[jid].status == "done"), None
+            )
+            if finished_id is None:
+                # No finished job to evict, all are running.
+                del self._jobs[job.id]
+                raise JobsAtCapacity()
+            del self._jobs[finished_id]
+            owned.remove(finished_id)
         # Global memory backstop, applied after per-owner trimming: evicts
         # the oldest *finished* job of any owner (aging out someone else's
         # results under global pressure is acceptable and documented).
