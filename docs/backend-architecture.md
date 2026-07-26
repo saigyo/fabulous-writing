@@ -386,8 +386,9 @@ domain's (`get_term`/`update_term`/`delete_term` join to `domains` and read
 [Ownership](#ownership) for why a domain deletion must reach every owner's profiles).
 
 `domains.owner_id` is nullable, exactly like `profiles.owner_id`: `NULL` is a **global**
-domain (the seeded "Product docs" example, or any domain an admin explicitly creates as
-global), a caller's `users.id` is a private one. **One-shot backfill**: when `owner_id`
+domain — the seeded "Product docs" example, and nothing else, since `create_domain`
+always writes `owner_id=user.id` regardless of caller; a caller's `users.id` is a
+private one. **One-shot backfill**: when `owner_id`
 is first added to an existing database, the single row matching the seed domain's name
 (`seed.DOMAIN_NAME`, "Product docs" — asserted equal to `terminology.py`'s own
 `_SEED_DOMAIN_NAME` by a test, since the two constants can't share an import without a
@@ -626,7 +627,14 @@ when a check runs (see Rule engine below); fresh seeds default it to `[]`.
   Standard specifically is forbidden," which would leak that the row is Standard to a
   caller who was never going to be allowed to touch it regardless. Responses are
   **pruned**: rule ids that no longer exist for the language and deleted domain ids
-  are filtered out, so stale references never reach clients. `llm_tier` is one of the
+  are filtered out, so stale references never reach clients. Pruning is existence-only,
+  not owner-scoped: if an admin points a *global* profile at one of their own *private*
+  domains, every other viewer of that profile still sees the domain's bare integer id in
+  `domain_ids` — never its name, terms, or findings, since the checker and every
+  copy-forward path re-derive domain content from the caller's own domain list, never
+  from the profile's raw ids. Adjudicated as acceptable: per-viewer pruning of a shared
+  global profile's `domain_ids` would add real complexity for exposure limited to an
+  opaque integer. `llm_tier` is one of the
   four tier ids or `null` on both `POST` and `PUT`; `ProfileCreate` defaults it to
   `null` when omitted, while `ProfileUpdate` requires the field on every `PUT` (still
   nullable) since a full replacement should not leave it implicit.
@@ -1215,7 +1223,9 @@ cover everything:
 - **Owner-scoped with global rows** (`profiles`, `domains`): `owner_id` is nullable.
   `NULL` means **global** — seeded built-ins (the Standard profile per language, the
   example Marketing/Technical Documentation/Blog profiles, the "Product docs" example
-  terminology domain) plus anything an admin explicitly creates as global. A global row
+  terminology domain) and nothing else: both create endpoints always write
+  `owner_id=user.id`, even for an admin caller, so a startup seeder is the only path to
+  a global row. A global row
   is visible to every caller (`WHERE owner_id IS NULL OR owner_id = ?`) but mutable only
   by an admin: any store's `update_*`/`delete_*` (and, for domains, `create_term` on a
   global domain) raises `GlobalReadOnlyError` (`app/services/ownership.py`) when a
@@ -1240,14 +1250,18 @@ legacy `UNIQUE(language, name)`, wrong once names are meaningful per-owner) and
 `folders` (dropping both the legacy `UNIQUE(name)` and `owner_id`'s `DEFAULT 1`). Both
 follow the same shape — detect the stale DDL via `sqlite_master`, create a
 `<table>_new` from the current `_SCHEMA`, copy every row across by an explicit column
-list, drop the old table, rename the new one in — and both replace the single dropped
-constraint with **two partial unique indexes** (one `WHERE owner_id IS NOT NULL`, scoped
-per-owner; one `WHERE owner_id IS NULL`, scoped globally) rather than one composite
-index, because SQLite treats every `NULL` as distinct from every other `NULL` — a single
-index spanning both partitions would never actually enforce global-name uniqueness.
-`domains` needed no rebuild (it never had a `UNIQUE` constraint to drop) but gained the
-same two-partial-index pair. All three tables' index creation is preceded by a
-duplicate pre-scan of its own partition; a partition with a pre-existing case-insensitive
+list, drop the old table, rename the new one in — but the replacement index differs by
+table, because only `profiles` (and `domains`, below) has global rows. `profiles`
+replaces its dropped constraint with **two partial unique indexes** (one `WHERE
+owner_id IS NOT NULL`, scoped per-owner; one `WHERE owner_id IS NULL`, scoped
+globally) rather than one composite index, because SQLite treats every `NULL` as
+distinct from every other `NULL` — a single index spanning both partitions would never
+actually enforce global-name uniqueness. `folders`' `owner_id` is `NOT NULL` (folders
+have no global concept), so it replaces its dropped constraint with a single composite
+index instead, `idx_folders_owner_name` on `(owner_id, name COLLATE NOCASE)`. `domains`
+needed no table rebuild (it never had a `UNIQUE` constraint to drop) but gained the same
+two-partial-index pair as `profiles`. All three tables' index creation is preceded by a
+duplicate pre-scan of its own scope; a scope with a pre-existing case-insensitive
 collision has its index **skipped**, with a warning logged, rather than crashing
 startup — a live legacy database is not guaranteed to be collision-free, and refusing to
 start is a worse failure mode than temporarily running without that one uniqueness
@@ -1266,9 +1280,13 @@ and every seed-example-named row (matched against `SEED_EXAMPLE_NAMES` and a
 keeps `owner_id NULL`; every other row becomes `owner_id = 1`. For `domains`, the single
 row matching the seed domain's name keeps `owner_id NULL`; every other row becomes
 `owner_id = 1`. In every case, "every other row" means **the pre-existing single-owner
-data becomes the admin's** — a decision that only holds because `create_app()`'s wiring
-order ([Startup bootstrap](#startup-bootstrap) above) guarantees `users` id 1 is the
-admin by the time these backfills run.
+data becomes user id 1's** — not, as an earlier draft of this doc claimed, because
+`create_app()`'s wiring guarantees an already-bootstrapped admin by backfill time: the
+store constructors that run these backfills (`app/main.py:110-128`) execute *before*
+`seed_admin()`, not after. The decision instead relies on the historical id-1
+convention — a pre-M3, single-user database's sole real user was always id 1 — and
+`seed_admin()` separately assigning the admin role to id 1 is what makes "becomes id
+1's" read as "becomes the admin's" in practice.
 
 **Seeders write global rows, not admin rows.** `seed_terminology`/`seed_profiles`
 (`app/services/seed.py`, `app/services/seed_profiles.py`) call `create_domain`/
