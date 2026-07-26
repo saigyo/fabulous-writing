@@ -2924,7 +2924,14 @@ Documentation-only changes, so the frontend gate was not re-run.
 Full detail: `.superpowers/sdd/m1-final-review-fixes-report.md`.
 
 ## 2026-07-26 — M2: authentication enforced on every feature router
-Commits: `d111691`..`45bc400` (branch `multi-user-m2-implementation`, 25 commits)
+PR: [#23](https://github.com/saigyo/fabulous-writing/pull/23) — rebase merge,
+35 commits, branch `multi-user-m2-implementation`.
+
+*Referenced by PR rather than by commit range from here on.* Both rebase and
+squash merges rewrite a branch's SHAs, so any range recorded before the merge
+is stale the moment it lands — this entry originally read
+`d111691..45bc400`, and neither SHA exists on `main`. The PR number is stable
+and carries the full commit list and the review history besides.
 
 M1 built accounts, local login, and a `TokenVerifier` seam without wiring
 either into a single existing endpoint. M2 closes that gap: `documents`,
