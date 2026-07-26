@@ -209,4 +209,31 @@ export const fr: Messages = {
   folderDefaultsSave: 'Enregistrer',
   folderDefaultsCancel: 'Annuler',
   folderDefaultsError: "Échec de l'enregistrement des valeurs par défaut du dossier.",
+
+  // Authentification
+  signInTitle: 'Connexion',
+  signInEmail: 'E-mail',
+  signInPassword: 'Mot de passe',
+  signInSubmit: 'Se connecter',
+  signInPending: 'Connexion…',
+  signInInvalid: 'E-mail ou mot de passe incorrect.',
+  signInFailed: 'Échec de la connexion. Veuillez réessayer.',
+  sessionExpired:
+    'Votre session a pris fin. Veuillez vous reconnecter — les modifications non enregistrées ont été conservées.',
+  accountMenu: 'Compte',
+  accountChangePassword: 'Changer le mot de passe',
+  accountLogOut: 'Se déconnecter',
+  passwordCurrent: 'Mot de passe actuel',
+  passwordNew: 'Nouveau mot de passe',
+  passwordConfirm: 'Confirmer le nouveau mot de passe',
+  passwordSubmit: 'Changer le mot de passe',
+  passwordCancel: 'Annuler',
+  passwordMismatch: 'Les nouveaux mots de passe ne correspondent pas.',
+  passwordTooShort: (min) =>
+    `Le nouveau mot de passe doit comporter au moins ${min} caractères.`,
+  passwordCurrentWrong: 'Le mot de passe actuel est incorrect.',
+  passwordChanged: 'Mot de passe modifié.',
+  passwordFailed: 'Échec de la modification du mot de passe.',
+  connectionFailed: 'Le serveur est injoignable.',
+  connectionRetry: 'Réessayer',
 }

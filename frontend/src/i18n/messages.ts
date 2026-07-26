@@ -189,4 +189,29 @@ export interface Messages {
   folderDefaultsSave: string
   folderDefaultsCancel: string
   folderDefaultsError: string
+
+  // Authentication
+  signInTitle: string
+  signInEmail: string
+  signInPassword: string
+  signInSubmit: string
+  signInPending: string
+  signInInvalid: string
+  signInFailed: string
+  sessionExpired: string
+  accountMenu: string
+  accountChangePassword: string
+  accountLogOut: string
+  passwordCurrent: string
+  passwordNew: string
+  passwordConfirm: string
+  passwordSubmit: string
+  passwordCancel: string
+  passwordMismatch: string
+  passwordTooShort: (min: number) => string
+  passwordCurrentWrong: string
+  passwordChanged: string
+  passwordFailed: string
+  connectionFailed: string
+  connectionRetry: string
 }
