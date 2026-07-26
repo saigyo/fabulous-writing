@@ -161,9 +161,10 @@ class VerifiedToken:
 
     `issued_at` crosses this boundary — rather than staying an internal
     detail of the verifier — because the request path, not the verifier,
-    owns revocation policy: `get_current_user` compares it against
-    `users.password_changed_at`, and a future Supabase verifier has no
-    notion of that column at all.
+    owns revocation policy: `get_current_user` primarily compares `epoch`
+    against `users.token_epoch` (exact equality); `issued_at` vs.
+    `users.password_changed_at` is only the fallback for an epoch-less
+    verifier (a future Supabase verifier has no notion of `epoch` at all).
     """
 
     user_id: int          # always the LOCAL users.id, in every auth mode
