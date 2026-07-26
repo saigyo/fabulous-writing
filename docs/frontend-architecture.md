@@ -845,10 +845,50 @@ bytes to the parser, so a 401 body (which `fetch()` resolves "successfully," unl
 `handleUnauthorized()` rather than parsed as zero events and treated as a quiet,
 successful end of stream.
 
-**Purge-on-user-change.** `login()` and `logout()` both bump a module-level
-`generation` counter (`sessionGeneration()`), which every in-flight async operation
-captures at its start and re-checks before committing — a completion that started
-under an older generation no longer speaks for anyone. `resetSessionState()` (called
+**Purge-on-user-change.** Two independent generation counters exist, guarding two
+different kinds of in-flight work, and it matters that they are not the same counter.
+`auth/session.ts` owns an auth counter (`sessionGeneration()`), bumped by `logout()`
+and `expireSession()` — but deliberately **not** by `login()`. It has exactly one
+external consumer, `AccountMenu.tsx`'s password-change flow, which captures it before
+the change request and the silent re-login it triggers, and checks it before each of
+its own `setState` calls, so a log-out (or an unrelated session expiry) landing mid-flow
+abandons the completion instead of writing a stale password-changed banner into
+whatever session is current by then.
+
+`documents/autosave.ts` owns a separate document counter (`currentGeneration()`),
+bumped by `invalidateDocumentWork()` — called from `logout()` and `expireSession()`,
+again **never from `login()`**. This is the counter every in-flight document-affecting
+operation captures at its start and re-checks before committing: the autosave push
+itself (`documents/autosave.ts`), the document CRUD helpers (`documents/documents.ts`,
+`documents/folders.ts`), and — as of M2's final review — the five header/view modules
+whose async writes can feed the same open document (`App.tsx`'s per-document settings
+subscription and profile-fetch effect, `header/ProfileSelector.tsx`,
+`profiles/ProfilesView.tsx`, `rules/RulesView.tsx`). That is real coverage, not "every
+in-flight async operation" — writes backed by data that is not user- or
+document-scoped (app-wide catalogs: providers, domains, languages, routing; and
+`terminology/TerminologyView.tsx`'s domains/terms, which have no owner at all) commit
+unconditionally, because there is nothing session-specific in them to leak.
+
+`login()` bumping neither counter is deliberate, not an oversight: in-flight document
+work must survive a same-user re-login, which is exactly what Task 8's silent
+re-authentication after a password change depends on — the token changes, but the
+person, and the document they were editing, has not.
+
+**Why `checking/cancelSlot.ts` exists.** `checking/` cannot import `sessionGeneration`
+(or anything else) from `auth/session.ts` directly: `documents/hydration.ts` already
+imports `cancelCheck` from `checking/controller.ts`, and `session.ts` already imports
+from `documents.ts`, so a direct `controller.ts <-> session.ts` import would close the
+cycle `controller -> session -> documents -> hydration -> controller` — not merely
+untidy, but a crash at boot, since whichever of the two modules is reached second in
+the dependency graph's depth-first evaluation finds the other's binding still in its
+temporal dead zone. `checking/cancelSlot.ts` is a small, deliberately leaf module (it
+imports from neither `controller.ts` nor `session.ts`, and nothing imports it back into
+either) that `controller.ts` and `session.ts` both talk to instead of each other,
+breaking the cycle. `checking/cancelSlot.test.ts` pins this: it exists to catch a
+regression that re-closes the cycle before it reaches production and crashes the app
+at boot.
+
+`resetSessionState()` (called
 by `logout()`, `expireSession()`, and by `login()` **only when the signing-in user's
 id differs from the previous one**) clears the persisted zustand blob and every
 non-persisted data field (tracked findings, documents, folders, scorecard, …), then

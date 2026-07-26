@@ -1257,7 +1257,6 @@ comment header:
 
 ```ts
   // Authentication
-  signInTitle: string
   signInEmail: string
   signInPassword: string
   signInSubmit: string
@@ -1290,7 +1289,6 @@ Append to each locale file, before the closing brace:
 
 ```ts
   // Authentication
-  signInTitle: 'Sign in',
   signInEmail: 'Email',
   signInPassword: 'Password',
   signInSubmit: 'Sign in',
@@ -1320,7 +1318,6 @@ Append to each locale file, before the closing brace:
 
 ```ts
   // Authentifizierung
-  signInTitle: 'Anmelden',
   signInEmail: 'E-Mail',
   signInPassword: 'Passwort',
   signInSubmit: 'Anmelden',
@@ -1350,7 +1347,6 @@ Append to each locale file, before the closing brace:
 
 ```ts
   // Authentification
-  signInTitle: 'Connexion',
   signInEmail: 'E-mail',
   signInPassword: 'Mot de passe',
   signInSubmit: 'Se connecter',
@@ -1381,7 +1377,6 @@ Append to each locale file, before the closing brace:
 
 ```ts
   // Autenticación
-  signInTitle: 'Iniciar sesión',
   signInEmail: 'Correo electrónico',
   signInPassword: 'Contraseña',
   signInSubmit: 'Iniciar sesión',
@@ -1411,7 +1406,6 @@ Append to each locale file, before the closing brace:
 
 ```ts
   // Autenticazione
-  signInTitle: 'Accedi',
   signInEmail: 'E-mail',
   signInPassword: 'Password',
   signInSubmit: 'Accedi',
@@ -1441,7 +1435,6 @@ Append to each locale file, before the closing brace:
 
 ```ts
   // 認証
-  signInTitle: 'ログイン',
   signInEmail: 'メールアドレス',
   signInPassword: 'パスワード',
   signInSubmit: 'ログイン',
@@ -1471,7 +1464,6 @@ Append to each locale file, before the closing brace:
 
 ```ts
   // 身份验证
-  signInTitle: '登录',
   signInEmail: '邮箱',
   signInPassword: '密码',
   signInSubmit: '登录',
