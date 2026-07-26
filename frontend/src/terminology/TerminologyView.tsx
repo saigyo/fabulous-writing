@@ -53,21 +53,32 @@ export function TerminologyView() {
     }
   }, [domains, activeDomainId])
 
-  // Latest-request-wins: each call to loadTerms gets its own request id, so
-  // a stale fetch that resolves after the selection has moved on (e.g. an
-  // out-of-order domain switch, or a slow refetch after add/edit/delete) is
-  // discarded instead of overwriting the current domain's rows.
+  // Guard policy composed of two independent checks:
+  // - the request counter orders same-domain fetches, so a stale fetch for
+  //   the CURRENT domain (e.g. an in-flight load superseded by a newer one)
+  //   is discarded instead of overwriting more recent rows;
+  // - activeDomainRef rejects cross-domain starts and completions, so a
+  //   mutation's onChanged callback — which closes over the domain id at
+  //   the render it was wired to — cannot refetch or apply results for a
+  //   domain the user has since switched away from (its own fetch resolving
+  //   later would otherwise "win" the counter race against the domain the
+  //   user is actually looking at).
+  const activeDomainRef = useRef<number | null>(null)
   const termsRequestRef = useRef(0)
   const loadTerms = useCallback((domainId: number) => {
+    if (activeDomainRef.current !== domainId) return Promise.resolve()
     const requestId = ++termsRequestRef.current
     return getTerms(domainId).then((fetched) => {
-      if (termsRequestRef.current === requestId) setTerms(fetched)
+      if (termsRequestRef.current === requestId && activeDomainRef.current === domainId) {
+        setTerms(fetched)
+      }
     })
   }, [])
 
   useEffect(() => {
     // Clear immediately on domain change so the previous domain's rows never
     // stay interactive (or visible) while the new domain's fetch is in flight.
+    activeDomainRef.current = activeDomainId
     setTerms([])
     if (activeDomainId !== null) {
       void loadTerms(activeDomainId)

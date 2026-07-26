@@ -27,7 +27,7 @@ vi.mock('../documents/documents', () => ({
   clearLegacyText: vi.fn(),
 }))
 
-import { getDomains, getTerms, updateTerm } from '../api/client'
+import { deleteTerm, getDomains, getTerms, updateTerm } from '../api/client'
 import { logout } from '../auth/session'
 import { TerminologyView } from './TerminologyView'
 
@@ -190,6 +190,84 @@ describe('TerminologyView terms fetch: latest-request-wins on domain switch', ()
 
     expect(screen.queryByText('alpha')).toBeNull()
     expect(screen.getByText('beta')).toBeTruthy()
+  })
+
+  it('discards a stale onChanged refetch from a mutation started on the previous domain', async () => {
+    // Reproduces the round-7 finding: a mutation's onChanged closure captures
+    // the domain id at the time it was wired (render time), not at the time
+    // it fires. If that mutation's own request (deleteTerm here) resolves
+    // *after* the user has switched domains, its onChanged() call still
+    // refetches the OLD domain — and that refetch takes a newer counter
+    // value than the new domain's own in-flight/completed fetch, so it must
+    // be rejected by domain identity, not just request ordering.
+    const privateA: Domain = { id: 2, name: 'Private A', description: '', is_global: false }
+    const privateB: Domain = { id: 3, name: 'Private B', description: '', is_global: false }
+    useStore.setState({ domains: [privateA, privateB] })
+    vi.mocked(getDomains).mockResolvedValue([privateA, privateB])
+
+    const termA: Term = { ...term, id: 201, domain_id: privateA.id, preferred: 'alpha' }
+    const staleTermA: Term = { ...term, id: 301, domain_id: privateA.id, preferred: 'stale-alpha' }
+    const termB: Term = { ...term, id: 202, domain_id: privateB.id, preferred: 'beta' }
+
+    let resolveB!: (terms: Term[]) => void
+    const fetchB = new Promise<Term[]>((resolve) => {
+      resolveB = resolve
+    })
+    let resolveStaleA!: (terms: Term[]) => void
+    const fetchStaleA = new Promise<Term[]>((resolve) => {
+      resolveStaleA = resolve
+    })
+    let getTermsACalls = 0
+    vi.mocked(getTerms).mockImplementation((domainId: number) => {
+      if (domainId === privateA.id) {
+        getTermsACalls += 1
+        // First call: TerminologyView's mount-time fetch for the initial
+        // domain. Resolves immediately so the row is on screen to delete.
+        return getTermsACalls === 1 ? Promise.resolve([termA]) : fetchStaleA
+      }
+      if (domainId === privateB.id) return fetchB
+      return Promise.resolve([])
+    })
+
+    let resolveDelete!: () => void
+    vi.mocked(deleteTerm).mockReturnValue(
+      new Promise((resolve) => {
+        resolveDelete = () => resolve(undefined)
+      }),
+    )
+
+    render(<TerminologyView />)
+    // domains[0] (Private A) auto-selects; its initial fetch resolves eagerly.
+    await screen.findByText('alpha')
+
+    // Start a delete on the current domain (A). deleteTerm() is deferred, so
+    // the mutation's onChanged() call (closing over domain A) has not fired
+    // yet by the time the user switches domains below.
+    await userEvent.click(screen.getByTitle(en.deleteTermTitle))
+
+    // Switch to Private B before the delete resolves.
+    const rowB = (await screen.findByText('Private B')).closest('.domain-row') as HTMLElement
+    await userEvent.click(within(rowB).getByText('Private B'))
+
+    // B's own switch-triggered fetch resolves and is displayed.
+    resolveB([termB])
+    await screen.findByText('beta')
+
+    // Now the stale delete-on-A resolves: its onChanged() closure still
+    // targets domain A, firing a refetch for A *after* B is the active
+    // domain and after B's fetch already landed.
+    resolveDelete()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    resolveStaleA([staleTermA])
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // The stale A refetch must never overwrite B's rows.
+    expect(screen.queryByText('stale-alpha')).toBeNull()
+    expect(screen.getByText('beta')).toBeTruthy()
+    // The onChanged closure must be rejected at the START too (not merely
+    // have its result discarded on completion): once the domain has moved
+    // on, it must never even issue the redundant getTerms(A) call.
+    expect(getTermsACalls).toBe(1)
   })
 })
 
