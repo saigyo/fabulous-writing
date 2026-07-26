@@ -14,27 +14,97 @@ import type {
   Tier,
   Term,
 } from '../types'
+// store.ts only imports this module's *types* (`import type`), which are
+// erased at build time — so this value import does not close a runtime
+// cycle. That is a different relationship from session.ts (below), which
+// imports this module's values and therefore cannot be imported back.
+import { useStore } from '../state/store'
 
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 
 export class HttpError extends Error {
   readonly status: number
+  readonly code?: string
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, code?: string) {
     super(message)
     this.status = status
+    this.code = code
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...init,
-  })
+interface RequestOptions extends RequestInit {
+  // Skips the clear-auth branch when (and only when) the response is 401.
+  // A property of the *call*, not a URL match, so a future endpoint that
+  // also must not clear state opts in explicitly instead of being
+  // special-cased by path. Its only caller is postLogin — a wrong password
+  // must reach the caller as an HttpError, not trigger a state-clearing
+  // loop. This must never influence header construction (in particular, it
+  // must never suppress the Authorization header) — it has exactly the one
+  // effect described above.
+  keepSessionOn401?: boolean
+}
+
+// A non-OK response is not guaranteed to have a JSON body, let alone one
+// shaped like `{ detail: { code, message } }` — so a parse failure here
+// must not replace the real HTTP status with a parse error; it just leaves
+// `code` undefined and the caller still gets `status`.
+async function extractErrorCode(response: Response): Promise<string | undefined> {
+  try {
+    const body: unknown = JSON.parse(await response.text())
+    const detail = (body as { detail?: unknown } | null)?.detail
+    if (
+      detail !== null &&
+      typeof detail === 'object' &&
+      typeof (detail as { code?: unknown }).code === 'string'
+    ) {
+      return (detail as { code: string }).code
+    }
+  } catch {
+    // Not JSON, or not the expected shape — status alone still throws below.
+  }
+  return undefined
+}
+
+// Shared by request() below and, from Task 5, the SSE reader (which passes
+// the token it opened its stream with) — so both inherit this same scoping
+// rather than the stream growing a second copy. The app fires several
+// requests in parallel on mount and the check stream outlives them, so a
+// 401 can arrive long after the request that earned it: once the first 401
+// has shown the gate and the user has signed back in, a straggler from the
+// dead token must not call the handler again and discard the *fresh*
+// token. Clearing only when the store's current token still matches the
+// one the rejected request was sent with prevents that.
+export function handleUnauthorized(tokenUsed: string | null): void {
+  if (useStore.getState().token !== tokenUsed) return
+  getUnauthorizedHandler()?.()
+}
+
+export async function request<T>(path: string, init?: RequestOptions): Promise<T> {
+  const { keepSessionOn401, headers: callerHeaders, ...rest } = init ?? {}
+  // Read at fetch time, not captured earlier: an in-flight request that
+  // turns stale is safe only because it still carries the *outgoing*
+  // session's own token, so a recovered document lands under the user who
+  // was leaving rather than the one arriving. Reading any earlier (e.g. at
+  // api-function entry) risks a request built before a refresh picking up
+  // a token that isn't its caller's anymore.
+  const token = useStore.getState().token
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(callerHeaders as Record<string, string> | undefined),
+  }
+  if (token) headers.Authorization = `Bearer ${token}`
+
+  const response = await fetch(`${BASE}${path}`, { ...rest, headers })
+
   if (!response.ok) {
+    if (response.status === 401 && !keepSessionOn401) {
+      handleUnauthorized(token)
+    }
     throw new HttpError(
       response.status,
       `${init?.method ?? 'GET'} ${path} failed: ${response.status}`,
+      await extractErrorCode(response),
     )
   }
   if (response.status === 204) return undefined as T
@@ -57,10 +127,18 @@ export interface LoginResponse {
   user: MeResponse
 }
 
+// keepSessionOn401: a wrong password is a 401 here, and must reach the
+// caller as an HttpError rather than clearing auth state — there is no
+// session to clear yet, and doing so would just retrigger the login UI in
+// a loop. postPasswordChange (Task 8) is deliberately NOT exempt: its 401
+// can only mean the bearer token was rejected (Task 8 removes the
+// ambiguity with get_current_user at the source), so it must flow through
+// expireSession() like any other endpoint.
 export const postLogin = (email: string, password: string) =>
   request<LoginResponse>('/api/auth/login', {
     method: 'POST',
     body: JSON.stringify({ email, password }),
+    keepSessionOn401: true,
   })
 
 export const getMe = () => request<MeResponse>('/api/auth/me')
@@ -68,8 +146,8 @@ export const getMe = () => request<MeResponse>('/api/auth/me')
 // Injected by auth/session.ts (avoids a module cycle): session.ts imports
 // this module for postLogin/getMe, so this module must not import
 // session.ts back to call expireSession() directly. getUnauthorizedHandler
-// is read by request()'s 401 branch, added in Task 4 — not yet wired up
-// here.
+// is read by handleUnauthorized() above, invoked from request()'s 401
+// branch.
 let onUnauthorized: (() => void) | null = null
 export function setUnauthorizedHandler(fn: () => void): void {
   onUnauthorized = fn
