@@ -150,7 +150,7 @@ reading the tasks:
 | `frontend/src/auth/AccountMenu.tsx` (new) | Header menu: change password, log out. |
 | `frontend/src/auth/session.ts` (new) | `login()`, `logout()`, `expireSession()`, `restoreSession()` — the only writers of auth state. |
 | `frontend/src/i18n/messages.ts` + 7 locale files (modify) | Auth strings. |
-| `frontend/src/App.tsx` (modify) | Mount-time fetches deferred until authenticated; account menu in the header. |
+| `frontend/src/App.tsx` (modify) | Account menu in the header; `<Wordmark/>` extracted for reuse. Mount-time fetches need no guard of their own — `LoginGate` never renders this subtree while unauthenticated, which Task 7 Step 4 verifies rather than assumes. |
 | `frontend/src/main.tsx` (modify) | `<LoginGate>` wraps `<App/>`. |
 
 ---
@@ -483,9 +483,11 @@ EOF
   `collectSnapshot()`; the generation check on deferred writes),
   `frontend/src/documents/documents.ts` (`invalidateDocumentWork()`,
   `clearLegacyText()`, the generation check on `initDocuments`' post-`await`
-  writes), `frontend/src/checking/controller.ts` (register
-  `cancelInFlightCheck` through the injection setter — `cancelCheck()` lives
-  here, at `:16`, and `session.ts` must not import this module),
+  writes), `frontend/src/checking/cancelSlot.ts` (**new** — a leaf
+  module owning the cancel-handler slot; the injection note below explains why
+  the slot cannot live in `session.ts`),
+  `frontend/src/checking/controller.ts` (registers `cancelCheck` into that
+  slot; `cancelCheck()` lives here, at `:16`),
   `frontend/src/api/client.ts` (`postLogin`, `getMe`,
   `setUnauthorizedHandler`)
 - Create: `frontend/src/auth/session.ts`
@@ -783,8 +785,27 @@ let onUnauthorized: (() => void) | null = null
 export function setUnauthorizedHandler(fn: () => void): void { onUnauthorized = fn }
 ```
 
-`session.ts` registers `expireSession` at module load. Apply the same idiom for
-`cancelInFlightCheck()` rather than importing `controller.ts`.
+`session.ts` registers `expireSession` at module load.
+
+**The check-cancel slot needs a different shape, and getting this wrong crashes
+the app at boot.** The symmetric arrangement — the slot living in `session.ts`,
+with `controller.ts` registering into it — was tried and produced a module-load
+`ReferenceError`: `setCancelCheckHandler` is hoisted, but its body assigns to a
+`let`, and `controller.ts` calls it during module evaluation from inside the
+cycle `controller → session → documents → hydration → controller`. Whenever the
+cycle is first entered through `session.ts`, that `let` is still in TDZ. It
+survived initial testing only because `controller.ts` was briefly the sole
+importer of `session.ts` — and Task 7's `LoginGate` imports `session.ts`
+directly, which is exactly the entry that detonates it. Had the binding been
+`var` it would have failed *silently*, leaving check-cancellation a permanent
+no-op.
+
+So the slot goes in its own leaf module, `frontend/src/checking/cancelSlot.ts`,
+which imports nothing. `controller.ts` registers `cancelCheck` into it;
+`session.ts` calls `cancelInFlightCheck()` from it. Neither imports the other
+and `session.ts` leaves the cycle entirely. Pin it with a test that imports
+`./auth/session` **before** `./checking/controller` — that is the order that
+fails without this.
 
 `resetSessionState()` runs on **logout**, on **expiry**, and on a login that
 **changes the user** — not on every login. It carries login at all because
@@ -883,7 +904,9 @@ Expected: PASS.
 
 ```bash
 git add src/state/store.ts src/state/store.test.ts src/auth src/api/client.ts \
-        src/checking/controller.ts \
+        src/checking/controller.ts src/checking/cancelSlot.ts \
+        src/checking/cancelSlot.test.ts \
+        src/documents/hydration.ts src/documents/list.ts src/documents/folders.ts \
         src/documents/buffer.ts src/documents/autosave.ts \
         src/documents/autosave.test.ts src/documents/documents.ts \
         src/documents/documents.test.ts
@@ -1212,8 +1235,11 @@ because translation is a judgment call, not a mechanical one — the phrasing,
 formality and typography below were chosen against the existing catalogs, and
 an implementer should transcribe them, not invent them.
 
-Conventions they follow, taken from the current files: flat camelCase keys
-grouped under a comment header; parameterized messages are functions so each
+Conventions they follow, taken from the current files: flat camelCase keys.
+(The `// Authentication` headers below are new to the locale catalogs — those
+files carried no comments before this milestone; only `messages.ts` groups
+under headers. Adding them is deliberate, not an existing convention.)
+Further conventions: parameterized messages are functions so each
 language controls word order; sentences take a full stop, buttons and labels do
 not; ellipsis is attached with no space (`checking: 'Checking…'`, `de: 'Prüft…'`);
 locale-native quotes and punctuation (`fr` « » with narrow spaces, `es` ¿ ?,
@@ -1636,7 +1662,8 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add package.json package-lock.json src/auth src/main.tsx src/App.tsx src/App.css
+git add package.json package-lock.json src/auth src/main.tsx src/App.tsx \
+        src/App.css src/Wordmark.tsx
 git commit -m "$(cat <<'EOF'
 feat(auth): full-screen login gate above the app shell
 
@@ -1839,7 +1866,8 @@ per dismissal path is listed above.
 component styles — this repo keeps one stylesheet, and a new `auth.css` would
 be the only exception. Class prefixes: `.account-badge`, `.account-menu`,
 `.account-who`, `.account-password-panel`; the gate uses `.login-gate`,
-`.login-card`, `.login-form`, `.login-error`.
+`.login-card`, `.login-field`, `.login-submit`, and reuses `.llm-error` for
+failures rather than defining its own error class.
 
 Mount it in `Header()` as the final child of `.header-controls`.
 
@@ -2216,7 +2244,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01QG5RSDiRACnzQgN89FceuQ
 EOF
 )"
-git push -u origin multi-user-enforcement
+git push -u origin multi-user-m2-implementation
 ```
 
 Open the PR describing: what is enforced, that the frontend ships with it, the
