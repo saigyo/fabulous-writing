@@ -3132,7 +3132,24 @@ directory, not its neighbour" defect shape.
 `npx vitest run && npm run lint && npm run build` → 379 passed, `oxlint`
 clean, build succeeded.
 
-Full detail: `.superpowers/sdd/2026-07-26-multi-user-m3-ownership/task-8-report.md`.
+**Review hardening (post-PR addendum, same PR).** A whole-branch final
+review plus ten Copilot rounds on PR #26 (7 → 4 → 2 → 1 → 1 → 1 → 1 → 3 →
+3 → clean) hardened the milestone beyond the plan: the global-read-only
+rule was extended to the two `updateProfile` call sites the plan had not
+named (`RulesView`, `ProfileSelector` — the fifth instance of the
+guard-sweep failure shape, this time frontend); check-job retention became
+per-owner and running-work-safe (finished-only eviction, 429 at running
+capacity, failed request setup discards its job); the terminology domain
+switch gained clear-on-switch plus a domain-identity guard against stale
+starts and completions; same-user re-login (password change) now re-runs
+the guarded domain fetches via a reactive `authGeneration` counter;
+selection dropdowns disambiguate global from private name shadows in every
+audited surface; the Japanese badge string was corrected from 標準
+(standard) to 組み込み (built-in); and the reset route now answers 403
+before the Standard-only 409, matching update/delete. Final state: backend
+920 passed (zero warnings), frontend 397 passed, lint and build clean. The
+git-ignored SDD scratch workspace was removed after the clean round; the
+PR discussion and this entry are the durable record.
 
 **Next**: M4 — tiered LLM access (`tiers:` config, `resolve_llm_selection`,
 feature gates, frontend gating and degradation notes).
