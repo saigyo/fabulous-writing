@@ -28,10 +28,12 @@ vi.mock('./routing', () => ({
 }))
 
 import { postSuggestions } from '../api/client'
-import { fetchSuggestions, llmActionPending } from './suggest'
+import { bumpGeneration, resetAutosaveForTests } from '../documents/autosave'
+import { fetchRewrite, fetchSuggestions, llmActionPending } from './suggest'
 
 beforeEach(() => {
   vi.clearAllMocks()
+  resetAutosaveForTests()
   useStore.getState().setSuggestPending(null)
   useStore.getState().setRewritePending(null)
   useStore.getState().setSuggestError('f1', null)
@@ -103,5 +105,57 @@ describe('fetchSuggestions', () => {
 
     expect(postSuggestions).not.toHaveBeenCalled()
     expect(llmActionPending()).toBe(true)
+  })
+
+  it('drops a suggestion response that resolves after the session already ended', async () => {
+    let resolvePost!: (value: Awaited<ReturnType<typeof postSuggestions>>) => void
+    vi.mocked(postSuggestions).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePost = resolve
+        }),
+    )
+
+    const call = fetchSuggestions('f1')
+    bumpGeneration() // the literal bump invalidateDocumentWork() makes on session end
+    resolvePost({
+      suggestions: ['better'],
+      span: { start: 0, end: 4 },
+      original: 'orig',
+      rejected: 0,
+      held_back: [],
+      advice: [],
+    })
+    await call
+
+    // beforeEach primes extraSuggestions.f1 to []; a dropped response must
+    // leave it exactly there, not overwrite it with the stale suggestions.
+    expect(useStore.getState().extraSuggestions.f1).toEqual([])
+  })
+})
+
+describe('fetchRewrite', () => {
+  it('drops a rewrite response that resolves after the session already ended', async () => {
+    let resolvePost!: (value: Awaited<ReturnType<typeof postSuggestions>>) => void
+    vi.mocked(postSuggestions).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePost = resolve
+        }),
+    )
+
+    const call = fetchRewrite('f1')
+    bumpGeneration()
+    resolvePost({
+      suggestions: ['rewritten sentence'],
+      span: { start: 0, end: 4 },
+      original: 'a sentence from user A\'s document',
+      rejected: 0,
+      held_back: [],
+      advice: [],
+    })
+    await call
+
+    expect(useStore.getState().rewrites.f1).toBeUndefined()
   })
 })

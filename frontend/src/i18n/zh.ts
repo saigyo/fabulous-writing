@@ -199,7 +199,6 @@ export const zh: Messages = {
   folderDefaultsError: '保存文件夹默认设置失败。',
 
   // 身份验证
-  signInTitle: '登录',
   signInEmail: '邮箱',
   signInPassword: '密码',
   signInSubmit: '登录',

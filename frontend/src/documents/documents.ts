@@ -81,10 +81,17 @@ export async function moveDocumentToFolder(
   id: number,
   folderId: number | null,
 ): Promise<void> {
+  // Captured before the request goes out: a session ending mid-request must
+  // not land a false error banner into the incoming user's sidebar. The 422
+  // branch's own refreshFolders()/refreshDocuments() calls already guard
+  // their writes internally (see list.ts), so only the plain error write
+  // below needs its own check.
+  const gen = currentGeneration()
   let moved: DocumentFull
   try {
     moved = await apiMoveDocument(id, folderId)
   } catch (error) {
+    if (gen !== currentGeneration()) return // session ended: nothing to report
     if (error instanceof HttpError && error.status === 422) {
       // The target folder vanished meanwhile: drop the stale entry from
       // the submenu and re-sync memberships.

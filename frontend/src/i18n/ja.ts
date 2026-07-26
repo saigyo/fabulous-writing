@@ -199,7 +199,6 @@ export const ja: Messages = {
   folderDefaultsError: 'フォルダーの既定値の保存に失敗しました。',
 
   // 認証
-  signInTitle: 'ログイン',
   signInEmail: 'メールアドレス',
   signInPassword: 'パスワード',
   signInSubmit: 'ログイン',

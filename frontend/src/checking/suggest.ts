@@ -1,4 +1,5 @@
 import { postSuggestions } from '../api/client'
+import { currentGeneration } from '../documents/autosave'
 import { getEditorView } from '../editor/editorRef'
 import { findingsField } from '../editor/findings'
 import { currentMessages } from '../i18n'
@@ -18,8 +19,15 @@ export async function fetchSuggestions(findingId: string): Promise<void> {
   state.setSuggestHeldBack(findingId, null)
   state.setSuggestAdvice(findingId, null)
   state.setSuggestPending(findingId)
+  // Captured before the LLM round-trip: postSuggestions() takes tens of
+  // seconds, and a session ending mid-request must not let another user's
+  // sentence (result.original) or its rewrites (result.suggestions) land in
+  // the incoming session's store — see controller.ts's runCheck() for the
+  // same hazard on the check-scorecard path.
+  const gen = currentGeneration()
   try {
     const result = await requestForFinding(findingId, 'span')
+    if (gen !== currentGeneration()) return // session ended: drop the response
     if (result) {
       const vetoed = noReliableSuggestionMessage(
         result.suggestions,
@@ -43,6 +51,7 @@ export async function fetchSuggestions(findingId: string): Promise<void> {
       }
     }
   } catch (error) {
+    if (gen !== currentGeneration()) return // session ended: stale error, nothing to report
     useStore.getState().setSuggestError(findingId, error instanceof Error ? error.message : String(error))
   } finally {
     useStore.getState().setSuggestPending(null)
@@ -60,8 +69,13 @@ export async function fetchRewrite(findingId: string): Promise<void> {
   state.setRewriteHeldBack(findingId, null)
   state.setRewriteAdvice(findingId, null)
   state.setRewritePending(findingId)
+  // Same hazard as fetchSuggestions() above: capture before the round-trip
+  // so a session ending mid-request cannot write another user's rewritten
+  // sentence into this session's store.
+  const gen = currentGeneration()
   try {
     const result = await requestForFinding(findingId, 'sentence')
+    if (gen !== currentGeneration()) return // session ended: drop the response
     if (result) {
       const vetoed = noReliableSuggestionMessage(
         result.suggestions,
@@ -90,6 +104,7 @@ export async function fetchRewrite(findingId: string): Promise<void> {
       }
     }
   } catch (error) {
+    if (gen !== currentGeneration()) return // session ended: stale error, nothing to report
     useStore.getState().setRewriteError(findingId, error instanceof Error ? error.message : String(error))
   } finally {
     useStore.getState().setRewritePending(null)

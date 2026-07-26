@@ -1,5 +1,5 @@
 import { postCheck, subscribeCheck } from '../api/client'
-import { flush } from '../documents/autosave'
+import { currentGeneration, flush } from '../documents/autosave'
 import { getEditorView } from '../editor/editorRef'
 import { mergeFindingsEffect } from '../editor/findings'
 import { currentMessages } from '../i18n'
@@ -72,6 +72,17 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
 
   const profile = activeProfile(state)
 
+  // Captured before the request goes out: logout()/expireSession() bump this
+  // (via invalidateDocumentWork()) while postCheck() is still in flight.
+  // cancelInFlightCheck() only cancels a *subscribed* check (it nulls
+  // unsubscribe/currentCheckId) — it cannot touch this await, so without this
+  // guard runCheck() itself would re-arm currentCheckId and open a fresh
+  // subscription for a session that has already ended once the await below
+  // resolves. That subscription is what let a previous user's scorecard
+  // (onScorecard has no text guard, unlike onResult/markScorecardStale) reach
+  // the next user's store and get PUT onto their document.
+  const gen = currentGeneration()
+
   let result
   try {
     result = await postCheck({
@@ -85,6 +96,7 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
       llm_instructions: profile?.llm_instructions ?? '',
     })
   } catch (error) {
+    if (gen !== currentGeneration()) return // session ended: stale error, nothing to report
     useStore.setState({
       checkPhase: 'idle',
       llmError: currentMessages().llmCheckFailed(String(error)),
@@ -93,6 +105,8 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
     })
     return
   }
+
+  if (gen !== currentGeneration()) return // session ended while postCheck was in flight: do not apply findings, flush, or subscribe
 
   applyFindings(text, ['rule', 'terminology'], fastFindings(result.findings))
   void flush()

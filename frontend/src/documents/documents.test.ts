@@ -829,6 +829,27 @@ describe('folders', () => {
     expect(useStore.getState().docListError).toBe(true)
   })
 
+  it('moveDocumentToFolder does not set docListError once the session already ended', async () => {
+    const docs = [
+      { ...summaryOf(doc(1)), folder_id: null },
+      { ...summaryOf(doc(2)), folder_id: null },
+    ]
+    useStore.getState().setDocuments(docs)
+    useStore.getState().setDocListError(false)
+    let rejectMove!: (err: unknown) => void
+    vi.mocked(moveDocument).mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectMove = reject
+        }),
+    )
+    const call = moveDocumentToFolder(2, 5)
+    invalidateDocumentWork() // simulates logout()/expireSession() firing mid-flight
+    rejectMove(new TypeError('offline'))
+    await call
+    expect(useStore.getState().docListError).toBe(false)
+  })
+
   it('removeFolder refreshes folders and documents', async () => {
     vi.mocked(deleteFolder).mockResolvedValue(undefined)
     vi.mocked(listFolders).mockResolvedValue([])

@@ -211,7 +211,6 @@ export const es: Messages = {
   folderDefaultsError: 'No se pudieron guardar los valores predeterminados de la carpeta.',
 
   // Autenticación
-  signInTitle: 'Iniciar sesión',
   signInEmail: 'Correo electrónico',
   signInPassword: 'Contraseña',
   signInSubmit: 'Iniciar sesión',
