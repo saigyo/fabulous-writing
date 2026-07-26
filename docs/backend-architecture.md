@@ -72,7 +72,7 @@ backend/
 └── tests/                       # pytest suite (one module per unit)
 ```
 
-See [Authentication and user accounts](#authentication-and-user-accounts-m1-foundation-only)
+See [Authentication and user accounts](#authentication-and-user-accounts)
 below for the auth/admin/manage modules just added to this map.
 
 ## The Finding contract
@@ -126,7 +126,7 @@ Singletons on `app.state`:
 | `jobs` | in-memory `JobManager` for check jobs |
 | `nlp` | `NlpRegistry` of lazy spaCy pipelines |
 | `provider_factory` | `(name?, model?) -> LLMProvider` |
-| `user_store` | `UserStore` — users + admin_audit (see [Authentication](#authentication-and-user-accounts-m1-foundation-only)) |
+| `user_store` | `UserStore` — users + admin_audit (see [Authentication](#authentication-and-user-accounts)) |
 | `auth_secret` | resolved HS256 signing secret (never logged) |
 | `token_verifier` | `LocalTokenVerifier` bound to `auth_secret` |
 | `login_throttle` | in-process `LoginThrottle`, per-(email, IP) backoff |
@@ -159,6 +159,17 @@ lowercase identifier names that don't shadow built-ins, since the name derives t
 `<NAME>_API_KEY` env variable), and the per-language spaCy model map (`nlp.models`),
 and the routing section (`routing.default_tier`, per-language tier maps — validated
 tier/language names, per-language override of shipped defaults).
+
+**CORS is config-driven, not hardcoded** (`cors.origins`, default
+`["http://localhost:5173"]` — the Vite dev server). `create_app()` passes it straight
+to `CORSMiddleware` as `allow_origins`; `allow_credentials` is deliberately left unset
+(`False`) since Bearer-header auth needs no cookie/credentials mode, and turning it on
+alongside a permissive origin list is a common misconfiguration this avoids by
+construction. A deployment serving the frontend from anywhere other than
+`localhost:5173` — a built `vite preview`, a different port, a real domain — must set
+`cors.origins` in `config.yaml`; there is no environment-variable override, because
+`load_settings()` only reads YAML (`config_file` param aside, used by tests and
+one-off scripts, never by `main.py`'s own `app` attribute).
 
 ## The check flow
 
@@ -798,18 +809,58 @@ in `src/documents/documents.ts`, see `docs/frontend-architecture.md#documents`) 
 `POST /api/documents` itself is unchanged by phase 3; it still just accepts whatever
 settings the client sends in the create payload, same as before defaults existed.
 
-## Authentication and user accounts (M1: foundation only)
+## Authentication and user accounts
 
-Milestone 1 of the multi-user work adds user accounts, local email/password
-login, an admin user-management API, and an operator CLI. **It authenticates
-no existing endpoint.** `documents`, `folders`, `checks`, `profiles`,
-`terminology`, `rules`, `providers`, `routing`, `suggestions`, and
-`languages` remain exactly as unauthenticated as before, so `main` keeps
-working against the current frontend unchanged. Wiring `get_current_user`/
-`require_admin` onto those routers — together with the frontend that can
-satisfy it — is M2. Everything below exists, is fully tested, and is live at
-its own `/api/auth`/`/api/admin` endpoints, but nothing yet *requires* a
-caller to use it.
+Milestone 1 of the multi-user work added user accounts, local email/password
+login, an admin user-management API, and an operator CLI, without
+authenticating any existing endpoint. **Milestone 2 (this one) closes that
+gap**: `documents`, `folders`, `checks`, `profiles`, `terminology`, `rules`,
+`providers`, `routing`, `suggestions`, and `languages` now all require a
+logged-in caller, and the frontend ships with the login gate, the bearer
+transport, and the account menu needed to satisfy it (see
+[frontend-architecture.md](frontend-architecture.md)). **What M2 does not do:
+none of this data is owner-scoped yet.** Every document, folder, profile, and
+terminology domain is still shared across every account — auth answers *who
+can call the API at all*, not *whose rows a given caller can see*. Filtering
+every query by the caller's `user_id` is M3.
+
+### Enforcement: router-level auth
+
+`app/main.py#create_app` attaches `Depends(get_current_user)` at
+**router-level inclusion**, not on individual endpoints:
+
+```python
+protected = [
+    terminology_router, checks_router, languages_router, rules_router,
+    providers_router, suggestions_router, documents_router,
+    folders_router, profiles_router, routing_router,
+]
+for router in protected:
+    app.include_router(router, dependencies=[Depends(get_current_user)])
+app.include_router(auth_router)
+app.include_router(admin_router)
+```
+
+`auth_router` is excluded from that loop because `POST /api/auth/login` must
+stay public; its own two other endpoints (`GET /api/auth/me`, `POST
+/api/auth/password`) declare `get_current_user` individually instead.
+`admin_router` is excluded too — it already carries the strictly stronger
+`require_admin` on itself (see below). Attaching the dependency at inclusion
+rather than editing it into each of the ten router files means a router
+added to `protected` later inherits enforcement by construction, and one
+*not* added is a one-line diff to catch in review, rather than a
+per-endpoint omission that has to be individually noticed.
+
+`backend/tests/test_auth_enforcement.py` is the check that keeps this true:
+it walks the app's actual route tree (`app.routes`, recursing through
+FastAPI's internal `_IncludedRouter` wrapper) rather than a hand-maintained
+endpoint list or the OpenAPI schema alone — the schema silently omits any
+`include_in_schema=False` route, which is exactly the flag an
+internal/ops/debug endpoint would carry if someone forgot to wire it up. The
+test asserts every discovered `(path, method)` pair requires auth except a
+`PUBLIC` allowlist of exactly `{("/api/health", "GET"), ("/api/auth/login",
+"POST")}`, and separately asserts those two are actually reachable
+anonymously (not just registered unauthenticated by omission).
 
 ### Users and the audit trail
 
@@ -894,6 +945,28 @@ failure — missing header, malformed/expired token, unknown or inactive user �
 collapses to the same `401 "Not authenticated"`, so a caller cannot
 distinguish "no such account" from "token expired" from "account
 deactivated." `require_admin` layers a `403` on top for a non-admin caller.
+
+**`password_changed_at` is the second revocation lever**, alongside
+deactivation above. A password change updates `users.password_changed_at` to
+the current UTC time (second granularity, via `_utcnow()`); `get_current_user`
+compares it against the token's own `iat` and rejects (401) any token issued
+strictly before that timestamp. Nothing needs to track individual token
+identifiers or maintain a blocklist — every outstanding token for that user,
+regardless of how many are in flight, becomes unusable the instant the
+column is written, without touching `LocalTokenVerifier` or the JWT itself.
+
+**Accepted residual**: both sides of that comparison are second-granularity
+(`iat` from `fromtimestamp(..., UTC)`, `password_changed_at` from
+`_utcnow()`), and the check is a strict `<` — so a token issued in the *same*
+wall-clock second as the password change is not revoked; it survives for the
+remainder of its normal 24-hour lifetime. This is also what makes Task 8's
+silent re-authentication work at all: the replacement token a password
+change mints is issued in that same instant and must remain valid. Closing
+the residual — distinguishing "the replacement token this same request just
+minted" from "an old token that happened to share that second" — needs a
+per-user token epoch (a monotonic counter bumped on every password change,
+carried in a new token claim) rather than a wall-clock comparison. The owner
+has scoped that to M3.
 
 ### `app/api/auth.py` — login, me, password change
 
@@ -991,6 +1064,10 @@ and minting a fresh one afterward is exactly what this tool is for.
 
 ## API surface
 
+Every endpoint below requires a valid `Authorization: Bearer <token>` caller **except**
+`GET /api/health` and `POST /api/auth/login` — see
+[Enforcement](#enforcement-router-level-auth) for how that is wired and tested.
+
 | Endpoint | Purpose |
 |---|---|
 | `POST /api/checks` → `GET /api/checks/{id}[/events]` | run a check; poll or stream results |
@@ -1000,8 +1077,8 @@ and minting a fresh one afterward is exactly what this tool is for.
 | `GET/POST/PUT/DELETE /api/profiles`, `POST /api/profiles/{id}/reset` | profile CRUD |
 | `GET/POST/PUT/DELETE /api/documents`, `POST /api/documents/{id}/generate-name` | revision-guarded document CRUD + auto-titling (see [Documents](#documents)) |
 | `GET/POST/PUT/DELETE /api/folders` | folder CRUD, lossless delete, read-time defaults pruning (see [Folders](#folders)) |
-| `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/password` | local login/session/password-change; unauthenticated by every *other* router (see [Authentication](#authentication-and-user-accounts-m1-foundation-only)) |
-| `GET/POST/PATCH /api/admin/users` | admin user management, `require_admin` at router level (see [Authentication](#authentication-and-user-accounts-m1-foundation-only)) |
+| `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/password` | local login/session/password-change; `/login` is public, `/me` and `/password` require a caller (see [Authentication](#authentication-and-user-accounts)) |
+| `GET/POST/PATCH /api/admin/users` | admin user management, `require_admin` at router level (see [Authentication](#authentication-and-user-accounts)) |
 | `PUT /api/folders/{id}/defaults` | full-replace a folder's per-folder defaults; 422 matrix + 404 (see [Per-folder defaults](#per-folder-defaults)) |
 | `POST /api/documents/{id}/move` | revision-free move of a document into/out of a folder |
 | `GET /api/providers` | provider availability + model discovery |
@@ -1010,7 +1087,12 @@ and minting a fresh one afterward is exactly what this tool is for.
 | `GET /api/health` | liveness |
 
 FastAPI serves the OpenAPI schema at `/docs` — that is the contract for any future
-non-browser client.
+non-browser client. **Accepted residual**: `/docs`, `/redoc`, and `/openapi.json` are
+FastAPI-internal routes, not `APIRoute`s registered through the routers above, so they
+sit outside both the enforcement loop in `create_app()` and the route-tree walk in
+`test_auth_enforcement.py` — they remain anonymously reachable. They expose the shape
+of the API, not any data or capability an anonymous request couldn't already
+discover by reading this repository, so this is accepted rather than fixed.
 
 ## Testing
 

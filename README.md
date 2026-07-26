@@ -178,7 +178,7 @@ remembered). Rule messages are authored per rule file and are not translated by 
 
 Backend (requires [uv](https://docs.astral.sh/uv/)); in the default configuration, startup
 fails closed without the three `FW_*` variables below (see
-[Authentication](#authentication-foundation-only--not-yet-enforced) for what they do):
+[Authentication](#authentication) for what they do):
 
 ```sh
 cd backend
@@ -195,6 +195,11 @@ cd frontend
 npm install
 npm run dev          # http://localhost:5173
 ```
+
+**The app requires signing in.** Every screen sits behind a login gate; on
+first load, sign in with the `FW_ADMIN_EMAIL`/`FW_ADMIN_PASSWORD` you just
+set above — that bootstrap admin is the only account that exists until you
+create more (see [Authentication](#authentication)).
 
 With the three variables set, that's a fully working installation: rules and
 terminology checks need nothing else. The sections below add LLM checking and
@@ -226,16 +231,20 @@ Which model to pick — per language, API vs. local Ollama, hardware and cost
 considerations — is covered in
 [docs/model-recommendations.md](docs/model-recommendations.md).
 
-### Authentication (foundation only — not yet enforced)
+### Authentication
 
-The backend has user accounts and local email/password login (see
-[Authentication and user accounts](docs/backend-architecture.md#authentication-and-user-accounts-m1-foundation-only)
-in the architecture doc). In the default configuration, startup fails closed
-without the three variables below — that's why they're already set in [Quick start](#quick-start)
-above — but once the app has started, **no endpoint currently requires a
-logged-in user**: request handling works exactly as before. Enforcement lands
-in a later milestone. These variables are read from the environment only,
-never stored:
+The backend has user accounts, local email/password login, and — as of this
+milestone — **every endpoint requires a logged-in user** except `GET
+/api/health` and `POST /api/auth/login` (see
+[Authentication and user accounts](docs/backend-architecture.md#authentication-and-user-accounts)
+in the architecture doc). In the default configuration, startup also fails
+closed without the three variables below — that's why they're already set in
+[Quick start](#quick-start) above. Sign in with them on first load: there is
+no other account until you create one (via the admin API/CLI; there is no
+self-service signup). **Data is not yet scoped per owner** — every account
+currently sees the same documents, folders, profiles, and terminology; a
+future milestone adds per-user ownership. These variables are read from the
+environment only, never stored:
 
 | Variable | Purpose |
 |-----------|-------|

@@ -51,19 +51,28 @@ One FastAPI dependency resolves identity:
 ```
 get_current_user(request) -> CurrentUser
   1. extract Bearer token (401 if missing/malformed)
-  2. user_id = TokenVerifier.verify(token)       # 401 on invalid/expired
-  3. user = UserStore lookup (by local user id)  # 401 if unknown or inactive
-  4. return CurrentUser(id, email, display_name, tier, is_admin)
+  2. verified = TokenVerifier.verify(token)        # 401 on invalid/expired
+  3. user = UserStore lookup (by verified.user_id)  # 401 if unknown or inactive
+  4. 401 if verified.issued_at predates user.password_changed_at (revocation)
+  5. return CurrentUser(id, email, display_name, tier, is_admin)
 ```
 
 `TokenVerifier` is a small protocol whose contract is mode-independent:
 **`verify` returns the local `users.id`** in every mode, so
-`get_current_user` never changes lookup keys when the auth mode switches:
+`get_current_user` never changes lookup keys when the auth mode switches.
+It also returns the token's issue time, which is what makes the
+password-change revocation step above possible without the verifier itself
+knowing anything about `users.password_changed_at`:
 
 ```python
+@dataclass(frozen=True)
+class VerifiedToken:
+    user_id: int          # always the LOCAL users.id, in every auth mode
+    issued_at: datetime   # tz-aware UTC
+
 class TokenVerifier(Protocol):
-    def verify(self, token: str) -> int: ...
-    # returns the LOCAL users.id; raises InvalidToken on any failure
+    def verify(self, token: str) -> VerifiedToken: ...
+    # raises InvalidToken on any failure
 ```
 
 The local verifier parses its own `sub` (the local id it issued). The
@@ -170,20 +179,28 @@ is acceptable. Supabase brings refresh semantics in sub-project 2.
 
 ```sql
 CREATE TABLE users (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    external_id   TEXT UNIQUE,             -- Supabase sub; NULL until linked
-    email         TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    display_name  TEXT,
-    password_hash TEXT,                    -- NULL once Supabase-managed
-    tier          TEXT NOT NULL DEFAULT 'basic',   -- 'basic' | 'premium'
-    is_admin      INTEGER NOT NULL DEFAULT 0,
-    is_active     INTEGER NOT NULL DEFAULT 1,
-    created_at    TEXT NOT NULL          -- ISO 8601 UTC ('…T…+00:00'), as in existing tables
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    external_id         TEXT UNIQUE,             -- Supabase sub; NULL until linked
+    email               TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    display_name        TEXT,
+    password_hash       TEXT,                    -- NULL once Supabase-managed
+    tier                TEXT NOT NULL DEFAULT 'basic',   -- 'basic' | 'premium'
+    is_admin            INTEGER NOT NULL DEFAULT 0,
+    is_active           INTEGER NOT NULL DEFAULT 1,
+    created_at          TEXT NOT NULL,         -- ISO 8601 UTC ('…T…+00:00'), as in existing tables
+    password_changed_at TEXT                   -- ISO 8601 UTC; NULL until the first change (M2)
 );
 ```
 
 Tier and admin flag live here — the permission model never depends on the
-external auth provider.
+external auth provider. `password_changed_at` (M2, added additively via
+`migrate_columns`, so an existing `users` table needs no rebuild) exists so a
+password change can revoke every outstanding token for that user without any
+token-identifier tracking or blocklist: `get_current_user` (§4.1) rejects a
+token whose `iat` predates it. It starts `NULL` and is set only on an actual
+password change, never on account creation — a token issued before the
+column was ever populated has nothing to compare against and is judged on
+`exp` alone, which is correct: nothing has revoked it.
 
 ### 5.2 Ownership semantics
 

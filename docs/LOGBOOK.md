@@ -2922,3 +2922,112 @@ the milestone's original commit-range note omitted.
 Documentation-only changes, so the frontend gate was not re-run.
 
 Full detail: `.superpowers/sdd/m1-final-review-fixes-report.md`.
+
+## 2026-07-26 — M2: authentication enforced on every feature router
+Commits: `d111691`..`45bc400` (branch `multi-user-m2-implementation`, 25 commits)
+
+M1 built accounts, local login, and a `TokenVerifier` seam without wiring
+either into a single existing endpoint. M2 closes that gap: `documents`,
+`folders`, `checks`, `profiles`, `terminology`, `rules`, `providers`,
+`routing`, `suggestions`, and `languages` now all require a caller, and the
+frontend ships with the login gate, the bearer transport, and the account
+menu needed to satisfy it — the one PR where backend enforcement and its
+frontend could not be split without leaving `main` broken in between.
+
+**Backend.** `app/main.py#create_app` attaches `Depends(get_current_user)`
+at router-level inclusion for every feature router, rather than editing each
+router file, so a router added to the list later inherits enforcement by
+construction; `test_auth_enforcement.py` walks the app's actual route tree
+(not just the OpenAPI schema, which silently omits `include_in_schema=False`
+routes) to keep that true, with an explicit allowlist of exactly `GET
+/api/health` and `POST /api/auth/login`. `TokenVerifier.verify` changed
+return type from a bare `int` to a `VerifiedToken` dataclass (`user_id`,
+`issued_at`), which is what makes the second revocation lever possible:
+`users.password_changed_at` (new column, additive migration) is compared
+against a token's `iat` in `get_current_user`, so a password change
+invalidates every outstanding session for that user with no token-identifier
+tracking at all. `cors.origins` moved from implicit to config-driven
+(`CorsSettings`, default still `["http://localhost:5173"]`), since a
+frontend served from anywhere else now needs its origin allowed explicitly.
+
+**Frontend.** A new `auth/` module: `session.ts` (login/logout/
+expireSession/restoreSession, a generation counter that supersedes stale
+async completions), `LoginGate.tsx` (renders the login form until
+`authStatus` is `'authenticated'`), and `AccountMenu.tsx` (signed-in email,
+password change, log out). `api/client.ts` attaches `Authorization: Bearer
+<token>` in one place (`authHeader()`) and routes every 401 through one
+handler, scoped to the token that produced it so a stale rejection can't
+tear down a session that already replaced it. The SSE check-events reader
+was rewritten from `EventSource` to `fetch()` + `ReadableStream` +
+`AbortController` (`eventsource-parser` handles wire framing only) —
+`EventSource` cannot carry an Authorization header at all, and a full SSE
+client would have reconnected automatically or missed a 401 mid-stream,
+both wrong for a one-shot check. Logging out or a user change purges the
+persisted store and the document buffer; re-authenticating as the *same*
+user (Task 8's silent re-auth after a password change) deliberately does
+not, so locale/current-document/collapse state survive it.
+
+**XSS audit** (spec §8's two client-side rules, now binding since M2 puts a
+bearer token in `localStorage`): grepped the whole frontend for
+`dangerouslySetInnerHTML`, `innerHTML`, `<a `, and dynamic `href`/`src`/
+`window.location` assignment. **Clean** — none of the four patterns occur
+anywhere in `frontend/src`; every user- or LLM-sourced string (findings,
+suggestions, messages, document names, terminology) renders as React text
+content, never as markup or a navigable URL.
+
+**Verified by running it** against a scratch stack (backend on 8001 against
+a scratch db + scratch `config.yaml` for CORS; frontend built with
+`VITE_API_URL=http://127.0.0.1:8001` and served via `vite preview --port
+4199`; the owner's own 8000/5173 servers were never touched). All seven
+behaviors from the plan held, including the two no unit test reaches: a
+local-tier check (Ollama, `mistral-nemo:12b-instruct-2407-q6_K`) ran to
+completion end-to-end over the new SSE reader, and a password change via the
+account menu left the session signed in (silent re-auth) while the old
+password was rejected on a fresh sign-in immediately after. A stale token
+produces exactly one `/api/auth/me` call before falling back to the gate; no
+stored token produces zero `/api/*` calls. There is no dedicated "cancel
+check" button in this build — the only wired cancellation path is
+`cancelInFlightCheck()` on logout/session-expiry — so "cancel mid-run" was
+verified by logging out while a check was streaming: it stopped cleanly and
+the UI returned to the login gate with the persisted blob cleared, no
+error.
+
+**Fixed `frontend/scripts/capture-screenshots.mjs`**, a real entry point
+(`npm run screenshots`; the README images come from it) that this milestone
+broke twice over: its `api()` helper sent no Authorization header, and it
+drove the UI via `page.goto`, which now lands on the login gate instead of
+the editor. Logs in once via `POST /api/auth/login` with `FW_ADMIN_EMAIL`/
+`FW_ADMIN_PASSWORD`, then routes *every* request — including `makeFolder()`
+and the profile switch/restore calls, which had their own bare `fetch()`
+calls bypassing `api()` entirely — through the same authenticated helper,
+and drives the login form in the browser before the first shot. Verified by
+running it end-to-end against the scratch stack: all seven screenshots
+captured, scratch content cleaned up, and the Standard profile's LLM
+settings restored.
+
+**Two accepted residuals**, both recorded in the architecture docs: token
+revocation compares second-granularity timestamps with a strict `<`, so a
+token issued in the same wall-clock second as a password change survives
+for its remaining lifetime — the same granularity that lets the silent
+re-auth's replacement token stay valid; closing it needs a per-user token
+epoch, scoped to M3. And `/docs`, `/redoc`, `/openapi.json` are
+FastAPI-internal routes outside the enforcement loop and remain anonymously
+reachable — schema only, no data.
+
+**Ownership scoping is still M3.** Every document, folder, profile, and
+terminology domain remains shared across every account; M2 answers who can
+call the API, not whose rows they see.
+
+**Gates**: backend `rtk proxy uv run pytest -q` → 848 passed (up from 822 at
+the branch point), zero warnings. Frontend `npx vitest run && npx tsc -b &&
+npm run lint && npm run build` → 356 passed (up from 238), no type errors
+(root `tsconfig.json` is solution-style, so this milestone's plan updated
+the gate to `tsc -b`; `tsc --noEmit` checks zero files against it and always
+passes), no lint findings, build succeeded.
+
+Full detail: `.superpowers/sdd/2026-07-25-multi-user-m2-enforcement/task-11-report.md`.
+
+**Next**: M3 — ownership scoping (`owner_id` on documents/folders,
+nullable `owner_id` + global built-ins for profiles/domains, 404-not-403
+semantics) and the per-user token epoch that closes this milestone's
+same-second revocation residual.
