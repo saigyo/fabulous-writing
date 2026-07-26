@@ -9,7 +9,7 @@ from app.checkers.llm.provider import FakeProvider, LLMProvider
 from app.core.config import Settings
 from app.core.models import Language
 from app.main import create_app
-from tests.conftest import auth_headers
+from tests.conftest import auth_headers, second_user_headers
 
 TEXT = "The results were very good. We move on."
 
@@ -70,6 +70,7 @@ class TestSuggestionsEndpoint:
             "rejected": 0,
             "held_back": [],
             "advice": [],
+            "skipped": None,
         }
 
     def test_filters_echo_of_original_span_and_non_strings(self, tmp_path: Path) -> None:
@@ -271,3 +272,84 @@ class TestVetting:
         body = client.post("/api/suggestions", json=self.de_request()).json()
         assert body["suggestions"] == []
         assert body["advice"] == ["Ganz umstellen."]
+
+
+class RecordingFactory:
+    """Fake provider factory that records the (provider, model) it was asked
+    to build, so gate tests can assert what was actually resolved."""
+
+    def __init__(self, response: str = json.dumps(["excellent"])) -> None:
+        self.response = response
+        self.calls: list[tuple[str | None, str | None]] = []
+
+    def __call__(self, name: str | None = None, model: str | None = None) -> LLMProvider:
+        self.calls.append((name, model))
+        return FakeProvider(self.response)
+
+
+def _app_with_tiers(tmp_path: Path, tiers: dict | None = None):
+    settings = Settings(
+        db_path=tmp_path / "t.db", rules_dir=tmp_path / "rules", tiers=tiers or {}
+    )
+    app = create_app(settings)
+    factory = RecordingFactory()
+    app.state.provider_factory = factory
+    return app, factory
+
+
+class TestSuggestionsGate:
+    def test_restricted_user_cannot_obtain_disallowed_provider(
+        self, tmp_path: Path
+    ) -> None:
+        # tiers={"basic": {"llm": {"tiers": ["local"], "providers": ["ollama"]}}}:
+        # the basic user requests llm_provider "claude" -- the recording
+        # factory receives ("ollama", ...) (best allowed tier "local" routes
+        # there), never "claude". Spec §10: "a basic user cannot obtain a
+        # premium provider through them".
+        tiers = {"basic": {"llm": {"tiers": ["local"], "providers": ["ollama"]}}}
+        app, factory = _app_with_tiers(tmp_path, tiers)
+        with TestClient(app) as client:
+            headers = second_user_headers(client)  # non-admin, tier 'basic'
+            response = client.post(
+                "/api/suggestions",
+                json={**suggestion_request(), "llm_provider": "claude"},
+                headers=headers,
+            )
+            assert response.status_code == 200
+        assert factory.calls == [("ollama", "mistral-nemo:12b-instruct-2407-q6_K")]
+
+    def test_floor_user_gets_200_with_skipped(self, tmp_path: Path) -> None:
+        # tiers={"basic": {"llm": {"tiers": [], "providers": []}}}: POST
+        # /api/suggestions -> 200, suggestions == [], skipped ==
+        # "llm_unavailable", span/original still filled; factory never called.
+        # Never 403 (spec §7.2).
+        tiers = {"basic": {"llm": {"tiers": [], "providers": []}}}
+        app, factory = _app_with_tiers(tmp_path, tiers)
+        with TestClient(app) as client:
+            headers = second_user_headers(client)  # non-admin, tier 'basic'
+            response = client.post(
+                "/api/suggestions", json=suggestion_request(), headers=headers
+            )
+            assert response.status_code == 200
+            body = response.json()
+        assert body["suggestions"] == []
+        assert body["skipped"] == "llm_unavailable"
+        assert body["span"] == {"start": 17, "end": 26}
+        assert body["original"] == "very good"
+        assert factory.calls == []
+
+    def test_unrestricted_response_has_no_skipped(self, tmp_path: Path) -> None:
+        # Existing happy path still returns skipped None.
+        app, factory = _app_with_tiers(tmp_path)
+        with TestClient(app) as client:
+            headers = auth_headers(client)
+            response = client.post(
+                "/api/suggestions", json=suggestion_request(), headers=headers
+            )
+            assert response.status_code == 200
+            body = response.json()
+        assert body["skipped"] is None
+        assert body["suggestions"] == ["excellent"]
+        # No explicit tier/provider requested: resolves to the server's
+        # configured default provider (pre-M4 behavior), not tier routing.
+        assert factory.calls == [("ollama", "llama3.1")]
