@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MeResponse } from '../api/client'
@@ -317,6 +317,77 @@ describe('AccountMenu', () => {
     expect(screen.queryByText(en.passwordChanged)).toBeNull()
   })
 
+  it('does not expire a newer session when the silent re-login rejects after the session already moved on', async () => {
+    // Pins the fix for item 1 (review round 2): unlike setResult(),
+    // expireSession() is a global store mutation, so it must not fire for a
+    // rejection that belongs to a session that has already moved on —
+    // otherwise an orphaned handler from a dead session reaches across and
+    // expires a brand-new, unrelated one.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(noContent())
+    let rejectOriginalPostLogin!: (err: unknown) => void
+    vi.mocked(postLogin)
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectOriginalPostLogin = reject
+          }),
+      )
+      .mockImplementationOnce(() => Promise.resolve({ token: 'live-tok', user: user() }))
+
+    const u = userEvent.setup()
+    render(<AccountMenu />)
+    await openPasswordForm(u)
+    await fillPasswordForm(u, { next: 'new-secret1' })
+    await u.click(screen.getByRole('button', { name: en.passwordSubmit }))
+    await waitFor(() => expect(postLogin).toHaveBeenCalledTimes(1))
+
+    // Externally: the user logs out (or a background 401 expires them) and
+    // signs back in as a brand-new session while the original silent
+    // re-login above is still awaiting its (slow) postLogin.
+    await act(async () => {
+      sessionModule.logout()
+      await sessionModule.login('ada@example.com', 'whatever-current-password')
+    })
+    expect(useStore.getState().authStatus).toBe('authenticated')
+    expect(useStore.getState().token).toBe('live-tok')
+
+    // The original re-login's postLogin finally rejects (e.g. a slow
+    // connection) — stale relative to the generation bump above, so this
+    // must not touch the new session at all.
+    await act(async () => {
+      rejectOriginalPostLogin(new Error('slow connection'))
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(useStore.getState().authStatus).toBe('authenticated')
+    expect(useStore.getState().token).toBe('live-tok')
+    expect(useStore.getState().sessionExpired).toBe(false)
+  })
+
+  it('logging out resets the popover so a later re-authentication does not reopen it', async () => {
+    // Pins closeMenu() specifically inside the log-out handler (item 5) —
+    // "log-out calls logout()" above already covers logout() itself, but
+    // not whether the popover's own open/view state was reset alongside it.
+    // Right after logging out `user` is null, so a dangling `open: true`
+    // renders nothing *at that moment* regardless — but this test renders
+    // AccountMenu directly (no LoginGate mount/unmount boundary around it),
+    // so the component instance — and its open/view hooks — survives the
+    // gap, and a stale `open: true` would resurface unprompted the instant
+    // the user is signed in again.
+    const u = userEvent.setup()
+    render(<AccountMenu />)
+    await openMenu(u)
+    await u.click(screen.getByRole('button', { name: en.accountLogOut }))
+    expect(useStore.getState().authStatus).toBe('anonymous')
+
+    // Simulate signing back in.
+    act(() => {
+      useStore.setState({ token: 'new-tok', user: user(), authStatus: 'authenticated' })
+    })
+
+    expect(screen.queryByRole('button', { name: en.accountChangePassword })).toBeNull()
+    expect(screen.queryByText('ada@example.com')).toBeNull()
+  })
+
   it('an outside click dismisses the popover; reopening shows the menu, not the password form', async () => {
     const u = userEvent.setup()
     render(<AccountMenu />)
@@ -357,14 +428,18 @@ describe('AccountMenu', () => {
   })
 
   it('does not show passwordChanged when login() resolves false (session moved during the re-login itself)', async () => {
-    // Pins guard #2 in isolation from login()'s own generation check (already
-    // covered by session.test.ts and by the "pending" tests above): even
-    // when login() resolves without throwing, a `false` result means the
-    // session moved while it was in flight and the completion must still be
-    // abandoned — no success message. Spying on session.ts's own `login`
-    // lets this be asserted without a real logout/login round trip, which
-    // would otherwise remount PasswordForm (clearing the form) and make the
-    // very message this test is pinning impossible to observe either way.
+    // Pins guard #2 as written — required by the brief and kept as
+    // defence-in-depth — but review round 2 correctly identified that no
+    // real sequence reaches it with this component still mounted: logout()
+    // and expireSession() both end at authStatus 'anonymous', at which
+    // point LoginGate stops rendering children and this whole subtree
+    // unmounts (the only other login() caller, LoginForm, renders only
+    // while anonymous). So a real `false` result is never observed by a
+    // mounted PasswordForm — the guard's real-world effect is suppressing a
+    // setState React 18 already no-ops on an unmounted component. This test
+    // is honestly synthetic: it forces `login()` to resolve `false` via a
+    // spy, without any real session transition, specifically so the branch
+    // has *a* test — not because this reflects a reachable production path.
     const loginSpy = vi.spyOn(sessionModule, 'login').mockResolvedValueOnce(false)
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(noContent())
     const u = userEvent.setup()
@@ -381,5 +456,49 @@ describe('AccountMenu', () => {
     await new Promise((r) => setTimeout(r, 0))
     expect(screen.queryByText(en.passwordChanged)).toBeNull()
     expect(useStore.getState().authStatus).toBe('authenticated') // untouched — no expiry either
+  })
+
+  it('a second submit while one is pending is ignored (only one request is sent)', async () => {
+    // Judgment call from review round 2: the disabled submit button is the
+    // primary defence, but handleSubmit also checks `pending` itself, so a
+    // second submit event that bypasses the button (e.g. a raw form submit
+    // dispatched before React has committed the disabled attribute) cannot
+    // start a second, orphaned completion racing the first one.
+    let resolveFetch!: (r: Response) => void
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve
+        }),
+    )
+    const u = userEvent.setup()
+    render(<AccountMenu />)
+    await openPasswordForm(u)
+    await fillPasswordForm(u)
+    const form = screen.getByRole('button', { name: en.passwordSubmit }).closest('form')!
+
+    fireEvent.submit(form)
+    fireEvent.submit(form) // immediately after — pending is already true by now
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+
+    resolveFetch(noContent())
+  })
+
+  it('editing a field after a failed attempt clears the stale error message', async () => {
+    // Judgment call from review round 2: without this, a "wrong current
+    // password" message stays visible while the user retypes the very
+    // field it refers to, until they submit again.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      jsonResponse(422, { detail: { code: 'wrong_current_password' } }),
+    )
+    const u = userEvent.setup()
+    render(<AccountMenu />)
+    await openPasswordForm(u)
+    await fillPasswordForm(u)
+    await u.click(screen.getByRole('button', { name: en.passwordSubmit }))
+    await waitFor(() => screen.getByText(en.passwordCurrentWrong))
+
+    await u.type(screen.getByLabelText(en.passwordCurrent), 'x')
+    expect(screen.queryByText(en.passwordCurrentWrong)).toBeNull()
   })
 })
