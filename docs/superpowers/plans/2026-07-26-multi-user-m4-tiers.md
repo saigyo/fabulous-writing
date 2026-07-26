@@ -63,6 +63,7 @@ Binding for every task; copied from the spec/roadmap where they originate.
 | `frontend/src/sidebar/Sidebar.tsx` | degradation / not-included notes |
 | `frontend/src/profiles/ProfilesView.tsx` | create row gated on `custom_profiles`; the profile editor's own LLM tier/provider/model controls plan-gated |
 | `frontend/src/terminology/TerminologyView.tsx` | domain + term create gated on `custom_domains` |
+| `frontend/src/documents/FolderDefaultsDialog.tsx` | folder-default quality-tier options plan-gated |
 | `frontend/src/i18n/messages.ts` + 7 catalogs | `planSuffix`, `llmDegraded`, `llmNotIncluded` |
 | `docs/backend-architecture.md`, `docs/frontend-architecture.md`, roadmap | Task 10 |
 
@@ -412,6 +413,15 @@ class TestPolicyFor:
         warnings = [r for r in caplog.records if "ghost" in r.getMessage()]
         assert len(warnings) == 1  # once per tier name, not once per request
 
+    def test_features_for_unknown_tier_warns_too(self, caplog, monkeypatch):
+        # A feature-gated create can be the first call that hits an unknown
+        # tier (policy_for and /me need never have run) — the diagnostic
+        # must not depend on which builder fires first.
+        monkeypatch.setattr(permissions, "_warned_unknown_tiers", set())
+        with caplog.at_level(logging.WARNING, logger="app.core.permissions"):
+            assert features_for(tier="ghost", is_admin=False, settings=TIERED) == frozenset()
+        assert any("ghost" in r.getMessage() for r in caplog.records)
+
     def test_features_default_and_admin_and_unknown(self):
         full = frozenset({"custom_profiles", "custom_domains"})
         assert features_for(tier="basic", is_admin=False, settings=SETTINGS) == full
@@ -555,7 +565,13 @@ is pure — no I/O, no app state — so the §6.2 rules are testable as a table.
 import logging
 from dataclasses import dataclass
 
-from app.core.config import KNOWN_FEATURES, TIERS, ProviderSettings, Settings
+from app.core.config import (
+    KNOWN_FEATURES,
+    TIERS,
+    ProviderSettings,
+    Settings,
+    TierSettings,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -604,20 +620,29 @@ class EffectiveSelection:
 _warned_unknown_tiers: set[str] = set()
 
 
+def _tier_config(tier: str, settings: Settings) -> TierSettings | None:
+    """Shared unknown-tier handling for both policy builders. The warn-once
+    diagnostic must fire no matter which builder a request reaches first —
+    a feature-gated create can be a user's very first call after a config
+    change, and its denial must not be silent."""
+    cfg = settings.tiers.get(tier)
+    if cfg is None and tier not in _warned_unknown_tiers:
+        _warned_unknown_tiers.add(tier)
+        logger.warning(
+            "user tier '%s' is not configured under tiers:; treating as no-LLM",
+            tier,
+        )
+    return cfg
+
+
 def policy_for(*, tier: str, is_admin: bool, settings: Settings) -> LLMPolicy:
     if is_admin or not settings.tiers:
         # Admins bypass tier policy (spec §6.1); an instance with no tiers
         # configured behaves exactly as before M4 (roadmap: default inert).
         return FULL_POLICY
-    cfg = settings.tiers.get(tier)
+    cfg = _tier_config(tier, settings)
     if cfg is None:
         # Fail closed, visibly: the user sees degradation notes, not errors.
-        if tier not in _warned_unknown_tiers:
-            _warned_unknown_tiers.add(tier)
-            logger.warning(
-                "user tier '%s' is not configured under tiers:; treating as no-LLM",
-                tier,
-            )
         return NO_LLM_POLICY
     llm = cfg.llm
     return LLMPolicy(
@@ -632,7 +657,7 @@ def policy_for(*, tier: str, is_admin: bool, settings: Settings) -> LLMPolicy:
 def features_for(*, tier: str, is_admin: bool, settings: Settings) -> frozenset[str]:
     if is_admin or not settings.tiers:
         return frozenset(KNOWN_FEATURES)
-    cfg = settings.tiers.get(tier)
+    cfg = _tier_config(tier, settings)
     if cfg is None:
         return frozenset()
     return frozenset(cfg.features)
@@ -1055,6 +1080,12 @@ Name generation (in `backend/tests/test_documents_api.py`, following its `genera
         # Unrestricted user: the recording factory receives exactly the
         # routing table's ("cheap") entry for the document's language.
         ...
+
+    def test_generate_name_empty_text_never_reaches_gate(self, tmp_path):
+        # Empty/whitespace document: the factory is never called — the
+        # text guard sits OUTSIDE the gate (and must stay there when M5
+        # adds quota reservation to it).
+        ...
 ```
 
 Write real bodies; the `...` only abbreviates this plan.
@@ -1085,21 +1116,25 @@ Write real bodies; the `...` only abbreviates this plan.
 
 ```python
     title: str | None = None
-    requested = RequestedLLM(tier="cheap")  # name generation hard-selects the cheap route
-    effective, provider = get_effective_provider(
-        request.app, user, requested, document.language.value
-    )
-    if provider is not None and document.text.strip():
-        try:
-            system, prompt = build_title_prompt(document.text, document.language)
-            title = clean_title(await provider.generate(system, prompt))
-        except Exception:
-            logger.warning(
-                "auto-title generation failed for document %s",
-                document_id,
-                exc_info=True,
-            )
-            title = None  # silent per spec; the fallback below still applies
+    # Empty text never reaches the gate: no provider gets constructed for a
+    # document that will not generate — and once M5 adds reservation to the
+    # gate, an empty document must not consume quota either.
+    if document.text.strip():
+        requested = RequestedLLM(tier="cheap")  # naming hard-selects the cheap route
+        effective, provider = get_effective_provider(
+            request.app, user, requested, document.language.value
+        )
+        if provider is not None:
+            try:
+                system, prompt = build_title_prompt(document.text, document.language)
+                title = clean_title(await provider.generate(system, prompt))
+            except Exception:
+                logger.warning(
+                    "auto-title generation failed for document %s",
+                    document_id,
+                    exc_info=True,
+                )
+                title = None  # silent per spec; the fallback below still applies
 ```
 
 Note this renames the prompt's user-message variable from `user` to `prompt` — removing the existing shadowing of the `CurrentUser` (the `owner_id` capture above it stays but its shadowing rationale comment can now go).
@@ -1356,6 +1391,7 @@ git commit -m "feat(api): feature gates on creation, config-driven tier names (M
 - Test: `frontend/src/auth/policy.test.ts` (create)
 - Modify: `frontend/src/header/LlmSelector.tsx`
 - Modify: `frontend/src/i18n/messages.ts` + all seven catalogs
+- Modify: existing typed fixtures that construct the widened types (see Step 3a)
 - Test: `frontend/src/header/LlmSelector.test.tsx` (create, jsdom render like `ProfileSelector.test.tsx`)
 
 **Interfaces:**
@@ -1543,12 +1579,20 @@ export function llmDisabled(user: MeResponse | null): boolean {
 
 (`llmDegraded`/`llmNotIncluded`/`llmSkippedServer` are used in Task 8; declaring them here keeps the seven catalogs in lockstep in one pass — the `i18n.test.ts` key-parity test enforces it.)
 
+- [ ] **Step 3a: Repair existing typed fixtures.** `policy` (on `MeResponse`) and `allowed` (on `RoutingEntry`/`ProviderInfo`) are deliberately **required** — an optional field would let a stale fixture silently mean "unrestricted". That breaks every existing fixture that constructs these types; `npm run build` (`tsc -b`) is the net. Sweep and fix in this task, not the new tests only:
+
+```
+grep -rln "MeResponse\|ProviderInfo\|RoutingEntry\|RoutingTable" src --include='*.test.*'
+```
+
+Known fixture sites to update (give tests a full-policy `policy` and `allowed: true` unless the test is about restriction): `auth/AccountMenu.test.tsx`, `auth/LoginGate.test.tsx`, `auth/session.test.ts`, `auth/session.integration.test.ts`, `checking/model.test.ts`, `checking/routing.test.ts`, plus whatever else the sweep finds. A shared `fullPolicy` fixture helper in the new `policy.test.ts`'s style may be exported from a small test util if repetition warrants it.
+
 - [ ] **Step 4: Run to verify green**: `npx vitest run && npm run lint && npm run build` from `frontend/`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/types.ts src/api/client.ts src/auth/policy.ts src/auth/policy.test.ts src/header/LlmSelector.tsx src/header/LlmSelector.test.tsx src/i18n/
+git add src/types.ts src/api/client.ts src/auth/ src/checking/ src/header/ src/i18n/
 git commit -m "feat(frontend): plan-gated LLM selector from /me policy (M4)"
 ```
 
@@ -1654,7 +1698,8 @@ git commit -m "feat(frontend): tier-based check requests and degradation notes (
 **Files:**
 - Modify: `frontend/src/profiles/ProfilesView.tsx`
 - Modify: `frontend/src/terminology/TerminologyView.tsx`
-- Test: `frontend/src/profiles/ProfilesView.features.test.tsx`, `frontend/src/terminology/TerminologyView.features.test.tsx` (create; fixture style from the existing `.ownership.test.tsx` neighbors)
+- Modify: `frontend/src/documents/FolderDefaultsDialog.tsx`
+- Test: `frontend/src/profiles/ProfilesView.features.test.tsx`, `frontend/src/terminology/TerminologyView.features.test.tsx` (create; fixture style from the existing `.ownership.test.tsx` neighbors), plus a focused case for the folder-defaults tier options (in the dialog's existing test file if one exists, else a new `FolderDefaultsDialog.policy.test.tsx`)
 
 **Interfaces:**
 - Consumes: Task 7's `hasFeature`, `tierAllowed`, `providerAllowed`, `modelAllowed` and `planSuffix`; Task 6's backend semantics (403 on gated creates).
@@ -1666,9 +1711,9 @@ grep -rn "createProfile(\|createDomain(\|createTerm(" src --include='*.ts*' | gr
 grep -rln "setTier\|setPinned\|llm_tier\|llm_provider" src --include='*.tsx' | grep -v test
 ```
 
-The first finds every creating call site — each must be inside a `hasFeature`-gated affordance after this task (ProfilesView's create *and duplicate* paths both call `createProfile`). The second finds every **LLM-selection surface**: Task 7 gated `header/LlmSelector`, but `ProfilesView`'s profile editor carries its own complete set of LLM controls (quality-tier buttons plus provider/model selects, currently `ProfilesView.tsx:261-345`) — leaving them ungated would contradict Task 7's single-gating-source promise. Gate whatever both sweeps find.
+The first finds every creating call site — each must be inside a `hasFeature`-gated affordance after this task (currently a single `createProfile` call at `ProfilesView.tsx:51`, `createDomain`/`createTerm` in `TerminologyView.tsx`). The second finds every **LLM-selection surface**: Task 7 gated `header/LlmSelector`, but `ProfilesView`'s profile editor carries its own complete set of LLM controls (quality-tier buttons plus provider/model selects, currently `ProfilesView.tsx:261-345`), and `FolderDefaultsDialog` carries a quality-tier selector for folder defaults (`FolderDefaultsDialog.tsx:226-255`) — leaving either ungated would contradict Task 7's single-gating-source promise. Gate whatever both sweeps find.
 
-- [ ] **Step 1: Write the failing tests.** For each view, render twice (store user with/without the feature, per the policy fixtures from Task 7's tests): without `custom_profiles`, ProfilesView shows no new-profile input, no create button, and no duplicate affordance; with it, all present. Without `custom_domains`, TerminologyView shows no add-domain row and no add-term affordance (existing terms stay editable — the edit affordances from the M3 ownership tests remain); with it, all present. Admin-shaped user (`is_admin: true` — whose policy from `/me` already contains both features) sees everything. Plus the profile editor's LLM controls with a RESTRICTED-policy user: the disallowed quality-tier button is disabled with `planSuffix` in its title/label, disallowed provider/model options are disabled — same assertions as `LlmSelector.test.tsx`, against ProfilesView's own controls.
+- [ ] **Step 1: Write the failing tests.** For each view, render twice (store user with/without the feature, per the policy fixtures from Task 7's tests): without `custom_profiles`, ProfilesView shows no new-profile input and no create button; with it, both present. Without `custom_domains`, TerminologyView shows no add-domain row and no add-term affordance (existing terms stay editable — the edit affordances from the M3 ownership tests remain); with it, all present. Admin-shaped user (`is_admin: true` — whose policy from `/me` already contains both features) sees everything. Plus the LLM-selection surfaces with a RESTRICTED-policy user: in ProfilesView's editor, the disallowed quality-tier button is disabled with `planSuffix` in its title/label and disallowed provider/model options are disabled — same assertions as `LlmSelector.test.tsx`; in FolderDefaultsDialog, disallowed quality-tier options are disabled with `planSuffix`.
 
 - [ ] **Step 2: Run to verify they fail.**
 
@@ -1681,15 +1726,15 @@ The first finds every creating call site — each must be inside a `hasFeature`-
 
 and wrap the affordances the sweep found in `{canCreate && (...)}` — hidden, not disabled, matching the M3 read-only convention (the backend 403 remains the real boundary). No new i18n keys for creation: hidden affordances need no copy.
 
-For ProfilesView's LLM controls (`ProfilesView.tsx:261-345`), apply Task 7's selector pattern with the same helpers and `planSuffix`: quality-tier buttons `disabled={!tierAllowed(user, tier)}`, provider options `disabled={!providerAllowed(user, name)}`, model options `disabled={!modelAllowed(user, provider, model)}` — disabled (not hidden) here, because a *global* profile may legitimately reference an off-plan selection the user can still run via degradation (§6.2); the control must stay visible to show what the profile asks for.
+For ProfilesView's LLM controls (`ProfilesView.tsx:261-345`), apply Task 7's selector pattern with the same helpers and `planSuffix`: quality-tier buttons `disabled={!tierAllowed(user, tier)}`, provider options `disabled={!providerAllowed(user, name)}`, model options `disabled={!modelAllowed(user, provider, model)}` — disabled (not hidden) here, because a *global* profile may legitimately reference an off-plan selection the user can still run via degradation (§6.2); the control must stay visible to show what the profile asks for. `FolderDefaultsDialog.tsx` (`:226-255`): the same `disabled={!tierAllowed(user, tier)}` + `planSuffix` treatment on its quality-tier options ("inherit"/"pinned"/"none" entries are policy-neutral and stay untouched).
 
 - [ ] **Step 4: Run to verify green**: `npx vitest run && npm run lint && npm run build`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/profiles/ src/terminology/
-git commit -m "feat(frontend): feature-gated creates, plan-gated profile LLM controls (M4)"
+git add src/profiles/ src/terminology/ src/documents/
+git commit -m "feat(frontend): feature-gated creates, plan-gated selection surfaces (M4)"
 ```
 
 ---
