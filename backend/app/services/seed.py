@@ -37,12 +37,17 @@ DEFAULT_TERMS: list[tuple[Language, str, list[str], str]] = [
 
 def seed_terminology(store: TerminologyStore) -> bool:
     """Populate an empty store with the example domain. Returns True if seeded."""
-    if store.list_domains():
+    if store.has_global_domains():
         return False
-    domain = store.create_domain(DOMAIN_NAME, DOMAIN_DESCRIPTION)
+    domain = store.create_domain(DOMAIN_NAME, DOMAIN_DESCRIPTION, owner_id=None)
     for language, preferred, variants, definition in DEFAULT_TERMS:
+        # owner_id here is only a visibility key — the domain is global,
+        # visible to every owner, so any value passes — and is_admin=True
+        # authorizes the global write; no ownership is recorded on terms.
         store.create_term(
             domain.id,
+            owner_id=1,
+            is_admin=True,
             language=language,
             preferred=preferred,
             forbidden_variants=variants,

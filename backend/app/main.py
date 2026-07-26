@@ -108,8 +108,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.terminology_store = TerminologyStore(settings.db_path)
-    if settings.seed_terminology:
-        seed_terminology(app.state.terminology_store)
     app.state.rule_engine = RuleEngine(settings.rules_dir)
     app.state.jobs = JobManager()
     app.state.nlp = NlpRegistry(settings.nlp.models)
@@ -117,11 +115,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.document_store = DocumentStore(settings.db_path)
     app.state.folder_store = FolderStore(settings.db_path)
     app.state.profile_store = ProfileStore(settings.db_path)
-    seed_profiles(
-        app.state.profile_store,
-        settings.demos_dir,
-        seed_examples=settings.seed_example_profiles,
-    )
     if settings.auth.mode != "local":
         raise AuthConfigError(
             "auth.mode 'supabase' is not implemented yet (sub-project 2)"
@@ -133,6 +126,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.token_verifier = LocalTokenVerifier(app.state.auth_secret)
     app.state.login_throttle = LoginThrottle()
     seed_admin(app.state.user_store)
+    # Global seeders last (spec §9): migrations (store constructors) -> admin
+    # bootstrap -> seeders, so a failing bootstrap aborts before any global
+    # row is written.
+    if settings.seed_terminology:
+        seed_terminology(app.state.terminology_store)
+    seed_profiles(
+        app.state.profile_store,
+        settings.demos_dir,
+        seed_examples=settings.seed_example_profiles,
+    )
     # Every feature router requires a logged-in caller. Attached here at
     # inclusion, rather than edited into each of the ten router files, so the
     # policy lives in one readable place and a router added to this list

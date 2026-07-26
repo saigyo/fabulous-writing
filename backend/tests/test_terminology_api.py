@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.core.config import Settings
 from app.main import create_app
-from tests.conftest import auth_headers
+from tests.conftest import auth_headers, second_user_headers
 
 
 @pytest.fixture
@@ -113,3 +113,60 @@ def test_update_term_with_preferred_none_still_succeeds(client: TestClient) -> N
     assert response.status_code == 200
     assert response.json()["preferred"] == "sign in"
     assert response.json()["definition"] == "Updated definition."
+
+
+def test_terminology_api_ownership(tmp_path):
+    settings = Settings(db_path=tmp_path / "t.db", rules_dir=tmp_path / "rules")
+    client = TestClient(create_app(settings))
+    admin = auth_headers(client)
+    other = second_user_headers(client)
+    mine = client.post("/api/domains", json={"name": "Mine"}, headers=admin).json()
+    assert mine["is_global"] is False and "owner_id" not in mine
+    term = client.post(
+        f"/api/domains/{mine['id']}/terms",
+        json={"language": "en", "preferred": "secret term"},
+        headers=admin,
+    ).json()
+    # Foreign domain and its terms: 404 everywhere.
+    assert all(d["id"] != mine["id"] for d in client.get("/api/domains", headers=other).json())
+    assert client.get(f"/api/domains/{mine['id']}/terms", headers=other).status_code == 404
+    assert (
+        client.post(
+            f"/api/domains/{mine['id']}/terms",
+            json={"language": "en", "preferred": "x"},
+            headers=other,
+        ).status_code
+        == 404
+    )
+    assert (
+        client.put(f"/api/terms/{term['id']}", json={"preferred": "x"}, headers=other).status_code
+        == 404
+    )
+    assert client.delete(f"/api/terms/{term['id']}", headers=other).status_code == 404
+    assert (
+        client.put(f"/api/domains/{mine['id']}", json={"name": "X"}, headers=other).status_code
+        == 404
+    )
+    assert client.delete(f"/api/domains/{mine['id']}", headers=other).status_code == 404
+    # Global domain (the seeded one): readable by all, writable by admins only.
+    seeded = next(d for d in client.get("/api/domains", headers=other).json() if d["is_global"])
+    assert client.get(f"/api/domains/{seeded['id']}/terms", headers=other).status_code == 200
+    assert (
+        client.put(f"/api/domains/{seeded['id']}", json={"name": "X"}, headers=other).status_code
+        == 403
+    )
+    assert (
+        client.post(
+            f"/api/domains/{seeded['id']}/terms",
+            json={"language": "en", "preferred": "x"},
+            headers=other,
+        ).status_code
+        == 403
+    )
+    global_term = client.get(f"/api/domains/{seeded['id']}/terms", headers=admin).json()[0]
+    assert (
+        client.delete(f"/api/terms/{global_term['id']}", headers=other).status_code == 403
+    )
+    # Duplicate own domain name: now 409.
+    client.post("/api/domains", json={"name": "Dup"}, headers=other)
+    assert client.post("/api/domains", json={"name": "dup"}, headers=other).status_code == 409

@@ -83,8 +83,15 @@ class TerminologyChecker:
         self.store = store
         self.nlp = nlp
 
-    def check(self, text: str, language: Language, domain_id: int) -> list[Finding]:
-        terms = self.store.list_terms(domain_id, language=language)
+    def check(
+        self, text: str, language: Language, domain_id: int, *, owner_id: int
+    ) -> list[Finding]:
+        terms = self.store.list_terms(domain_id, owner_id=owner_id, language=language)
+        if terms is None:
+            # Invisible domain (foreign or deleted): no findings, through
+            # the same store-level ownership check every other term read
+            # goes through (spec §5.2).
+            return []
         if language in CJK_LANGUAGES:
             variants = self._check_cjk(text, language, terms)
             casing = self._casing_cjk(text, language, terms)

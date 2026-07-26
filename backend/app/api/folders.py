@@ -46,7 +46,10 @@ def _pruned(request: Request, folder: Folder, *, owner_id: int) -> Folder:
         if profile_store.get_profile(folder.default_profile_id, owner_id=owner_id) is None:
             update["default_profile_id"] = None
     if folder.default_domain_ids:
-        known = {d.id for d in request.app.state.terminology_store.list_domains()}
+        known = {
+            d.id
+            for d in request.app.state.terminology_store.list_domains(owner_id=owner_id)
+        }
         kept = [i for i in folder.default_domain_ids if i in known]
         if len(kept) != len(folder.default_domain_ids):
             update["default_domain_ids"] = kept
@@ -117,7 +120,10 @@ def set_folder_defaults(
                 422, "The profile belongs to a different language"
             )
     if body.default_domain_ids:
-        known = {d.id for d in request.app.state.terminology_store.list_domains()}
+        known = {
+            d.id
+            for d in request.app.state.terminology_store.list_domains(owner_id=user.id)
+        }
         unknown = [i for i in body.default_domain_ids if i not in known]
         if unknown:
             raise HTTPException(422, f"Unknown domain ids: {unknown}")
