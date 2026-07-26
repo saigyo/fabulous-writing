@@ -207,6 +207,17 @@ function TermTable({ domain, terms, onChanged, run, readOnly }: TermTableProps) 
   const [languageFilter, setLanguageFilter] = useState<Language | null>(null)
   const [query, setQuery] = useState('')
 
+  // TermTable is reused across domain switches (no `key` prop), so without
+  // this the previous domain's edit row (and its live Save button) stayed
+  // mounted against `terms` that hadn't been refetched yet — letting a save
+  // land on the domain the user just navigated away from. Resetting on
+  // `readOnly` too closes edit mode the instant a domain becomes read-only
+  // for any other reason.
+  useEffect(() => {
+    setEditingId(null)
+    setEditDraft(null)
+  }, [domainId, readOnly])
+
   const visibleTerms = sortTerms(filterTerms(terms, languageFilter, query), sortCriteria)
 
   function onToggleSort(key: SortKey) {

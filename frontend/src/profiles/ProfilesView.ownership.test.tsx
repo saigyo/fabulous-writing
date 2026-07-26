@@ -106,6 +106,23 @@ describe('ProfilesView ownership affordances (non-admin)', () => {
     expect(updateProfile).not.toHaveBeenCalled()
   })
 
+  it('guardedSave guard: a control that still reaches the handler does not call updateProfile on a global card', async () => {
+    // Mirrors RulesView's saveRuleSelection guard test: the name input is
+    // disabled in the DOM, so this forces it past `disabled` to prove
+    // guardedSave's own readOnly early-return — not the browser's native
+    // disabled-blocks-events behavior — is what stops the write.
+    useStore.setState({ profiles: [profile()] })
+    render(<ProfilesView />)
+
+    const nameInput = screen.getByDisplayValue('Global Profile') as HTMLInputElement
+    expect(nameInput.disabled).toBe(true) // sanity: normally blocked
+    nameInput.disabled = false
+    fireEvent.change(nameInput, { target: { value: 'Renamed' } })
+    fireEvent.blur(nameInput)
+
+    expect(updateProfile).not.toHaveBeenCalled()
+  })
+
   it('leaves a private card fully editable', async () => {
     useStore.setState({
       profiles: [profile({ id: 2, name: 'Private Profile', is_global: false })],
