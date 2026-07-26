@@ -107,6 +107,9 @@ export const it: Messages = {
       structure: 'struttura',
     })[d],
 
+  globalBadge: 'Integrato',
+  globalBadgeTitle: 'Elemento integrato — solo gli amministratori possono modificarlo',
+
   domains: 'Domini',
   newDomainPlaceholder: 'Nuovo dominio…',
   add: 'Aggiungi',

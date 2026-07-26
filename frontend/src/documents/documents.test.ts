@@ -958,6 +958,7 @@ describe('applyHeaderProfileSelection', () => {
     llm_tier: null,
     llm_instructions: '',
     example_text: '',
+    is_global: true,
   }
 
   it('leaves a just-opened null-profile document with no profile selected (does not adopt the fallback)', async () => {
