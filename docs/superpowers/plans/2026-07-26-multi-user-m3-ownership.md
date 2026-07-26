@@ -147,7 +147,10 @@ def test_token_without_epoch_claim_is_rejected():
 
 def test_malformed_epoch_claim_is_rejected():
     issued = datetime.now(UTC)
-    for bad in (["1"], {"n": 1}, "not-a-number", None):
+    # True/False are load-bearing cases: bool is an int subclass, so
+    # without the implementation's explicit bool guard they would pass an
+    # isinstance check and compare equal to epochs 1/0.
+    for bad in (["1"], {"n": 1}, "not-a-number", None, True, False):
         token = jwt.encode(
             {
                 "sub": "7",
@@ -976,7 +979,8 @@ Domains mirror profiles (nullable `owner_id`, no rebuild needed — no existing 
 - Modify: `backend/app/services/terminology.py`, `backend/app/services/seed.py`
 - Modify: `backend/app/api/terminology.py`, `backend/app/api/checks.py` (filter only), `backend/app/checkers/terminology.py:87`
 - Modify (caller threading): `backend/app/api/folders.py:48,98`, `backend/app/api/profiles.py:52`
-- Test: `backend/tests/test_terminology.py`, `test_terminology_api.py`, `test_seed.py`, `test_check_api.py`
+- Modify: `backend/app/main.py:109-135` (startup reorder, Step 4a)
+- Test: `backend/tests/test_terminology.py`, `test_terminology_api.py`, `test_seed.py`, `test_check_api.py`, `test_main.py`
 
 **Interfaces:**
 - Produces:
@@ -1246,7 +1250,24 @@ Run — FAIL.
 
 Run Step 3's tests — PASS.
 
-- [ ] **Step 5: Mutation verification.** (1) Remove the visibility predicate from `_visible_domain_row` — `test_terms_inherit_domain_ownership` and the API 404s must FAIL. Restore. (2) Remove the `create_check` filter — `test_check_request_ignores_foreign_domain_ids` must FAIL. Restore. (3) Change `has_global_domains` back to "any domains" — `test_seeder_presence_check_is_global_only` must FAIL. Restore. Record.
+- [ ] **Step 4a: Startup order per spec §9.** `main.py` currently runs `seed_terminology` (`main.py:111-112`) and `seed_profiles` (`:120-124`) *before* the `UserStore`/admin bootstrap (`:129-135`); spec §9 requires migrations → admin seeding → global seeders, so a failing admin bootstrap must abort startup **before** any global row is written. M3 owns the seeders, so M3 fixes the order. Failing test first, in `test_main.py`:
+
+```python
+def test_seeders_run_after_admin_bootstrap(tmp_path, monkeypatch):
+    # Spec §9 startup order: migrations -> admin seeding -> global
+    # seeders. With bootstrap credentials missing and no users, create_app
+    # must fail BEFORE the seeders write any global row.
+    monkeypatch.delenv("FW_ADMIN_EMAIL", raising=False)
+    monkeypatch.delenv("FW_ADMIN_PASSWORD", raising=False)
+    settings = Settings(db_path=tmp_path / "t.db", rules_dir=tmp_path / "rules")
+    with pytest.raises(AuthConfigError):
+        create_app(settings)
+    with connect(tmp_path / "t.db") as conn:
+        assert conn.execute("SELECT count(*) FROM domains").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM profiles").fetchone()[0] == 0
+```
+
+  Run — FAIL (rows exist: the seeders ran first). Then reorder `create_app`: keep every store constructor where it is (constructors are the migrations), move the two seeder calls to after `seed_admin(...)`, with this comment: `# Global seeders last (spec §9): migrations (store constructors) -> admin bootstrap -> seeders, so a failing bootstrap aborts before any global row is written.` Run — PASS. — `test_terms_inherit_domain_ownership` and the API 404s must FAIL. Restore. (2) Remove the `create_check` filter — `test_check_request_ignores_foreign_domain_ids` must FAIL. Restore. (3) Change `has_global_domains` back to "any domains" — `test_seeder_presence_check_is_global_only` must FAIL. Restore. Record.
 
 - [ ] **Step 6: Full gate + commit**
 
@@ -1562,9 +1583,12 @@ it('discards a domains fetch that resolves after a session turnover', async () =
   render(<Header />)                      // mount fires the fetch
   logout()                                 // session ends while it is in flight
   resolveFetch([{ id: 9, name: 'Foreign', description: '', is_global: false }])
-  await waitFor(() => {
-    expect(useStore.getState().domains).toEqual([])  // nothing landed
-  })
+  // Drain the .then chain before asserting. logout() already resets
+  // domains to [] synchronously, so a waitFor here would succeed on its
+  // immediate first probe — before the resolved fetch's write runs — and
+  // the test would stay green with the guard deleted.
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(useStore.getState().domains).toEqual([])   // nothing landed
 })
 ```
 
@@ -1645,27 +1669,36 @@ git commit -m "feat(ownership): is_global affordances, per-user domain fetch gua
 
 - [ ] **Step 1: Rehearse the migration on a copy.** Copy `backend/data/fabulous.db` to the session scratchpad (`cp`, read-only source). From `backend/`, run a scratch script (via `uv run python`) that: opens the copy with `Settings(db_path=<copy>)` through `create_app` (env: `FW_AUTH_SECRET` + admin creds set, as the real server would have), then asserts on the copy:
   - `users` id 1 exists and `is_admin`;
-  - `profiles`: every `is_standard=1` row and every marker-language seed-name row has `owner_id IS NULL`; every other row `owner_id = 1`; `sqlite_master` shows no `UNIQUE` in the profiles DDL and both partial indexes exist;
-  - `domains`: `Product docs` → NULL, all others → 1; both partial indexes exist (or a logged skip if the copy holds legal duplicates — record which);
-  - `folders`: DDL free of `UNIQUE` and `DEFAULT 1`; `idx_folders_owner_name` exists; row count unchanged;
+  - `profiles`: every `is_standard=1` row and every marker-language seed-name row has `owner_id IS NULL`; every other row `owner_id = 1`; `sqlite_master` shows no `UNIQUE` in the profiles DDL; both partial indexes exist **or** a duplicate-skip warning was logged for that partition — legacy uniqueness was case-*sensitive*, so `Blog`/`blog` may legally coexist and the NOCASE index is then intentionally absent (the pre-scan pattern; record which partitions skipped);
+  - `domains`: `Product docs` → NULL, all others → 1; both partial indexes exist or a logged skip (same rule — domains never had any uniqueness, so this is the likeliest table to skip; record which);
+  - `folders`: DDL free of `UNIQUE` and `DEFAULT 1`; `idx_folders_owner_name` exists or a logged skip (same rule); row count unchanged;
   - `documents`: row count and per-row `owner_id = 1` unchanged;
   - `PRAGMA integrity_check` → ok; **run the app factory a second time** against the copy → no changes (idempotence);
   - row counts per table identical before/after except for schema objects.
   Record every command and output in the report and the ledger. If any assertion fails, stop: fix the migration task, re-run the rehearsal from a fresh copy.
-- [ ] **Step 2: Roadmap contract update.** In `2026-07-25-multi-user-roadmap.md` Cross-milestone interfaces: `VerifiedToken` is now `user_id: int`, `issued_at: datetime`, **`epoch: int | None`** — local tokens always carry an integer epoch (equality-checked against `users.token_epoch`); `None` is reserved for verifiers without an epoch concept, which fall back to the `password_changed_at` comparison. Keep the M2 history note; append rather than rewrite.
+- [ ] **Step 2: Roadmap contract update.** In `2026-07-25-multi-user-roadmap.md` Cross-milestone interfaces, update **both** changed signatures: `VerifiedToken` is now `user_id: int`, `issued_at: datetime`, **`epoch: int | None`** — local tokens always carry an integer epoch (equality-checked against `users.token_epoch`); `None` is reserved for verifiers without an epoch concept, which fall back to the `password_changed_at` comparison. And `issue_token` (roadmap line 72) becomes `issue_token(user_id: int, secret: str, *, epoch: int) -> str`. Keep the M2 history note; append rather than rewrite.
 - [ ] **Step 3: Architecture docs.** `backend-architecture.md`: ownership semantics (owner-scoped stores, global rows, `GlobalReadOnlyError`, job ownership, the two rebuilds, epoch revocation). `frontend-architecture.md`: `is_global` affordances and the domains-fetch guard. Update, don't append-only — stale text is worse than none.
-- [ ] **Step 4: LOGBOOK.** Append the M3 entry per convention: date (run `date` first), title, **PR reference** (the PR number exists once opened — write the entry, open the PR, then fill the number in the same commit if needed by amending the file, not the commit), distilled why/what/verification/observations.
-- [ ] **Step 5: Final gates + commit + PR.**
+- [ ] **Step 4: Final gates, docs commit, open the PR.** The PR number must exist before the LOGBOOK entry can reference it, so the PR opens *before* the logbook lands (a follow-up commit on the open PR — not an amend):
 
 Run: backend `uv run pytest -q` (zero warnings); frontend `npx vitest run && npm run lint && npm run build`.
 
 ```bash
 git add docs
-git commit -m "docs: M3 ownership — logbook, architecture docs, roadmap contract update"
-git push -u origin multi-user-ownership
+git commit -m "docs: M3 ownership — architecture docs and roadmap contract update"
+git push -u origin <implementation-branch>
 ```
 
-Open the PR against `main`, request a Copilot review, and resolve every thread (the ruleset blocks merge otherwise). PR description must include the deploy note from Task 1 (one-time global sign-out) and the rehearsal summary from Step 1.
+Open the PR against `main` and request a Copilot review. PR description must include the deploy note from Task 1 (one-time global sign-out) and the rehearsal summary from Step 1.
+
+- [ ] **Step 5: LOGBOOK follow-up commit.** Now the PR number exists: run `date`, append the M3 entry per convention — date, title, **PR reference**, distilled why/what/verification/observations — as a follow-up commit on the same branch:
+
+```bash
+git add docs/LOGBOOK.md
+git commit -m "docs(logbook): M3 multi-user ownership entry"
+git push
+```
+
+Resolve every review thread before merge (the ruleset blocks merging otherwise).
 
 ---
 
