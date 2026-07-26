@@ -54,7 +54,7 @@ async def create_check(
     user: CurrentUser = Depends(get_current_user),
 ) -> CheckStatus:
     app = request.app
-    job: CheckJob = app.state.jobs.create()
+    job: CheckJob = app.state.jobs.create(user.id)
 
     if "rules" in body.checkers:
         doc = app.state.nlp.analyze(body.text, body.language.value)
@@ -138,8 +138,12 @@ async def _run_llm(
 
 
 @router.get("/checks/{check_id}")
-def get_check(request: Request, check_id: str) -> CheckStatus:
-    job = request.app.state.jobs.get(check_id)
+def get_check(
+    request: Request,
+    check_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> CheckStatus:
+    job = request.app.state.jobs.get(check_id, owner_id=user.id)
     if job is None:
         raise HTTPException(404, "Check not found")
     return CheckStatus(
@@ -152,8 +156,12 @@ def get_check(request: Request, check_id: str) -> CheckStatus:
 
 
 @router.get("/checks/{check_id}/events")
-async def check_events(request: Request, check_id: str) -> StreamingResponse:
-    job = request.app.state.jobs.get(check_id)
+async def check_events(
+    request: Request,
+    check_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> StreamingResponse:
+    job = request.app.state.jobs.get(check_id, owner_id=user.id)
     if job is None:
         raise HTTPException(404, "Check not found")
 

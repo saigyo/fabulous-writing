@@ -1,4 +1,5 @@
 import json
+import uuid
 from pathlib import Path
 
 import pytest
@@ -394,3 +395,31 @@ def test_bare_array_response_yields_null_scorecard(client: TestClient) -> None:
     final = client.get(f"/api/checks/{check['check_id']}").json()
     assert final["scorecard"] is None
     assert all(name != "scorecard" for name, _ in events)
+
+
+def test_check_results_are_invisible_to_other_users(tmp_path: Path) -> None:
+    settings = Settings(db_path=tmp_path / "t.db", rules_dir=tmp_path / "rules")
+    client = TestClient(create_app(settings))
+    admin = auth_headers(client)
+    other = second_user_headers(client)
+    check = client.post(
+        "/api/checks",
+        json={"text": "the secret launch date is May", "language": "en",
+              "checkers": ["rules"]},
+        headers=admin,
+    ).json()
+    check_id = check["check_id"]
+    assert client.get(f"/api/checks/{check_id}", headers=admin).status_code == 200
+    # Foreign caller: 404 on status and on the SSE stream, indistinguishable
+    # from an unknown id.
+    assert client.get(f"/api/checks/{check_id}", headers=other).status_code == 404
+    assert (
+        client.get(f"/api/checks/{check_id}/events", headers=other).status_code
+        == 404
+    )
+    unknown = client.get(f"/api/checks/{uuid.uuid4()}", headers=other)
+    assert unknown.status_code == 404
+    assert (
+        unknown.json()
+        == client.get(f"/api/checks/{check_id}", headers=other).json()
+    )

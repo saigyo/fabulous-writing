@@ -10,8 +10,9 @@ MAX_JOBS = 100
 
 
 class CheckJob:
-    def __init__(self, job_id: str) -> None:
+    def __init__(self, job_id: str, owner_id: int) -> None:
         self.id = job_id
+        self.owner_id = owner_id
         self.status = "running"
         self.findings: list[Finding] = []
         self.skipped_rules: list[str] = []
@@ -65,12 +66,18 @@ class JobManager:
     def __init__(self) -> None:
         self._jobs: OrderedDict[str, CheckJob] = OrderedDict()
 
-    def create(self) -> CheckJob:
-        job = CheckJob(str(uuid.uuid4()))
+    def create(self, owner_id: int) -> CheckJob:
+        job = CheckJob(str(uuid.uuid4()), owner_id)
         self._jobs[job.id] = job
         while len(self._jobs) > MAX_JOBS:
             self._jobs.popitem(last=False)
         return job
 
-    def get(self, job_id: str) -> CheckJob | None:
-        return self._jobs.get(job_id)
+    def get(self, job_id: str, *, owner_id: int) -> CheckJob | None:
+        job = self._jobs.get(job_id)
+        # A foreign job answers exactly like a missing one: check results
+        # quote spans of the document text, and a UUID in a URL is not an
+        # authorization boundary.
+        if job is None or job.owner_id != owner_id:
+            return None
+        return job
