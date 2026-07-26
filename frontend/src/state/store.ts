@@ -110,6 +110,17 @@ interface AppStateData {
   // every setAuth call, since reaching a resolved auth state at all means
   // the server answered.
   restoreFailed: boolean
+  // Bumped only by login() committing (see session.ts) — including the
+  // silent same-user re-login the password-change flow performs
+  // (auth/AccountMenu.tsx). sessionGeneration() itself is a plain module
+  // variable, so bumping it does not trigger a React re-render; this field
+  // is the reactive counterpart mount effects can depend on to re-run after
+  // such a re-login (Copilot round-9 U1/U2) — e.g. Header's and
+  // TerminologyView's domains fetches. Deliberately NOT bumped by
+  // logout()/expireSession(): those already unmount the effects that would
+  // depend on it (LoginGate stops rendering children), and re-running them
+  // on the way to a null user would only fire fetches no one is looking at.
+  authGeneration: number
 }
 
 interface AppStateActions {
@@ -164,6 +175,8 @@ interface AppStateActions {
   // it (see session.ts), so a re-login after an expiry does not race this
   // setter.
   setAuth: (token: string | null, user: MeResponse | null) => void
+  // Called only from login() on a commit — see authGeneration's own comment.
+  bumpAuthGeneration: () => void
 }
 
 type AppState = AppStateData & AppStateActions
@@ -236,15 +249,20 @@ export const persistConfig = {
   }),
 }
 
-// Every AppStateData field except the five auth fields (token, user,
-// authStatus, sessionExpired, restoreFailed) — those are set explicitly by
-// every resetSessionState() caller right afterwards (see session.ts), never
-// through this object. Exported (rather than enumerated again inside
-// resetSessionState()) so a field added here is reset automatically instead
-// of silently leaking from one account's session into the next.
+// Every AppStateData field except the six auth fields (token, user,
+// authStatus, sessionExpired, restoreFailed, authGeneration) — those are set
+// explicitly by every resetSessionState() caller right afterwards (see
+// session.ts), never through this object. authGeneration specifically must
+// survive a reset untouched: it is bumped only by login()'s own commit, and
+// resetSessionState() runs before that bump on a cross-user login, so
+// resetting it here would just be overwritten a line later anyway — keeping
+// it out of this object makes that explicit instead of coincidental.
+// Exported (rather than enumerated again inside resetSessionState()) so a
+// field added here is reset automatically instead of silently leaking from
+// one account's session into the next.
 export const INITIAL_DATA: Omit<
   AppStateData,
-  'token' | 'user' | 'authStatus' | 'sessionExpired' | 'restoreFailed'
+  'token' | 'user' | 'authStatus' | 'sessionExpired' | 'restoreFailed' | 'authGeneration'
 > = {
   language: 'en',
   uiLocale: null,
@@ -326,6 +344,7 @@ export const useStore = create<AppState>()(
       authStatus: 'unknown',
       sessionExpired: false,
       restoreFailed: false,
+      authGeneration: 0,
 
       setLanguage: (language) => set({ language }),
       setUiLocale: (uiLocale) => set({ uiLocale }),
@@ -455,6 +474,8 @@ export const useStore = create<AppState>()(
           authStatus: token && user ? 'authenticated' : 'anonymous',
           restoreFailed: false,
         }),
+      bumpAuthGeneration: () =>
+        set((state) => ({ authGeneration: state.authGeneration + 1 })),
     }),
     persistConfig,
   ),

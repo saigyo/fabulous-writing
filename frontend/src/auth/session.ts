@@ -35,6 +35,13 @@ export async function login(email: string, password: string): Promise<boolean> {
   discardForeignBuffer(user.id)   // keeps this user's own unsaved work
   useStore.setState({ sessionExpired: false, restoreFailed: false })
   useStore.getState().setAuth(token, user)
+  // Reactive counterpart to the generation++ above (see authGeneration's own
+  // comment in state/store.ts): a same-user re-login stays on this same
+  // branch — resetSessionState() above is skipped for it — so this bump is
+  // the ONLY signal mount effects depending on it see when the
+  // password-change flow (auth/AccountMenu.tsx) silently re-authenticates
+  // the current user while they stay mounted.
+  useStore.getState().bumpAuthGeneration()
   return true
 }
 
