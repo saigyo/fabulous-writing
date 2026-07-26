@@ -1883,7 +1883,15 @@ input {
   border-bottom: 1px solid var(--border);
 }
 
-.account-menu button {
+/* Direct-child combinator: this must only style the two top-level menu
+   items (Change password, Log out). A plain descendant selector also
+   reaches the Cancel/Submit buttons nested inside the password form below
+   (form > .account-password-actions > button) — at equal-or-lower
+   specificity than .account-password-cancel/-submit, but *this* rule has
+   an extra class in its own selector (.account-menu + button vs. a single
+   class each on the other two), so it was winning regardless of source
+   order and left the submit button `background: none` with white text. */
+.account-menu > button {
   text-align: left;
   padding: 0.4rem 0.7rem;
   background: none;
@@ -1891,7 +1899,7 @@ input {
   cursor: pointer;
 }
 
-.account-menu button:hover {
+.account-menu > button:hover {
   background: var(--accent-soft);
 }
 
@@ -1907,6 +1915,35 @@ input {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+}
+
+/* .login-field is reused here for the same look as the login gate's fields,
+   but this panel lives inside .header-controls, whose own `label` rule
+   (.header-controls label, one class + one element = higher specificity
+   than .login-field alone) turns the labels into small-caps header
+   captions instead. Two classes here outweighs that regardless of source
+   order, restoring the login gate's own field styling. */
+.account-password-panel .login-field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding-left: 0;
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  line-height: normal;
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: normal;
+}
+
+/* Both messages share the panel's own gap for spacing; .llm-error's own
+   margin-bottom (meant for looser contexts) would otherwise stack on top
+   of that gap unevenly against .all-clear, which has no margin override of
+   its own and falls back to the browser's default <p> margin. */
+.account-password-panel .llm-error,
+.account-password-panel .all-clear {
+  margin: 0;
 }
 
 .account-password-actions {

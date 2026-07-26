@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+} from 'react'
 import { HttpError, MIN_PASSWORD_LENGTH, postPasswordChange } from '../api/client'
 import { useDismissOnOutsideClick } from '../hooks/useDismissOnOutsideClick'
 import { useMessages, type Messages } from '../i18n'
@@ -115,6 +122,11 @@ function PasswordForm({ email, onCancel }: { email: string; onCancel: () => void
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault()
+    // Belt-and-suspenders alongside the disabled submit button: a second
+    // in-flight change (e.g. a stray Enter keypress the disabled attribute
+    // hasn't visually caught up with yet) must not start a second, orphaned
+    // completion racing the first one.
+    if (pending) return
 
     if (next.length < MIN_PASSWORD_LENGTH) {
       setResult({ kind: 'error', text: m.passwordTooShort(MIN_PASSWORD_LENGTH) })
@@ -143,12 +155,20 @@ function PasswordForm({ email, onCancel }: { email: string; onCancel: () => void
         try {
           reauthenticated = await login(email, next)
         } catch {
-          // The silent re-login itself failed. The password change already
-          // revoked the current token — postLogin bypasses central 401
-          // handling, so nothing else will correct the store — leaving it
-          // `authenticated` would mean every subsequent request 401s while
-          // the UI insists the user is signed in. Run the expiry path
-          // instead of surfacing an error: the change *did* succeed.
+          // The silent re-login itself failed. Guard first: unlike
+          // setResult below, expireSession() is a global store mutation, so
+          // an orphaned handler from a session that has already moved on
+          // (logged out, or logged back in as a fresh session while this
+          // rejection was still in flight) must not reach across and expire
+          // the *new*, unrelated session — only the session this completion
+          // actually belongs to gets expired.
+          if (sessionGeneration() !== startedAt) return
+          // The password change already revoked the current token —
+          // postLogin bypasses central 401 handling, so nothing else will
+          // correct the store — leaving it `authenticated` would mean every
+          // subsequent request 401s while the UI insists the user is signed
+          // in. Run the expiry path instead of surfacing an error: the
+          // change *did* succeed.
           expireSession()
           return
         }
@@ -175,6 +195,16 @@ function PasswordForm({ email, onCancel }: { email: string; onCancel: () => void
       .finally(() => setPending(false))
   }
 
+  // A stale result (from the previous attempt) must not linger while the
+  // user is already retyping the field it refers to — clearing on the next
+  // submit alone leaves a "wrong current password" message sitting next to
+  // an input the user has already corrected.
+  const editField =
+    (setter: (value: string) => void) => (event: ChangeEvent<HTMLInputElement>) => {
+      setter(event.target.value)
+      setResult(null)
+    }
+
   return (
     <form onSubmit={handleSubmit}>
       <label className="login-field">
@@ -183,7 +213,7 @@ function PasswordForm({ email, onCancel }: { email: string; onCancel: () => void
           type="password"
           autoComplete="current-password"
           value={current}
-          onChange={(e) => setCurrent(e.target.value)}
+          onChange={editField(setCurrent)}
           required
         />
       </label>
@@ -193,7 +223,7 @@ function PasswordForm({ email, onCancel }: { email: string; onCancel: () => void
           type="password"
           autoComplete="new-password"
           value={next}
-          onChange={(e) => setNext(e.target.value)}
+          onChange={editField(setNext)}
           required
         />
       </label>
@@ -203,7 +233,7 @@ function PasswordForm({ email, onCancel }: { email: string; onCancel: () => void
           type="password"
           autoComplete="new-password"
           value={confirm}
-          onChange={(e) => setConfirm(e.target.value)}
+          onChange={editField(setConfirm)}
           required
         />
       </label>
