@@ -15,6 +15,19 @@ export function setProfileApplySuppressed(value: boolean): void {
   suppressProfileApply = value
 }
 
+/** Called by documents.ts' invalidateDocumentWork() (logout()/expireSession()
+ * only). Without this, a suppression armed by user A's hydration (opening a
+ * document with a language switch) can outlive A's session: if A's
+ * getProfiles() fetch is still pending when A logs out, it resolves under
+ * B's session and consumeProfileApplySuppression() would hand B's profile
+ * response A's leftover flag — skipping or misapplying B's own selection.
+ * A never legitimately needs this flag once the session that armed it has
+ * ended, so a plain reset (rather than threading a generation through this
+ * one-shot value) is the correct, simplest fix. */
+export function resetProfileApplySuppression(): void {
+  suppressProfileApply = false
+}
+
 /** Header's language-switch effect calls this once it has picked which
  * profile to show. Normally a real language switch applies the profile's
  * values to the header selectors (autosaving them onto the document). But

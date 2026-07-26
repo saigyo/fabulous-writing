@@ -434,6 +434,28 @@ describe('AccountMenu', () => {
     expect(screen.queryByLabelText(en.passwordCurrent)).toBeNull()
   })
 
+  it('Escape returns focus to the account badge, not <body>', async () => {
+    // closeMenu() unmounts the focused password input on this path; without
+    // returning focus explicitly it falls back to <body>, stranding
+    // keyboard/screen-reader users.
+    const u = userEvent.setup()
+    render(<AccountMenu />)
+    const badge = screen.getByRole('button', { name: en.accountMenu })
+    await openPasswordForm(u)
+    await u.click(screen.getByLabelText(en.passwordCurrent))
+    await u.keyboard('{Escape}')
+    expect(document.activeElement).toBe(badge)
+  })
+
+  it('exposes aria-expanded on the account badge, tracking the popover', async () => {
+    const u = userEvent.setup()
+    render(<AccountMenu />)
+    const badge = screen.getByRole('button', { name: en.accountMenu })
+    expect(badge.getAttribute('aria-expanded')).toBe('false')
+    await openMenu(u)
+    expect(badge.getAttribute('aria-expanded')).toBe('true')
+  })
+
   it('Cancel dismisses the popover; reopening shows the menu, not the password form', async () => {
     const u = userEvent.setup()
     render(<AccountMenu />)

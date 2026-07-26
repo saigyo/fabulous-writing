@@ -2,6 +2,10 @@
 import { cleanup, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { bumpGeneration, resetAutosaveForTests } from './documents/autosave'
+import {
+  consumeProfileApplySuppression,
+  setProfileApplySuppressed,
+} from './documents/profileApply'
 import { useStore } from './state/store'
 import type { Profile } from './types'
 
@@ -113,5 +117,36 @@ describe('Header profile-fetch generation guard', () => {
     expect(useStore.getState().profiles).toHaveLength(0) // A's list never lands
     expect(useStore.getState().profileId).toBeNull() // A's selection never lands
     expect(useStore.getState().domainIds).toEqual([99]) // B's own choice survives
+  })
+
+  it('a getProfiles rejection that lands after turnover does not consume the suppression the new session just armed', async () => {
+    // The .catch() cleanup below the .then() exists so a FAILED fetch still
+    // consumes the one-shot suppression (otherwise it strands and wrongly
+    // suppresses the next legitimate apply) — but without its own generation
+    // guard, a rejection arriving after a session turnover can consume a
+    // suppression flag the *incoming* session has since armed for its own
+    // document open, silently discarding it before that session's own
+    // profile fetch ever gets to see it.
+    vi.mocked(getProfiles).mockResolvedValueOnce([])
+    render(<Header />)
+    await waitFor(() => expect(getProfiles).toHaveBeenCalledTimes(1))
+
+    let rejectProfiles!: (error: unknown) => void
+    vi.mocked(getProfiles).mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectProfiles = reject
+        }),
+    )
+    useStore.setState({ language: 'de' })
+    await waitFor(() => expect(getProfiles).toHaveBeenCalledTimes(2))
+
+    bumpGeneration() // the session that started this fetch has ended
+    setProfileApplySuppressed(true) // the incoming session arms its own suppression
+
+    rejectProfiles(new Error('network down'))
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(consumeProfileApplySuppression()).toBe(true)
   })
 })

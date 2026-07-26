@@ -25,6 +25,7 @@ import { addFolder, applyFolderDefaults, saveFolderDefaults } from './folders'
 import {
   applyHeaderProfileSelection,
   consumeProfileApplySuppression,
+  setProfileApplySuppressed,
 } from './profileApply'
 
 vi.mock('../api/client', async (importOriginal) => ({
@@ -400,6 +401,18 @@ describe('initDocuments', () => {
 })
 
 describe('invalidateDocumentWork', () => {
+  it('resets the one-shot profile-apply suppression so it cannot leak into the next session', () => {
+    // If user A's hydration armed the suppression (a language-change profile
+    // fetch was still pending) and A logs out before that fetch resolves,
+    // neither resetSessionState() nor a bare generation bump clears this
+    // flag on its own — invalidateDocumentWork() must do it explicitly, or
+    // user B's own profile response would consume A's leftover flag and
+    // skip/misapply B's selection.
+    setProfileApplySuppressed(true)
+    invalidateDocumentWork()
+    expect(consumeProfileApplySuppression()).toBe(false)
+  })
+
   it('cancels a pending debounced save and a pending backoff retry', async () => {
     vi.useFakeTimers()
     try {
@@ -639,6 +652,75 @@ describe('invalidateDocumentWork', () => {
     await pending
 
     expect(createDocument).not.toHaveBeenCalled()
+  })
+
+  it('recoverSnapshot(skipHydrate=true) skips the self-write fast path\'s hydrate', async () => {
+    // Regression for the shared `skipRecoveryHydrate` module boolean: it
+    // used to be toggled by the *caller* (replayOrphanedSnapshot) around its
+    // own call, so one overlapping recovery's completion could reset it out
+    // from under a different, still-pending recovery. skipHydrate is now a
+    // parameter threaded per call — this pins that the self-write branch
+    // (server text matches the buffered snapshot) still honours it.
+    const snapshot: DocSnapshot = {
+      docId: 5, revision: 2, dirty: true, name: 'Orphan',
+      text: 'stored text', // matches doc(5)'s default text: a self-write
+      findings: [], scorecard: null,
+      settings: {
+        language: 'en', profile_id: null, domain_ids: [],
+        llm_provider: null, llm_model: null, llm_tier: null, llm_auto: true,
+      },
+      ownerId: 1,
+    }
+    // docMeta still shows the orphan's own document here — replayOrphanedSnapshot
+    // calls recoverSnapshot() for it BEFORE hydrateFromDocument() switches
+    // docMeta over to the real target, so the id equals snapshot.docId at
+    // this point. That means the separate `docMeta?.id !== snapshot.docId`
+    // check below cannot be what stops the hydrate here — only skipHydrate
+    // can, which is exactly what this test needs to isolate.
+    useStore.getState().setDocMeta({ id: 5, name: 'Orphan', nameSource: 'user', revision: 2 })
+    vi.mocked(getDocument).mockResolvedValueOnce(doc(5))
+    vi.mocked(listDocuments).mockResolvedValue([summaryOf(doc(5))])
+
+    const gen = currentGeneration()
+    await recoverSnapshot(snapshot, gen, true)
+
+    // No hydrate happened: the editor never received the orphan's text.
+    expect(dispatched).toHaveLength(0)
+  })
+
+  it('recoverSnapshot(skipHydrate=true) recovers a copy but never re-enters hydration for it', async () => {
+    const snapshot: DocSnapshot = {
+      docId: 5, revision: 2, dirty: true, name: 'Orphan',
+      text: 'orphan text', findings: [], scorecard: null,
+      settings: {
+        language: 'en', profile_id: null, domain_ids: [],
+        llm_provider: null, llm_model: null, llm_tier: null, llm_auto: true,
+      },
+      ownerId: 1,
+    }
+    // docMeta still shows id 5 (the orphan's own document) — see the
+    // self-write test above for why this, not 99, is what isolates
+    // skipHydrate rather than the separate docMeta-id check below it.
+    useStore.getState().setDocMeta({ id: 5, name: 'Orphan', nameSource: 'user', revision: 2 })
+    // A genuine conflict (server text differs, no exception) falls through
+    // to the recovered-copy branch.
+    vi.mocked(getDocument).mockResolvedValueOnce(doc(5, { text: 'server-side text' }))
+    vi.mocked(createDocument).mockResolvedValueOnce(
+      doc(50, { name: 'Orphan (recovered)', name_source: 'user' }),
+    )
+    vi.mocked(listDocuments).mockResolvedValue([summaryOf(doc(50))])
+
+    const gen = currentGeneration()
+    await recoverSnapshot(snapshot, gen, true)
+
+    // The recovery itself still happens (the copy is not lost)...
+    expect(createDocument).toHaveBeenCalledTimes(1)
+    // ...but it must not re-enter hydration for it: only the one self-write
+    // check call to getDocument happened, never the second "fetch original
+    // to hydrate" call this branch would otherwise make, and nothing reached
+    // the editor.
+    expect(getDocument).toHaveBeenCalledTimes(1)
+    expect(dispatched).toHaveLength(0)
   })
 
   it('removeDocument()\'s hydrate of the next document does not run once the session has ended', async () => {

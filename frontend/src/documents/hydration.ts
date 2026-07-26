@@ -26,12 +26,6 @@ import {
 import { refreshDocuments } from './list'
 import { setProfileApplySuppressed } from './profileApply'
 
-// Set while an orphan-replay's conflict recovery is running so recoverSnapshot
-// doesn't also re-hydrate: we're already in the middle of hydrating a
-// different, unrelated target document and must not re-enter hydration for
-// the document the orphaned snapshot belonged to.
-let skipRecoveryHydrate = false
-
 /** The buffer is a single slot for the CURRENT document only. If it still
  * holds a dirty snapshot for a document other than the one about to be
  * hydrated (e.g. the user switched documents while a save was failing),
@@ -65,12 +59,14 @@ async function replayOrphanedSnapshot(targetDocId: number, gen: number): Promise
       error instanceof HttpError &&
       (error.status === 409 || error.status === 404)
     ) {
-      skipRecoveryHydrate = true
-      try {
-        await recoverSnapshot(existing, gen)
-      } finally {
-        skipRecoveryHydrate = false
-      }
+      // skipHydrate=true: we're already in the middle of hydrating a
+      // different, unrelated target document (the caller of
+      // replayOrphanedSnapshot), so recoverSnapshot must not re-enter
+      // hydration for the document this orphaned snapshot belonged to. This
+      // is passed as a call-scoped argument rather than shared module state
+      // — see recoverSnapshot's own doc comment for why a shared boolean
+      // here previously let two overlapping recoveries corrupt each other.
+      await recoverSnapshot(existing, gen, true)
     }
     // Any other failure (offline/network): accepted limitation per spec —
     // the buffer is a single slot by design (current document only), so an
@@ -200,8 +196,27 @@ export async function hydrateFromBuffer(snapshot: DocSnapshot, gen: number): Pro
  * prevent *acting* on the response of one that was already in flight when
  * the turnover happened (see the audit in the Task 3 report for why that's
  * the architectural limit of a client-side guard against an in-flight
- * network call). */
-export async function recoverSnapshot(snapshot: DocSnapshot, gen: number): Promise<void> {
+ * network call).
+ *
+ * `skipHydrate` is likewise threaded from the caller rather than kept as
+ * shared module state: replayOrphanedSnapshot() passes `true` because it is
+ * already mid-hydration of a different, unrelated target document when it
+ * calls this for the orphaned snapshot's own conflict, and re-entering
+ * hydration here would hydrate the WRONG document in the middle of that.
+ * A module-level boolean toggled around that one call used to serve this
+ * purpose, but it was shared across every call to this function — while one
+ * caller's recovery was still awaiting the network, a second, unrelated
+ * recovery (e.g. a different orphaned snapshot recovered concurrently) could
+ * flip the shared flag out from under the first, and the first's own
+ * `finally` could just as easily reset it out from under the second before
+ * the second ever reached its own check. Threading the intent as a
+ * parameter per call makes that interference impossible instead of merely
+ * unlikely. */
+export async function recoverSnapshot(
+  snapshot: DocSnapshot,
+  gen: number,
+  skipHydrate = false,
+): Promise<void> {
   if (gen !== currentGeneration()) return // already stale before we even started
   try {
     const server = await getDocument(snapshot.docId)
@@ -210,7 +225,7 @@ export async function recoverSnapshot(snapshot: DocSnapshot, gen: number): Promi
       clearSnapshot()
       await refreshDocuments()
       if (gen !== currentGeneration()) return
-      if (skipRecoveryHydrate) return
+      if (skipHydrate) return
       if (useStore.getState().docMeta?.id !== snapshot.docId) return
       await hydrateFromDocument(server, gen)
       return
@@ -237,7 +252,7 @@ export async function recoverSnapshot(snapshot: DocSnapshot, gen: number): Promi
   // Reached via replayOrphanedSnapshot: we're mid-hydration of an unrelated
   // target document, so this snapshot's own document must not be re-entered.
   if (gen !== currentGeneration()) return
-  if (skipRecoveryHydrate) return
+  if (skipHydrate) return
   if (useStore.getState().docMeta?.id !== snapshot.docId) return
   try {
     const original = await getDocument(snapshot.docId)
