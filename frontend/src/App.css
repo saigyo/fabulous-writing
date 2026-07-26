@@ -20,14 +20,21 @@
   background: var(--panel);
 }
 
-.header h1 {
-  font-size: 1.15rem;
+/* Shared by Header() and LoginForm/LoginGate's card (see Wordmark.tsx) —
+   kept on the component's own class rather than duplicated per container,
+   so the two cannot silently drift apart the way two copies of the inline
+   JSX already had. Each container still sets its own font-size below. */
+.wordmark {
   margin: 0;
   white-space: nowrap;
 }
 
-.header .accent {
+.wordmark .accent {
   color: var(--accent);
+}
+
+.header .wordmark {
+  font-size: 1.15rem;
 }
 
 .view-switch {
@@ -1781,4 +1788,56 @@ input {
   color: #e5484d;
   font-size: 0.8rem;
   margin: 0;
+}
+
+/* ---- login gate ---- */
+
+.login-gate {
+  height: 100vh;
+  width: 100vw;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel);
+}
+
+.login-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.2rem;
+  width: 18rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+}
+
+.login-card .wordmark {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+}
+
+.login-field input {
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-sizing: border-box;
+}
+
+.login-submit {
+  height: 30px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
 }
