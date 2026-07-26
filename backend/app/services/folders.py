@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS folders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    owner_id INTEGER NOT NULL DEFAULT 1,
-    name TEXT NOT NULL UNIQUE,
+    owner_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
     created_at TEXT NOT NULL,
     default_language TEXT,
     default_profile_id INTEGER,
@@ -47,7 +47,7 @@ class FolderDefaults(BaseModel):
 
 class Folder(FolderDefaults):
     id: int
-    owner_id: int = 1
+    owner_id: int
     name: str
     created_at: str
 
@@ -112,37 +112,55 @@ class FolderStore:
                 ("default_llm_auto", "INTEGER"),
             ],
         )
-        # Names are ordered case-insensitively but were historically UNIQUE
-        # case-sensitively; enforce NOCASE uniqueness via an index (an inline
-        # constraint can't be altered without a table rebuild). Skipped —
-        # with a warning — if legacy data already holds case-duplicates.
+        # M3 rebuild, guarded by shape: the legacy table carries an inline
+        # UNIQUE on name (global uniqueness — wrong once folders are
+        # per-user) and a DEFAULT 1 on owner_id (would let an INSERT that
+        # forgets the owner silently file under the admin). SQLite cannot
+        # drop either without the documented table rebuild.
+        sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='folders'"
+        ).fetchone()[0]
+        if "UNIQUE" in sql.upper() or "DEFAULT 1" in sql:
+            columns = (
+                "id, owner_id, name, created_at, default_language,"
+                " default_profile_id, default_domain_ids, default_llm_provider,"
+                " default_llm_model, default_llm_tier, default_llm_auto"
+            )
+            conn.execute(_SCHEMA.replace("IF NOT EXISTS folders", "folders_new"))
+            conn.execute(
+                f"INSERT INTO folders_new ({columns}) SELECT {columns} FROM folders"
+            )
+            conn.execute("DROP TABLE folders")
+            conn.execute("ALTER TABLE folders_new RENAME TO folders")
+        # Per-owner NOCASE uniqueness, with the house duplicate pre-scan.
         duplicates = conn.execute(
-            "SELECT name FROM folders GROUP BY lower(name) HAVING count(*) > 1"
+            "SELECT owner_id, name FROM folders"
+            " GROUP BY owner_id, lower(name) HAVING count(*) > 1"
         ).fetchall()
         if duplicates:
             logger.warning(
-                "folders table has case-duplicate names %s; "
-                "skipping NOCASE unique index",
-                [row[0] for row in duplicates],
+                "folders table has per-owner case-duplicate names %s; "
+                "skipping unique index",
+                [(row[0], row[1]) for row in duplicates],
             )
         else:
             conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_folders_name_nocase "
-                "ON folders(name COLLATE NOCASE)"
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_folders_owner_name "
+                "ON folders(owner_id, name COLLATE NOCASE)"
             )
 
     def set_defaults(
-        self, folder_id: int, defaults: FolderDefaults
+        self, folder_id: int, defaults: FolderDefaults, *, owner_id: int
     ) -> Folder | None:
         """Full replace of the folder's defaults; None = unknown folder."""
-        if self.get_folder(folder_id) is None:
+        if self.get_folder(folder_id, owner_id=owner_id) is None:
             return None
         with self._connect() as conn:
             conn.execute(
                 """UPDATE folders SET default_language = ?, default_profile_id = ?,
                    default_domain_ids = ?, default_llm_provider = ?,
                    default_llm_model = ?, default_llm_tier = ?, default_llm_auto = ?
-                   WHERE id = ?""",
+                   WHERE id = ? AND owner_id = ?""",
                 (
                     defaults.default_language.value
                     if defaults.default_language
@@ -158,61 +176,72 @@ class FolderStore:
                     if defaults.default_llm_auto is None
                     else int(defaults.default_llm_auto),
                     folder_id,
+                    owner_id,
                 ),
             )
-        return self.get_folder(folder_id)
+        return self.get_folder(folder_id, owner_id=owner_id)
 
-    def list_folders(self) -> list[Folder]:
+    def list_folders(self, *, owner_id: int) -> list[Folder]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM folders ORDER BY name COLLATE NOCASE, id"
+                "SELECT * FROM folders WHERE owner_id = ?"
+                " ORDER BY name COLLATE NOCASE, id",
+                (owner_id,),
             ).fetchall()
         return [_row_to_folder(row) for row in rows]
 
-    def get_folder(self, folder_id: int) -> Folder | None:
+    def get_folder(self, folder_id: int, *, owner_id: int) -> Folder | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM folders WHERE id = ?", (folder_id,)
+                "SELECT * FROM folders WHERE id = ? AND owner_id = ?",
+                (folder_id, owner_id),
             ).fetchone()
         return _row_to_folder(row) if row else None
 
-    def create_folder(self, name: str) -> Folder:
+    def create_folder(self, name: str, *, owner_id: int) -> Folder:
         try:
             with self._connect() as conn:
                 cursor = conn.execute(
-                    "INSERT INTO folders (name, created_at) VALUES (?, ?)",
-                    (name, _utcnow()),
+                    "INSERT INTO folders (owner_id, name, created_at) VALUES (?, ?, ?)",
+                    (owner_id, name, _utcnow()),
                 )
                 folder_id = cursor.lastrowid
         except sqlite3.IntegrityError as exc:
             raise ValueError(f"Folder '{name}' already exists") from exc
         assert folder_id is not None
-        folder = self.get_folder(folder_id)
+        folder = self.get_folder(folder_id, owner_id=owner_id)
         assert folder is not None
         return folder
 
-    def rename_folder(self, folder_id: int, name: str) -> Folder | None:
-        if self.get_folder(folder_id) is None:
+    def rename_folder(
+        self, folder_id: int, name: str, *, owner_id: int
+    ) -> Folder | None:
+        if self.get_folder(folder_id, owner_id=owner_id) is None:
             return None
         try:
             with self._connect() as conn:
                 conn.execute(
-                    "UPDATE folders SET name = ? WHERE id = ?",
-                    (name, folder_id),
+                    "UPDATE folders SET name = ? WHERE id = ? AND owner_id = ?",
+                    (name, folder_id, owner_id),
                 )
         except sqlite3.IntegrityError as exc:
             raise ValueError(f"Folder '{name}' already exists") from exc
-        return self.get_folder(folder_id)
+        return self.get_folder(folder_id, owner_id=owner_id)
 
-    def delete_folder(self, folder_id: int) -> bool:
+    def delete_folder(self, folder_id: int, *, owner_id: int) -> bool:
         """Folders never take documents with them: members drop back to the
-        ungrouped list in the same transaction as the folder row's removal."""
+        ungrouped list in the same transaction as the folder row's removal.
+        Both statements carry the owner: folder ids are just integers, so
+        without the scope a caller could unfile another owner's documents."""
         with self._connect() as conn:
-            conn.execute(
-                "UPDATE documents SET folder_id = NULL WHERE folder_id = ?",
-                (folder_id,),
-            )
             cursor = conn.execute(
-                "DELETE FROM folders WHERE id = ?", (folder_id,)
+                "DELETE FROM folders WHERE id = ? AND owner_id = ?",
+                (folder_id, owner_id),
             )
+            if cursor.rowcount:
+                conn.execute(
+                    "UPDATE documents SET folder_id = NULL"
+                    " WHERE folder_id = ? AND owner_id = ?",
+                    (folder_id, owner_id),
+                )
         return cursor.rowcount > 0

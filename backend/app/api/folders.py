@@ -1,8 +1,9 @@
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
+from app.api.deps import CurrentUser, get_current_user
 from app.api.validation import validate_name
 from app.core.models import Language
 from app.services.folders import Folder, FolderDefaults, FolderStore
@@ -53,22 +54,39 @@ def _pruned(request: Request, folder: Folder) -> Folder:
 
 
 @router.get("/folders")
-def list_folders(request: Request) -> list[Folder]:
-    return [_pruned(request, f) for f in _store(request).list_folders()]
+def list_folders(
+    request: Request, user: CurrentUser = Depends(get_current_user)
+) -> list[Folder]:
+    return [
+        _pruned(request, f) for f in _store(request).list_folders(owner_id=user.id)
+    ]
 
 
 @router.post("/folders", status_code=201)
-def create_folder(request: Request, body: FolderPayload) -> Folder:
+def create_folder(
+    request: Request,
+    body: FolderPayload,
+    user: CurrentUser = Depends(get_current_user),
+) -> Folder:
     try:
-        return _store(request).create_folder(_validated_name(body.name))
+        return _store(request).create_folder(
+            _validated_name(body.name), owner_id=user.id
+        )
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
 
 
 @router.put("/folders/{folder_id}")
-def rename_folder(request: Request, folder_id: int, body: FolderPayload) -> Folder:
+def rename_folder(
+    request: Request,
+    folder_id: int,
+    body: FolderPayload,
+    user: CurrentUser = Depends(get_current_user),
+) -> Folder:
     try:
-        renamed = _store(request).rename_folder(folder_id, _validated_name(body.name))
+        renamed = _store(request).rename_folder(
+            folder_id, _validated_name(body.name), owner_id=user.id
+        )
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     if renamed is None:
@@ -78,7 +96,10 @@ def rename_folder(request: Request, folder_id: int, body: FolderPayload) -> Fold
 
 @router.put("/folders/{folder_id}/defaults")
 def set_folder_defaults(
-    request: Request, folder_id: int, body: FolderDefaultsPayload
+    request: Request,
+    folder_id: int,
+    body: FolderDefaultsPayload,
+    user: CurrentUser = Depends(get_current_user),
 ) -> Folder:
     if body.default_profile_id is not None:
         if body.default_language is None:
@@ -100,7 +121,7 @@ def set_folder_defaults(
         if unknown:
             raise HTTPException(422, f"Unknown domain ids: {unknown}")
     updated = _store(request).set_defaults(
-        folder_id, FolderDefaults(**body.model_dump())
+        folder_id, FolderDefaults(**body.model_dump()), owner_id=user.id
     )
     if updated is None:
         raise HTTPException(404, "Folder not found")
@@ -108,7 +129,11 @@ def set_folder_defaults(
 
 
 @router.delete("/folders/{folder_id}", status_code=204)
-def delete_folder(request: Request, folder_id: int) -> Response:
-    if not _store(request).delete_folder(folder_id):
+def delete_folder(
+    request: Request,
+    folder_id: int,
+    user: CurrentUser = Depends(get_current_user),
+) -> Response:
+    if not _store(request).delete_folder(folder_id, owner_id=user.id):
         raise HTTPException(404, "Folder not found")
     return Response(status_code=204)

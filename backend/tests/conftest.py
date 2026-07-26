@@ -52,6 +52,26 @@ def auth_headers(client: TestClient) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+SECOND_USER_EMAIL = "second@example.com"
+SECOND_USER_PASSWORD = "second user password"  # >= 12 chars (admin-set floor)
+
+
+def second_user_headers(client: TestClient) -> dict[str, str]:
+    """Bearer header for a second, non-admin user, created via the real
+    admin API + login — the same honest path auth_headers takes."""
+    admin = auth_headers(client)
+    client.post(
+        "/api/admin/users",
+        json={"email": SECOND_USER_EMAIL, "password": SECOND_USER_PASSWORD},
+        headers=admin,
+    )
+    token = client.post(
+        "/api/auth/login",
+        json={"email": SECOND_USER_EMAIL, "password": SECOND_USER_PASSWORD},
+    ).json()["token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
 @pytest.fixture()
 def authed_client(tmp_path: Path) -> TestClient:
     """A TestClient for a plain tmp_path app, with the admin's Bearer header

@@ -1,6 +1,9 @@
 from fastapi.testclient import TestClient
 
+from app.core.config import Settings
+from app.main import create_app
 from app.services.folders import FolderStore
+from tests.conftest import auth_headers, second_user_headers
 
 
 def make_folder(authed_client: TestClient, name: str = "Project") -> dict:
@@ -152,7 +155,9 @@ def test_defaults_pruning_is_read_time_only(authed_client: TestClient):
     assert listed["default_language"] == "de"
     assert listed["default_domain_ids"] == [d1["id"]]
     # The DB row itself is untouched (read-time view, like documents GET).
-    raw = FolderStore(authed_client.app.state.settings.db_path).get_folder(folder["id"])
+    raw = FolderStore(authed_client.app.state.settings.db_path).get_folder(
+        folder["id"], owner_id=1
+    )
     assert raw.default_profile_id == profile["id"]
     assert raw.default_domain_ids == [d1["id"], d2["id"]]
 
@@ -188,3 +193,39 @@ def test_rename_response_prunes_dangling_domain_default(authed_client):
     renamed = authed_client.put(f"/api/folders/{folder['id']}", json={"name": "Renamed"})
     assert renamed.status_code == 200
     assert renamed.json()["default_domain_ids"] == [kept["id"]]
+
+
+def test_folders_api_is_owner_scoped(tmp_path):
+    settings = Settings(db_path=tmp_path / "t.db", rules_dir=tmp_path / "rules")
+    client = TestClient(create_app(settings))
+    admin = auth_headers(client)
+    other = second_user_headers(client)
+    folder = client.post("/api/folders", json={"name": "Mine"}, headers=admin).json()
+    assert (
+        client.put(
+            f"/api/folders/{folder['id']}", json={"name": "Stolen"}, headers=other
+        ).status_code
+        == 404
+    )
+    assert (
+        client.put(
+            f"/api/folders/{folder['id']}/defaults", json={}, headers=other
+        ).status_code
+        == 404
+    )
+    assert client.delete(f"/api/folders/{folder['id']}", headers=other).status_code == 404
+    assert client.get("/api/folders", headers=other).json() == []
+    # Both owners may hold the same folder name.
+    assert (
+        client.post("/api/folders", json={"name": "Mine"}, headers=other).status_code
+        == 201
+    )
+    # A document may not be filed into another owner's folder.
+    assert (
+        client.post(
+            "/api/documents",
+            json={"name": "D", "language": "en", "folder_id": folder["id"]},
+            headers=other,
+        ).status_code
+        == 422
+    )
