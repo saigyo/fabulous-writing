@@ -17,7 +17,17 @@ from app.core.auth import LocalTokenVerifier, VerifiedToken, issue_token
 from app.core.config import Settings
 from app.main import create_app
 from app.services.users import UserStore
-from tests.conftest import TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD, auth_headers
+from tests.conftest import (
+    TEST_ADMIN_EMAIL,
+    TEST_ADMIN_PASSWORD,
+    auth_headers,
+    second_user_headers,
+)
+
+TIERS_CONFIG = {
+    "basic": {"llm": {"tiers": ["cheap", "local"], "providers": ["ollama"],
+                      "models": {"ollama": ["llama3.1"]}}, "features": []},
+}
 
 # 64 bytes, not merely the 32-byte minimum: kept consistent with the secret
 # length used in tests/test_auth_core.py.
@@ -298,6 +308,61 @@ def test_me_requires_authentication_and_returns_the_caller(app_client):
     body = app_client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"}).json()
     assert body["email"] == "root@example.com" and body["is_admin"] is True
     assert body["tier"] == "premium"
+
+
+class TestMePolicy:
+    def test_default_config_reports_full_policy(self, tmp_path: Path):
+        # No tiers configured: /me carries policy.llm all-null and both
+        # features — the "unchanged until tiers are configured" contract.
+        settings = Settings(db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules")
+        client = TestClient(create_app(settings))
+        body = client.get("/api/auth/me", headers=auth_headers(client)).json()
+        assert body["policy"] == {
+            "llm": {"tiers": None, "providers": None, "models": None},
+            "features": ["custom_profiles", "custom_domains"],
+        }
+
+    def test_tiered_user_sees_their_policy(self, tmp_path: Path):
+        settings = Settings(
+            db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules", tiers=TIERS_CONFIG
+        )
+        client = TestClient(create_app(settings))
+        headers = second_user_headers(client)  # non-admin, tier 'basic'
+        body = client.get("/api/auth/me", headers=headers).json()
+        assert body["tier"] == "basic"
+        assert body["policy"] == {
+            "llm": {
+                "tiers": ["cheap", "local"],
+                "providers": ["ollama"],
+                "models": {"ollama": ["llama3.1"]},
+            },
+            "features": [],
+        }
+
+    def test_admin_sees_full_policy_despite_tiers(self, tmp_path: Path):
+        settings = Settings(
+            db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules", tiers=TIERS_CONFIG
+        )
+        client = TestClient(create_app(settings))
+        body = client.get("/api/auth/me", headers=auth_headers(client)).json()
+        assert body["is_admin"] is True
+        assert body["policy"] == {
+            "llm": {"tiers": None, "providers": None, "models": None},
+            "features": ["custom_profiles", "custom_domains"],
+        }
+
+    def test_login_response_user_carries_policy(self, tmp_path: Path):
+        # LoginResponse.user is the same MeResponse model — policy included.
+        settings = Settings(
+            db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules", tiers=TIERS_CONFIG
+        )
+        client = TestClient(create_app(settings))
+        response = login(client, TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD)
+        assert response.status_code == 200
+        assert response.json()["user"]["policy"] == {
+            "llm": {"tiers": None, "providers": None, "models": None},
+            "features": ["custom_profiles", "custom_domains"],
+        }
 
 
 def test_password_change_requires_the_current_password(app_client):

@@ -6,7 +6,12 @@ from fastapi.testclient import TestClient
 from app.checkers.llm import bedrock
 from app.core.config import ExtraProviderSettings, ProviderSettings, Settings
 from app.main import create_app
-from tests.conftest import auth_headers
+from tests.conftest import auth_headers, second_user_headers
+
+TIERS_CONFIG = {
+    "basic": {"llm": {"tiers": ["cheap", "local"], "providers": ["ollama"],
+                      "models": {"ollama": ["llama3.1"]}}, "features": []},
+}
 
 
 @pytest.fixture
@@ -100,3 +105,27 @@ def test_routing_bedrock_availability(
     entry = client.get("/api/routing", headers=headers).json()["languages"]["en"]["quality"]
     assert entry["available"] is False
     assert entry["reason"] == "AWS credentials not available"
+
+
+def test_routing_allowed_reflects_the_caller_s_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bedrock, "credentials_available", lambda: False)
+    settings = Settings(
+        db_path=tmp_path / "test.db",
+        rules_dir=tmp_path / "rules",
+        providers=ProviderSettings(ollama_base_url="http://127.0.0.1:9"),
+        tiers=TIERS_CONFIG,
+    )
+    client = TestClient(create_app(settings))
+
+    basic_body = client.get("/api/routing", headers=second_user_headers(client)).json()
+    for tiers in basic_body["languages"].values():
+        assert tiers["cheap"]["allowed"] is True
+        assert tiers["local"]["allowed"] is True
+        assert tiers["quality"]["allowed"] is False
+        assert tiers["balanced"]["allowed"] is False
+
+    admin_body = client.get("/api/routing", headers=auth_headers(client)).json()
+    for tiers in admin_body["languages"].values():
+        assert all(entry["allowed"] is True for entry in tiers.values())

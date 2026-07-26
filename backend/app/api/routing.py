@@ -3,11 +3,13 @@ import logging
 import os
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
+from app.api.deps import CurrentUser, get_current_user
 from app.checkers.llm import bedrock
 from app.checkers.llm.ollama import OllamaProvider
 from app.core.config import BUILTIN_ENV_KEYS, TIERS, ProviderSettings
+from app.core.permissions import policy_for
 
 router = APIRouter(prefix="/api", tags=["routing"])
 
@@ -49,9 +51,12 @@ async def _provider_status(
 
 
 @router.get("/routing")
-async def get_routing(request: Request) -> dict[str, Any]:
+async def get_routing(
+    request: Request, user: CurrentUser = Depends(get_current_user)
+) -> dict[str, Any]:
     settings = request.app.state.settings
     routing = settings.routing
+    policy = policy_for(tier=user.tier, is_admin=user.is_admin, settings=settings)
     names = sorted(
         {
             entry.provider
@@ -70,6 +75,7 @@ async def get_routing(request: Request) -> dict[str, Any]:
                 "model": entry.model,
                 "available": status[entry.provider][0],
                 "reason": status[entry.provider][1],
+                "allowed": policy.tiers is None or tier in policy.tiers,
             }
             for tier, entry in tiers.items()
         }

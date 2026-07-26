@@ -11,6 +11,8 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.api.deps import CurrentUser, get_current_user
 from app.core.auth import SELF_MIN_PASSWORD_LENGTH, issue_token, validate_password
+from app.core.config import KNOWN_FEATURES, Settings
+from app.core.permissions import features_for, policy_for
 from app.services.users import User
 
 router = APIRouter(prefix="/api", tags=["auth"])
@@ -240,24 +242,56 @@ class LoginRequest(BaseModel):
         return stripped
 
 
+class LlmPolicyPayload(BaseModel):
+    """None = unrestricted (config 'all')."""
+
+    tiers: list[str] | None = None
+    providers: list[str] | None = None
+    models: dict[str, list[str]] | None = None
+
+
+class PolicyPayload(BaseModel):
+    llm: LlmPolicyPayload
+    features: list[str]
+
+
+def _policy_payload(user: User, settings: Settings) -> PolicyPayload:
+    policy = policy_for(tier=user.tier, is_admin=user.is_admin, settings=settings)
+    features = features_for(tier=user.tier, is_admin=user.is_admin, settings=settings)
+    return PolicyPayload(
+        llm=LlmPolicyPayload(
+            tiers=None if policy.tiers is None else list(policy.tiers),
+            providers=None if policy.providers is None else list(policy.providers),
+            models=None
+            if policy.models is None
+            else {name: list(models) for name, models in policy.models.items()},
+        ),
+        # KNOWN_FEATURES order, so the payload is deterministic.
+        features=[f for f in KNOWN_FEATURES if f in features],
+    )
+
+
 class MeResponse(BaseModel):
-    """The caller's own account. Later milestones extend this model with the
-    LLM policy (M4) and quota/size/concurrency limits (M5)."""
+    """The caller's own account. The M4 half of this model's promise — the
+    LLM policy — is now delivered via `policy`; M5 adds quota/size/
+    concurrency limits."""
 
     id: int
     email: str
     display_name: str | None = None
     tier: str
     is_admin: bool
+    policy: PolicyPayload
 
     @classmethod
-    def from_user(cls, user: User) -> "MeResponse":
+    def from_user(cls, user: User, settings: Settings) -> "MeResponse":
         return cls(
             id=user.id,
             email=user.email,
             display_name=user.display_name,
             tier=user.tier,
             is_admin=user.is_admin,
+            policy=_policy_payload(user, settings),
         )
 
 
@@ -318,7 +352,7 @@ def login(request: Request, body: LoginRequest) -> LoginResponse:
     app.state.login_throttle.record_success(key)
     return LoginResponse(
         token=issue_token(user.id, app.state.auth_secret, epoch=user.token_epoch),
-        user=MeResponse.from_user(user),
+        user=MeResponse.from_user(user, app.state.settings),
     )
 
 
@@ -327,7 +361,7 @@ def me(request: Request, current: CurrentUser = Depends(get_current_user)) -> Me
     user = request.app.state.user_store.get_user(current.id)
     if user is None:  # pragma: no cover - get_current_user already rejected this
         raise HTTPException(401, "Not authenticated")
-    return MeResponse.from_user(user)
+    return MeResponse.from_user(user, request.app.state.settings)
 
 
 @router.post("/auth/password", status_code=204)
