@@ -61,7 +61,7 @@ Binding for every task; copied from the spec/roadmap where they originate.
 | `frontend/src/checking/effectiveLabel.ts` | **Create**: label helper for degradation notes |
 | `frontend/src/state/store.ts` | `llmEffective` transient state |
 | `frontend/src/sidebar/Sidebar.tsx` | degradation / not-included notes |
-| `frontend/src/profiles/ProfilesView.tsx` | create row gated on `custom_profiles` |
+| `frontend/src/profiles/ProfilesView.tsx` | create row gated on `custom_profiles`; the profile editor's own LLM tier/provider/model controls plan-gated |
 | `frontend/src/terminology/TerminologyView.tsx` | domain + term create gated on `custom_domains` |
 | `frontend/src/i18n/messages.ts` + 7 catalogs | `planSuffix`, `llmDegraded`, `llmNotIncluded` |
 | `docs/backend-architecture.md`, `docs/frontend-architecture.md`, roadmap | Task 10 |
@@ -362,8 +362,11 @@ The resolution table is the heart of spec §6.2 — every rule gets a named row,
 builders. Routing defaults used below (from config._default_routing_languages,
 language 'en'): quality→claude, balanced→claude, cheap→gemini, local→ollama."""
 
+import logging
+
 import pytest
 
+from app.core import permissions
 from app.core.config import Settings
 from app.core.permissions import (
     FULL_POLICY,
@@ -400,9 +403,14 @@ class TestPolicyFor:
             tiers=("cheap", "local"), providers=("ollama",), models=None
         )
 
-    def test_unknown_tier_fails_closed(self, caplog):
-        policy = policy_for(tier="ghost", is_admin=False, settings=TIERED)
-        assert policy == NO_LLM_POLICY
+    def test_unknown_tier_fails_closed_and_warns_once(self, caplog, monkeypatch):
+        # Isolate the module-level warn-once set so this test is order-independent.
+        monkeypatch.setattr(permissions, "_warned_unknown_tiers", set())
+        with caplog.at_level(logging.WARNING, logger="app.core.permissions"):
+            assert policy_for(tier="ghost", is_admin=False, settings=TIERED) == NO_LLM_POLICY
+            assert policy_for(tier="ghost", is_admin=False, settings=TIERED) == NO_LLM_POLICY
+        warnings = [r for r in caplog.records if "ghost" in r.getMessage()]
+        assert len(warnings) == 1  # once per tier name, not once per request
 
     def test_features_default_and_admin_and_unknown(self):
         full = frozenset({"custom_profiles", "custom_domains"})
@@ -457,6 +465,12 @@ RESOLUTION_TABLE = [
     # degrade to the server's default provider (same as the no-selection path).
     ("tier-under-unordered-direct", TIERS_EMPTY_PROVIDERS_ALL, RequestedLLM(tier="cheap"),
      eff(None, "ollama", "llama3.1", True)),
+    # …and that fallback must still respect a models allowlist for the
+    # default provider (providers "all" + models mapping is valid config).
+    ("tier-under-unordered-direct-allowlisted",
+     LLMPolicy(tiers=(), providers=None, models={"ollama": ("qwen3:8b",)}),
+     RequestedLLM(tier="cheap"),
+     eff(None, "ollama", "qwen3:8b", True)),
     # §6.2 floor: both lists empty → the LLM phase is skipped, visibly.
     ("floor-skips", NO_LLM_POLICY, RequestedLLM(tier="balanced"),
      eff(None, None, None, False, "llm_unavailable")),
@@ -702,14 +716,13 @@ def _direct_fallback(policy: LLMPolicy, settings: Settings) -> EffectiveSelectio
     so the server default stands in; both empty is the floor."""
     if policy.providers is None:
         name = settings.providers.default_provider
-        return EffectiveSelection(
-            tier=None,
-            provider=name,
-            model=default_model_for(settings.providers, name),
-            degraded=True,
-        )
-    if policy.providers:
+    elif policy.providers:
         name = policy.providers[0]
+    else:
+        name = None
+    if name is not None:
+        # providers "all" may still carry a models allowlist for this
+        # provider — the fallback must not bypass it.
         allow = policy.models.get(name) if policy.models is not None else None
         model = allow[0] if allow else default_model_for(settings.providers, name)
         return EffectiveSelection(tier=None, provider=name, model=model, degraded=True)
@@ -810,6 +823,12 @@ class TestEffectiveLlm:
         # llm_tier "turbo" → 422 straight from the request model.
         ...
 
+    def test_tier_request_ignores_bogus_provider(self, tmp_path):
+        # llm_tier "local" WITH llm_provider "nope": tier wins per the
+        # RequestedLLM contract (provider/model ignored) — 202, resolved via
+        # the tier path, no 422.
+        ...
+
     def test_no_llm_checker_has_no_effective_llm(self, tmp_path):
         # checkers=["rules"] → effective_llm is None (the block describes the
         # LLM phase; absent phase, absent block).
@@ -891,9 +910,13 @@ def get_effective_provider(
     provider that will actually run. (selection, None) means the LLM phase
     is skipped — selection.skipped says why."""
     settings = app.state.settings
-    if requested.provider is not None and requested.provider not in known_provider_names(
-        settings.providers
+    if (
+        requested.tier is None
+        and requested.provider is not None
+        and requested.provider not in known_provider_names(settings.providers)
     ):
+        # Direct requests only: with a tier set, provider/model are ignored
+        # by contract (RequestedLLM), so an ignored field must not 422.
         raise HTTPException(422, f"Unknown LLM provider: {requested.provider}")
     policy = policy_for(tier=user.tier, is_admin=user.is_admin, settings=settings)
     effective = resolve_llm_selection(policy, requested, language, settings=settings)
@@ -1038,7 +1061,7 @@ Write real bodies; the `...` only abbreviates this plan.
 
 - [ ] **Step 2: Run to verify they fail** — `uv run pytest tests/test_suggestions_api.py tests/test_documents_api.py -q` (adjust the suggestions module name to what Step 1 located).
 
-- [ ] **Step 3: Implement.** `suggestions.py`: add to `SuggestionRequest` the field `llm_tier: QualityTier | None = None`; add to `SuggestionResponse` the field `skipped: str | None = None`; give the handler `user: CurrentUser = Depends(get_current_user)`; replace the `provider_factory` call (currently `suggestions.py:75-77`) with:
+- [ ] **Step 3: Implement.** `suggestions.py`: add to `SuggestionRequest` the field `llm_tier: QualityTier | None = None`; add to `SuggestionResponse` the field `skipped: str | None = None`; give the handler `user: CurrentUser = Depends(get_current_user)`. **First rename the prompt locals**: both `system, user = build_rewrite_prompt(...)` and `system, user = build_suggestion_prompt(...)` become `system, prompt = ...`, and `provider.generate(system, user)` becomes `provider.generate(system, prompt)` — otherwise the prompt string shadows the `CurrentUser` dependency and the gate below reads `.tier` off a `str`. Then replace the `provider_factory` call (currently `suggestions.py:75-77`) with:
 
 ```python
     requested = RequestedLLM(
@@ -1337,7 +1360,7 @@ git commit -m "feat(api): feature gates on creation, config-driven tier names (M
 
 **Interfaces:**
 - Consumes: Task 5's `/me` payload shape.
-- Produces: `PolicyPayload`/`LlmPolicy`/`LlmSelectionInfo`/`EffectiveLlm` in `types.ts`; `MeResponse.policy: PolicyPayload`; `tierAllowed(user, tier)`, `providerAllowed(user, name)`, `modelAllowed(user, provider, model)`, `hasFeature(user, feature)`, `llmDisabled(user)` in `auth/policy.ts` (each takes `MeResponse | null`); i18n keys `planSuffix: string`, `llmDegraded: (effective: string, requested: string) => string`, `llmNotIncluded: string`.
+- Produces: `PolicyPayload`/`LlmPolicy`/`LlmSelectionInfo`/`EffectiveLlm` in `types.ts`; `MeResponse.policy: PolicyPayload`; `tierAllowed(user, tier)`, `providerAllowed(user, name)`, `modelAllowed(user, provider, model)`, `hasFeature(user, feature)`, `llmDisabled(user)` in `auth/policy.ts` (each takes `MeResponse | null`); i18n keys `planSuffix: string`, `llmDegraded: (effective: string, requested: string) => string`, `llmNotIncluded: string`, `llmSkippedServer: string`.
 
 **Design decision (single source of truth):** the UI gates on the `/me` policy via these helpers *everywhere*; the `allowed` flags on `/api/routing` and `/api/providers` are for API consumers and are covered by backend tests. Two live sources for the same boolean in the UI would let them disagree during refetches. This is why the helpers exist instead of reading `entry.allowed` in components.
 
@@ -1410,7 +1433,7 @@ describe('policy helpers', () => {
 })
 ```
 
-And `LlmSelector.test.tsx`: render with a store seeded with a RESTRICTED-policy user, a loaded routing table and providers list (copy the fixture style from `ProfileSelector.test.tsx`); assert (1) the `balanced` option is disabled and its label ends with the `planSuffix`, (2) the `local` option is enabled, (3) with a FLOOR-policy user the component renders nothing.
+And `LlmSelector.test.tsx`: render with a store seeded with a RESTRICTED-policy user, a loaded routing table and providers list (copy the fixture style from `ProfileSelector.test.tsx`); assert (1) the `balanced` option is disabled and its label ends with the `planSuffix`, (2) the `local` option is enabled, (3) with a FLOOR-policy user the component renders nothing, (4) with a tier selected whose routed provider/model is outside the RESTRICTED direct allowlist, the "Pin this model" button is absent.
 
 - [ ] **Step 2: Run to verify they fail** — `npx vitest run src/auth/policy.test.ts src/header/LlmSelector.test.tsx` (module not found / assertions fail).
 
@@ -1493,29 +1516,32 @@ export function llmDisabled(user: MeResponse | null): boolean {
 }
 ```
 
-`LlmSelector.tsx`: read `const user = store.user`; first thing in the component body (after hooks), `if (llmDisabled(user)) return null`. Tier options: `const notOnPlan = !tierAllowed(user, tier)`; `disabled={unavailable || notOnPlan}`; suffix `notOnPlan ? m.planSuffix : unavailable ? m.offlineSuffix : ''` (plan beats offline: "not on your plan" is the actionable one). Provider options in the Advanced panel: same pattern with `providerAllowed`. Model options: `disabled={!modelAllowed(user, shownProvider, model)}` with `planSuffix` on the label. Hooks stay above the early return (React's rules).
+`LlmSelector.tsx`: read `const user = store.user`; first thing in the component body (after hooks), `if (llmDisabled(user)) return null`. Tier options: `const notOnPlan = !tierAllowed(user, tier)`; `disabled={unavailable || notOnPlan}`; suffix `notOnPlan ? m.planSuffix : unavailable ? m.offlineSuffix : ''` (plan beats offline: "not on your plan" is the actionable one). Provider options in the Advanced panel: same pattern with `providerAllowed`. Model options: `disabled={!modelAllowed(user, shownProvider, model)}` with `planSuffix` on the label. The **"Pin this model" button** renders only when `modelAllowed(user, shownProvider, shownModel)`: pinning turns a tier-routed pair into a *direct* selection, and a routed provider can legitimately sit outside the direct-selection allowlist (§6.2 rule 5) — the pin must not offer what the dropdowns mark as off-plan. Hooks stay above the early return (React's rules).
 
-`i18n/messages.ts` adds the three keys; all seven catalogs in the same commit:
+`i18n/messages.ts` adds the four keys; all seven catalogs in the same commit. `llmNotIncluded` is the *floor* copy (the caller's plan has no LLM); `llmSkippedServer` is the *server-side* copy (routing entry missing / provider not configured) — the same `llm_unavailable` code covers both, and the UI must not tell an unrestricted user their plan denied a request the server simply cannot serve (Task 8 branches on `llmDisabled`).
 
 | key | en | de |
 |---|---|---|
 | `planSuffix` | `' (not on your plan)'` | `' (nicht im Tarif enthalten)'` |
 | `llmDegraded(effective, requested)` | `` `LLM ran on ${effective} — ${requested} is not available on your plan.` `` | `` `LLM-Prüfung lief mit ${effective} — ${requested} ist im aktuellen Tarif nicht verfügbar.` `` |
 | `llmNotIncluded` | `'LLM checking is not included in your plan.'` | `'Die LLM-Prüfung ist im aktuellen Tarif nicht enthalten.'` |
+| `llmSkippedServer` | `'LLM check skipped: not available on the server.'` | `'LLM-Prüfung übersprungen: auf dem Server nicht verfügbar.'` |
 
 | key | fr | es |
 |---|---|---|
 | `planSuffix` | `' (non inclus dans l’offre)'` | `' (no incluido en el plan)'` |
 | `llmDegraded` | `` `Vérification LLM effectuée avec ${effective} — ${requested} n’est pas disponible dans l’offre actuelle.` `` | `` `La verificación LLM se ejecutó con ${effective} — ${requested} no está disponible en el plan actual.` `` |
 | `llmNotIncluded` | `'La vérification LLM n’est pas incluse dans l’offre actuelle.'` | `'La verificación LLM no está incluida en el plan actual.'` |
+| `llmSkippedServer` | `'Vérification LLM ignorée : non disponible sur le serveur.'` | `'Verificación LLM omitida: no disponible en el servidor.'` |
 
 | key | it | ja | zh |
 |---|---|---|---|
 | `planSuffix` | `' (non incluso nel piano)'` | `'（プラン対象外）'` | `'（不在当前套餐内）'` |
 | `llmDegraded` | `` `Verifica LLM eseguita con ${effective} — ${requested} non è disponibile nel piano attuale.` `` | `` `LLMチェックは${effective}で実行されました。${requested}は現在のプランでは利用できません。` `` | `` `LLM 检查已使用${effective}运行，${requested}不在当前套餐内。` `` |
 | `llmNotIncluded` | `'La verifica LLM non è inclusa nel piano attuale.'` | `'LLMチェックは現在のプランに含まれていません。'` | `'LLM 检查不包含在当前套餐内。'` |
+| `llmSkippedServer` | `'Verifica LLM saltata: non disponibile sul server.'` | `'LLMチェックをスキップしました：サーバーで利用できません。'` | `'LLM 检查已跳过：服务器上不可用。'` |
 
-(`llmDegraded` is used in Task 8; declaring it here keeps the seven catalogs in lockstep in one pass — the `i18n.test.ts` key-parity test enforces it.)
+(`llmDegraded`/`llmNotIncluded`/`llmSkippedServer` are used in Task 8; declaring them here keeps the seven catalogs in lockstep in one pass — the `i18n.test.ts` key-parity test enforces it.)
 
 - [ ] **Step 4: Run to verify green**: `npx vitest run && npm run lint && npm run build` from `frontend/`.
 
@@ -1534,7 +1560,7 @@ git commit -m "feat(frontend): plan-gated LLM selector from /me policy (M4)"
 - Modify: `frontend/src/checking/controller.ts`, `frontend/src/checking/suggest.ts`
 - Create: `frontend/src/checking/effectiveLabel.ts` + `effectiveLabel.test.ts`
 - Modify: `frontend/src/state/store.ts`, `frontend/src/sidebar/Sidebar.tsx`, `frontend/src/App.css`
-- Test: `frontend/src/checking/controller.test.ts` (extend)
+- Test: `frontend/src/checking/controller.test.ts` (extend), `frontend/src/sidebar/Sidebar.notes.test.tsx` (create)
 
 **Interfaces:**
 - Consumes: Task 7's types/helpers and i18n keys; Task 3's response fields.
@@ -1550,6 +1576,8 @@ git commit -m "feat(frontend): plan-gated LLM selector from /me policy (M4)"
 - a response whose `effective_llm.degraded` is true lands in `useStore.getState().llmEffective`;
 - a floor user (policy with empty lists) never includes `'llm'` in `checkers` even when `includeLlm` is true;
 - a new `runCheck` resets `llmEffective` to null.
+
+`Sidebar.notes.test.tsx` (jsdom render, store seeded per case): degraded-and-ran shows the `llmDegraded` note; **degraded AND skipped shows only the skip note** (nothing "ran"); skipped with a floor-policy user shows `llmNotIncluded`; skipped with an unrestricted user shows `llmSkippedServer`.
 
 - [ ] **Step 2: Run to verify they fail.**
 
@@ -1586,12 +1614,12 @@ Add `llmEffective: null` to the `useStore.setState` reset at the top of `runChec
 
 Note the availability skip stays client-side and unchanged: in tier mode, `resolveModel` still refuses an unavailable/unconfigured tier before any request goes out. Server-side degradation can still land on an offline provider (the client cannot foresee which tier the server degrades to); that surfaces through the existing `checker_error` path — spec-conform, no new handling.
 
-`suggest.ts` (`requestForFinding`): add `llm_tier: state.tier` and null out `llm_provider`/`llm_model` when `state.tier !== null` (same shape as the controller). In `fetchSuggestions`/`fetchRewrite`, before the vet logic: if `result.skipped` is set, call `setSuggestError(findingId, currentMessages().llmNotIncluded)` (resp. `setRewriteError`) and return — the existing per-finding notice channel, per spec "surfaces like the check-status notes".
+`suggest.ts` (`requestForFinding`): add `llm_tier: state.tier` and null out `llm_provider`/`llm_model` when `state.tier !== null` (same shape as the controller). In `fetchSuggestions`/`fetchRewrite`, before the vet logic: if `result.skipped` is set, call `setSuggestError(findingId, llmDisabled(useStore.getState().user) ? currentMessages().llmNotIncluded : currentMessages().llmSkippedServer)` (resp. `setRewriteError`) and return — the existing per-finding notice channel, per spec "surfaces like the check-status notes", with the same floor-vs-server copy branch as the Sidebar.
 
 `Sidebar.tsx`, directly under the `llmError` div (`Sidebar.tsx:139`):
 
 ```tsx
-      {llmEffective?.degraded && (
+      {llmEffective?.degraded && !llmEffective.skipped && (
         <div className="llm-note">
           {m.llmDegraded(
             effectiveLabel(llmEffective.effective, m),
@@ -1600,11 +1628,13 @@ Note the availability skip stays client-side and unchanged: in tier mode, `resol
         </div>
       )}
       {llmEffective?.skipped === 'llm_unavailable' && (
-        <div className="llm-note">{m.llmNotIncluded}</div>
+        <div className="llm-note">
+          {llmDisabled(user) ? m.llmNotIncluded : m.llmSkippedServer}
+        </div>
       )}
 ```
 
-with `const llmEffective = useStore((s) => s.llmEffective)` beside the `llmError` selector. `App.css`: a `.llm-note` rule next to `.llm-error` — same layout, muted foreground (informational, not an error).
+with `const llmEffective = useStore((s) => s.llmEffective)` and `const user = useStore((s) => s.user)` beside the `llmError` selector. Two deliberate branches: a selection can be **both** degraded and skipped (degradation landing on a missing routing entry) — "ran on X" must not show when nothing ran; and `llm_unavailable` covers both the plan floor and server-side unavailability — `llmDisabled(user)` is the client-known floor signal that picks the honest copy (Task 7's key table). `App.css`: a `.llm-note` rule next to `.llm-error` — same layout, muted foreground (informational, not an error).
 
 - [ ] **Step 4: Run to verify green**: `npx vitest run && npm run lint && npm run build`.
 
@@ -1619,7 +1649,7 @@ git commit -m "feat(frontend): tier-based check requests and degradation notes (
 
 ---
 
-### Task 9: Feature-gated create affordances
+### Task 9: Feature-gated create affordances; the profile editor's LLM controls
 
 **Files:**
 - Modify: `frontend/src/profiles/ProfilesView.tsx`
@@ -1627,17 +1657,18 @@ git commit -m "feat(frontend): tier-based check requests and degradation notes (
 - Test: `frontend/src/profiles/ProfilesView.features.test.tsx`, `frontend/src/terminology/TerminologyView.features.test.tsx` (create; fixture style from the existing `.ownership.test.tsx` neighbors)
 
 **Interfaces:**
-- Consumes: Task 7's `hasFeature`; Task 6's backend semantics (403 on gated creates).
+- Consumes: Task 7's `hasFeature`, `tierAllowed`, `providerAllowed`, `modelAllowed` and `planSuffix`; Task 6's backend semantics (403 on gated creates).
 
-**Sweep first (guard-rule lesson from M3):** the gate applies to every path that calls a creating API export, not just the views this plan names. Run from `frontend/`:
+**Sweeps first (guard-rule lesson from M3):** a gate applies to every surface that exercises the guarded capability, not just the views this plan names. Run both from `frontend/`, and list both outputs in the task report:
 
 ```
 grep -rn "createProfile(\|createDomain(\|createTerm(" src --include='*.ts*' | grep -v test | grep -v api/client
+grep -rln "setTier\|setPinned\|llm_tier\|llm_provider" src --include='*.tsx' | grep -v test
 ```
 
-Every hit must be inside a `hasFeature`-gated affordance after this task (ProfilesView's create *and duplicate* paths both call `createProfile` — gate whatever the sweep finds, and list the sweep output in the task report).
+The first finds every creating call site — each must be inside a `hasFeature`-gated affordance after this task (ProfilesView's create *and duplicate* paths both call `createProfile`). The second finds every **LLM-selection surface**: Task 7 gated `header/LlmSelector`, but `ProfilesView`'s profile editor carries its own complete set of LLM controls (quality-tier buttons plus provider/model selects, currently `ProfilesView.tsx:261-345`) — leaving them ungated would contradict Task 7's single-gating-source promise. Gate whatever both sweeps find.
 
-- [ ] **Step 1: Write the failing tests.** For each view, render twice (store user with/without the feature, per the policy fixtures from Task 7's tests): without `custom_profiles`, ProfilesView shows no new-profile input, no create button, and no duplicate affordance; with it, all present. Without `custom_domains`, TerminologyView shows no add-domain row and no add-term affordance (existing terms stay editable — the edit affordances from the M3 ownership tests remain); with it, all present. Admin-shaped user (`is_admin: true` — whose policy from `/me` already contains both features) sees everything.
+- [ ] **Step 1: Write the failing tests.** For each view, render twice (store user with/without the feature, per the policy fixtures from Task 7's tests): without `custom_profiles`, ProfilesView shows no new-profile input, no create button, and no duplicate affordance; with it, all present. Without `custom_domains`, TerminologyView shows no add-domain row and no add-term affordance (existing terms stay editable — the edit affordances from the M3 ownership tests remain); with it, all present. Admin-shaped user (`is_admin: true` — whose policy from `/me` already contains both features) sees everything. Plus the profile editor's LLM controls with a RESTRICTED-policy user: the disallowed quality-tier button is disabled with `planSuffix` in its title/label, disallowed provider/model options are disabled — same assertions as `LlmSelector.test.tsx`, against ProfilesView's own controls.
 
 - [ ] **Step 2: Run to verify they fail.**
 
@@ -1648,7 +1679,9 @@ Every hit must be inside a `hasFeature`-gated affordance after this task (Profil
   const canCreate = hasFeature(user, 'custom_domains')   // TerminologyView
 ```
 
-and wrap the affordances the sweep found in `{canCreate && (...)}` — hidden, not disabled, matching the M3 read-only convention (the backend 403 remains the real boundary). No new i18n keys: hidden affordances need no copy.
+and wrap the affordances the sweep found in `{canCreate && (...)}` — hidden, not disabled, matching the M3 read-only convention (the backend 403 remains the real boundary). No new i18n keys for creation: hidden affordances need no copy.
+
+For ProfilesView's LLM controls (`ProfilesView.tsx:261-345`), apply Task 7's selector pattern with the same helpers and `planSuffix`: quality-tier buttons `disabled={!tierAllowed(user, tier)}`, provider options `disabled={!providerAllowed(user, name)}`, model options `disabled={!modelAllowed(user, provider, model)}` — disabled (not hidden) here, because a *global* profile may legitimately reference an off-plan selection the user can still run via degradation (§6.2); the control must stay visible to show what the profile asks for.
 
 - [ ] **Step 4: Run to verify green**: `npx vitest run && npm run lint && npm run build`.
 
@@ -1656,7 +1689,7 @@ and wrap the affordances the sweep found in `{canCreate && (...)}` — hidden, n
 
 ```bash
 git add src/profiles/ src/terminology/
-git commit -m "feat(frontend): feature-gated create affordances (M4)"
+git commit -m "feat(frontend): feature-gated creates, plan-gated profile LLM controls (M4)"
 ```
 
 ---
