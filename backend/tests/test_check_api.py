@@ -423,3 +423,43 @@ def test_check_results_are_invisible_to_other_users(tmp_path: Path) -> None:
         unknown.json()
         == client.get(f"/api/checks/{check_id}", headers=other).json()
     )
+
+
+def test_job_retention_is_per_owner_not_global_fifo(tmp_path: Path) -> None:
+    # Pins the fix: flooding with cheap checks used to evict the *global*
+    # oldest job regardless of owner, so one user's flood could 404 another
+    # user's still-running or recently finished check. The cap must be
+    # enforced per owner, never cross-owner.
+    from app.services.jobs import MAX_JOBS_PER_OWNER
+
+    settings = Settings(db_path=tmp_path / "t.db", rules_dir=tmp_path / "rules")
+    client = TestClient(create_app(settings))
+    admin = auth_headers(client)
+    other = second_user_headers(client)
+
+    b_check = client.post(
+        "/api/checks",
+        json={"text": "b's job", "language": "en", "checkers": ["rules"]},
+        headers=other,
+    ).json()
+
+    a_first_check_id = None
+    for i in range(MAX_JOBS_PER_OWNER + 1):
+        resp = client.post(
+            "/api/checks",
+            json={"text": f"a's job {i}", "language": "en", "checkers": ["rules"]},
+            headers=admin,
+        ).json()
+        if i == 0:
+            a_first_check_id = resp["check_id"]
+
+    # A's oldest job was evicted by A's own flood...
+    assert (
+        client.get(f"/api/checks/{a_first_check_id}", headers=admin).status_code
+        == 404
+    )
+    # ...but B's job, created before A's flood, is untouched.
+    assert (
+        client.get(f"/api/checks/{b_check['check_id']}", headers=other).status_code
+        == 200
+    )

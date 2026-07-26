@@ -1,8 +1,10 @@
-"""Seed an empty terminology store with an example domain.
+"""Seed a store with no global domain with an example domain.
 
 Gives fresh installations something to demo: one style-guide domain with a few
-representative terms per language. Never touches a store that already has
-domains; disable entirely via `seed_terminology: false` in config.yaml.
+representative terms per language. Runs whenever the store has no GLOBAL
+domain yet — private domains belonging to some owner never suppress it, since
+they aren't visible to other owners and so don't serve as a shared demo.
+Disable entirely via `seed_terminology: false` in config.yaml.
 """
 
 from app.core.models import Language
@@ -36,7 +38,8 @@ DEFAULT_TERMS: list[tuple[Language, str, list[str], str]] = [
 
 
 def seed_terminology(store: TerminologyStore) -> bool:
-    """Populate an empty store with the example domain. Returns True if seeded."""
+    """Populate the store with the example domain unless a global domain
+    already exists. Returns True if seeded."""
     if store.has_global_domains():
         return False
     domain = store.create_domain(DOMAIN_NAME, DOMAIN_DESCRIPTION, owner_id=None)

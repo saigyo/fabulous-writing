@@ -7,6 +7,7 @@ from typing import Any
 from app.core.models import Finding, Scorecard
 
 MAX_JOBS = 100
+MAX_JOBS_PER_OWNER = 10
 
 
 class CheckJob:
@@ -69,6 +70,15 @@ class JobManager:
     def create(self, owner_id: int) -> CheckJob:
         job = CheckJob(str(uuid.uuid4()), owner_id)
         self._jobs[job.id] = job
+        # Isolation must cover availability, not just visibility: trim the
+        # creator's own oldest jobs first, so flooding evicts your own
+        # history and never another owner's running or recent job.
+        # OrderedDict preserves insertion order, so the first matching entry
+        # is the creator's oldest.
+        owned = [jid for jid, j in self._jobs.items() if j.owner_id == owner_id]
+        while len(owned) > MAX_JOBS_PER_OWNER:
+            del self._jobs[owned.pop(0)]
+        # Global memory backstop, applied after per-owner trimming.
         while len(self._jobs) > MAX_JOBS:
             self._jobs.popitem(last=False)
         return job
