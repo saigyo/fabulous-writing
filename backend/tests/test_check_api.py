@@ -343,6 +343,25 @@ class RecordingFactory:
         return FakeProvider(self.response)
 
 
+class SelectiveFactory:
+    """Mimics the real make_provider_factory: raises ValueError for a
+    provider name this deployment has not configured (e.g. an optional
+    extra like gemini referenced by the default routing table), instead of
+    unconditionally returning a fake provider. Lets tests exercise the
+    gate's except-ValueError -> skipped path end to end."""
+
+    def __init__(self, known: set[str], response: str = LLM_RESPONSE) -> None:
+        self.known = known
+        self.response = response
+        self.calls: list[tuple[str | None, str | None]] = []
+
+    def __call__(self, name: str | None = None, model: str | None = None) -> LLMProvider:
+        self.calls.append((name, model))
+        if name not in self.known:
+            raise ValueError(f"Unknown LLM provider: {name}")
+        return FakeProvider(self.response)
+
+
 def _app_with_tiers(tmp_path: Path, tiers: dict | None = None):
     settings = Settings(
         db_path=tmp_path / "t.db", rules_dir=RULES_DIR, tiers=tiers or {}
@@ -393,6 +412,53 @@ class TestEffectiveLlm:
             final = client.get(f"/api/checks/{check_id}", headers=headers).json()
             assert final["effective_llm"] == expected
         assert factory.calls == [("claude", "claude-sonnet-5")]
+
+    def test_routing_to_unconfigured_provider_is_skipped_not_500(
+        self, tmp_path: Path
+    ) -> None:
+        """A granted quality tier can still route to a provider this server
+        has not configured (the default table references optional extras
+        like gemini as configuration guidance, spec §7.2 comment in
+        llm_gate.py). The factory's ValueError must surface as a graceful
+        skip, never a 500."""
+        settings = Settings(db_path=tmp_path / "t.db", rules_dir=RULES_DIR)
+        app = create_app(settings)
+        # Only ollama/claude are "configured" here; the default en/cheap
+        # routing entry points at gemini, which this factory cannot build.
+        factory = SelectiveFactory(known={"ollama", "claude"})
+        app.state.provider_factory = factory
+        with TestClient(app) as client:
+            headers = auth_headers(client)  # admin: unrestricted policy
+            post = client.post(
+                "/api/checks",
+                json={
+                    "text": "A nice text.",
+                    "language": "en",
+                    "checkers": ["llm"],
+                    "llm_tier": "cheap",
+                },
+                headers=headers,
+            )
+            assert post.status_code == 202
+            body = post.json()
+            assert body["status"] == "done"
+            assert body["findings"] == []
+            expected = {
+                "requested": {"tier": "cheap", "provider": None, "model": None},
+                "effective": {
+                    "tier": "cheap",
+                    "provider": "gemini",
+                    "model": "models/gemini-flash-latest",
+                },
+                "degraded": False,
+                "skipped": "llm_unavailable",
+            }
+            assert body["effective_llm"] == expected
+            check_id = body["check_id"]
+
+            final = client.get(f"/api/checks/{check_id}", headers=headers).json()
+            assert final["effective_llm"] == expected
+        assert factory.calls == [("gemini", "models/gemini-flash-latest")]
 
     def test_restricted_user_degrades_balanced_to_local(self, tmp_path: Path) -> None:
         app, factory = _app_with_tiers(tmp_path, TIERS_CONFIG)
