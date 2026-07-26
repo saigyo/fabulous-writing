@@ -847,13 +847,20 @@ successful end of stream.
 
 **Purge-on-user-change.** Two independent generation counters exist, guarding two
 different kinds of in-flight work, and it matters that they are not the same counter.
-`auth/session.ts` owns an auth counter (`sessionGeneration()`), bumped by `logout()`
-and `expireSession()` — but deliberately **not** by `login()`. It has exactly one
-external consumer, `AccountMenu.tsx`'s password-change flow, which captures it before
-the change request and the silent re-login it triggers, and checks it before each of
-its own `setState` calls, so a log-out (or an unrelated session expiry) landing mid-flow
-abandons the completion instead of writing a stale password-changed banner into
-whatever session is current by then.
+`auth/session.ts` owns an auth counter (`sessionGeneration()`), bumped by **every**
+session transition — `login()` on commit (`session.ts:30`), `logout()`, and
+`expireSession()`. It has exactly one external consumer, `AccountMenu.tsx`'s
+password-change flow, which captures it before the change request and compares it
+after the 204, so a log-out or an unrelated expiry landing in that window abandons the
+completion instead of writing a stale password-changed banner into whatever session is
+current by then.
+
+For the *second* window — a log-out landing while the silent re-login is itself in
+flight — that flow deliberately does **not** compare the counter again, because a
+successful `login()` bumps it, so an equality check there would abandon every normal
+completion. It relies on `login()`'s returned boolean instead: `login()` returns
+`false` without committing anything when the session moved while `postLogin` was in
+flight.
 
 `documents/autosave.ts` owns a separate document counter (`currentGeneration()`),
 bumped by `invalidateDocumentWork()` — called from `logout()` and `expireSession()`,
@@ -869,10 +876,11 @@ document-scoped (app-wide catalogs: providers, domains, languages, routing; and
 `terminology/TerminologyView.tsx`'s domains/terms, which have no owner at all) commit
 unconditionally, because there is nothing session-specific in them to leak.
 
-`login()` bumping neither counter is deliberate, not an oversight: in-flight document
-work must survive a same-user re-login, which is exactly what Task 8's silent
-re-authentication after a password change depends on — the token changes, but the
-person, and the document they were editing, has not.
+`login()` leaving the **document** counter alone is deliberate, not an oversight:
+in-flight document work must survive a same-user re-login, which is exactly what the
+silent re-authentication after a password change depends on — the token changes, but
+the person, and the document they were editing, has not. The auth counter is bumped in
+that same path, which is why the two are separate counters rather than one.
 
 **Why `checking/cancelSlot.ts` exists.** `checking/` cannot import `sessionGeneration`
 (or anything else) from `auth/session.ts` directly: `documents/hydration.ts` already
