@@ -404,6 +404,66 @@ gained the same `{ error, run }` surface (previously it had none, so a failed
 create/rename/delete of a domain or term failed silently); `ProfilesView.tsx` was
 already error-surfaced and now shares the same hook rather than its own copy.
 
+## `is_global` affordances and the domains-fetch guard
+
+M3 gave the backend's `profiles` and `domains` tables a nullable `owner_id`: a row with
+`owner_id NULL` is **global** (a seeded built-in — Standard, the example profiles,
+"Product docs" — or anything an admin explicitly created as global), visible to every
+account but mutable only by an admin (see
+`docs/backend-architecture.md#ownership`). The frontend's job is narrower than the
+backend's: it never sees `owner_id` at all, only the derived `is_global: boolean` both
+`Domain` and `Profile` (`types.ts`) now carry, and it must render read-only affordances
+for a non-admin viewing a global row rather than let a doomed mutation reach the API
+and 403.
+
+**`TerminologyView.tsx`**: `isAdmin` comes from the store; each domain computes
+`editable = !domain.is_global || isAdmin`, which gates the rename (✎) and delete (✕)
+buttons and the double-click-to-rename handler — a non-admin simply has no way to
+reach a mutation on a global domain. A `<span class="global-badge" title="…">Built-in
+</span>` renders immediately after the domain name whenever `domain.is_global` is true
+(admin or not — the badge states a fact about the row, not a permission the current
+viewer lacks). `TermTable` takes the whole `Domain` (not just its id) plus a `readOnly`
+boolean derived the same way, which hides the add-term row and every per-term ✎/✕ cell
+for a non-admin on a global domain's term list.
+
+**`ProfilesView.tsx`**: each `ProfileCard` computes `readOnly = profile.is_global &&
+!isAdmin` and applies it twice, deliberately redundantly — **belt and buckle**:
+`disabled={readOnly || …}` on every control that can reach a save (name input, domain
+multi-select, tier buttons, the pin/clear-pin controls, provider/model selects,
+rule-pack chips, both textareas) is the buckle; a `guardedSave` wrapper that
+early-returns before calling the real save whenever `readOnly` is true is the belt
+behind it, so even a control that somehow bypassed its own `disabled` attribute still
+cannot mutate a global profile it has no business touching. The delete (✕) and reset
+(↺) buttons don't go through `onSave` at all, so they are hidden entirely
+(`!readOnly && …`) rather than merely disabled. The same `global-badge` span (mirroring
+`TerminologyView`'s) renders beside the profile's name input whenever `profile.is_global`
+is true.
+
+**CSS**: `.global-badge` (`App.css`) mirrors the pre-existing `.case-badge` rule
+byte-for-byte (small bordered, muted, uppercase pill) rather than inventing a new visual
+language for "this is special." One specificity fix was needed: `.domain-row span`
+already sets `flex: 1` for every child span in a domain row, which — being a
+class+element selector — beats a bare `.global-badge` class selector regardless of
+source order, and would stretch the badge across the whole row. `.domain-row
+.global-badge { flex: none }` (a class+class selector, which wins) overrides it. Two new
+i18n keys, `globalBadge`/`globalBadgeTitle`, are defined once per locale across all
+seven catalogs.
+
+**The domains-fetch guard**: `getDomains()` populates `store.domains` from two call
+sites — `App.tsx`'s `Header` mount effect and `TerminologyView.tsx`'s `refreshDomains()`
+— and both now capture `sessionGeneration()` before the fetch and only commit the result
+if the session hasn't turned over by the time it resolves (or rejects); see this
+document's [Authentication](#authentication) section ("Purge-on-user-change") for why
+this uses the **auth** counter rather than the document one. Before M3, domains were
+shared, unowned data, so a stale write
+here was harmless by construction — the in-code comment on `App.tsx`'s effect used to
+say exactly that ("no generation guard needed"). M3 made that reasoning obsolete the
+moment domains gained an `owner_id`: an unguarded write landing after a user change
+would show the *previous* account's private domain names to whoever is now logged in.
+The stale comment was the trigger for a wider audit (`grep -rn "getDomains("` and `grep
+-rn "No generation guard"` across `frontend/src`) that confirmed these were the only two
+call sites and the only stale comment of that shape in the tree.
+
 ## Documents
 
 `src/documents/` gives each piece of writing its own persisted text, check-state
@@ -799,10 +859,13 @@ never a second source of truth for the list.
 
 M2 puts the whole app behind a login gate — every backend feature router now requires
 a caller (see `docs/backend-architecture.md`'s
-[Authentication](backend-architecture.md#authentication-and-user-accounts)). **This is
-enforcement, not ownership**: every document, folder, profile, and terminology domain
-is still shared across every account — M3 is what scopes data to the caller who
-created it.
+[Authentication](backend-architecture.md#authentication-and-user-accounts)). M2 was
+enforcement, not ownership: every document, folder, profile, and terminology domain was
+still shared across every account. **M3 (this one) is what scopes data to the caller who
+created it** — see [`is_global` affordances and the domains-fetch
+guard](#is_global-affordances-and-the-domains-fetch-guard) above and
+`docs/backend-architecture.md`'s [Ownership](backend-architecture.md#ownership) section
+for the full model.
 
 **The gate** (`auth/LoginGate.tsx`) renders `LoginForm` only while `authStatus` is
 `'anonymous'`, and the app (children) only once it is `'authenticated'`. While
@@ -874,10 +937,19 @@ itself (`documents/autosave.ts`), the document CRUD helpers (`documents/document
 whose async writes can feed the same open document (`App.tsx`'s per-document settings
 subscription and profile-fetch effect, `header/ProfileSelector.tsx`,
 `profiles/ProfilesView.tsx`, `rules/RulesView.tsx`). That is real coverage, not "every
-in-flight async operation" — writes backed by data that is not user- or
-document-scoped (app-wide catalogs: providers, domains, languages, routing; and
-`terminology/TerminologyView.tsx`'s domains/terms, which have no owner at all) commit
-unconditionally, because there is nothing session-specific in them to leak.
+in-flight async operation" — writes backed by data that is genuinely not
+document-scoped (providers, languages, routing — nobody owns these, ever) commit
+unconditionally through this counter, because there is nothing session-specific in
+them to leak. **Domains moved out of that group once M3 gave them an owner.** A
+domains fetch that resolves after the caller has changed is a real leak now (another
+account's domain names landing in the new caller's UI), but it is not *document*-scoped
+either — nothing about it belongs to the currently open document — so it is guarded by
+the separate **auth** counter (`sessionGeneration()`, above) rather than this one: both
+`App.tsx`'s `Header` mount effect and `terminology/TerminologyView.tsx`'s
+`refreshDomains()` capture `gen = sessionGeneration()` before the `GET /api/domains`
+call and only call `setDomains(...)` if `sessionGeneration() === gen` still holds on
+both the resolve and reject paths — see [`is_global` affordances and the domains-fetch
+guard](#is_global-affordances-and-the-domains-fetch-guard) above.
 
 `login()` leaving the **document** counter alone is deliberate, not an oversight:
 in-flight document work must survive a same-user re-login, which is exactly what the

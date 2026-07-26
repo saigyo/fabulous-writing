@@ -69,13 +69,23 @@ reading other milestones' plans:
 
 - `app/core/auth.py`: `hash_password(str) -> str`,
   `check_password(str, str | None) -> bool`,
-  `issue_token(user_id: int, secret: str) -> str`,
+  `issue_token(user_id: int, secret: str, *, epoch: int) -> str`,
   `TokenVerifier` protocol with `verify(token: str) -> VerifiedToken`
   (`VerifiedToken` is a frozen dataclass of `user_id: int` — **always the
   local `users.id`, in every auth mode** — and `issued_at: datetime`, tz-aware
   UTC; M2 changed this from a bare `int` return so `get_current_user` could
   compare `issued_at` against `users.password_changed_at` for revocation
   without the verifier knowing anything about that column), `LocalTokenVerifier(secret)`.
+  M3 added a third field, **`epoch: int | None`**: local tokens always carry
+  an integer epoch, equality-checked (not ordered) against the issuing
+  user's `users.token_epoch`, giving password-change revocation that is
+  exact regardless of same-second timing — the residual M2's
+  `password_changed_at` comparison left open. `None` is reserved for a
+  verifier with no epoch concept at all (the future Supabase verifier),
+  in which case `get_current_user` falls back to the `password_changed_at`
+  comparison M2 already had. `issue_token` gained the matching keyword-only
+  `epoch` parameter; every caller (today, just `POST /api/auth/login`)
+  passes the user's current `token_epoch`.
 - `app/api/deps.py`: `get_current_user(request) -> CurrentUser`,
   `require_admin(...) -> CurrentUser`; `CurrentUser` carries
   `id, email, display_name, tier, is_admin`.

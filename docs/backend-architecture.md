@@ -58,14 +58,15 @@ backend/
 │   ├── nlp/registry.py          # lazy per-language spaCy pipelines
 │   └── services/
 │       ├── _sqlite.py           # shared connect()/migrate_columns() for all five stores
-│       ├── jobs.py              # in-memory check jobs + event streams
-│       ├── terminology.py       # SQLite store: domains, terms
-│       ├── profiles.py          # SQLite store: checking profiles
-│       ├── documents.py         # SQLite store: documents
-│       ├── folders.py           # SQLite store: folders + per-folder defaults
-│       ├── seed.py              # example terminology domain
-│       ├── seed_profiles.py     # Standard + example profiles per language
-│       ├── users.py             # UserStore: users + admin_audit tables
+│       ├── ownership.py         # GlobalReadOnlyError — the one exception every owner-scoped store raises
+│       ├── jobs.py              # in-memory check jobs, scoped to their creator
+│       ├── terminology.py       # SQLite store: domains, terms — owner-scoped, nullable owner_id
+│       ├── profiles.py          # SQLite store: checking profiles — owner-scoped, nullable owner_id
+│       ├── documents.py         # SQLite store: documents — owner-scoped, NOT NULL owner_id
+│       ├── folders.py           # SQLite store: folders + per-folder defaults — owner-scoped
+│       ├── seed.py              # example terminology domain (seeded as a global row)
+│       ├── seed_profiles.py     # Standard + example profiles per language (seeded as global rows)
+│       ├── users.py             # UserStore: users + admin_audit tables; per-user token_epoch
 │       └── seed_admin.py        # bootstrap the first admin from the environment
 ├── rules/<lang>/<category>/*.yml  # the shipped rule catalog
 ├── demos/                       # seed example texts for profiles
@@ -215,7 +216,19 @@ Details worth knowing:
   client that connects late (or reconnects) still receives every event. The manager
   keeps the last 100 jobs in an `OrderedDict` — state is in-memory and per-process by
   design (a check is ephemeral; the client re-checks rather than resumes after a
-  restart).
+  restart). **Scoped to its creator (M3)**: `CheckJob` carries the `owner_id` passed to
+  `JobManager.create(owner_id)` (`POST /api/checks`, from the authenticated caller), and
+  `JobManager.get(job_id, *, owner_id)` treats a job whose `owner_id` doesn't match the
+  requesting caller identically to a missing one (`None`) — both id-addressable
+  endpoints, `GET /api/checks/{id}` and `GET /api/checks/{id}/events`, go through this
+  same scoped lookup. This was a deliberate M3 addition beyond the plan's original
+  document/folder/profile/domain scope: check ids are UUIDs (obscurity, not
+  authorization) and findings carry quoted spans of the document text, so an
+  unauthenticated-by-owner job lookup would have let any logged-in caller read another
+  account's check results by guessing or observing an id, once documents themselves
+  became private. `POST /api/suggestions` needed no equivalent change — it receives text
+  in the request body and stores nothing server-side, so there is no persistent artifact
+  for a foreign caller to address by id.
 - **Cross-checker dedup** (`app/checkers/pipeline.py`): `drop_duplicates(candidates,
   existing)` discards candidates that repeat an existing diagnosis — an overlapping
   finding of the *same category*, or one flagging substantially the same span (the
@@ -363,10 +376,32 @@ incompatibility (`compound_splitter.split_mode`).
 ## Terminology
 
 Storage (`app/services/terminology.py`) is two SQLite tables: `domains(id, name,
-description)` and `terms(id, domain_id, language, preferred, forbidden_variants JSON,
-definition, case_sensitive)`, with `ON DELETE CASCADE` from domain to terms. CRUD is
-exposed under `/api/domains` and `/api/terms`; deleting a domain also prunes it from
-every profile (`ProfileStore.remove_domain_everywhere`).
+description, owner_id)` and `terms(id, domain_id, language, preferred,
+forbidden_variants JSON, definition, case_sensitive)` — **terms carry no `owner_id` of
+their own**; a term's visibility and mutability are entirely derived from its parent
+domain's (`get_term`/`update_term`/`delete_term` join to `domains` and read
+`d.owner_id`) — with `ON DELETE CASCADE` from domain to terms. CRUD is exposed under
+`/api/domains` and `/api/terms`; deleting a domain also prunes it from every profile
+(`ProfileStore.remove_domain_everywhere`, deliberately unscoped by owner — see
+[Ownership](#ownership) for why a domain deletion must reach every owner's profiles).
+
+`domains.owner_id` is nullable, exactly like `profiles.owner_id`: `NULL` is a **global**
+domain (the seeded "Product docs" example, or any domain an admin explicitly creates as
+global), a caller's `users.id` is a private one. **One-shot backfill**: when `owner_id`
+is first added to an existing database, the single row matching the seed domain's name
+(`seed.DOMAIN_NAME`, "Product docs" — asserted equal to `terminology.py`'s own
+`_SEED_DOMAIN_NAME` by a test, since the two constants can't share an import without a
+cycle) keeps `owner_id NULL`; every other row becomes `owner_id = 1`. Unlike `profiles`
+and `folders`, `domains` never had a `UNIQUE` constraint to begin with, so there is no
+guarded table rebuild here — only the two partial unique indexes
+(`idx_domains_owner_name`, `idx_domains_global_name`, same `WHERE owner_id IS [NOT]
+NULL` shape as profiles), each behind the same duplicate pre-scan and skip-with-warning
+fallback. Because `domains` never enforced uniqueness pre-M3, this is the table most
+likely, on a real legacy database, to have the index actually skipped for one or both
+partitions — a live-DB rehearsal found neither partition needed a skip on this repo's
+current data, but the code path (and its warning) exists for exactly that pre-existing
+data shape, unlike `folders`, whose old `UNIQUE(name)` already made a legacy
+case-*sensitive* skip the more likely finding.
 
 Term names go through the same shared `validate_name()` guard documents/profiles/folders
 use (below): `POST`/`PUT /api/terms` reject an empty (whitespace-only) `preferred` term
@@ -515,15 +550,48 @@ for the editor's Load-example button. `packs_on` flows unmodified from
 when a check runs (see Rule engine below); fresh seeds default it to `[]`.
 
 - **Storage** (`app/services/profiles.py`): a `profiles` table (JSON-encoded list
-  columns, `UNIQUE(language, name)`) beside the terminology tables, plus
-  `profile_seed_markers` so seeding runs once per language and deleted example profiles
-  stay deleted across restarts. `packs_on` is its own `TEXT NOT NULL DEFAULT '[]'`
-  column (JSON-encoded list, like `categories_off`/`rule_exceptions`) — the profile's
-  rule configuration was never a single JSON blob, so adding pack support meant adding
-  a column, not reshaping one. Both `packs_on` and (earlier) `llm_tier` are added to
-  existing on-disk databases with a startup `PRAGMA table_info(profiles)` check plus
-  `ALTER TABLE ... ADD COLUMN` when missing, so upgrading in place needs no manual
-  migration step.
+  columns, nullable `owner_id` as of M3 — see below) beside the terminology tables,
+  plus `profile_seed_markers` so seeding runs once per language and deleted example
+  profiles stay deleted across restarts. `packs_on` is its own `TEXT NOT NULL DEFAULT
+  '[]'` column (JSON-encoded list, like `categories_off`/`rule_exceptions`) — the
+  profile's rule configuration was never a single JSON blob, so adding pack support
+  meant adding a column, not reshaping one. `packs_on`, (earlier) `llm_tier`, and (M3)
+  `owner_id` are all added to existing on-disk databases with a startup `PRAGMA
+  table_info(profiles)` check plus `ALTER TABLE ... ADD COLUMN` when missing, so
+  upgrading in place needs no manual migration step.
+
+  **Ownership** (M3): `owner_id INTEGER` — `NULL` for a **global** profile (visible to
+  and, per [Ownership](#ownership) below, mutable only by an admin) or a caller's
+  `users.id` for a private one. `Profile.is_global` is a `computed_field` (`owner_id is
+  None`) — the raw `owner_id` never reaches an API response (`exclude=True` on the
+  field); callers only ever see the derived boolean. **One-shot backfill**, run once
+  when `owner_id` is first added to an existing database: every `is_standard=1` row and
+  every row whose `(language, name)` matches a name in `SEED_EXAMPLE_NAMES` *and* whose
+  language already has a `profile_seed_markers` row becomes global (`owner_id` stays
+  `NULL`, since `ALTER TABLE ... ADD COLUMN` with no `DEFAULT` leaves existing rows
+  `NULL`); every other pre-existing row is explicitly set to `owner_id = 1` (the admin,
+  by migration-time convention — see [Ownership](#ownership) for why this is safe).
+  This runs exactly once, guarded by the same `"owner_id" not in columns` check that
+  gates the `ALTER TABLE`: a later rename onto a seed name must never re-globalize an
+  already-private row. **Guarded rebuild**: the legacy `UNIQUE(language, name)`
+  table-level constraint enforced global cross-owner uniqueness, which is wrong once
+  names are meaningful per-owner — SQLite cannot drop a table-level constraint without
+  a rebuild, so `_migrate()` detects `"UNIQUE" in sql.upper()` against the stored DDL
+  and, if present, creates `profiles_new` from the column-listed `_SCHEMA_TABLE`, copies
+  every row across, drops the old table, and renames the new one in — the same
+  create-copy-drop-rename shape `folders` uses (above). In place of the single dropped
+  constraint, two **partial** unique indexes are created (SQLite treats every `NULL` as
+  distinct from every other `NULL`, so one composite index covering both global and
+  per-owner rows would never actually enforce global-name uniqueness):
+  `idx_profiles_owner_lang_name` — `UNIQUE(owner_id, language, name COLLATE NOCASE)
+  WHERE owner_id IS NOT NULL` — and `idx_profiles_global_lang_name` — `UNIQUE(language,
+  name COLLATE NOCASE) WHERE owner_id IS NULL`. Each is preceded by a duplicate
+  pre-scan (`GROUP BY … , lower(name) HAVING count(*) > 1`, partitioned the same way as
+  the index it guards); if the scan finds any collision in that partition, the index is
+  **skipped** and the collision logged as a warning instead of crashing startup — the
+  same skip-with-warning pattern `folders`/`domains` use, since a pre-existing database
+  offers no general guarantee that no two rows in a partition already share a
+  case-insensitive name.
 - **`llm_tier` column** (nullable): the profile's quality tier
   (`quality|balanced|cheap|local`), an alternative to pinning `llm_provider`/
   `llm_model`. Precedence when a profile is applied: pin wins over tier wins over "no
@@ -539,9 +607,25 @@ when a check runs (see Rule engine below); fresh seeds default it to `[]`.
   and *Blog* example profiles when `seed_example_profiles` is on. Seeding is collision-safe: a
   user-created profile with the same name never crashes startup.
 - **API semantics** (`app/api/profiles.py`): full CRUD plus `POST
-  /api/profiles/{id}/reset`. The Standard profile is editable but cannot be renamed or
-  deleted (409); only Standard can be reset to seed defaults (409 otherwise). Responses
-  are **pruned**: rule ids that no longer exist for the language and deleted domain ids
+  /api/profiles/{id}/reset`, all owner-scoped (`ProfileStore` methods take `owner_id`
+  and the query itself is `WHERE owner_id IS NULL OR owner_id = ?`, so a global profile
+  is visible to everyone and a private one only to its owner — a foreign private
+  profile id 404s exactly like a nonexistent one, never 403; see
+  [Ownership](#ownership)). The Standard profile is editable but cannot be renamed or
+  deleted; only Standard can be reset to seed defaults. **Two independent guards can
+  both refuse a mutation, and their status codes differ on purpose** (adjudicated
+  against spec §7.2 after an earlier plan draft assumed a flat 409 for every caller):
+  a **non-admin** touching *any* global row — Standard or not — is refused **403**
+  ("Only admins can change built-in items", `GlobalReadOnlyError` mapped by the router)
+  before the Standard-specific rule is even consulted; an **admin**, who is allowed to
+  mutate global rows in general, hits the Standard-specific **409** ("The Standard
+  profile cannot be renamed"/"…deleted"/"Only the Standard profile can be reset") — a
+  business rule about *this one profile*, not an authorization boundary. The router
+  checks 403 before 409 in `update`/`delete` (`app/api/profiles.py`) precisely so a
+  non-admin's rejection reads as "you can't touch built-ins," never as "renaming
+  Standard specifically is forbidden," which would leak that the row is Standard to a
+  caller who was never going to be allowed to touch it regardless. Responses are
+  **pruned**: rule ids that no longer exist for the language and deleted domain ids
   are filtered out, so stale references never reach clients. `llm_tier` is one of the
   four tier ids or `null` on both `POST` and `PUT`; `ProfileCreate` defaults it to
   `null` when omitted, while `ProfileUpdate` requires the field on every `PUT` (still
@@ -551,8 +635,18 @@ when a check runs (see Rule engine below); fresh seeds default it to `[]`.
 
 Documents give each piece of writing its own persisted text, check-state snapshot, and
 per-document settings — the multi-document upgrade from the earlier single-buffer model.
-There is one owner (`owner_id` defaults to `1`; the column exists so a future multi-user
-mode is a data migration, not a schema change — nothing today issues a different value).
+`owner_id` (`INTEGER NOT NULL DEFAULT 1` — the column, and its default, predate M3 and are
+unchanged in the DDL) is the caller's `users.id`: every store method (`list_documents`,
+`get_document`, `update_document`, …) now takes and enforces `owner_id`, so one account's
+documents are simply absent from another's queries — see [Ownership](#ownership) below.
+The `DEFAULT 1` was always inert for scoping purposes (this section used to describe it as
+a placeholder for "a future multi-user mode"): every write path has always supplied
+`owner_id` explicitly (`create_document` requires it as a keyword-only argument, dropped
+from the pydantic model's own `= 1` default at the same time), so the column default never
+actually determined a row's owner — it only matters as a defensive fallback for a
+hand-written `INSERT` that forgot the column. What M3 changed is that `owner_id` is finally
+*enforced*: pre-M3 code accepted the column but never scoped a query by it, so every
+document was visible to every logged-in caller regardless of whose id was stored.
 
 All five SQLite-backed stores (`terminology.py`, `profiles.py`, `documents.py`,
 `folders.py`, `users.py` under `app/services/`) share `connect()`, and three of them
@@ -675,28 +769,39 @@ defaults applied when a document is created inside them. Deleting a folder never
 deletes what it contains.
 
 - **Storage** (`app/services/folders.py`): a single `folders` table — `id`, `owner_id`
-  (defaults to `1`, same rationale as documents), `name` (`UNIQUE`), `created_at`, plus
-  seven nullable defaults columns added by phase 3 (below). `FolderStore` is deliberately
-  simpler than `DocumentStore`: no revision, no optimistic locking — a folder is just a
-  named bucket, so the only invariant worth enforcing is **unique names** (a
-  `sqlite3.IntegrityError` from the `UNIQUE` constraint on `create_folder`/`rename_folder`
-  is caught and re-raised as `ValueError`, which the API layer maps to 409).
-  `list_folders()` orders case-insensitively by name (`COLLATE NOCASE`) then `id`, so the
-  sidebar's alphabetical folder list needs no client-side sort for the initial fetch (the
-  frontend still re-sorts locally after mutations — see `docs/frontend-architecture.md`).
-  Uniqueness itself was case-sensitive despite the case-insensitive ordering — `"Blog"`
-  and `"blog"` could coexist as two folders — so `_migrate()` additionally creates
-  `CREATE UNIQUE INDEX IF NOT EXISTS idx_folders_name_nocase ON folders(name COLLATE
-  NOCASE)`, making name uniqueness itself case-insensitive (the same `IntegrityError`→
-  `ValueError`→409 path already handles a violation of this index, no new error
-  handling needed). Since an inline column constraint can't be added to an existing
-  table without a full rebuild, this is a migration-time index creation instead; on a
-  pre-existing database that already holds case-duplicate names (e.g. both `"Blog"` and
-  `"blog"`), creating the unique index would fail outright, so `_migrate()` first checks
-  for any `lower(name)` collision and, if found, **skips** creating the index and logs a
-  warning (`"folders table has case-duplicate names %s; skipping NOCASE unique index"`)
-  instead of crashing startup — a live-DB scan during this iteration found zero
-  case-duplicates in practice, so the index is created on every database seen so far.
+  (`INTEGER NOT NULL`, the caller's `users.id`), `name`, `created_at`, plus seven nullable
+  defaults columns added by phase 3 (below). `FolderStore` is deliberately simpler than
+  `DocumentStore`: no revision, no optimistic locking — a folder is just a named bucket,
+  scoped by owner, so the only invariant worth enforcing is **unique names per owner**,
+  case-insensitively (a `sqlite3.IntegrityError` from the unique index on
+  `create_folder`/`rename_folder` is caught and re-raised as `ValueError`, which the API
+  layer maps to 409). `list_folders()` orders case-insensitively by name (`COLLATE
+  NOCASE`) then `id`, so the sidebar's alphabetical folder list needs no client-side sort
+  for the initial fetch (the frontend still re-sorts locally after mutations — see
+  `docs/frontend-architecture.md`).
+
+  **M3's guarded rebuild.** The pre-M3 table carried an inline `UNIQUE` on `name`
+  (case-sensitive, so `"Blog"` and `"blog"` could already coexist as two folders) and
+  `owner_id INTEGER NOT NULL DEFAULT 1` — both wrong once folders are per-user: global
+  uniqueness on `name` would block two different owners from both naming a folder
+  "Notes", and a silent `DEFAULT 1` would let an `INSERT` that forgot `owner_id` file
+  under the admin instead of failing loudly. SQLite cannot drop an inline `UNIQUE` or a
+  column default without rebuilding the table, so `_migrate()` detects either
+  (`"UNIQUE" in sql.upper() or "DEFAULT 1" in sql` against `sqlite_master`'s stored DDL)
+  and, if present, creates a `folders_new` table from the current `_SCHEMA` (which has
+  neither), copies every row across explicitly by column list, drops the old table, and
+  renames the new one into place — the same
+  create-copy-drop-rename shape [Checking profiles](#checking-profiles) above uses for
+  the analogous `profiles` rebuild. Row count and content are preserved exactly; only the
+  DDL changes. After the rebuild (or immediately, on a database that already lacks both),
+  `_migrate()` creates `idx_folders_owner_name` — `UNIQUE(owner_id, name COLLATE
+  NOCASE)` — replacing the old global `UNIQUE(name)` with a per-owner, case-insensitive
+  one. As with the profiles indexes above, a duplicate pre-scan
+  (`GROUP BY owner_id, lower(name) HAVING count(*) > 1`) guards the `CREATE UNIQUE INDEX`:
+  if any owner already has case-duplicate folder names (impossible on a fresh migration
+  from a single-owner DB, since the old index was already unique-per-name globally, but
+  guarded defensively the same way domains/profiles are), the index is skipped and a
+  warning logged instead of crashing startup.
 - **Lossless delete** (`delete_folder`): removing a folder and detaching its documents
   happen in the same transaction — `UPDATE documents SET folder_id = NULL WHERE folder_id
   = ?` runs before the `DELETE FROM folders`, both under the store's single `_connect()`
@@ -823,16 +928,16 @@ settings the client sends in the create payload, same as before defaults existed
 
 Milestone 1 of the multi-user work added user accounts, local email/password
 login, an admin user-management API, and an operator CLI, without
-authenticating any existing endpoint. **Milestone 2 (this one) closes that
-gap**: `documents`, `folders`, `checks`, `profiles`, `terminology`, `rules`,
-`providers`, `routing`, `suggestions`, and `languages` now all require a
+authenticating any existing endpoint. Milestone 2 closed that gap:
+`documents`, `folders`, `checks`, `profiles`, `terminology`, `rules`,
+`providers`, `routing`, `suggestions`, and `languages` all require a
 logged-in caller, and the frontend ships with the login gate, the bearer
 transport, and the account menu needed to satisfy it (see
-[frontend-architecture.md](frontend-architecture.md)). **What M2 does not do:
-none of this data is owner-scoped yet.** Every document, folder, profile, and
-terminology domain is still shared across every account — auth answers *who
-can call the API at all*, not *whose rows a given caller can see*. Filtering
-every query by the caller's `user_id` is M3.
+[frontend-architecture.md](frontend-architecture.md)). M2 answered *who can
+call the API at all*, not *whose rows a given caller can see* — every
+document, folder, profile, and terminology domain was still shared across
+every account. **Milestone 3 (this one) is what scopes data to the caller
+who created it** — see [Ownership](#ownership) below.
 
 ### Enforcement: router-level auth
 
@@ -965,18 +1070,39 @@ identifiers or maintain a blocklist — every outstanding token for that user,
 regardless of how many are in flight, becomes unusable the instant the
 column is written, without touching `LocalTokenVerifier` or the JWT itself.
 
-**Accepted residual**: both sides of that comparison are second-granularity
-(`iat` from `fromtimestamp(..., UTC)`, `password_changed_at` from
-`_utcnow()`), and the check is a strict `<` — so a token issued in the *same*
-wall-clock second as the password change is not revoked; it survives for the
-remainder of its normal 24-hour lifetime. This is also what makes Task 8's
-silent re-authentication work at all: the replacement token a password
-change mints is issued in that same instant and must remain valid. Closing
-the residual — distinguishing "the replacement token this same request just
-minted" from "an old token that happened to share that second" — needs a
-per-user token epoch (a monotonic counter bumped on every password change,
-carried in a new token claim) rather than a wall-clock comparison. The owner
-has scoped that to M3.
+**`password_changed_at`'s same-second residual, closed by M3's token
+epoch.** Both sides of the comparison above are second-granularity (`iat`
+from `fromtimestamp(..., UTC)`, `password_changed_at` from `_utcnow()`), and
+the check is a strict `<` — so a token issued in the *same* wall-clock
+second as the password change was not revoked; it survived for the
+remainder of its normal 24-hour lifetime. M3 closes this exactly, with a
+per-user `token_epoch` counter (`users.token_epoch`, `INTEGER NOT NULL
+DEFAULT 0`) rather than a wall-clock comparison: `set_password`
+(`app/services/users.py`) bumps it in the same `UPDATE` that sets
+`password_changed_at`, `issue_token` (`app/core/auth.py`) gained a
+keyword-only `epoch: int` parameter baked into the JWT as an `epoch` claim
+(required, validated as a non-bool `int` — `bool` is an `int` subclass, so
+an unguarded `isinstance` check would silently accept `True` as epoch `1`),
+and `VerifiedToken` grew a third field, `epoch: int | None`.
+`get_current_user` (`app/api/deps.py`) checks epoch **first**, by equality
+(not ordering) against the current `users.token_epoch`: any mismatch is 401,
+regardless of timestamps. This is exact where the old wall-clock comparison
+was not: the replacement token a password change mints (in the very same
+instant as the old token's `iat`, in the pathological same-second case) is
+freshly issued *after* `set_password` has already bumped `token_epoch`, so
+it always carries the new epoch and is correctly accepted, while every
+other outstanding token — including one from that same wall-clock second —
+still carries the old epoch and is rejected. `epoch is None` is the reserved
+fallback path for a verifier with no epoch concept at all (the future
+Supabase verifier — pinned in the roadmap's Cross-milestone interfaces
+section): only then does `get_current_user` fall back to the
+`password_changed_at` comparison described above, same-second residual and
+all. A pre-M3 database's `users` rows are backfilled to `token_epoch = 0` by
+the same idempotent `migrate_columns` pattern every other store uses — see
+[Ownership](#ownership) below for the deploy-time consequence (every
+existing session signs out once, since a pre-M3 token carries no `epoch`
+claim at all and the JWT's own `required` claims list now rejects it
+outright).
 
 ### `app/api/auth.py` — login, me, password change
 
@@ -1071,6 +1197,99 @@ put a mistyped password on stderr). Every mutation is audited with
 API. `revoke-admin`/`deactivate` warn — but don't refuse — if the action
 would leave no active admin: freezing all admin access during an incident
 and minting a fresh one afterward is exactly what this tool is for.
+
+## Ownership
+
+Milestone 3 scopes every per-user resource to the caller who created it. Two shapes
+cover everything:
+
+- **Owner-scoped, no global rows** (`documents`, `folders`, and the in-memory
+  `jobs` registry — see [The check flow](#the-check-flow) above for jobs):
+  `owner_id` is `NOT NULL`; every store method takes `owner_id` and every query filters
+  by it (`WHERE owner_id = ?`, or for `JobManager`, an equality check after an in-memory
+  lookup). A foreign id — another owner's document, folder, or job — is indistinguishable
+  from a nonexistent one: **404, never 403**. This matters for the same reason it always
+  does in multi-tenant systems: a 403 on a foreign id would confirm the id *exists*,
+  leaking that some other account owns something at that address; a uniform 404 reveals
+  nothing about ids you can't see.
+- **Owner-scoped with global rows** (`profiles`, `domains`): `owner_id` is nullable.
+  `NULL` means **global** — seeded built-ins (the Standard profile per language, the
+  example Marketing/Technical Documentation/Blog profiles, the "Product docs" example
+  terminology domain) plus anything an admin explicitly creates as global. A global row
+  is visible to every caller (`WHERE owner_id IS NULL OR owner_id = ?`) but mutable only
+  by an admin: any store's `update_*`/`delete_*` (and, for domains, `create_term` on a
+  global domain) raises `GlobalReadOnlyError` (`app/services/ownership.py`) when a
+  non-admin caller reaches a row with `owner_id IS NULL`. Every API router maps that one
+  exception to **403** ("Only admins can change built-in items") — the single shared
+  error shape for "you may see this, but not touch it," independent of *which* store or
+  endpoint raised it. `Profile.is_global`/`Domain.is_global` are `computed_field`
+  properties (`owner_id is None`) — the frontend never sees the raw `owner_id`, only the
+  derived boolean it actually needs (see `docs/frontend-architecture.md`'s `is_global`
+  affordances).
+
+  The Standard profile additionally carries a **second**, narrower rule on top of the
+  general global-row guard: it can never be renamed, deleted, or (for anything but
+  itself) reset, regardless of caller. Because that Standard-specific 409 and the
+  general non-admin 403 can both apply to the same request, the router checks the 403
+  first (see [Checking profiles](#checking-profiles) above) — an authorization refusal
+  must never be shaped by a business rule the caller was never going to reach anyway.
+
+**Two guarded table rebuilds** were needed because SQLite cannot drop an inline
+`UNIQUE`/`DEFAULT` constraint without recreating the table: `profiles` (dropping the
+legacy `UNIQUE(language, name)`, wrong once names are meaningful per-owner) and
+`folders` (dropping both the legacy `UNIQUE(name)` and `owner_id`'s `DEFAULT 1`). Both
+follow the same shape — detect the stale DDL via `sqlite_master`, create a
+`<table>_new` from the current `_SCHEMA`, copy every row across by an explicit column
+list, drop the old table, rename the new one in — and both replace the single dropped
+constraint with **two partial unique indexes** (one `WHERE owner_id IS NOT NULL`, scoped
+per-owner; one `WHERE owner_id IS NULL`, scoped globally) rather than one composite
+index, because SQLite treats every `NULL` as distinct from every other `NULL` — a single
+index spanning both partitions would never actually enforce global-name uniqueness.
+`domains` needed no rebuild (it never had a `UNIQUE` constraint to drop) but gained the
+same two-partial-index pair. All three tables' index creation is preceded by a
+duplicate pre-scan of its own partition; a partition with a pre-existing case-insensitive
+collision has its index **skipped**, with a warning logged, rather than crashing
+startup — a live legacy database is not guaranteed to be collision-free, and refusing to
+start is a worse failure mode than temporarily running without that one uniqueness
+guarantee. [Terminology](#terminology) above documents why `domains` — never
+uniqueness-constrained pre-M3 — is the table most likely to actually need a skip on real
+data, even though this repo's own live-DB rehearsal needed none.
+
+**One-shot ownership backfills**, each run exactly once (guarded by the same
+`"owner_id" not in columns` check that adds the column) when a pre-M3 database is first
+opened: `documents.owner_id` already existed pre-M3 (see [Documents](#documents)) and
+needed no backfill logic — every existing row was already `1`. For `folders`, the
+existing `DEFAULT 1` already meant every row's `owner_id` was already `1`, so nothing
+extra ran either — only the DDL rebuild above. For `profiles`, every `is_standard=1` row
+and every seed-example-named row (matched against `SEED_EXAMPLE_NAMES` and a
+`profile_seed_markers` entry for its language, since there is no per-row seed marker)
+keeps `owner_id NULL`; every other row becomes `owner_id = 1`. For `domains`, the single
+row matching the seed domain's name keeps `owner_id NULL`; every other row becomes
+`owner_id = 1`. In every case, "every other row" means **the pre-existing single-owner
+data becomes the admin's** — a decision that only holds because `create_app()`'s wiring
+order ([Startup bootstrap](#startup-bootstrap) above) guarantees `users` id 1 is the
+admin by the time these backfills run.
+
+**Seeders write global rows, not admin rows.** `seed_terminology`/`seed_profiles`
+(`app/services/seed.py`, `app/services/seed_profiles.py`) call `create_domain`/
+`create_profile` with `owner_id=None` — a fresh installation's example content is global
+from the start, visible to every account that ever signs up, not owned by whichever
+account happens to trigger the first `create_app()` run. `seed_terminology`'s
+`has_global_domains()` check (rather than "any domain exists") is what makes this
+correct on a legacy migration too: a database with only a user's own private domains
+(no global one yet, because the old schema had no concept of global) legitimately gets
+the global example domain seeded on top, rather than the presence of *any* domain
+suppressing it forever (spec §5.2's global-only presence check — this is a deliberate
+reversal from pre-M3 behavior, not an oversight, and is exactly the shape of "legitimate
+bootstrap addition" a migration rehearsal must classify rather than treat as row-count
+drift).
+
+**Deploy-time consequence**: pre-M3 tokens carry no `epoch` claim (see
+[`app/core/auth.py`](#appcoreauthpy--secrets-passwords-tokens) above), and
+`LocalTokenVerifier.verify`'s `required` claims list now includes `epoch` — so every
+session outstanding at the moment of an upgrade is signed out exactly once. Users simply
+log in again; the 24-hour token TTL means this is a one-time event per session, not a
+recurring one.
 
 ## API surface
 
