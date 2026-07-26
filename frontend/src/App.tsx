@@ -22,6 +22,7 @@ import { languageLabel } from './languages'
 import { useStore } from './state/store'
 import { TerminologyView } from './terminology/TerminologyView'
 import type { Language } from './types'
+import { Wordmark } from './Wordmark'
 
 export default function App() {
   const activeView = useStore((s) => s.activeView)
@@ -120,9 +121,7 @@ function Header() {
 
   return (
     <header className="header">
-      <h1>
-        Fabulous <span className="accent">Writing</span>
-      </h1>
+      <Wordmark />
       <LocaleSwitcher />
       <nav className="view-switch">
         <button
