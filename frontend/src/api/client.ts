@@ -282,10 +282,19 @@ async function readEvents(
 
   const parser = createParser({
     onEvent(event) {
+      // A single feed() call can synchronously dispatch every event framed
+      // in one chunk. If a handler calls the unsubscribe function returned
+      // by subscribeCheck (aborting `signal`) partway through that chunk,
+      // later events in the same chunk must not still reach a handler the
+      // caller just tore down.
+      if (signal.aborted) return
       if (event.event === 'done') {
         // "done" closes the stream: stop reading and settle, matching
-        // EventSource's own close-on-done behaviour above.
-        void reader?.cancel()
+        // EventSource's own close-on-done behaviour above. cancel() rejects
+        // if the stream is already errored (e.g. a dropped connection
+        // racing this same frame) — nothing awaits it, so that rejection
+        // must be caught here rather than becoming unhandled.
+        void reader?.cancel().catch(() => {})
         settle()
         return
       }
@@ -334,6 +343,15 @@ async function readEvents(
       if (done) break
       parser.feed(decoder.decode(value, { stream: true }))
     }
+    // Deliberately unpinnable by test: a correctly-terminated SSE stream
+    // never leaves a complete pending code point in the decoder, so this
+    // flush can only ever produce the tail of an already-truncated
+    // sequence — bytes that could never have completed a dispatchable
+    // frame (which requires a trailing blank line) regardless of whether
+    // this call exists. It stays because the brief mandates it as the
+    // general defence against a decoder holding a still-buffered partial
+    // multi-byte character across the last chunk, not because any test
+    // here can observe its absence — see task-5-report.md.
     parser.feed(decoder.decode())
     settle()
   } catch (error) {
@@ -352,7 +370,11 @@ export function subscribeCheck(
   handlers: CheckEventHandlers,
 ): () => void {
   const controller = new AbortController()
-  void readEvents(checkId, handlers, controller.signal)
+  // readEvents() only rejects if handlers.onDone() itself throws from
+  // inside its own catch-block settle() — nothing here awaits that
+  // promise, so an uncaught rejection would otherwise surface as an
+  // unhandled rejection with no connection back to this call site.
+  void readEvents(checkId, handlers, controller.signal).catch(() => {})
   // AbortController.abort() is idempotent and never throws, so the returned
   // function needs no guard of its own even though cancelCheck() and every
   // new runCheck() call it unconditionally.
