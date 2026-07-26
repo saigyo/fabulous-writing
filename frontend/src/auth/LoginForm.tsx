@@ -58,8 +58,15 @@ export function LoginForm() {
         />
       </label>
       {/* Same slot for both: a fresh submit error is more useful than a
-          stale expiry notice once the user has tried again. */}
-      {notice && <p className="llm-error">{notice}</p>}
+          stale expiry notice once the user has tried again. role="alert"
+          so a screen-reader user is told why sign-in failed, or why this
+          form suddenly appeared (session expiry), without having to
+          discover the text on their own. */}
+      {notice && (
+        <p className="llm-error" role="alert">
+          {notice}
+        </p>
+      )}
       <button type="submit" className="login-submit" disabled={pending}>
         {pending ? m.signInPending : m.signInSubmit}
       </button>
