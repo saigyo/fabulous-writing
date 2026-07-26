@@ -177,10 +177,24 @@ class TestTiersConfig:
         })
         assert "deepseek" in known_provider_names(settings.providers)
 
-    def test_nonpositive_tier_limit_rejected(self):
+    def test_incomplete_or_nonpositive_tier_limits_rejected(self):
+        # Spec §6.1: a supplied limits block is all-or-nothing — missing,
+        # null, or non-positive members are load-time errors (they would
+        # fail open once M5 enforces them). Absent block stays fine.
+        complete = {
+            "llm_checks_per_day": 20,
+            "max_llm_document_chars": 20000,
+            "concurrent_llm_runs": 3,
+        }
         with pytest.raises(ValidationError, match="llm_checks_per_day"):
             Settings.model_validate(
-                {"tiers": {"basic": {"limits": {"llm_checks_per_day": 0}}}}
+                {"tiers": {"basic": {"limits": {**complete, "llm_checks_per_day": 0}}}}
+            )
+        with pytest.raises(ValidationError):  # empty block: members missing
+            Settings.model_validate({"tiers": {"basic": {"limits": {}}}})
+        with pytest.raises(ValidationError):  # explicit null member
+            Settings.model_validate(
+                {"tiers": {"basic": {"limits": {**complete, "concurrent_llm_runs": None}}}}
             )
 
     def test_misspelled_tier_keys_fail_closed(self):
@@ -229,22 +243,23 @@ Add after `AuthSettings` (needs `TIERS`, which is defined above it; extend the p
 
 ```python
 class TierLimitsSettings(BaseModel):
-    """Per-user-tier numeric limits (spec §6.1). Parsed and shape-validated
-    here so the spec's sample config loads; enforcement (and required-ness)
-    arrives with M5 metering."""
+    """Per-user-tier numeric limits (spec §6.1): a supplied limits block is
+    all-or-nothing — a missing or null member is a load-time error, because
+    it would fail open the moment M5 starts enforcing. The block itself
+    stays optional on TierSettings until M5 requires it."""
 
     # Access policy must not fail open on a typo: a misspelled key in any
     # tier block is a config error, not a silently-ignored extra.
     model_config = ConfigDict(extra="forbid")
 
-    llm_checks_per_day: int | None = None
-    max_llm_document_chars: int | None = None
-    concurrent_llm_runs: int | None = None
+    llm_checks_per_day: int
+    max_llm_document_chars: int
+    concurrent_llm_runs: int
 
     @field_validator("llm_checks_per_day", "max_llm_document_chars", "concurrent_llm_runs")
     @classmethod
-    def _positive(cls, value: int | None, info) -> int | None:
-        if value is not None and value <= 0:
+    def _positive(cls, value: int, info) -> int:
+        if value <= 0:
             raise ValueError(f"{info.field_name} must be a positive integer")
         return value
 
