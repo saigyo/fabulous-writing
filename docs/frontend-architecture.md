@@ -804,10 +804,13 @@ enforcement, not ownership**: every document, folder, profile, and terminology d
 is still shared across every account — M3 is what scopes data to the caller who
 created it.
 
-**The gate** (`auth/LoginGate.tsx`) renders `LoginForm` while `authStatus` is
-`'anonymous'` or `'unknown'`, and the app (children) only once it is
-`'authenticated'`. `authStatus` starts `'unknown'`; `restoreSession()` (called once at
-mount) resolves it before anything else renders. With no stored token,
+**The gate** (`auth/LoginGate.tsx`) renders `LoginForm` only while `authStatus` is
+`'anonymous'`, and the app (children) only once it is `'authenticated'`. While
+`'unknown'` it renders **nothing** (`LoginGate.tsx:59`) — deliberately, and this is the
+reason that state exists: showing the login form during the restore round-trip would
+flash it at an already-authenticated user on every reload, and mounting the app would
+fire its mount effects unauthenticated. `authStatus` starts `'unknown'`;
+`restoreSession()` (called once at mount) resolves it before anything else renders. With no stored token,
 `restoreSession()` returns immediately without calling the API at all — a first-time
 anonymous visit makes **zero** `/api/*` requests. With a stored token it calls `GET
 /api/auth/me` — **exactly one** request — and sets `authStatus` from the result: `ok`
