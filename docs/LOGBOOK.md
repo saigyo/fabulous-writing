@@ -2967,6 +2967,14 @@ persisted store and the document buffer; re-authenticating as the *same*
 user (Task 8's silent re-auth after a password change) deliberately does
 not, so locale/current-document/collapse state survive it.
 
+**Component tests adopted, reversing the 2026-07-12 "keep no-component-test
+convention" triage.** The reversal is deliberate, not drift: M2 added the
+first components whose *behaviour* is security-relevant — `LoginGate`
+deciding not to render the app at all, and `AccountMenu` not signing the
+user out over a mistyped current password — and neither property is
+expressible as a pure function without contorting the design. Task 7 added
+`@testing-library/react` and `@testing-library/user-event` for it.
+
 **XSS audit** (spec §8's two client-side rules, now binding since M2 puts a
 bearer token in `localStorage`): grepped the whole frontend for
 `dangerouslySetInnerHTML`, `innerHTML`, `<a `, and dynamic `href`/`src`/
