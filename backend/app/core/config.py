@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -18,6 +18,19 @@ BUILTIN_ENV_KEYS = {
     "openai": "OPENAI_API_KEY",
     "mistral": "MISTRAL_API_KEY",
 }
+
+# Feature flags a tier may grant (spec §6.3). A closed set: config validation
+# rejects unknown names so a typo cannot silently withhold (or appear to
+# grant) a capability.
+KNOWN_FEATURES = ("custom_profiles", "custom_domains")
+
+
+def known_provider_names(providers: "ProviderSettings") -> tuple[str, ...]:
+    """Every provider name this deployment can construct: the built-in five
+    plus configured extras. The vocabulary for tier policies and for direct
+    provider selection."""
+    return BUILTIN_PROVIDERS + tuple(providers.extra_providers)
+
 
 # Extra provider names derive their env variable (<NAME>_API_KEY), so they
 # must be safe identifiers.
@@ -198,7 +211,74 @@ class AuthSettings(BaseModel):
     allow_additional_admins: bool = False
 
 
+class TierLimitsSettings(BaseModel):
+    """Per-user-tier numeric limits (spec §6.1): a supplied limits block is
+    all-or-nothing — a missing or null member is a load-time error, because
+    it would fail open the moment M5 starts enforcing. The block itself
+    stays optional on TierSettings until M5 requires it."""
+
+    # Access policy must not fail open on a typo: a misspelled key in any
+    # tier block is a config error, not a silently-ignored extra.
+    model_config = ConfigDict(extra="forbid")
+
+    llm_checks_per_day: int
+    max_llm_document_chars: int
+    concurrent_llm_runs: int
+
+    @field_validator("llm_checks_per_day", "max_llm_document_chars", "concurrent_llm_runs")
+    @classmethod
+    def _positive(cls, value: int, info) -> int:
+        if value <= 0:
+            raise ValueError(f"{info.field_name} must be a positive integer")
+        return value
+
+
+class TierLLMSettings(BaseModel):
+    """What a user tier may run (spec §6.1). 'all' means unrestricted for
+    that dimension. `tiers` lists *quality* tiers (the fixed ladder in
+    TIERS); `providers`/`models` govern direct selection. Provider-name
+    validation lives on Settings, which knows the configured extras."""
+
+    model_config = ConfigDict(extra="forbid")  # see TierLimitsSettings
+
+    tiers: list[str] | Literal["all"] = "all"
+    providers: list[str] | Literal["all"] = "all"
+    models: dict[str, list[str]] | Literal["all"] = "all"
+
+    @field_validator("tiers")
+    @classmethod
+    def _known_quality_tiers(cls, value: list[str] | str) -> list[str] | str:
+        if value == "all":
+            return value
+        for name in value:
+            if name not in TIERS:
+                raise ValueError(
+                    f"unknown quality tier '{name}': must be one of {TIERS}"
+                )
+        return value
+
+
+class TierSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")  # see TierLimitsSettings
+
+    llm: TierLLMSettings = Field(default_factory=TierLLMSettings)
+    limits: TierLimitsSettings | None = None
+    features: list[str] = Field(default_factory=list)
+
+    @field_validator("features")
+    @classmethod
+    def _known_features(cls, value: list[str]) -> list[str]:
+        for name in value:
+            if name not in KNOWN_FEATURES:
+                raise ValueError(
+                    f"unknown feature '{name}': must be one of {KNOWN_FEATURES}"
+                )
+        return value
+
+
 class Settings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     # Fails closed by design: a deployment that forgets to set this gets
     # "production" (docs endpoints off), not an anonymously-reachable API
     # surface. A developer who forgets gets their docs turned off, which is
@@ -223,6 +303,40 @@ class Settings(BaseModel):
     nlp: NlpSettings = Field(default_factory=NlpSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     cors: CorsSettings = Field(default_factory=CorsSettings)
+
+    # User tiers (spec §6.1): policy per tiers-of-service name. Distinct from
+    # the quality tiers in TIERS. Empty (the default) = no policy anywhere —
+    # every user unrestricted, behavior identical to pre-M4.
+    tiers: dict[str, TierSettings] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_tier_provider_names(self) -> "Settings":
+        known = set(known_provider_names(self.providers))
+        for tier_name, tier in self.tiers.items():
+            llm = tier.llm
+            if llm.providers != "all":
+                for name in llm.providers:
+                    if name not in known:
+                        raise ValueError(
+                            f"tiers.{tier_name}.llm.providers: unknown provider '{name}'"
+                        )
+            if llm.models != "all":
+                listed = None if llm.providers == "all" else set(llm.providers)
+                for name, models in llm.models.items():
+                    if name not in known:
+                        raise ValueError(
+                            f"tiers.{tier_name}.llm.models: unknown provider '{name}'"
+                        )
+                    if listed is not None and name not in listed:
+                        raise ValueError(
+                            f"tiers.{tier_name}.llm.models: '{name}' is not in providers"
+                        )
+                    if not models:
+                        raise ValueError(
+                            f"tiers.{tier_name}.llm.models.{name}: empty model allowlist"
+                            " — omit the provider from llm.providers instead"
+                        )
+        return self
 
 
 def load_settings(config_file: Path | None = None) -> Settings:

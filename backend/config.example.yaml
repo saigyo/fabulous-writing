@@ -29,6 +29,27 @@ auth:
   # When false, no API call may create or promote an admin account.
   allow_additional_admins: false
 
+# User tiers (multi-user): what each account tier may run and create.
+# With no tiers block, every user is unrestricted. Admins always bypass
+# tier policy. `tiers` inside `llm:` are the quality tiers
+# (quality/balanced/cheap/local); `limits:` is parsed now, enforced by
+# the metering milestone.
+# tiers:
+#   basic:
+#     llm:
+#       tiers: [cheap, local]   # allowed quality tiers
+#       providers: [ollama]     # allowed for direct provider selection
+#       models: all             # or a per-provider allowlist, e.g.
+#                               #   models:
+#                               #     ollama: [mistral-nemo:12b-instruct-2407-q6_K]
+#     features: []
+#   premium:
+#     llm:
+#       tiers: all
+#       providers: all
+#       models: all
+#     features: [custom_profiles, custom_domains]
+
 # CORS: browser origins permitted to call the API. Non-browser clients are
 # unaffected — CORS only constrains requests made from a web page.
 # cors:

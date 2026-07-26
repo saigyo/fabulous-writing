@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from app.core.config import Settings, load_settings
+from app.core.config import Settings, load_settings, known_provider_names
 
 
 def test_load_settings_from_yaml(tmp_path: Path) -> None:
@@ -157,3 +157,127 @@ def test_routing_rejects_unknown_default_tier(tmp_path: Path) -> None:
     config.write_text("routing:\n  default_tier: premium\n", encoding="utf-8")
     with pytest.raises(ValidationError, match="tier"):
         load_settings(config)
+
+
+class TestTiersConfig:
+    def test_default_is_no_tiers(self):
+        assert Settings().tiers == {}
+
+    def test_minimal_tier_defaults_to_all(self):
+        settings = Settings.model_validate({"tiers": {"basic": {}}})
+        tier = settings.tiers["basic"]
+        assert tier.llm.tiers == "all"
+        assert tier.llm.providers == "all"
+        assert tier.llm.models == "all"
+        assert tier.features == []
+        assert tier.limits is None
+
+    def test_spec_sample_config_loads(self):
+        settings = Settings.model_validate({
+            "tiers": {
+                "basic": {
+                    "llm": {"tiers": ["cheap", "local"], "providers": ["ollama"], "models": "all"},
+                    "limits": {
+                        "llm_checks_per_day": 20,
+                        "max_llm_document_chars": 20000,
+                        "concurrent_llm_runs": 3,
+                    },
+                    "features": [],
+                },
+                "premium": {
+                    "llm": {"tiers": "all", "providers": "all", "models": "all"},
+                    "features": ["custom_profiles", "custom_domains"],
+                },
+            }
+        })
+        assert settings.tiers["basic"].llm.tiers == ["cheap", "local"]
+        assert settings.tiers["premium"].features == ["custom_profiles", "custom_domains"]
+
+    def test_empty_llm_lists_are_the_valid_floor(self):
+        settings = Settings.model_validate(
+            {"tiers": {"basic": {"llm": {"tiers": [], "providers": []}}}}
+        )
+        assert settings.tiers["basic"].llm.tiers == []
+        assert settings.tiers["basic"].llm.providers == []
+
+    def test_unknown_quality_tier_rejected(self):
+        with pytest.raises(ValidationError, match="unknown quality tier 'turbo'"):
+            Settings.model_validate({"tiers": {"basic": {"llm": {"tiers": ["turbo"]}}}})
+
+    def test_unknown_feature_rejected(self):
+        with pytest.raises(ValidationError, match="unknown feature 'teleport'"):
+            Settings.model_validate({"tiers": {"basic": {"features": ["teleport"]}}})
+
+    def test_unknown_provider_rejected(self):
+        with pytest.raises(ValidationError, match="unknown provider 'nope'"):
+            Settings.model_validate({"tiers": {"basic": {"llm": {"providers": ["nope"]}}}})
+
+    def test_models_key_unknown_provider_rejected(self):
+        # A typo in a models key must not silently narrow a policy (spec §6.1).
+        with pytest.raises(ValidationError, match="unknown provider 'nope'"):
+            Settings.model_validate(
+                {"tiers": {"basic": {"llm": {"models": {"nope": ["x"]}}}}}
+            )
+
+    def test_models_key_outside_providers_rejected(self):
+        with pytest.raises(ValidationError, match="'claude' is not in providers"):
+            Settings.model_validate({
+                "tiers": {"basic": {"llm": {
+                    "providers": ["ollama"], "models": {"claude": ["claude-sonnet-5"]},
+                }}}
+            })
+
+    def test_empty_model_allowlist_rejected(self):
+        # An empty list would leave the degradation substitute undefined
+        # (spec §6.1); "no models" is expressed by omitting the provider.
+        with pytest.raises(ValidationError, match="empty model allowlist"):
+            Settings.model_validate(
+                {"tiers": {"basic": {"llm": {"models": {"ollama": []}}}}}
+            )
+
+    def test_extra_provider_usable_in_tier_policy(self):
+        settings = Settings.model_validate({
+            "providers": {"extra_providers": {"deepseek": {
+                "base_url": "https://api.deepseek.com/v1", "default_model": "deepseek-v4-pro",
+            }}},
+            "tiers": {"basic": {"llm": {"providers": ["deepseek"]}}},
+        })
+        assert "deepseek" in known_provider_names(settings.providers)
+
+    def test_incomplete_or_nonpositive_tier_limits_rejected(self):
+        # Spec §6.1: a supplied limits block is all-or-nothing — missing,
+        # null, or non-positive members are load-time errors (they would
+        # fail open once M5 enforces them). Absent block stays fine.
+        complete = {
+            "llm_checks_per_day": 20,
+            "max_llm_document_chars": 20000,
+            "concurrent_llm_runs": 3,
+        }
+        with pytest.raises(ValidationError, match="llm_checks_per_day"):
+            Settings.model_validate(
+                {"tiers": {"basic": {"limits": {**complete, "llm_checks_per_day": 0}}}}
+            )
+        with pytest.raises(ValidationError):  # empty block: members missing
+            Settings.model_validate({"tiers": {"basic": {"limits": {}}}})
+        with pytest.raises(ValidationError):  # explicit null member
+            Settings.model_validate(
+                {"tiers": {"basic": {"limits": {**complete, "concurrent_llm_runs": None}}}}
+            )
+
+    def test_misspelled_tier_keys_fail_closed(self):
+        # extra='forbid' on all three tier models: a typo must be a config
+        # error, never a silently-unrestricted policy.
+        with pytest.raises(ValidationError):  # 'provider' for 'providers'
+            Settings.model_validate(
+                {"tiers": {"basic": {"llm": {"provider": ["ollama"]}}}}
+            )
+        with pytest.raises(ValidationError):  # 'lmm' for 'llm'
+            Settings.model_validate(
+                {"tiers": {"basic": {"lmm": {"tiers": ["local"]}}}}
+            )
+        with pytest.raises(ValidationError):  # typo inside limits
+            Settings.model_validate(
+                {"tiers": {"basic": {"limits": {"llm_checks_per_dya": 5}}}}
+            )
+        with pytest.raises(ValidationError):  # top-level: 'tier' for 'tiers'
+            Settings.model_validate({"tier": {"basic": {}}})
