@@ -1,66 +1,55 @@
 import time
-from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
 
-from app.core.config import Settings
-from app.main import create_app
 
-
-@pytest.fixture()
-def client(tmp_path: Path) -> TestClient:
-    settings = Settings(db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules")
-    return TestClient(create_app(settings))
-
-
-def make_doc(client: TestClient, name: str = "Untitled", **extra) -> dict:
-    response = client.post(
+def make_doc(authed_client: TestClient, name: str = "Untitled", **extra) -> dict:
+    response = authed_client.post(
         "/api/documents", json={"name": name, "language": "en", **extra}
     )
     assert response.status_code == 201
     return response.json()
 
 
-def test_create_returns_full_document(client):
-    doc = make_doc(client, text="Hello there world.", llm_tier="cheap")
+def test_create_returns_full_document(authed_client):
+    doc = make_doc(authed_client, text="Hello there world.", llm_tier="cheap")
     assert doc["name"] == "Untitled" and doc["name_source"] == "fallback"
     assert doc["text"] == "Hello there world."
     assert doc["revision"] == 0 and doc["llm_tier"] == "cheap"
 
 
-def test_list_is_recency_ordered_summaries(client):
-    a = make_doc(client, name="A")
-    b = make_doc(client, name="B")
-    listing = client.get("/api/documents").json()
+def test_list_is_recency_ordered_summaries(authed_client):
+    a = make_doc(authed_client, name="A")
+    b = make_doc(authed_client, name="B")
+    listing = authed_client.get("/api/documents").json()
     assert [d["id"] for d in listing] == [b["id"], a["id"]]
     assert "text" not in listing[0] and "last_findings" not in listing[0]
 
 
-def test_get_full_document_and_404(client):
-    doc = make_doc(client)
-    assert client.get(f"/api/documents/{doc['id']}").json()["id"] == doc["id"]
-    assert client.get("/api/documents/9999").status_code == 404
+def test_get_full_document_and_404(authed_client):
+    doc = make_doc(authed_client)
+    assert authed_client.get(f"/api/documents/{doc['id']}").json()["id"] == doc["id"]
+    assert authed_client.get("/api/documents/9999").status_code == 404
 
 
-def test_get_document_prunes_dead_profile_id(client):
-    doc = make_doc(client, profile_id=9999)
-    body = client.get(f"/api/documents/{doc['id']}").json()
+def test_get_document_prunes_dead_profile_id(authed_client):
+    doc = make_doc(authed_client, profile_id=9999)
+    body = authed_client.get(f"/api/documents/{doc['id']}").json()
     assert body["profile_id"] is None
 
 
-def test_get_document_preserves_live_profile_id(client):
+def test_get_document_preserves_live_profile_id(authed_client):
     from app.core.models import Language
 
-    profile = client.app.state.profile_store.create_profile(Language.EN, "Formal")
-    doc = make_doc(client, profile_id=profile.id)
-    body = client.get(f"/api/documents/{doc['id']}").json()
+    profile = authed_client.app.state.profile_store.create_profile(Language.EN, "Formal")
+    doc = make_doc(authed_client, profile_id=profile.id)
+    body = authed_client.get(f"/api/documents/{doc['id']}").json()
     assert body["profile_id"] == profile.id
 
 
-def test_put_content_and_settings(client):
-    doc = make_doc(client)
-    response = client.put(
+def test_put_content_and_settings(authed_client):
+    doc = make_doc(authed_client)
+    response = authed_client.put(
         f"/api/documents/{doc['id']}",
         json={
             "revision": 0,
@@ -88,76 +77,76 @@ def test_put_content_and_settings(client):
     assert body["scorecard"]["stale"] is False
 
 
-def test_put_stale_revision_409(client):
-    doc = make_doc(client)
+def test_put_stale_revision_409(authed_client):
+    doc = make_doc(authed_client)
     ok = {"revision": 0, "content": {"text": "a", "findings": [], "scorecard": None}}
-    assert client.put(f"/api/documents/{doc['id']}", json=ok).status_code == 200
-    stale = client.put(f"/api/documents/{doc['id']}", json=ok)
+    assert authed_client.put(f"/api/documents/{doc['id']}", json=ok).status_code == 200
+    stale = authed_client.put(f"/api/documents/{doc['id']}", json=ok)
     assert stale.status_code == 409
-    assert client.put("/api/documents/9999", json=ok).status_code == 404
+    assert authed_client.put("/api/documents/9999", json=ok).status_code == 404
 
 
-def test_rename_sets_user_source(client):
-    doc = make_doc(client)
-    body = client.put(
+def test_rename_sets_user_source(authed_client):
+    doc = make_doc(authed_client)
+    body = authed_client.put(
         f"/api/documents/{doc['id']}", json={"revision": 0, "name": "Mine"}
     ).json()
     assert body["name"] == "Mine" and body["name_source"] == "user"
     assert body["revision"] == 1
 
 
-def test_delete(client):
-    doc = make_doc(client)
-    assert client.delete(f"/api/documents/{doc['id']}").status_code == 204
-    assert client.delete(f"/api/documents/{doc['id']}").status_code == 404
+def test_delete(authed_client):
+    doc = make_doc(authed_client)
+    assert authed_client.delete(f"/api/documents/{doc['id']}").status_code == 204
+    assert authed_client.delete(f"/api/documents/{doc['id']}").status_code == 404
 
 
 from app.checkers.llm.provider import FakeProvider
 
 
-def with_provider(client: TestClient, response: str | None) -> None:
+def with_provider(authed_client: TestClient, response: str | None) -> None:
     """Route every provider request to a fake; None simulates provider failure."""
     if response is None:
         def failing(name=None, model=None):
             raise RuntimeError("provider unavailable")
-        client.app.state.provider_factory = failing
+        authed_client.app.state.provider_factory = failing
     else:
-        client.app.state.provider_factory = (
+        authed_client.app.state.provider_factory = (
             lambda name=None, model=None: FakeProvider(response=response)
         )
 
 
-def test_generate_name_titles_fallback_document(client):
-    doc = make_doc(client, text="A long enough body about widget assembly.")
-    with_provider(client, '"Widget Assembly Guide."')
-    body = client.post(f"/api/documents/{doc['id']}/generate-name").json()
+def test_generate_name_titles_fallback_document(authed_client):
+    doc = make_doc(authed_client, text="A long enough body about widget assembly.")
+    with_provider(authed_client, '"Widget Assembly Guide."')
+    body = authed_client.post(f"/api/documents/{doc['id']}/generate-name").json()
     assert body["name"] == "Widget Assembly Guide"
     assert body["name_source"] == "llm"
     assert body["revision"] == doc["revision"]  # naming never bumps revision
 
 
-def test_generate_name_failure_falls_back_to_first_words(client):
-    doc = make_doc(client, text="alpha beta gamma delta epsilon zeta eta")
-    with_provider(client, None)
-    body = client.post(f"/api/documents/{doc['id']}/generate-name").json()
+def test_generate_name_failure_falls_back_to_first_words(authed_client):
+    doc = make_doc(authed_client, text="alpha beta gamma delta epsilon zeta eta")
+    with_provider(authed_client, None)
+    body = authed_client.post(f"/api/documents/{doc['id']}/generate-name").json()
     assert body["name"] == "alpha beta gamma delta epsilon zeta"
     assert body["name_source"] == "fallback"
 
 
-def test_generate_name_noop_when_named(client):
-    doc = make_doc(client, text="some body text here")
-    client.put(f"/api/documents/{doc['id']}", json={"revision": 0, "name": "Mine"})
-    with_provider(client, "Ignored Title")
-    body = client.post(f"/api/documents/{doc['id']}/generate-name").json()
+def test_generate_name_noop_when_named(authed_client):
+    doc = make_doc(authed_client, text="some body text here")
+    authed_client.put(f"/api/documents/{doc['id']}", json={"revision": 0, "name": "Mine"})
+    with_provider(authed_client, "Ignored Title")
+    body = authed_client.post(f"/api/documents/{doc['id']}/generate-name").json()
     assert body["name"] == "Mine" and body["name_source"] == "user"
 
 
-def test_generate_name_empty_text_keeps_name(client):
-    doc = make_doc(client, name="Untitled", text="")
-    with_provider(client, "Ignored")
-    body = client.post(f"/api/documents/{doc['id']}/generate-name").json()
+def test_generate_name_empty_text_keeps_name(authed_client):
+    doc = make_doc(authed_client, name="Untitled", text="")
+    with_provider(authed_client, "Ignored")
+    body = authed_client.post(f"/api/documents/{doc['id']}/generate-name").json()
     assert body["name"] == "Untitled" and body["name_source"] == "fallback"
-    assert client.post("/api/documents/9999/generate-name").status_code == 404
+    assert authed_client.post("/api/documents/9999/generate-name").status_code == 404
 
 
 class RenamingProvider:
@@ -178,52 +167,52 @@ class RenamingProvider:
         return self.response
 
 
-def test_generate_name_toctou_user_rename_wins(client):
-    doc = make_doc(client, text="A long enough body about widget assembly.")
-    store = client.app.state.document_store
-    client.app.state.provider_factory = lambda name=None, model=None: (
+def test_generate_name_toctou_user_rename_wins(authed_client):
+    doc = make_doc(authed_client, text="A long enough body about widget assembly.")
+    store = authed_client.app.state.document_store
+    authed_client.app.state.provider_factory = lambda name=None, model=None: (
         RenamingProvider(store, doc["id"], '"Some Title."')
     )
-    body = client.post(f"/api/documents/{doc['id']}/generate-name").json()
+    body = authed_client.post(f"/api/documents/{doc['id']}/generate-name").json()
     # The user's rename (which landed mid-flight) must survive; the LLM
     # title from the stale check must not clobber it.
     assert body["name"] == "User Renamed" and body["name_source"] == "user"
 
 
-def test_create_document_with_unknown_folder_is_422(client):
-    response = client.post(
+def test_create_document_with_unknown_folder_is_422(authed_client):
+    response = authed_client.post(
         "/api/documents",
         json={"name": "Doc", "language": "en", "folder_id": 9999},
     )
     assert response.status_code == 422
 
 
-def test_move_document_between_folders(client):
-    folder = client.post("/api/folders", json={"name": "Target"}).json()
-    doc = make_doc(client)
-    moved = client.post(
+def test_move_document_between_folders(authed_client):
+    folder = authed_client.post("/api/folders", json={"name": "Target"}).json()
+    doc = make_doc(authed_client)
+    moved = authed_client.post(
         f"/api/documents/{doc['id']}/move", json={"folder_id": folder["id"]}
     )
     assert moved.status_code == 200
     assert moved.json()["folder_id"] == folder["id"]
     assert moved.json()["revision"] == doc["revision"]  # moves never bump
-    assert client.get("/api/documents").json()[0]["folder_id"] == folder["id"]
-    back = client.post(f"/api/documents/{doc['id']}/move", json={"folder_id": None})
+    assert authed_client.get("/api/documents").json()[0]["folder_id"] == folder["id"]
+    back = authed_client.post(f"/api/documents/{doc['id']}/move", json={"folder_id": None})
     assert back.json()["folder_id"] is None
-    assert client.post(
+    assert authed_client.post(
         f"/api/documents/{doc['id']}/move", json={"folder_id": 9999}
     ).status_code == 422
-    assert client.post(
+    assert authed_client.post(
         "/api/documents/9999/move", json={"folder_id": None}
     ).status_code == 404
 
 
-def test_summaries_expose_timestamps_and_order_by_edited(client):
-    a = make_doc(client, name="A")
-    b = make_doc(client, name="B")
+def test_summaries_expose_timestamps_and_order_by_edited(authed_client):
+    a = make_doc(authed_client, name="A")
+    b = make_doc(authed_client, name="B")
     time.sleep(1.1)  # second-precision timestamps: the edit must be later
     # A check-style save on B (same text, findings only)...
-    client.put(
+    authed_client.put(
         f"/api/documents/{b['id']}",
         json={
             "revision": 0,
@@ -231,11 +220,11 @@ def test_summaries_expose_timestamps_and_order_by_edited(client):
         },
     )
     # ...then a real edit on A.
-    client.put(
+    authed_client.put(
         f"/api/documents/{a['id']}",
         json={"revision": 0, "content": {"text": "real edit", "findings": [], "scorecard": None}},
     )
-    listing = client.get("/api/documents").json()
+    listing = authed_client.get("/api/documents").json()
     assert [d["id"] for d in listing] == [a["id"], b["id"]]
     first = listing[0]
     assert {"created_at", "edited_at", "checked_at", "updated_at"} <= set(first)

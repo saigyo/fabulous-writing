@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.core.config import Settings
 from app.main import create_app
+from tests.conftest import auth_headers
 
 
 @pytest.fixture
@@ -14,7 +15,9 @@ def client(tmp_path: Path) -> TestClient:
         rules_dir=tmp_path / "rules",
         seed_terminology=False,  # CRUD tests assert exact domain lists
     )
-    return TestClient(create_app(settings))
+    client = TestClient(create_app(settings))
+    client.headers.update(auth_headers(client))
+    return client
 
 
 def test_domain_crud(client: TestClient) -> None:

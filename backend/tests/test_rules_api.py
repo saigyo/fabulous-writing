@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.core.config import Settings
 from app.main import create_app
+from tests.conftest import auth_headers
 
 RULES_DIR = Path(__file__).parent.parent / "rules"
 
@@ -13,6 +14,7 @@ RULES_DIR = Path(__file__).parent.parent / "rules"
 def client(tmp_path: Path):
     settings = Settings(db_path=tmp_path / "test.db", rules_dir=RULES_DIR)
     with TestClient(create_app(settings)) as client:
+        client.headers.update(auth_headers(client))
         yield client
 
 

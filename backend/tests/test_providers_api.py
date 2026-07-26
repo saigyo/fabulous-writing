@@ -7,6 +7,7 @@ from app.checkers.llm import bedrock
 from app.checkers.llm.claude import ClaudeProvider
 from app.core.config import ExtraProviderSettings, ProviderSettings, Settings
 from app.main import create_app
+from tests.conftest import auth_headers
 
 
 @pytest.fixture
@@ -34,7 +35,9 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
             },
         ),
     )
-    return TestClient(create_app(settings))
+    client = TestClient(create_app(settings))
+    client.headers.update(auth_headers(client))
+    return client
 
 
 def test_lists_all_providers_with_availability(

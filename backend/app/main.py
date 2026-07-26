@@ -1,11 +1,12 @@
 import os
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.admin import router as admin_router
 from app.api.auth import LoginThrottle, router as auth_router
 from app.api.checks import router as checks_router
+from app.api.deps import get_current_user
 from app.api.documents import router as documents_router
 from app.api.folders import router as folders_router
 from app.api.languages import router as languages_router
@@ -122,16 +123,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.token_verifier = LocalTokenVerifier(app.state.auth_secret)
     app.state.login_throttle = LoginThrottle()
     seed_admin(app.state.user_store)
-    app.include_router(terminology_router)
-    app.include_router(checks_router)
-    app.include_router(languages_router)
-    app.include_router(rules_router)
-    app.include_router(providers_router)
-    app.include_router(suggestions_router)
-    app.include_router(documents_router)
-    app.include_router(folders_router)
-    app.include_router(profiles_router)
-    app.include_router(routing_router)
+    # Every feature router requires a logged-in caller. Attached here at
+    # inclusion, rather than edited into each of the ten router files, so the
+    # policy lives in one readable place and a router added to this list
+    # without the dependency is visible in the diff. auth_router is excluded
+    # because POST /auth/login must stay public; its own endpoints (GET
+    # /auth/me, POST /auth/password) declare get_current_user individually.
+    # admin_router is excluded too: it already carries require_admin (a
+    # strictly stronger check) on itself.
+    protected = [
+        terminology_router, checks_router, languages_router, rules_router,
+        providers_router, suggestions_router, documents_router,
+        folders_router, profiles_router, routing_router,
+    ]
+    for router in protected:
+        app.include_router(router, dependencies=[Depends(get_current_user)])
     app.include_router(auth_router)
     app.include_router(admin_router)
 
