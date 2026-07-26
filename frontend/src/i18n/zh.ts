@@ -99,6 +99,9 @@ export const zh: Messages = {
       structure: '结构',
     })[d],
 
+  globalBadge: '内置',
+  globalBadgeTitle: '内置项 — 仅管理员可修改',
+
   domains: '领域',
   newDomainPlaceholder: '新领域…',
   add: '添加',

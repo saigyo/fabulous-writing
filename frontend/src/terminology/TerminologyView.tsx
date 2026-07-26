@@ -9,11 +9,12 @@ import {
   updateDomain,
   updateTerm,
 } from '../api/client'
+import { sessionGeneration } from '../auth/session'
 import { useCrudError } from '../hooks/useCrudError'
 import { useMessages } from '../i18n'
 import { languageName } from '../languages'
 import { useStore } from '../state/store'
-import type { Language, Term } from '../types'
+import type { Domain, Language, Term } from '../types'
 import {
   draftToTermPayload,
   filterTerms,
@@ -28,13 +29,19 @@ import {
 export function TerminologyView() {
   const domains = useStore((s) => s.domains)
   const setDomains = useStore((s) => s.setDomains)
+  const isAdmin = useStore((s) => s.user?.is_admin ?? false)
   const [activeDomainId, setActiveDomainId] = useState<number | null>(null)
   const [terms, setTerms] = useState<Term[]>([])
   const [newDomain, setNewDomain] = useState('')
   const m = useMessages()
   const { error, run } = useCrudError(m.changeFailed)
 
-  const refreshDomains = useCallback(() => getDomains().then(setDomains), [setDomains])
+  const refreshDomains = useCallback(() => {
+    const gen = sessionGeneration()
+    return getDomains().then((domains) => {
+      if (sessionGeneration() === gen) setDomains(domains)
+    })
+  }, [setDomains])
 
   useEffect(() => {
     void refreshDomains()
@@ -90,54 +97,68 @@ export function TerminologyView() {
     })
   }
 
+  const activeDomain = domains.find((domain) => domain.id === activeDomainId) ?? null
+
   return (
     <div className="terminology">
       {error && <p className="crud-error">{error}</p>}
       <aside className="domain-list">
         <h2>{m.domains}</h2>
-        {domains.map((domain) => (
-          <div
-            key={domain.id}
-            className={`domain-row${domain.id === activeDomainId ? ' selected' : ''}`}
-            onClick={() => setActiveDomainId(domain.id)}
-          >
-            {domain.id === renamingId ? (
-              <input
-                value={renameValue}
-                autoFocus
-                onClick={(event) => event.stopPropagation()}
-                onChange={(event) => setRenameValue(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') void saveRename()
-                  if (event.key === 'Escape') setRenamingId(null)
-                }}
-                onBlur={() => setRenamingId(null)}
-              />
-            ) : (
-              <span onDoubleClick={() => startRename(domain)}>{domain.name}</span>
-            )}
-            <button
-              className="icon-button"
-              title={m.renameDomainTitle}
-              onClick={(event) => {
-                event.stopPropagation()
-                startRename(domain)
-              }}
+        {domains.map((domain) => {
+          const editable = !domain.is_global || isAdmin
+          return (
+            <div
+              key={domain.id}
+              className={`domain-row${domain.id === activeDomainId ? ' selected' : ''}`}
+              onClick={() => setActiveDomainId(domain.id)}
             >
-              ✎
-            </button>
-            <button
-              className="icon-button"
-              title={m.deleteDomainTitle}
-              onClick={(event) => {
-                event.stopPropagation()
-                void removeDomain(domain.id)
-              }}
-            >
-              ✕
-            </button>
-          </div>
-        ))}
+              {domain.id === renamingId ? (
+                <input
+                  value={renameValue}
+                  autoFocus
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) => setRenameValue(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') void saveRename()
+                    if (event.key === 'Escape') setRenamingId(null)
+                  }}
+                  onBlur={() => setRenamingId(null)}
+                />
+              ) : (
+                <span onDoubleClick={() => editable && startRename(domain)}>{domain.name}</span>
+              )}
+              {domain.is_global && (
+                <span className="global-badge" title={m.globalBadgeTitle}>
+                  {m.globalBadge}
+                </span>
+              )}
+              {editable && (
+                <>
+                  <button
+                    className="icon-button"
+                    title={m.renameDomainTitle}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      startRename(domain)
+                    }}
+                  >
+                    ✎
+                  </button>
+                  <button
+                    className="icon-button"
+                    title={m.deleteDomainTitle}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      void removeDomain(domain.id)
+                    }}
+                  >
+                    ✕
+                  </button>
+                </>
+              )}
+            </div>
+          )
+        })}
         <div className="add-domain">
           <input
             value={newDomain}
@@ -148,12 +169,13 @@ export function TerminologyView() {
           <button onClick={() => void addDomain()}>{m.add}</button>
         </div>
       </aside>
-      {activeDomainId !== null && (
+      {activeDomain !== null && (
         <TermTable
-          domainId={activeDomainId}
+          domain={activeDomain}
           terms={terms}
-          onChanged={() => getTerms(activeDomainId).then(setTerms)}
+          onChanged={() => getTerms(activeDomain.id).then(setTerms)}
           run={run}
+          readOnly={activeDomain.is_global && !isAdmin}
         />
       )}
     </div>
@@ -161,13 +183,15 @@ export function TerminologyView() {
 }
 
 interface TermTableProps {
-  domainId: number
+  domain: Domain
   terms: Term[]
   onChanged: () => void
   run: (action: () => Promise<void>) => Promise<void>
+  readOnly: boolean
 }
 
-function TermTable({ domainId, terms, onChanged, run }: TermTableProps) {
+function TermTable({ domain, terms, onChanged, run, readOnly }: TermTableProps) {
+  const domainId = domain.id
   const languages = useStore((s) => s.languages)
   const m = useMessages()
   const [addDraft, setAddDraft] = useState<TermDraft>({
@@ -306,35 +330,41 @@ function TermTable({ domainId, terms, onChanged, run }: TermTableProps) {
                 </td>
                 <td>{term.definition}</td>
                 <td>
-                  <button
-                    className="icon-button"
-                    title={m.editTermTitle}
-                    onClick={() => startEdit(term)}
-                  >
-                    ✎
-                  </button>
-                  <button
-                    className="icon-button"
-                    title={m.deleteTermTitle}
-                    onClick={() =>
-                      void run(async () => {
-                        await deleteTerm(term.id)
-                        onChanged()
-                      })
-                    }
-                  >
-                    ✕
-                  </button>
+                  {!readOnly && (
+                    <>
+                      <button
+                        className="icon-button"
+                        title={m.editTermTitle}
+                        onClick={() => startEdit(term)}
+                      >
+                        ✎
+                      </button>
+                      <button
+                        className="icon-button"
+                        title={m.deleteTermTitle}
+                        onClick={() =>
+                          void run(async () => {
+                            await deleteTerm(term.id)
+                            onChanged()
+                          })
+                        }
+                      >
+                        ✕
+                      </button>
+                    </>
+                  )}
                 </td>
               </tr>
             ),
           )}
-          <tr className="add-term">
-            <TermFieldCells draft={addDraft} onChange={setAddDraft} onSubmit={() => void addTerm()} />
-            <td>
-              <button onClick={() => void addTerm()}>{m.add}</button>
-            </td>
-          </tr>
+          {!readOnly && (
+            <tr className="add-term">
+              <TermFieldCells draft={addDraft} onChange={setAddDraft} onSubmit={() => void addTerm()} />
+              <td>
+                <button onClick={() => void addTerm()}>{m.add}</button>
+              </td>
+            </tr>
+          )}
         </tbody>
       </table>
     </section>

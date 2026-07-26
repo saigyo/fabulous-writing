@@ -23,6 +23,7 @@ function profile(overrides: Partial<Profile> = {}): Profile {
     llm_tier: null,
     llm_instructions: '',
     example_text: 'Example.',
+    is_global: true,
     ...overrides,
   }
 }
@@ -101,7 +102,7 @@ describe('pack-aware rule activation', () => {
     id: 1, language: 'en', name: 'P', is_standard: false,
     categories_off: [], rule_exceptions: [], packs_on: ['techdocs'],
     domain_ids: [], llm_provider: null, llm_model: null, llm_tier: null,
-    llm_instructions: '', example_text: '',
+    llm_instructions: '', example_text: '', is_global: true,
   } as Profile
 
   it('keeps general rules on the XOR semantics', () => {
@@ -129,7 +130,7 @@ describe('tier-aware profile semantics', () => {
   const base = {
     id: 1, language: 'en' as const, name: 'P', is_standard: false,
     categories_off: [], rule_exceptions: [], packs_on: [], domain_ids: [],
-    llm_instructions: '', example_text: '',
+    llm_instructions: '', example_text: '', is_global: true,
   }
   const pinnedProfile = { ...base, llm_provider: 'claude', llm_model: 'claude-sonnet-5', llm_tier: null }
   const tierProfile = { ...base, llm_provider: null, llm_model: null, llm_tier: 'quality' as const }

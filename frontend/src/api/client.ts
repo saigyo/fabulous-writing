@@ -478,7 +478,7 @@ export const updateTerm = (termId: number, term: Partial<Omit<Term, 'id' | 'doma
 export const deleteTerm = (termId: number) =>
   request<void>(`/api/terms/${termId}`, { method: 'DELETE' })
 
-export type ProfilePayload = Omit<Profile, 'id' | 'is_standard'>
+export type ProfilePayload = Omit<Profile, 'id' | 'is_standard' | 'is_global'>
 
 export const getProfiles = (language: Language) =>
   request<Profile[]>(`/api/profiles?language=${language}`)

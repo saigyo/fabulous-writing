@@ -107,6 +107,9 @@ export const de: Messages = {
       structure: 'Struktur',
     })[d],
 
+  globalBadge: 'Mitgeliefert',
+  globalBadgeTitle: 'Mitgelieferter Eintrag — nur Administratoren können ihn ändern',
+
   domains: 'Domänen',
   newDomainPlaceholder: 'Neue Domäne…',
   add: 'Hinzufügen',

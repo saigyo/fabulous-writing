@@ -92,6 +92,10 @@ export interface Messages {
   scoreCraft: string
   dimensionName: (dimension: Dimension) => string
 
+  // Ownership (shared: terminology + profiles)
+  globalBadge: string
+  globalBadgeTitle: string
+
   // Terminology view
   domains: string
   newDomainPlaceholder: string

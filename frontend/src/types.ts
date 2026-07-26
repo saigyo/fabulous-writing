@@ -53,6 +53,7 @@ export interface Domain {
   id: number
   name: string
   description: string
+  is_global: boolean
 }
 
 export interface Term {
@@ -125,6 +126,7 @@ export interface Profile {
   llm_tier: Tier | null
   llm_instructions: string
   example_text: string
+  is_global: boolean
 }
 
 export type Tier = 'quality' | 'balanced' | 'cheap' | 'local'

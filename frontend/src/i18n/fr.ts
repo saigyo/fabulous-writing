@@ -111,6 +111,9 @@ export const fr: Messages = {
       structure: 'structure',
     })[d],
 
+  globalBadge: 'Intégré',
+  globalBadgeTitle: 'Élément intégré — seuls les administrateurs peuvent le modifier',
+
   domains: 'Domaines',
   newDomainPlaceholder: 'Nouveau domaine…',
   add: 'Ajouter',

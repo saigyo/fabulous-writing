@@ -976,6 +976,23 @@ span.score-badge {
   color: var(--text-dim);
 }
 
+.global-badge {
+  margin-left: 0.4rem;
+  font-size: 0.7rem;
+  padding: 0 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+/* .domain-row span sets flex: 1 (so the name/rename-input fills the free
+   space); the badge is a span too, so it needs its own override here — a
+   plain .global-badge rule loses that specificity fight. */
+.domain-row .global-badge {
+  flex: none;
+}
+
 .icon-button {
   background: none;
   border: none;

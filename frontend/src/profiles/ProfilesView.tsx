@@ -179,9 +179,18 @@ function ProfileCard({
   const providers = useStore((s) => s.providers)
   const routing = useStore((s) => s.routing)
   const domains = useStore((s) => s.domains)
+  const isAdmin = useStore((s) => s.user?.is_admin ?? false)
+  const readOnly = profile.is_global && !isAdmin
   const [name, setName] = useState(profile.name)
   const [instructions, setInstructions] = useState(profile.llm_instructions)
   const [example, setExample] = useState(profile.example_text)
+
+  // Belt for the `disabled` attributes below: a control that somehow still
+  // fires (or a future control that forgets `disabled`) can't reach onSave.
+  function guardedSave(patch: Partial<Profile>) {
+    if (readOnly) return
+    onSave(patch)
+  }
 
   // Mirror the header's Advanced panel: display what a check with this
   // profile would actually use — the tier's resolved pair in tier mode,
@@ -209,15 +218,21 @@ function ProfileCard({
       <div className="profile-card-title">
         <input
           value={name}
-          disabled={profile.is_standard}
+          disabled={readOnly || profile.is_standard}
           onChange={(e) => setName(e.target.value)}
-          onBlur={() => name !== profile.name && onSave({ name })}
+          onBlur={() => name !== profile.name && guardedSave({ name })}
         />
-        {profile.is_standard ? (
-          <button className="icon-button" title={m.resetStandardTitle} onClick={onReset}>↺</button>
-        ) : (
-          <button className="icon-button" title={m.deleteProfileTitle} onClick={onDelete}>✕</button>
+        {profile.is_global && (
+          <span className="global-badge" title={m.globalBadgeTitle}>
+            {m.globalBadge}
+          </span>
         )}
+        {!readOnly &&
+          (profile.is_standard ? (
+            <button className="icon-button" title={m.resetStandardTitle} onClick={onReset}>↺</button>
+          ) : (
+            <button className="icon-button" title={m.deleteProfileTitle} onClick={onDelete}>✕</button>
+          ))}
       </div>
       {/* A shared grid: row 1 holds domain (left) and the LLM selectors
           (right), row 2 the two text boxes — so their labels and upper
@@ -227,9 +242,10 @@ function ProfileCard({
           {m.domain}
           <select
             multiple
+            disabled={readOnly}
             value={profile.domain_ids.map(String)}
             onChange={(e) =>
-              onSave({
+              guardedSave({
                 domain_ids: [...e.target.selectedOptions].map((o) => Number(o.value)),
               })
             }
@@ -245,13 +261,14 @@ function ProfileCard({
             {TIERS.map((tier) => (
               <button
                 key={tier}
+                disabled={readOnly}
                 className={`tier-option${
                   profile.llm_provider === null && profile.llm_tier === tier
                     ? ' selected'
                     : ''
                 }`}
                 onClick={() =>
-                  onSave({ llm_tier: tier, llm_provider: null, llm_model: null })
+                  guardedSave({ llm_tier: tier, llm_provider: null, llm_model: null })
                 }
               >
                 {m.tierName(tier as Tier)}
@@ -273,8 +290,9 @@ function ProfileCard({
               {m.pinnedNote}
               <button
                 className="icon-button"
+                disabled={readOnly}
                 title={m.clearPin}
-                onClick={() => onSave({ llm_provider: null, llm_model: null })}
+                onClick={() => guardedSave({ llm_provider: null, llm_model: null })}
               >
                 ✕
               </button>
@@ -286,9 +304,10 @@ function ProfileCard({
               <label>
                 {m.llm}
                 <select
+                  disabled={readOnly}
                   value={shownProvider}
                   onChange={(e) =>
-                    onSave({ llm_provider: e.target.value, llm_model: null })
+                    guardedSave({ llm_provider: e.target.value, llm_model: null })
                   }
                 >
                   {shownProvider === '' && <option value="" />}
@@ -300,9 +319,10 @@ function ProfileCard({
               <label>
                 {m.model}
                 <select
+                  disabled={readOnly}
                   value={shownModel}
                   onChange={(e) =>
-                    onSave({
+                    guardedSave({
                       llm_provider: shownProvider || null,
                       llm_model: e.target.value || null,
                     })
@@ -316,9 +336,10 @@ function ProfileCard({
               {!pinnedProfile && resolution?.ok && (
                 <button
                   className="icon-button llm-pin-button"
+                  disabled={readOnly}
                   title={m.pinThisModel}
                   onClick={() =>
-                    onSave({
+                    guardedSave({
                       llm_provider: shownProvider,
                       llm_model: shownModel || null,
                     })
@@ -338,10 +359,11 @@ function ProfileCard({
                   return (
                     <button
                       key={pack}
+                      disabled={readOnly}
                       className={`tier-option${on ? ' selected' : ''}`}
                       aria-pressed={on}
                       onClick={() =>
-                        onSave({
+                        guardedSave({
                           packs_on: on
                             ? profile.packs_on.filter((p) => p !== pack)
                             : [...profile.packs_on, pack],
@@ -360,10 +382,11 @@ function ProfileCard({
           {m.exampleTextLabel}
           <textarea
             rows={8}
+            disabled={readOnly}
             value={example}
             onChange={(e) => setExample(e.target.value)}
             onBlur={() =>
-              example !== profile.example_text && onSave({ example_text: example })
+              example !== profile.example_text && guardedSave({ example_text: example })
             }
           />
         </label>
@@ -371,11 +394,12 @@ function ProfileCard({
           {m.llmInstructionsLabel}
           <textarea
             rows={8}
+            disabled={readOnly}
             value={instructions}
             onChange={(e) => setInstructions(e.target.value)}
             onBlur={() =>
               instructions !== profile.llm_instructions &&
-              onSave({ llm_instructions: instructions })
+              guardedSave({ llm_instructions: instructions })
             }
           />
           <span className="hint">{m.llmInstructionsHint}</span>

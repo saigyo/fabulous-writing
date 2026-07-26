@@ -95,6 +95,9 @@ export const en: Messages = {
       structure: 'structure',
     })[d],
 
+  globalBadge: 'Built-in',
+  globalBadgeTitle: 'Built-in item — only admins can change it',
+
   domains: 'Domains',
   newDomainPlaceholder: 'New domain…',
   add: 'Add',

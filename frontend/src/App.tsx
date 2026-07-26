@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import './App.css'
 import { getDomains, getLanguages, getProfiles, getProviders, getRouting } from './api/client'
 import { AccountMenu } from './auth/AccountMenu'
+import { sessionGeneration } from './auth/session'
 import { runCheck } from './checking/controller'
 import { currentGeneration, flush, noteChange } from './documents/autosave'
 import { initDocuments } from './documents/documents'
@@ -85,15 +86,20 @@ export function Header() {
   const m = useMessages()
 
   useEffect(() => {
-    // Mount-only fetch; grab the actions off the store object directly so the
-    // effect has no reactive dependencies. No generation guard needed: these
-    // are app-wide catalogs (providers/domains/languages/routing are not
-    // scoped to a user or document — see app/api/providers.py, terminology.py,
-    // languages.py, routing.py), so a write landing after a session turnover
-    // still writes the same data the incoming session would itself fetch.
+    // Mount-only fetch; grab the actions off the store object directly so
+    // the effect has no reactive dependencies. providers/languages/routing
+    // are app-wide catalogs (app/api/providers.py, languages.py,
+    // routing.py) — a write landing after a session turnover writes the
+    // same data the incoming session would fetch, so they stay unguarded.
+    // domains are per-user since M3 (owner-scoped in
+    // app/services/terminology.py): a fetch started under user A must not
+    // land in user B's store.
     const { setProviders, setDomains, setLanguages, setRouting } = useStore.getState()
+    const gen = sessionGeneration()
     getProviders().then(setProviders).catch(() => setProviders([]))
-    getDomains().then(setDomains).catch(() => setDomains([]))
+    getDomains()
+      .then((domains) => { if (sessionGeneration() === gen) setDomains(domains) })
+      .catch(() => { if (sessionGeneration() === gen) setDomains([]) })
     getLanguages().then(setLanguages).catch(() => {})
     getRouting().then(setRouting).catch(() => setRouting(null))
   }, [])

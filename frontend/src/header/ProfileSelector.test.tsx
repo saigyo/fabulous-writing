@@ -30,6 +30,7 @@ function profile(overrides: Partial<Profile> = {}): Profile {
     llm_tier: 'quality',
     llm_instructions: '',
     example_text: '',
+    is_global: true,
     ...overrides,
   }
 }
