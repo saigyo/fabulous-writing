@@ -2994,11 +2994,14 @@ account menu left the session signed in (silent re-auth) while the old
 password was rejected on a fresh sign-in immediately after. A stale token
 produces exactly one `/api/auth/me` call before falling back to the gate; no
 stored token produces zero `/api/*` calls. There is no dedicated "cancel
-check" button in this build — the only wired cancellation path is
-`cancelInFlightCheck()` on logout/session-expiry — so "cancel mid-run" was
-verified by logging out while a check was streaming: it stopped cleanly and
-the UI returned to the login gate with the persisted blob cleared, no
-error.
+check" **button** in this build; cancellation is wired to two paths, both
+reaching `cancelCheck()` — a document switch (`documents/hydration.ts` calls
+it before loading the next document) and session end
+(`cancelInFlightCheck()` from logout/expiry). "Cancel mid-run" was verified
+through the session-end path: logging out while a check was streaming
+stopped it cleanly and the UI returned to the login gate with the persisted
+blob cleared, no error. The document-switch path was not exercised in the
+browser, though it invokes the same function.
 
 **Fixed `frontend/scripts/capture-screenshots.mjs`**, a real entry point
 (`npm run screenshots`; the README images come from it) that this milestone
@@ -3013,14 +3016,20 @@ running it end-to-end against the scratch stack: all seven screenshots
 captured, scratch content cleaned up, and the Standard profile's LLM
 settings restored.
 
-**Two accepted residuals**, both recorded in the architecture docs: token
+**One accepted residual**, recorded in the architecture docs: token
 revocation compares second-granularity timestamps with a strict `<`, so a
 token issued in the same wall-clock second as a password change survives
 for its remaining lifetime — the same granularity that lets the silent
 re-auth's replacement token stay valid; closing it needs a per-user token
-epoch, scoped to M3. And `/docs`, `/redoc`, `/openapi.json` are
-FastAPI-internal routes outside the enforcement loop and remain anonymously
-reachable — schema only, no data.
+epoch, scoped to M3.
+
+`/docs`, `/redoc` and `/openapi.json` are FastAPI-internal routes outside the
+enforcement loop, so they were initially left anonymously reachable. That was
+**closed before merge** at the owner's request: a new `environment` setting
+(`dev` / `staging` / `production`, defaulting to `production`) means
+`create_app()` registers all three only in `dev`; staging and production
+return 404. They are not gated behind auth — they are not registered at all,
+so there is nothing to probe.
 
 **Ownership scoping is still M3.** Every document, folder, profile, and
 terminology domain remains shared across every account; M2 answers who can
