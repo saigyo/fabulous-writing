@@ -3,7 +3,7 @@ import './App.css'
 import { getDomains, getLanguages, getProfiles, getProviders, getRouting } from './api/client'
 import { AccountMenu } from './auth/AccountMenu'
 import { runCheck } from './checking/controller'
-import { flush, noteChange } from './documents/autosave'
+import { currentGeneration, flush, noteChange } from './documents/autosave'
 import { initDocuments } from './documents/documents'
 import {
   applyHeaderProfileSelection,
@@ -80,13 +80,17 @@ export default function App() {
   )
 }
 
-function Header() {
+export function Header() {
   const store = useStore()
   const m = useMessages()
 
   useEffect(() => {
     // Mount-only fetch; grab the actions off the store object directly so the
-    // effect has no reactive dependencies.
+    // effect has no reactive dependencies. No generation guard needed: these
+    // are app-wide catalogs (providers/domains/languages/routing are not
+    // scoped to a user or document — see app/api/providers.py, terminology.py,
+    // languages.py, routing.py), so a write landing after a session turnover
+    // still writes the same data the incoming session would itself fetch.
     const { setProviders, setDomains, setLanguages, setRouting } = useStore.getState()
     getProviders().then(setProviders).catch(() => setProviders([]))
     getDomains().then(setDomains).catch(() => setDomains([]))
@@ -102,8 +106,15 @@ function Header() {
     // under StrictMode's double-invoked effects.
     const isSwitch = prevLanguage.current !== null && prevLanguage.current !== language
     prevLanguage.current = language
+    // Captured before the request goes out: a session ending mid-request
+    // (logout/expiry — see documents/autosave.ts's currentGeneration()) must
+    // not let user A's profile list and header selection (language,
+    // domainIds, provider, model, tier) land in user B's store, where the
+    // live subscription below would autosave them onto B's open document.
+    const gen = currentGeneration()
     getProfiles(language)
       .then((profiles) => {
+        if (gen !== currentGeneration()) return // session ended: do not write
         const s = useStore.getState()
         s.setProfiles(profiles)
         const remembered = profiles.find(

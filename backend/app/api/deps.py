@@ -51,10 +51,20 @@ def get_current_user(request: Request) -> CurrentUser:
     # from _utcnow()), which is what makes the strict `<` correct on both
     # sides of a change, including a replacement token minted in the same
     # second as the change.
-    if user.password_changed_at and verified.issued_at < datetime.fromisoformat(
-        user.password_changed_at
-    ):
-        raise HTTPException(401, _UNAUTHENTICATED)
+    if user.password_changed_at:
+        try:
+            changed_at = datetime.fromisoformat(user.password_changed_at)
+        except ValueError:
+            # _utcnow() (users.py) is the only writer today and always
+            # produces a parseable value, so this is unreachable in
+            # practice — but a hand-edited row or a future migration could
+            # introduce a malformed one, the same class core/auth.py's
+            # check_password() and its iat guard already treat as "does not
+            # match" rather than letting it 500 every request this user
+            # makes.
+            raise HTTPException(401, _UNAUTHENTICATED) from None
+        if verified.issued_at < changed_at:
+            raise HTTPException(401, _UNAUTHENTICATED)
     return CurrentUser(
         id=user.id,
         email=user.email,

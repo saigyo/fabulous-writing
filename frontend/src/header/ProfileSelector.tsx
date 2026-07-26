@@ -1,4 +1,5 @@
 import { updateProfile } from '../api/client'
+import { currentGeneration } from '../documents/autosave'
 import { useMessages } from '../i18n'
 import { isProfileDirty } from '../profiles/profile'
 import { useStore } from '../state/store'
@@ -19,6 +20,12 @@ export function ProfileSelector() {
 
   async function saveOverrides() {
     if (!selected) return
+    // Captured before the request goes out: a session ending mid-request
+    // must not land this write in the incoming session's store. Also reads
+    // `profiles` fresh (not the pre-await closure above) after the await, so
+    // it can't clobber a `profiles` update that landed while this was in
+    // flight, session turnover or not.
+    const gen = currentGeneration()
     const saved = await updateProfile(selected.id, {
       name: selected.name,
       categories_off: selected.categories_off,
@@ -31,9 +38,9 @@ export function ProfileSelector() {
       llm_instructions: selected.llm_instructions,
       example_text: selected.example_text,
     })
-    useStore.getState().setProfiles(
-      profiles.map((p) => (p.id === saved.id ? saved : p)),
-    )
+    if (gen !== currentGeneration()) return // session ended: do not write
+    const s = useStore.getState()
+    s.setProfiles(s.profiles.map((p) => (p.id === saved.id ? saved : p)))
   }
 
   return (

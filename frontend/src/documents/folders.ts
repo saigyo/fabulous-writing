@@ -49,7 +49,10 @@ export function applyFolderDefaults(
 }
 
 /** Persist a folder's defaults (full replace) and update it in place.
- * Errors are rethrown: the defaults dialog shows them inline. */
+ * Errors are rethrown: the defaults dialog shows them inline. No generation
+ * check needed: the write below re-reads the store fresh (not a pre-await
+ * closure) and updates by id, so a stale `store.folders` here still only
+ * ever replaces `id` within whatever the store *currently* holds. */
 export async function saveFolderDefaults(
   id: number,
   defaults: FolderDefaults,
@@ -77,6 +80,10 @@ export async function addFolder(
   store.setFolders(sortedByName([...store.folders, folder]))
 }
 
+// No generation check needed, for the same reason as saveFolderDefaults()
+// above: a fresh store read plus an id-keyed .map means a stale
+// `store.folders` here still only ever renames `id` within whatever the
+// store *currently* holds.
 export async function renameFolderById(id: number, name: string): Promise<void> {
   const renamed = await apiRenameFolder(id, name.trim())
   const store = useStore.getState()

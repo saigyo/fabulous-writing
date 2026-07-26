@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from 'react'
 import { getRules, updateProfile, type RulesResponse } from '../api/client'
+import { currentGeneration } from '../documents/autosave'
 import { useCrudError } from '../hooks/useCrudError'
 import { interpolate, useMessages } from '../i18n'
 import { isRuleActive } from '../profiles/profile'
@@ -43,6 +44,9 @@ export function RulesView() {
     packs_on?: string[]
   }) {
     if (!profile) return
+    // Captured before the request goes out: a session ending mid-request
+    // must not land this write in the incoming session's store.
+    const gen = currentGeneration()
     await run(async () => {
       const saved = await updateProfile(profile.id, {
         name: profile.name,
@@ -56,6 +60,7 @@ export function RulesView() {
         llm_instructions: profile.llm_instructions,
         example_text: profile.example_text,
       })
+      if (gen !== currentGeneration()) return // session ended: do not write
       useStore.getState().setProfiles(
         useStore.getState().profiles.map((p) => (p.id === saved.id ? saved : p)),
       )

@@ -17,7 +17,11 @@ export function LoginForm() {
   const [password, setPassword] = useState('')
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const notice = error ?? (sessionExpired ? m.sessionExpired : null)
+  // `!pending` matters: without it, setError(null) below clears a previous
+  // attempt's error and notice falls back to the stale sessionExpired
+  // message for the duration of the new request — re-flashing "your session
+  // expired" over a second attempt that has nothing to do with expiry.
+  const notice = error ?? (sessionExpired && !pending ? m.sessionExpired : null)
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
