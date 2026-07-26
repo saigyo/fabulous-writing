@@ -4,6 +4,8 @@ from pathlib import Path
 import pytest
 
 from app.core.models import Language
+from app.services._sqlite import connect
+from app.services.ownership import GlobalReadOnlyError
 from app.services.profiles import ProfileStore
 
 # Schema as it existed before the packs_on column was added.
@@ -34,6 +36,7 @@ def test_create_and_list_profiles(store):
     p = store.create_profile(
         Language.DE,
         "Marketing",
+        owner_id=None,
         categories_off=["correctness"],
         rule_exceptions=["style.weasel-words"],
         domain_ids=[1, 4],
@@ -43,46 +46,52 @@ def test_create_and_list_profiles(store):
         example_text="Beispieltext.",
     )
     assert p.id > 0 and p.name == "Marketing" and not p.is_standard
-    listed = store.list_profiles(Language.DE)
+    listed = store.list_profiles(Language.DE, owner_id=1)
     assert [x.name for x in listed] == ["Marketing"]
     assert listed[0].rule_exceptions == ["style.weasel-words"]
-    assert store.list_profiles(Language.EN) == []
+    assert store.list_profiles(Language.EN, owner_id=1) == []
 
 
 def test_duplicate_name_raises(store):
-    store.create_profile(Language.EN, "Blog", llm_provider="ollama")
+    store.create_profile(Language.EN, "Blog", owner_id=None, llm_provider="ollama")
     with pytest.raises(ValueError, match="exists"):
-        store.create_profile(Language.EN, "Blog", llm_provider="ollama")
+        store.create_profile(Language.EN, "Blog", owner_id=None, llm_provider="ollama")
 
 
 def test_update_profile(store):
-    p = store.create_profile(Language.EN, "Blog", llm_provider="ollama")
-    updated = store.update_profile(p.id, name="Blog posts", domain_ids=[2])
+    p = store.create_profile(Language.EN, "Blog", owner_id=None, llm_provider="ollama")
+    updated = store.update_profile(
+        p.id, owner_id=1, is_admin=True, name="Blog posts", domain_ids=[2]
+    )
     assert updated.name == "Blog posts" and updated.domain_ids == [2]
-    assert store.get_profile(p.id).domain_ids == [2]
-    assert store.update_profile(9999, name="x") is None
+    assert store.get_profile(p.id, owner_id=1).domain_ids == [2]
+    assert store.update_profile(9999, owner_id=1, is_admin=True, name="x") is None
 
 
 def test_delete_profile(store):
-    p = store.create_profile(Language.EN, "Blog", llm_provider="ollama")
-    assert store.delete_profile(p.id) is True
-    assert store.delete_profile(p.id) is False
-    assert store.list_profiles(Language.EN) == []
+    p = store.create_profile(Language.EN, "Blog", owner_id=None, llm_provider="ollama")
+    assert store.delete_profile(p.id, owner_id=1, is_admin=True) is True
+    assert store.delete_profile(p.id, owner_id=1, is_admin=True) is False
+    assert store.list_profiles(Language.EN, owner_id=1) == []
 
 
 def test_remove_domain_everywhere(store):
-    a = store.create_profile(Language.EN, "A", domain_ids=[1, 2], llm_provider="ollama")
-    b = store.create_profile(Language.DE, "B", domain_ids=[2, 3], llm_provider="ollama")
+    a = store.create_profile(
+        Language.EN, "A", owner_id=None, domain_ids=[1, 2], llm_provider="ollama"
+    )
+    b = store.create_profile(
+        Language.DE, "B", owner_id=None, domain_ids=[2, 3], llm_provider="ollama"
+    )
     store.remove_domain_everywhere(2)
-    assert store.get_profile(a.id).domain_ids == [1]
-    assert store.get_profile(b.id).domain_ids == [3]
+    assert store.get_profile(a.id, owner_id=1).domain_ids == [1]
+    assert store.get_profile(b.id, owner_id=1).domain_ids == [3]
 
 
 def test_llm_tier_roundtrip(tmp_path: Path) -> None:
     store = ProfileStore(tmp_path / "p.db")
-    p = store.create_profile(Language.EN, "Blog", llm_tier="quality")
-    assert store.get_profile(p.id).llm_tier == "quality"
-    updated = store.update_profile(p.id, llm_tier=None)
+    p = store.create_profile(Language.EN, "Blog", owner_id=None, llm_tier="quality")
+    assert store.get_profile(p.id, owner_id=1).llm_tier == "quality"
+    updated = store.update_profile(p.id, owner_id=1, is_admin=True, llm_tier=None)
     assert updated.llm_tier is None
 
 
@@ -90,7 +99,12 @@ def test_llm_tier_column_migration_is_idempotent(tmp_path: Path) -> None:
     # Opening the store twice must not fail on the ALTER TABLE guard.
     ProfileStore(tmp_path / "p.db")
     store = ProfileStore(tmp_path / "p.db")
-    assert store.create_profile(Language.EN, "X", llm_tier="local").llm_tier == "local"
+    assert (
+        store.create_profile(
+            Language.EN, "X", owner_id=None, llm_tier="local"
+        ).llm_tier
+        == "local"
+    )
 
 
 from app.core.models import Language as L  # noqa: E402
@@ -119,7 +133,7 @@ def test_seed_is_idempotent(store):
     seed_profiles(store, DEMOS, seed_examples=True)
     seed_profiles(store, DEMOS, seed_examples=True)
     for lang in Language:
-        names = [p.name for p in store.list_profiles(lang)]
+        names = [p.name for p in store.list_profiles(lang, owner_id=1)]
         assert names.count("Standard") == 1
         assert names.count("Marketing") == 1
         assert names.count("Technical Documentation") == 1
@@ -128,22 +142,22 @@ def test_seed_is_idempotent(store):
 def test_example_seeding_and_deletion_sticks(store):
     seed_profiles(store, DEMOS, seed_examples=True)
     marketing = [
-        p for p in store.list_profiles(L.EN) if p.name == "Marketing"
+        p for p in store.list_profiles(L.EN, owner_id=1) if p.name == "Marketing"
     ][0]
     assert not marketing.is_standard
     assert "customer" in marketing.llm_instructions.lower()
     assert marketing.example_text.startswith("Introducing SuperWidget")
-    store.delete_profile(marketing.id)
+    store.delete_profile(marketing.id, owner_id=1, is_admin=True)
     seed_profiles(store, DEMOS, seed_examples=True)
-    assert "Marketing" not in [p.name for p in store.list_profiles(L.EN)]
+    assert "Marketing" not in [p.name for p in store.list_profiles(L.EN, owner_id=1)]
 
 
 def test_seed_examples_off(store):
     seed_profiles(store, DEMOS, seed_examples=False)
-    assert [p.name for p in store.list_profiles(L.EN)] == ["Standard"]
+    assert [p.name for p in store.list_profiles(L.EN, owner_id=1)] == ["Standard"]
     # Turning the switch on later seeds the not-yet-marked languages.
     seed_profiles(store, DEMOS, seed_examples=True)
-    assert "Marketing" in [p.name for p in store.list_profiles(L.EN)]
+    assert "Marketing" in [p.name for p in store.list_profiles(L.EN, owner_id=1)]
 
 
 def test_standard_defaults_reads_demo(store):
@@ -156,19 +170,21 @@ def test_standard_defaults_reads_demo(store):
 def test_seed_survives_name_collisions(store):
     # A user-created profile occupying a seeded name must not crash seeding,
     # and must not cause a retry loop on the next run.
-    store.create_profile(L.EN, "Technical Documentation", llm_provider="ollama")
+    store.create_profile(
+        L.EN, "Technical Documentation", owner_id=None, llm_provider="ollama"
+    )
     seed_profiles(store, DEMOS, seed_examples=True)
-    names = [p.name for p in store.list_profiles(L.EN)]
+    names = [p.name for p in store.list_profiles(L.EN, owner_id=1)]
     assert names.count("Marketing") == 1
     assert names.count("Technical Documentation") == 1
     assert store.is_example_seeded(L.EN)
     seed_profiles(store, DEMOS, seed_examples=True)
-    names = [p.name for p in store.list_profiles(L.EN)]
+    names = [p.name for p in store.list_profiles(L.EN, owner_id=1)]
     assert names.count("Marketing") == 1
 
 
 def test_seed_survives_user_profile_named_standard(store):
-    store.create_profile(L.EN, "Standard", llm_provider="ollama")
+    store.create_profile(L.EN, "Standard", owner_id=None, llm_provider="ollama")
     seed_profiles(store, DEMOS, seed_examples=False)
     # The colliding user profile blocks the seeded Standard for EN; seeding
     # must not crash and must still seed the other languages.
@@ -178,31 +194,33 @@ def test_seed_survives_user_profile_named_standard(store):
 def test_packs_on_roundtrip(tmp_path) -> None:
     store = ProfileStore(tmp_path / "p.sqlite")
     profile = store.create_profile(
-        Language.EN, "Docs", packs_on=["techdocs", "blog"]
+        Language.EN, "Docs", owner_id=None, packs_on=["techdocs", "blog"]
     )
     assert profile.packs_on == ["techdocs", "blog"]
-    updated = store.update_profile(profile.id, packs_on=["techdocs"])
+    updated = store.update_profile(
+        profile.id, owner_id=1, is_admin=True, packs_on=["techdocs"]
+    )
     assert updated is not None and updated.packs_on == ["techdocs"]
-    assert store.get_profile(profile.id).packs_on == ["techdocs"]
+    assert store.get_profile(profile.id, owner_id=1).packs_on == ["techdocs"]
 
 
 def test_seed_pack_profiles(tmp_path) -> None:
     store = ProfileStore(tmp_path / "profiles.sqlite")
     seed_profiles(store, DEMOS, seed_examples=True)
-    en = {p.name: p for p in store.list_profiles(Language.EN)}
+    en = {p.name: p for p in store.list_profiles(Language.EN, owner_id=1)}
     assert en["Marketing"].packs_on == ["marketing"]
     assert en["Technical Documentation"].packs_on == ["techdocs"]
     assert en["Blog"].packs_on == ["blog"]
     assert en["Blog"].example_text  # demo file exists and is non-empty
-    de = {p.name: p for p in store.list_profiles(Language.DE)}
+    de = {p.name: p for p in store.list_profiles(Language.DE, owner_id=1)}
     assert de["Blog"].packs_on == ["blog"]
-    ja = {p.name: p for p in store.list_profiles(Language.JA)}
+    ja = {p.name: p for p in store.list_profiles(Language.JA, owner_id=1)}
     assert ja["Blog"].packs_on == ["blog"]
     assert ja["Blog"].llm_instructions
     assert "いかがでしたか" in ja["Blog"].example_text
 
     for language in (Language.FR, Language.ES, Language.IT, Language.ZH):
-        profiles = {p.name: p for p in store.list_profiles(language)}
+        profiles = {p.name: p for p in store.list_profiles(language, owner_id=1)}
         assert profiles["Marketing"].packs_on == ["marketing"]
         assert profiles["Technical Documentation"].packs_on == ["techdocs"]
         assert profiles["Blog"].packs_on == ["blog"]
@@ -229,5 +247,128 @@ def test_packs_on_migration_defaults_empty(tmp_path) -> None:
     conn.commit()
     conn.close()
     store = ProfileStore(db)
-    old = store.list_profiles(Language.EN)[0]
+    old = store.list_profiles(Language.EN, owner_id=1)[0]
     assert old.packs_on == []
+
+
+def test_profile_visibility_global_plus_own(tmp_path):
+    store = ProfileStore(tmp_path / "p.db")
+    builtin = store.create_profile(Language.EN, "Standard", owner_id=None, is_standard=True)
+    mine = store.create_profile(Language.EN, "Mine", owner_id=1)
+    theirs = store.create_profile(Language.EN, "Theirs", owner_id=2)
+    visible = {p.name for p in store.list_profiles(Language.EN, owner_id=1)}
+    assert visible == {"Standard", "Mine"}
+    assert store.get_profile(theirs.id, owner_id=1) is None
+    assert store.get_profile(builtin.id, owner_id=1).is_global is True
+    assert store.get_profile(mine.id, owner_id=1).is_global is False
+
+
+def test_global_profile_mutation_requires_admin(tmp_path):
+    store = ProfileStore(tmp_path / "p.db")
+    builtin = store.create_profile(Language.EN, "Standard", owner_id=None, is_standard=True)
+    with pytest.raises(GlobalReadOnlyError):
+        store.update_profile(builtin.id, owner_id=1, is_admin=False, example_text="x")
+    with pytest.raises(GlobalReadOnlyError):
+        store.delete_profile(builtin.id, owner_id=1, is_admin=False)
+    assert (
+        store.update_profile(
+            builtin.id, owner_id=1, is_admin=True, example_text="x"
+        ).example_text
+        == "x"
+    )
+
+
+def test_profile_names_unique_per_owner_and_global_partition(tmp_path):
+    store = ProfileStore(tmp_path / "p.db")
+    store.create_profile(Language.EN, "Casual", owner_id=None)
+    # A user may shadow a global name...
+    store.create_profile(Language.EN, "Casual", owner_id=1)
+    # ...and another user may hold it too...
+    store.create_profile(Language.EN, "casual", owner_id=2)
+    # ...but neither partition tolerates its own duplicate (NOCASE).
+    with pytest.raises(ValueError):
+        store.create_profile(Language.EN, "casual", owner_id=1)
+    with pytest.raises(ValueError):
+        store.create_profile(Language.EN, "CASUAL", owner_id=None)
+    # The language dimension is load-bearing: same name, other language, fine.
+    store.create_profile(Language.DE, "Casual", owner_id=1)
+
+
+def test_owner_id_not_serialized_but_is_global_is(tmp_path):
+    store = ProfileStore(tmp_path / "p.db")
+    profile = store.create_profile(Language.EN, "Mine", owner_id=1)
+    dumped = profile.model_dump()
+    assert "owner_id" not in dumped
+    assert dumped["is_global"] is False
+
+
+def test_migration_backfills_ownership_by_seed_name_match(tmp_path):
+    # Legacy pre-M3 shape with the table-level UNIQUE and no owner_id.
+    db = tmp_path / "legacy.db"
+    with connect(db) as conn:
+        conn.execute(
+            """CREATE TABLE profiles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                language TEXT NOT NULL,
+                name TEXT NOT NULL,
+                is_standard INTEGER NOT NULL DEFAULT 0,
+                categories_off TEXT NOT NULL DEFAULT '[]',
+                rule_exceptions TEXT NOT NULL DEFAULT '[]',
+                packs_on TEXT NOT NULL DEFAULT '[]',
+                domain_ids TEXT NOT NULL DEFAULT '[]',
+                llm_provider TEXT,
+                llm_model TEXT,
+                llm_tier TEXT,
+                llm_instructions TEXT NOT NULL DEFAULT '',
+                example_text TEXT NOT NULL DEFAULT '',
+                UNIQUE(language, name)
+            )"""
+        )
+        conn.execute("CREATE TABLE profile_seed_markers (language TEXT PRIMARY KEY)")
+        conn.execute("INSERT INTO profile_seed_markers VALUES ('en')")
+        rows = [
+            ("en", "Standard", 1),   # standard -> global
+            ("en", "Marketing", 0),  # seed name + seeded language -> global
+            ("en", "My Style", 0),   # user row -> admin (1)
+            ("de", "Marketing", 0),  # seed name, UNseeded language -> admin
+        ]
+        for language, name, std in rows:
+            conn.execute(
+                "INSERT INTO profiles (language, name, is_standard) VALUES (?, ?, ?)",
+                (language, name, std),
+            )
+    store = ProfileStore(db)
+    with connect(db) as conn:
+        owners = {
+            (row["language"], row["name"]): row["owner_id"]
+            for row in conn.execute("SELECT language, name, owner_id FROM profiles")
+        }
+        sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='profiles'"
+        ).fetchone()[0]
+    assert owners == {
+        ("en", "Standard"): None,
+        ("en", "Marketing"): None,
+        ("en", "My Style"): 1,
+        ("de", "Marketing"): 1,
+    }
+    assert "UNIQUE" not in sql.upper()  # rebuild dropped the constraint
+    ProfileStore(db)  # idempotent second open
+
+
+def test_backfill_runs_exactly_once(tmp_path):
+    # A post-migration rename onto a seed name must NOT be re-globalized.
+    db = tmp_path / "p.db"
+    store = ProfileStore(db)
+    mine = store.create_profile(Language.EN, "My Style", owner_id=1)
+    store.update_profile(mine.id, owner_id=1, is_admin=False, name="Marketing")
+    ProfileStore(db)  # reopen: migration guard must skip the backfill
+    assert store.get_profile(mine.id, owner_id=1).is_global is False
+
+
+def test_seed_names_are_one_set_between_migration_and_seeder():
+    # Two-way: a name added to either side without the other must fail.
+    from app.services.profiles import SEED_EXAMPLE_NAMES
+    from app.services.seed_profiles import _EXAMPLE_SPECS
+
+    assert set(_EXAMPLE_SPECS) == set(SEED_EXAMPLE_NAMES)

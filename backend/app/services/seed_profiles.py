@@ -5,7 +5,7 @@ Marketing / Technical Documentation / Blog examples for every language
 from pathlib import Path
 
 from app.core.models import Language
-from app.services.profiles import ProfileStore
+from app.services.profiles import ProfileStore, SEED_EXAMPLE_NAMES
 
 _MARKETING_INSTRUCTIONS = {
     Language.EN: (
@@ -126,12 +126,41 @@ def _demo(demos_dir: Path, filename: str) -> str:
     return path.read_text(encoding="utf-8") if path.is_file() else ""
 
 
+_EXAMPLE_SPECS = {
+    "Marketing": lambda language, demos_dir: dict(
+        packs_on=["marketing"],
+        llm_tier="balanced",
+        llm_instructions=_MARKETING_INSTRUCTIONS[language],
+        example_text=_demo(demos_dir, f"{language.value}-marketing.txt"),
+    ),
+    "Technical Documentation": lambda language, demos_dir: dict(
+        categories_off=["vividness"],
+        packs_on=["techdocs"],
+        llm_tier="balanced",
+        llm_instructions=_TECHDOC_INSTRUCTIONS[language],
+        example_text=_demo(
+            demos_dir, f"{language.value}-technical-documentation.txt"
+        ),
+    ),
+    "Blog": lambda language, demos_dir: dict(
+        packs_on=["blog"],
+        llm_tier="balanced",
+        llm_instructions=_BLOG_INSTRUCTIONS[language],
+        example_text=_demo(demos_dir, f"{language.value}-blog.txt"),
+    ),
+}
+# Import-time tie to the migration's backfill set: adding an example on
+# either side without the other must fail loudly, not silently hand the
+# new seed row to admin ownership at migration time.
+assert set(_EXAMPLE_SPECS) == set(SEED_EXAMPLE_NAMES)
+
+
 def _create_ignoring_collision(
-    store: ProfileStore, language: Language, name: str, **fields
+    store: ProfileStore, language: Language, name: str, *, owner_id: int | None, **fields
 ) -> None:
     """A pre-existing profile occupying a seeded name wins; seeding skips it."""
     try:
-        store.create_profile(language, name, **fields)
+        store.create_profile(language, name, owner_id=owner_id, **fields)
     except ValueError:
         pass
 
@@ -163,40 +192,19 @@ def seed_profiles(
                 store,
                 language,
                 "Standard",
+                owner_id=None,
                 is_standard=True,
                 **standard_defaults(language, demos_dir),
             )
         if seed_examples and not store.is_example_seeded(language):
-            _create_ignoring_collision(
-                store,
-                language,
-                "Marketing",
-                packs_on=["marketing"],
-                llm_tier="balanced",
-                llm_instructions=_MARKETING_INSTRUCTIONS[language],
-                example_text=_demo(demos_dir, f"{language.value}-marketing.txt"),
-            )
-            _create_ignoring_collision(
-                store,
-                language,
-                "Technical Documentation",
-                categories_off=["vividness"],
-                packs_on=["techdocs"],
-                llm_tier="balanced",
-                llm_instructions=_TECHDOC_INSTRUCTIONS[language],
-                example_text=_demo(
-                    demos_dir, f"{language.value}-technical-documentation.txt"
-                ),
-            )
-            _create_ignoring_collision(
-                store,
-                language,
-                "Blog",
-                packs_on=["blog"],
-                llm_tier="balanced",
-                llm_instructions=_BLOG_INSTRUCTIONS[language],
-                example_text=_demo(demos_dir, f"{language.value}-blog.txt"),
-            )
+            for name in SEED_EXAMPLE_NAMES:
+                _create_ignoring_collision(
+                    store,
+                    language,
+                    name,
+                    owner_id=None,
+                    **_EXAMPLE_SPECS[name](language, demos_dir),
+                )
             # Marker is set even if an insert collided with a user profile —
             # this prevents a retry loop on every subsequent run.
             store.mark_example_seeded(language)
