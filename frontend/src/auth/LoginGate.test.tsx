@@ -213,6 +213,45 @@ describe('LoginGate', () => {
     await waitFor(() => screen.getByText(en.signInFailed))
   })
 
+  it('a second sign-in attempt does not re-flash the stale sessionExpired notice while pending', async () => {
+    // Pins the fix for LoginForm's `notice` fallback: setError(null) at the
+    // start of a new submit used to let `notice` fall back to the old
+    // sessionExpired message for the duration of the request, even though
+    // this attempt has nothing to do with why the form appeared.
+    useStore.setState({ authStatus: 'anonymous', sessionExpired: true })
+    vi.mocked(postLogin).mockRejectedValueOnce(
+      new HttpError(401, 'Invalid email or password'),
+    )
+    render(
+      <LoginGate>
+        <Sentinel />
+      </LoginGate>,
+    )
+    screen.getByText(en.sessionExpired)
+
+    const u = userEvent.setup()
+    await u.type(screen.getByLabelText(en.signInEmail), 'ada@example.com')
+    await u.type(screen.getByLabelText(en.signInPassword), 'wrong')
+    await u.click(screen.getByRole('button', { name: en.signInSubmit }))
+    await waitFor(() => screen.getByText(en.signInInvalid))
+
+    let resolveSecond!: (v: { token: string; user: MeResponse }) => void
+    vi.mocked(postLogin).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSecond = resolve
+        }),
+    )
+    await u.click(screen.getByRole('button', { name: en.signInSubmit }))
+    // While the second attempt is pending: neither the first attempt's
+    // error nor the original sessionExpired notice should be showing.
+    expect(screen.queryByText(en.signInInvalid)).toBeNull()
+    expect(screen.queryByText(en.sessionExpired)).toBeNull()
+
+    resolveSecond({ token: 'tok', user: user() })
+    await waitFor(() => screen.getByTestId('app-sentinel'))
+  })
+
   it('under StrictMode, mounting issues exactly one /api/auth/me request', async () => {
     useStore.setState({ token: 'tok', authStatus: 'unknown' })
     vi.mocked(getMe).mockResolvedValue(user())

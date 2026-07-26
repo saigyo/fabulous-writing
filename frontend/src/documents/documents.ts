@@ -89,8 +89,10 @@ export async function moveDocumentToFolder(
   // Captured before the request goes out: a session ending mid-request must
   // not land a false error banner into the incoming user's sidebar. The 422
   // branch's own refreshFolders()/refreshDocuments() calls already guard
-  // their writes internally (see list.ts), so only the plain error write
-  // below needs its own check.
+  // their writes internally (see list.ts), so the plain error write below
+  // needs its own check. The success-path write further down needs none: it
+  // re-reads the store fresh (not a pre-await closure) and updates by id, the
+  // same reasoning removeDocument() spells out below.
   const gen = currentGeneration()
   let moved: DocumentFull
   try {
@@ -107,6 +109,9 @@ export async function moveDocumentToFolder(
     }
     return
   }
+  // Fresh read (not a pre-await closure) and an id-keyed .map: a stale
+  // `store.documents` here still only ever updates `id` within whatever the
+  // store *currently* holds, so this needs no generation check of its own.
   const store = useStore.getState()
   store.setDocuments(
     store.documents.map((d) =>

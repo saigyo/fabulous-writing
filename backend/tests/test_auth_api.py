@@ -135,6 +135,24 @@ def test_changing_the_password_invalidates_tokens_issued_before_it(probe):
     ).status_code == 200
 
 
+def test_a_corrupt_stored_password_changed_at_is_401_not_500(probe):
+    # No code path writes a non-isoformat password_changed_at today
+    # (set_password's _utcnow() is the sole writer), but a hand-edited row or
+    # a future migration could — deps.py must treat that the same way
+    # core/auth.py already treats a malformed stored password hash and a
+    # malformed token iat: a generic 401, never an unhandled 500 that would
+    # 500 every request this user makes.
+    store = probe.state.user_store
+    user = store.create_user("ada@example.com", "correct horse battery")
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE users SET password_changed_at = ? WHERE id = ?",
+            ("not-a-timestamp", user.id),
+        )
+    response = TestClient(probe).get("/probe/user", headers=auth(user.id))
+    assert response.status_code == 401
+
+
 def test_require_admin_rejects_a_normal_user_and_admits_an_admin(probe):
     normal = probe.state.user_store.create_user("ada@example.com", "correct horse battery")
     admin = probe.state.user_store.create_user(

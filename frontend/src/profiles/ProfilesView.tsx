@@ -6,6 +6,7 @@ import {
   resetProfile,
   updateProfile,
 } from '../api/client'
+import { currentGeneration } from '../documents/autosave'
 import { PinIcon } from '../header/LlmSelector'
 import { useCrudError } from '../hooks/useCrudError'
 import { useMessages } from '../i18n'
@@ -30,6 +31,8 @@ export function ProfilesView() {
 
   const selected = profiles.find((p) => p.id === profileId) ?? null
 
+  // Every caller below has already checked its own generation guard and
+  // built `next` from a fresh store read, so this itself needs no guard.
   function refresh(next: Profile[], select?: Profile) {
     const store = useStore.getState()
     store.setProfiles(next)
@@ -40,6 +43,9 @@ export function ProfilesView() {
     if (!newName.trim()) return
     const state = useStore.getState()
     const base = selected
+    // Captured before the request goes out: a session ending mid-request
+    // must not land this write in the incoming session's store.
+    const gen = currentGeneration()
     await run(async () => {
       const created = await createProfile({
         language,
@@ -54,13 +60,18 @@ export function ProfilesView() {
         llm_instructions: base?.llm_instructions ?? '',
         example_text: base?.example_text ?? '',
       })
+      if (gen !== currentGeneration()) return // session ended: do not write
       setNewName('')
-      refresh([...profiles, created], created)
+      // Reads `profiles` fresh (not the pre-await closure above) so this
+      // can't clobber a `profiles` update that landed while the request was
+      // in flight.
+      refresh([...useStore.getState().profiles, created], created)
     })
   }
 
   async function save(profile: Profile, patch: Partial<Profile>) {
     const merged = { ...profile, ...patch }
+    const gen = currentGeneration()
     await run(async () => {
       const saved = await updateProfile(profile.id, {
         name: merged.name,
@@ -74,28 +85,36 @@ export function ProfilesView() {
         llm_instructions: merged.llm_instructions,
         example_text: merged.example_text,
       })
+      if (gen !== currentGeneration()) return // session ended: do not write
+      const s = useStore.getState()
       refresh(
-        profiles.map((p) => (p.id === saved.id ? saved : p)),
-        saved.id === profileId ? saved : undefined,
+        s.profiles.map((p) => (p.id === saved.id ? saved : p)),
+        saved.id === s.profileId ? saved : undefined,
       )
     })
   }
 
   async function remove(profile: Profile) {
+    const gen = currentGeneration()
     await run(async () => {
       await deleteProfile(profile.id)
-      const rest = profiles.filter((p) => p.id !== profile.id)
+      if (gen !== currentGeneration()) return // session ended: do not write
+      const s = useStore.getState()
+      const rest = s.profiles.filter((p) => p.id !== profile.id)
       const fallback = rest.find((p) => p.is_standard) ?? rest[0]
-      refresh(rest, profile.id === profileId ? fallback : undefined)
+      refresh(rest, profile.id === s.profileId ? fallback : undefined)
     })
   }
 
   async function reset(profile: Profile) {
+    const gen = currentGeneration()
     await run(async () => {
       const restored = await resetProfile(profile.id)
+      if (gen !== currentGeneration()) return // session ended: do not write
+      const s = useStore.getState()
       refresh(
-        profiles.map((p) => (p.id === restored.id ? restored : p)),
-        restored.id === profileId ? restored : undefined,
+        s.profiles.map((p) => (p.id === restored.id ? restored : p)),
+        restored.id === s.profileId ? restored : undefined,
       )
     })
   }
