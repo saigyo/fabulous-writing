@@ -5,9 +5,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, get_current_user
+from app.api.llm_gate import get_effective_provider
 from app.api.validation import validate_name
 from app.checkers.llm.prompts import build_title_prompt
 from app.core.models import Language
+from app.core.permissions import RequestedLLM
 from app.services.documents import (
     Document,
     DocumentStore,
@@ -208,9 +210,6 @@ async def generate_name(
     document_id: int,
     user: CurrentUser = Depends(get_current_user),
 ) -> Document:
-    # Captured before `user` is reused below as the prompt's user message
-    # (build_title_prompt's return tuple) -- `user.id` would otherwise read
-    # a str, not the CurrentUser, once that reassignment runs.
     owner_id = user.id
     store = _store(request)
     document = store.get_document(document_id, owner_id=owner_id)
@@ -220,18 +219,22 @@ async def generate_name(
         return document  # titled or user-named: never auto-touched again
 
     title: str | None = None
-    entry = (
-        request.app.state.settings.routing.languages.get(
-            document.language.value, {}
-        ).get("cheap")
-    )
-    if entry is not None and document.text.strip():
+    # Empty text never reaches the gate: no provider gets constructed for a
+    # document that will not generate -- and once M5 adds reservation to the
+    # gate, an empty document must not consume quota either.
+    if document.text.strip():
         try:
-            provider = request.app.state.provider_factory(
-                entry.provider, entry.model
+            # Acquisition sits INSIDE the fallback try: naming is silent-
+            # fallback for any failure (spec §7.2), including a provider
+            # constructor raising something get_effective_provider does not
+            # translate (a tier-only request cannot produce its 422).
+            requested = RequestedLLM(tier="cheap")  # naming hard-selects the cheap route
+            effective, provider = get_effective_provider(
+                request.app, user, requested, document.language.value
             )
-            system, user = build_title_prompt(document.text, document.language)
-            title = clean_title(await provider.generate(system, user))
+            if provider is not None:
+                system, prompt = build_title_prompt(document.text, document.language)
+                title = clean_title(await provider.generate(system, prompt))
         except Exception:
             logger.warning(
                 "auto-title generation failed for document %s",

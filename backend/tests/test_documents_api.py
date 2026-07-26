@@ -185,6 +185,103 @@ def test_generate_name_toctou_user_rename_wins(authed_client):
     assert body["name"] == "User Renamed" and body["name_source"] == "user"
 
 
+class RecordingFactory:
+    """Fake provider factory that records the (provider, model) it was asked
+    to build, so gate tests can assert what was actually resolved."""
+
+    def __init__(self, response: str = '"A Title."') -> None:
+        self.response = response
+        self.calls: list[tuple[str | None, str | None]] = []
+
+    def __call__(self, name: str | None = None, model: str | None = None):
+        self.calls.append((name, model))
+        return FakeProvider(response=self.response)
+
+
+def _app_with_tiers(tmp_path, tiers: dict | None = None):
+    settings = Settings(
+        db_path=tmp_path / "t.db", rules_dir=tmp_path / "rules", tiers=tiers or {}
+    )
+    app = create_app(settings)
+    factory = RecordingFactory()
+    app.state.provider_factory = factory
+    return app, factory
+
+
+def test_generate_name_floor_user_falls_back_silently(tmp_path):
+    # Floor-tier user POSTs generate-name on their own fallback-named
+    # document with text: 200, name_source "fallback" (local naming), no
+    # factory call, no error field anywhere.
+    tiers = {"basic": {"llm": {"tiers": [], "providers": []}}}
+    app, factory = _app_with_tiers(tmp_path, tiers)
+    with TestClient(app) as client:
+        headers = second_user_headers(client)  # non-admin, tier 'basic'
+        doc = client.post(
+            "/api/documents",
+            json={
+                "name": "Untitled",
+                "language": "en",
+                "text": "alpha beta gamma delta epsilon zeta eta",
+            },
+            headers=headers,
+        ).json()
+        response = client.post(
+            f"/api/documents/{doc['id']}/generate-name", headers=headers
+        )
+        assert response.status_code == 200
+        body = response.json()
+    assert body["name_source"] == "fallback"
+    assert body["name"] == "alpha beta gamma delta epsilon zeta"
+    assert "error" not in body
+    assert factory.calls == []
+
+
+def test_generate_name_uses_cheap_route_through_gate(tmp_path):
+    # Unrestricted user: the recording factory receives exactly the
+    # routing table's ("cheap") entry for the document's language.
+    app, factory = _app_with_tiers(tmp_path)
+    with TestClient(app) as client:
+        headers = auth_headers(client)
+        doc = client.post(
+            "/api/documents",
+            json={
+                "name": "Untitled",
+                "language": "en",
+                "text": "A long enough body about widget assembly.",
+            },
+            headers=headers,
+        ).json()
+        response = client.post(
+            f"/api/documents/{doc['id']}/generate-name", headers=headers
+        )
+        assert response.status_code == 200
+        body = response.json()
+    assert body["name_source"] == "llm"
+    assert factory.calls == [("gemini", "models/gemini-flash-latest")]
+
+
+def test_generate_name_empty_text_never_reaches_gate(tmp_path):
+    # Empty/whitespace document: the factory is never called -- the text
+    # guard sits OUTSIDE the gate (and must stay there when M5 adds quota
+    # reservation to it).
+    app, factory = _app_with_tiers(tmp_path)
+    with TestClient(app) as client:
+        headers = auth_headers(client)
+        doc = client.post(
+            "/api/documents",
+            json={"name": "Untitled", "language": "en", "text": "   "},
+            headers=headers,
+        ).json()
+        response = client.post(
+            f"/api/documents/{doc['id']}/generate-name", headers=headers
+        )
+        assert response.status_code == 200
+        body = response.json()
+    assert body["name_source"] == "fallback"
+    assert body["name"] == "Untitled"
+    assert factory.calls == []
+
+
 def test_create_document_with_unknown_folder_is_422(authed_client):
     response = authed_client.post(
         "/api/documents",
