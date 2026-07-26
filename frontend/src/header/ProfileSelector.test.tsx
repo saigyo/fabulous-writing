@@ -159,3 +159,31 @@ describe('ProfileSelector ownership affordances (non-admin)', () => {
     )
   })
 })
+
+describe('ProfileSelector option text disambiguation', () => {
+  it('appends the built-in marker to a global profile option but not to a private one of the same name', () => {
+    // Per-owner uniqueness allows a private profile to shadow a global name
+    // (including "Standard") — the option text is the only thing that
+    // distinguishes them since a <select> can't render the styled badge.
+    useStore.setState({
+      user: user({ is_admin: true }),
+      profiles: [
+        profile({ id: 1, name: 'Standard', is_global: true }),
+        profile({ id: 2, name: 'Standard', is_global: false }),
+      ],
+      profileId: 1,
+      domainIds: [7],
+    })
+    render(<ProfileSelector />)
+
+    const globalOption = screen.getByText(`Standard — ${en.globalBadge}`, {
+      selector: 'option',
+    }) as HTMLOptionElement
+    expect(globalOption.value).toBe('1')
+    const privateOption = screen.getByText('Standard', {
+      exact: true,
+      selector: 'option',
+    }) as HTMLOptionElement
+    expect(privateOption.value).toBe('2')
+  })
+})

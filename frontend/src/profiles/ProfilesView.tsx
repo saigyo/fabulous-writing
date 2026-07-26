@@ -10,6 +10,7 @@ import { currentGeneration } from '../documents/autosave'
 import { PinIcon } from '../header/LlmSelector'
 import { useCrudError } from '../hooks/useCrudError'
 import { useMessages } from '../i18n'
+import { ownershipLabel } from '../ownership'
 import { useStore } from '../state/store'
 import { TIERS, type Profile, type Tier } from '../types'
 import { resolveProfileModel } from './profile'
@@ -251,7 +252,7 @@ function ProfileCard({
             }
           >
             {domains.map((d) => (
-              <option key={d.id} value={d.id}>{d.name}</option>
+              <option key={d.id} value={d.id}>{ownershipLabel(d.name, d.is_global, m)}</option>
             ))}
           </select>
         </label>

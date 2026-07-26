@@ -2,6 +2,7 @@ import { updateProfile } from '../api/client'
 import { currentGeneration } from '../documents/autosave'
 import { useCrudError } from '../hooks/useCrudError'
 import { useMessages } from '../i18n'
+import { ownershipLabel } from '../ownership'
 import { isProfileDirty } from '../profiles/profile'
 import { useStore } from '../state/store'
 
@@ -99,7 +100,7 @@ export function ProfileSelector() {
           )}
           {profiles.map((p) => (
             <option key={p.id} value={p.id}>
-              {p.name}
+              {ownershipLabel(p.name, p.is_global, m)}
               {p.id === profileId && dirty ? ' ✱' : ''}
             </option>
           ))}

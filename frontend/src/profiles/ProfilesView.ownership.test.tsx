@@ -180,3 +180,32 @@ describe('ProfilesView ownership affordances (admin)', () => {
     }
   })
 })
+
+describe('ProfilesView profile-card domain select disambiguation', () => {
+  it('appends the built-in marker to a global domain option but not to a private one of the same name', async () => {
+    // Per-owner uniqueness allows a private domain to shadow a global name
+    // (two "Product docs") — the option text is the only thing that
+    // distinguishes them since a <select> can't render the styled badge.
+    useStore.setState({
+      user: user({ is_admin: true }),
+      profiles: [profile({ id: 5, name: 'Editable', domain_ids: [] })],
+      domains: [
+        { id: 1, name: 'Product docs', description: '', is_global: true },
+        { id: 2, name: 'Product docs', description: '', is_global: false },
+      ],
+    })
+    render(<ProfilesView />)
+    await screen.findByText(en.packName('techdocs'))
+
+    const card = screen.getByDisplayValue('Editable').closest('.profile-card') as HTMLElement
+    const globalOption = within(card).getByText(`Product docs — ${en.globalBadge}`, {
+      selector: 'option',
+    }) as HTMLOptionElement
+    expect(globalOption.value).toBe('1')
+    const privateOption = within(card).getByText('Product docs', {
+      exact: true,
+      selector: 'option',
+    }) as HTMLOptionElement
+    expect(privateOption.value).toBe('2')
+  })
+})
