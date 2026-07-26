@@ -86,7 +86,17 @@ def make_provider_factory(settings: Settings):
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
-    app = FastAPI(title=APP_NAME)
+    # Outside dev, the three doc routes are not registered at all (rather
+    # than registered-then-gated behind auth): a route that does not exist
+    # cannot be probed, while a route gated behind auth still confirms it is
+    # there. All three go together -- /docs and /redoc are useless without
+    # /openapi.json, and leaving that reachable would defeat the point.
+    docs_kwargs = (
+        {}
+        if settings.environment == "dev"
+        else {"docs_url": None, "redoc_url": None, "openapi_url": None}
+    )
+    app = FastAPI(title=APP_NAME, **docs_kwargs)
     # allow_credentials is deliberately left unset (defaults to False): Bearer-
     # header auth does not need CORS credentials mode, and enabling it
     # alongside a permissive origin list is a common mistake.

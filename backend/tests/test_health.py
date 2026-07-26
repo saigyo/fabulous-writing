@@ -2,11 +2,14 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 from fastapi.testclient import TestClient
 
 from app.core.auth import AuthConfigError
 from app.core.config import AuthSettings, Settings
 from app.main import create_app
+
+DOC_ENDPOINTS = ("/docs", "/redoc", "/openapi.json")
 
 
 def test_health_returns_ok(tmp_path: Path) -> None:
@@ -73,3 +76,44 @@ def test_cors_allows_only_the_configured_origin(tmp_path):
     # assertion a hard-coded implementation fails.
     assert "access-control-allow-origin" not in preflight("http://localhost:5173").headers
     assert "access-control-allow-origin" not in preflight("https://evil.example.com").headers
+
+
+def test_environment_defaults_to_production(tmp_path: Path) -> None:
+    # The security-relevant behaviour: a Settings built with no explicit
+    # environment must fail closed (docs off), not silently favour dev. A
+    # future refactor that flips this default must fail this assertion loudly.
+    settings = Settings(db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules")
+    assert settings.environment == "production"
+
+
+def test_environment_rejects_invalid_value(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError):
+        Settings(
+            db_path=tmp_path / "test.db",
+            rules_dir=tmp_path / "rules",
+            environment="prod",  # not one of the three permitted values
+        )
+
+
+def test_docs_endpoints_reachable_in_dev(tmp_path: Path) -> None:
+    settings = Settings(
+        db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules", environment="dev"
+    )
+    client = TestClient(create_app(settings))
+    for path in DOC_ENDPOINTS:
+        response = client.get(path)
+        assert response.status_code == 200, f"{path} returned {response.status_code} in dev"
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_docs_endpoints_not_registered_outside_dev(tmp_path: Path, environment: str) -> None:
+    settings = Settings(
+        db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules", environment=environment
+    )
+    client = TestClient(create_app(settings))
+    for path in DOC_ENDPOINTS:
+        response = client.get(path)
+        assert response.status_code == 404, (
+            f"{path} returned {response.status_code} in {environment!r}, expected 404 "
+            "-- the route must not be registered at all outside dev"
+        )

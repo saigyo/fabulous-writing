@@ -234,8 +234,11 @@ considerations — is covered in
 ### Authentication
 
 The backend has user accounts, local email/password login, and — as of this
-milestone — **every endpoint requires a logged-in user** except `GET
-/api/health` and `POST /api/auth/login` (see
+milestone — **every `/api` endpoint requires a logged-in user** except `GET
+/api/health` and `POST /api/auth/login`. The API documentation endpoints
+(`/docs`, `/redoc`, `/openapi.json`) are served only in the `dev` environment
+(see [Configuration](#configuration) below) — staging and production don't
+register them at all (see
 [Authentication and user accounts](docs/backend-architecture.md#authentication-and-user-accounts)
 in the architecture doc). In the default configuration, startup also fails
 closed without the three variables below — that's why they're already set in

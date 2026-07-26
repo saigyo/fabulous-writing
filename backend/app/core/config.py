@@ -199,6 +199,12 @@ class AuthSettings(BaseModel):
 
 
 class Settings(BaseModel):
+    # Fails closed by design: a deployment that forgets to set this gets
+    # "production" (docs endpoints off), not an anonymously-reachable API
+    # surface. A developer who forgets gets their docs turned off, which is
+    # visible and harmless in comparison. See config.example.yaml for the
+    # dev-friction this trades for.
+    environment: Literal["dev", "staging", "production"] = "production"
     db_path: Path = BACKEND_DIR / "data" / "fabulous.db"
     rules_dir: Path = BACKEND_DIR / "rules"
     demos_dir: Path = BACKEND_DIR / "demos"
