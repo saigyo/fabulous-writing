@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from app.checkers.llm import bedrock
 from app.core.config import ExtraProviderSettings, ProviderSettings, Settings
 from app.main import create_app
+from tests.conftest import auth_headers
 
 
 @pytest.fixture
@@ -37,7 +38,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 
 def test_routing_shape(client: TestClient) -> None:
-    body = client.get("/api/routing").json()
+    body = client.get("/api/routing", headers=auth_headers(client)).json()
     assert body["default_tier"] == "balanced"
     assert body["tiers"] == ["quality", "balanced", "cheap", "local"]
     assert set(body["languages"]) == {"en", "de", "fr", "es", "it", "ja", "zh"}
@@ -47,7 +48,8 @@ def test_routing_shape(client: TestClient) -> None:
 
 
 def test_routing_reports_unavailability_reasons(client: TestClient) -> None:
-    languages = client.get("/api/routing").json()["languages"]
+    response = client.get("/api/routing", headers=auth_headers(client))
+    languages = response.json()["languages"]
     # API provider without a key.
     balanced_de = languages["de"]["balanced"]
     assert balanced_de["available"] is False
@@ -70,7 +72,8 @@ def test_routing_reports_available_with_key(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("MISTRAL_API_KEY", "sk-test")
-    entry = client.get("/api/routing").json()["languages"]["de"]["balanced"]
+    response = client.get("/api/routing", headers=auth_headers(client))
+    entry = response.json()["languages"]["de"]["balanced"]
     assert entry["available"] is True
     assert entry["reason"] is None
 
@@ -89,10 +92,11 @@ def test_routing_bedrock_availability(
         },
     )
     client = TestClient(create_app(settings))
-    entry = client.get("/api/routing").json()["languages"]["en"]["quality"]
+    headers = auth_headers(client)
+    entry = client.get("/api/routing", headers=headers).json()["languages"]["en"]["quality"]
     assert entry["available"] is True and entry["reason"] is None
 
     monkeypatch.setattr(bedrock, "credentials_available", lambda: False)
-    entry = client.get("/api/routing").json()["languages"]["en"]["quality"]
+    entry = client.get("/api/routing", headers=headers).json()["languages"]["en"]["quality"]
     assert entry["available"] is False
     assert entry["reason"] == "AWS credentials not available"
