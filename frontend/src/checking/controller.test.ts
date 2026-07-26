@@ -22,6 +22,8 @@ vi.mock('../documents/autosave', async (importOriginal) => ({
 }))
 
 import { postCheck, subscribeCheck } from '../api/client'
+import { bumpGeneration, resetAutosaveForTests } from '../documents/autosave'
+import { cancelInFlightCheck } from './cancelSlot'
 import { cancelCheck, runCheck } from './controller'
 
 let docText = 'Some text with issues.'
@@ -46,6 +48,7 @@ const scorecard = {
 beforeEach(() => {
   vi.clearAllMocks()
   cancelCheck()
+  resetAutosaveForTests()
   docText = 'Some text with issues.'
   dispatched = []
   useStore.setState({ scorecard: null, scorecardStale: false, llmError: null })
@@ -109,5 +112,36 @@ describe('check controller', () => {
     docText = 'edited meanwhile'
     lastCallbacks().onResult('llm', [])
     expect(dispatched).toHaveLength(0)
+  })
+
+  it('drops a check whose postCheck resolves after the session already ended', async () => {
+    // Reproduces the real sequence: postCheck held pending, the literal
+    // session-end call (cancelInFlightCheck()) fires while it is still
+    // awaiting, then postCheck resolves. cancelInFlightCheck() only cancels
+    // a *subscribed* check, so before the fix runCheck() would re-arm
+    // currentCheckId and open a fresh subscription anyway.
+    let resolvePostCheck!: (value: Awaited<ReturnType<typeof postCheck>>) => void
+    vi.mocked(postCheck).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePostCheck = resolve
+        }),
+    )
+    const unsub = vi.fn()
+    vi.mocked(subscribeCheck).mockReturnValue(unsub)
+
+    const runPromise = runCheck(true)
+
+    // The literal call logout()/expireSession() make on session end.
+    cancelInFlightCheck()
+    // The literal generation bump invalidateDocumentWork() makes on session
+    // end (documents.ts calls this alongside cancelInFlightCheck()).
+    bumpGeneration()
+
+    resolvePostCheck({ check_id: 'c-a', status: 'running', findings: [] } as never)
+    await runPromise
+
+    expect(subscribeCheck).not.toHaveBeenCalled()
+    expect(useStore.getState().scorecard).toBeNull()
   })
 })

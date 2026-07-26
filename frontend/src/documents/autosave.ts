@@ -32,6 +32,13 @@ let inFlight: Promise<void> | null = null
 // against the generation this specific push started under, rather than
 // reading a fresh value that would trivially match "whatever is current".
 let onConflict: ((snapshot: DocSnapshot, gen: number) => Promise<void>) | null = null
+// Deliberately NOT cleared by invalidateDocumentWork(): it holds document ids
+// only, never content, so unlike every other piece of state in this module
+// there is nothing here for a session end to leak across users. Leaving it
+// populated across a session boundary just means a fallback-named document
+// that already attempted (and, say, failed) auto-titling won't retry within
+// the same browser tab's lifetime — a minor, same-document-only quirk, not a
+// cross-user concern.
 const titleAttempted = new Set<number>()
 
 // Bumped by invalidateDocumentWork() (documents.ts), called from logout()

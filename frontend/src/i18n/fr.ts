@@ -211,7 +211,6 @@ export const fr: Messages = {
   folderDefaultsError: "Échec de l'enregistrement des valeurs par défaut du dossier.",
 
   // Authentification
-  signInTitle: 'Connexion',
   signInEmail: 'E-mail',
   signInPassword: 'Mot de passe',
   signInSubmit: 'Se connecter',

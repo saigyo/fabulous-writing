@@ -207,7 +207,6 @@ export const it: Messages = {
   folderDefaultsError: 'Salvataggio delle impostazioni predefinite della cartella non riuscito.',
 
   // Autenticazione
-  signInTitle: 'Accedi',
   signInEmail: 'E-mail',
   signInPassword: 'Password',
   signInSubmit: 'Accedi',

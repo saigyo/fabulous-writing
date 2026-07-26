@@ -191,7 +191,6 @@ export interface Messages {
   folderDefaultsError: string
 
   // Authentication
-  signInTitle: string
   signInEmail: string
   signInPassword: string
   signInSubmit: string

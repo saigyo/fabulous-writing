@@ -207,7 +207,6 @@ export const de: Messages = {
   folderDefaultsError: 'Speichern der Ordner-Standardwerte fehlgeschlagen.',
 
   // Authentifizierung
-  signInTitle: 'Anmelden',
   signInEmail: 'E-Mail',
   signInPassword: 'Passwort',
   signInSubmit: 'Anmelden',
