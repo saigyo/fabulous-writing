@@ -1,9 +1,10 @@
 import logging
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from app.api.deps import CurrentUser, get_current_user
 from app.api.validation import validate_name
 from app.checkers.llm.prompts import build_title_prompt
 from app.core.models import Language
@@ -73,19 +74,31 @@ def _store(request: Request) -> DocumentStore:
 
 
 @router.get("/documents")
-def list_documents(request: Request) -> list[DocumentSummary]:
-    return _store(request).list_documents()
+def list_documents(
+    request: Request, user: CurrentUser = Depends(get_current_user)
+) -> list[DocumentSummary]:
+    return _store(request).list_documents(owner_id=user.id)
 
 
 @router.post("/documents", status_code=201)
-def create_document(request: Request, body: DocumentCreate) -> Document:
+def create_document(
+    request: Request,
+    body: DocumentCreate,
+    user: CurrentUser = Depends(get_current_user),
+) -> Document:
     name = validate_name(body.name, message="Document name must not be empty")
     if body.folder_id is not None:
-        if request.app.state.folder_store.get_folder(body.folder_id) is None:
+        if (
+            request.app.state.folder_store.get_folder(
+                body.folder_id, owner_id=user.id
+            )
+            is None
+        ):
             raise HTTPException(422, "Unknown folder")
     return _store(request).create_document(
         name,
         body.language,
+        owner_id=user.id,
         name_source=body.name_source,
         text=body.text,
         profile_id=body.profile_id,
@@ -101,8 +114,12 @@ def create_document(request: Request, body: DocumentCreate) -> Document:
 
 
 @router.get("/documents/{document_id}")
-def get_document(request: Request, document_id: int) -> Document:
-    document = _store(request).get_document(document_id)
+def get_document(
+    request: Request,
+    document_id: int,
+    user: CurrentUser = Depends(get_current_user),
+) -> Document:
+    document = _store(request).get_document(document_id, owner_id=user.id)
     if document is None:
         raise HTTPException(404, "Document not found")
     if document.profile_id is not None:
@@ -117,7 +134,10 @@ def get_document(request: Request, document_id: int) -> Document:
 
 @router.put("/documents/{document_id}")
 def update_document(
-    request: Request, document_id: int, body: DocumentUpdate
+    request: Request,
+    document_id: int,
+    body: DocumentUpdate,
+    user: CurrentUser = Depends(get_current_user),
 ) -> Document:
     fields: dict[str, object] = {}
     if body.name is not None:
@@ -139,7 +159,7 @@ def update_document(
         fields["llm_auto"] = body.settings.llm_auto
     try:
         updated = _store(request).update_document(
-            document_id, body.revision, **fields
+            document_id, body.revision, owner_id=user.id, **fields
         )
     except RevisionConflictError as exc:
         raise HTTPException(
@@ -151,29 +171,49 @@ def update_document(
 
 
 @router.delete("/documents/{document_id}", status_code=204)
-def delete_document(request: Request, document_id: int) -> Response:
-    if not _store(request).delete_document(document_id):
+def delete_document(
+    request: Request,
+    document_id: int,
+    user: CurrentUser = Depends(get_current_user),
+) -> Response:
+    if not _store(request).delete_document(document_id, owner_id=user.id):
         raise HTTPException(404, "Document not found")
     return Response(status_code=204)
 
 
 @router.post("/documents/{document_id}/move")
 def move_document(
-    request: Request, document_id: int, body: MoveRequest
+    request: Request,
+    document_id: int,
+    body: MoveRequest,
+    user: CurrentUser = Depends(get_current_user),
 ) -> Document:
     if body.folder_id is not None:
-        if request.app.state.folder_store.get_folder(body.folder_id) is None:
+        if (
+            request.app.state.folder_store.get_folder(
+                body.folder_id, owner_id=user.id
+            )
+            is None
+        ):
             raise HTTPException(422, "Unknown folder")
-    moved = _store(request).set_folder(document_id, body.folder_id)
+    moved = _store(request).set_folder(document_id, body.folder_id, owner_id=user.id)
     if moved is None:
         raise HTTPException(404, "Document not found")
     return moved
 
 
 @router.post("/documents/{document_id}/generate-name")
-async def generate_name(request: Request, document_id: int) -> Document:
+async def generate_name(
+    request: Request,
+    document_id: int,
+    user: CurrentUser = Depends(get_current_user),
+) -> Document:
+    # Captured before `user` is reused below as the prompt's user message
+    # (build_title_prompt's return tuple) -- `user.id` would otherwise read
+    # a str, not the CurrentUser, once that reassignment runs.
+    owner_id = user.id
     store = _store(request)
-    document = store.get_document(document_id)
+    document = store.get_document(document_id, owner_id=owner_id)
     if document is None:
         raise HTTPException(404, "Document not found")
     if document.name_source != "fallback":
@@ -202,14 +242,18 @@ async def generate_name(request: Request, document_id: int) -> Document:
 
     if title:
         named = store.set_name(
-            document_id, title, "llm", only_if_source="fallback"
+            document_id, title, "llm", owner_id=owner_id, only_if_source="fallback"
         )
     else:
         fallback = fallback_name(document.text)
         if fallback is None:
             return document  # empty text: keep the localized Untitled
         named = store.set_name(
-            document_id, fallback, "fallback", only_if_source="fallback"
+            document_id,
+            fallback,
+            "fallback",
+            owner_id=owner_id,
+            only_if_source="fallback",
         )
     assert named is not None
     return named

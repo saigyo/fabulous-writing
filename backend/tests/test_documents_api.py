@@ -2,6 +2,10 @@ import time
 
 from fastapi.testclient import TestClient
 
+from app.core.config import Settings
+from app.main import create_app
+from tests.conftest import auth_headers, second_user_headers
+
 
 def make_doc(authed_client: TestClient, name: str = "Untitled", **extra) -> dict:
     response = authed_client.post(
@@ -162,7 +166,7 @@ class RenamingProvider:
 
     async def generate(self, system, user, on_progress=None) -> str:
         self.store.update_document(
-            self.document_id, 0, name="User Renamed", name_source="user"
+            self.document_id, 0, owner_id=1, name="User Renamed", name_source="user"
         )
         return self.response
 
@@ -205,6 +209,52 @@ def test_move_document_between_folders(authed_client):
     assert authed_client.post(
         "/api/documents/9999/move", json={"folder_id": None}
     ).status_code == 404
+
+
+def test_documents_api_is_owner_scoped(tmp_path):
+    settings = Settings(db_path=tmp_path / "t.db", rules_dir=tmp_path / "rules")
+    client = TestClient(create_app(settings))
+    admin = auth_headers(client)
+    other = second_user_headers(client)
+    doc = client.post(
+        "/api/documents",
+        json={"name": "Mine", "language": "en"},
+        headers=admin,
+    ).json()
+    # Foreign id: indistinguishable from nonexistent -- 404 on every verb.
+    assert client.get(f"/api/documents/{doc['id']}", headers=other).status_code == 404
+    assert (
+        client.put(
+            f"/api/documents/{doc['id']}",
+            json={"revision": 0, "name": "Stolen"},
+            headers=other,
+        ).status_code
+        == 404
+    )
+    assert (
+        client.delete(f"/api/documents/{doc['id']}", headers=other).status_code == 404
+    )
+    assert (
+        client.post(
+            f"/api/documents/{doc['id']}/move",
+            json={"folder_id": None},
+            headers=other,
+        ).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            f"/api/documents/{doc['id']}/generate-name", headers=other
+        ).status_code
+        == 404
+    )
+    listed = client.get("/api/documents", headers=other).json()
+    assert listed == []
+    # And the owner still sees it untouched.
+    assert (
+        client.get(f"/api/documents/{doc['id']}", headers=admin).json()["name"]
+        == "Mine"
+    )
 
 
 def test_summaries_expose_timestamps_and_order_by_edited(authed_client):

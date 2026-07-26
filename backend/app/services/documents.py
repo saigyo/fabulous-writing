@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS documents (
 
 class Document(BaseModel):
     id: int
-    owner_id: int = 1
+    owner_id: int
     name: str
     name_source: str = "fallback"
     text: str = ""
@@ -142,6 +142,7 @@ class DocumentStore:
         name: str,
         language: Language,
         *,
+        owner_id: int,
         name_source: str = "fallback",
         text: str = "",
         profile_id: int | None = None,
@@ -158,11 +159,12 @@ class DocumentStore:
         with self._connect() as conn:
             cursor = conn.execute(
                 """INSERT INTO documents
-                   (name, name_source, text, language, profile_id, domain_ids,
+                   (owner_id, name, name_source, text, language, profile_id, domain_ids,
                     llm_provider, llm_model, llm_tier, llm_auto, last_findings,
                     scorecard, folder_id, edited_at, checked_at, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
+                    owner_id,
                     name,
                     name_source,
                     text,
@@ -184,15 +186,16 @@ class DocumentStore:
             )
             document_id = cursor.lastrowid
         assert document_id is not None
-        document = self.get_document(document_id)
+        document = self.get_document(document_id, owner_id=owner_id)
         assert document is not None
         return document
 
-    def list_documents(self) -> list[DocumentSummary]:
+    def list_documents(self, *, owner_id: int) -> list[DocumentSummary]:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT id, name, language, folder_id, created_at, edited_at, checked_at, updated_at FROM documents"
-                " ORDER BY edited_at DESC, id DESC"
+                " WHERE owner_id = ? ORDER BY edited_at DESC, id DESC",
+                (owner_id,),
             ).fetchall()
         return [
             DocumentSummary(
@@ -208,10 +211,11 @@ class DocumentStore:
             for row in rows
         ]
 
-    def get_document(self, document_id: int) -> Document | None:
+    def get_document(self, document_id: int, *, owner_id: int) -> Document | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM documents WHERE id = ?", (document_id,)
+                "SELECT * FROM documents WHERE id = ? AND owner_id = ?",
+                (document_id, owner_id),
             ).fetchone()
         return _row_to_document(row) if row else None
 
@@ -231,14 +235,19 @@ class DocumentStore:
     )
 
     def update_document(
-        self, document_id: int, base_revision: int, **fields: object
+        self,
+        document_id: int,
+        base_revision: int,
+        *,
+        owner_id: int,
+        **fields: object,
     ) -> Document | None:
         """Optimistic update: applies only if base_revision is current.
 
         Returns None for a missing document; raises RevisionConflictError
         when the document moved past base_revision.
         """
-        current = self.get_document(document_id)
+        current = self.get_document(document_id, owner_id=owner_id)
         if current is None:
             return None
         unknown = set(fields) - set(self._UPDATABLE)
@@ -256,7 +265,7 @@ class DocumentStore:
                    language = ?, profile_id = ?, domain_ids = ?, llm_provider = ?,
                    llm_model = ?, llm_tier = ?, llm_auto = ?, last_findings = ?,
                    scorecard = ?, edited_at = ?, checked_at = ?, revision = revision + 1, updated_at = ?
-                   WHERE id = ? AND revision = ?""",
+                   WHERE id = ? AND revision = ? AND owner_id = ?""",
                 (
                     merged.name,
                     merged.name_source,
@@ -277,10 +286,11 @@ class DocumentStore:
                     now,
                     document_id,
                     base_revision,
+                    owner_id,
                 ),
             )
         if cursor.rowcount == 0:
-            latest = self.get_document(document_id)
+            latest = self.get_document(document_id, owner_id=owner_id)
             if latest is None:
                 return None
             raise RevisionConflictError(latest.revision)
@@ -299,6 +309,7 @@ class DocumentStore:
         name: str,
         name_source: str,
         *,
+        owner_id: int,
         only_if_source: str | None = None,
     ) -> Document | None:
         """Server-side naming; deliberately no revision bump, so it can never
@@ -310,8 +321,11 @@ class DocumentStore:
         LLM titling call was in flight), the write is skipped and the
         document is returned unchanged instead of clobbering the newer name.
         """
-        query = "UPDATE documents SET name = ?, name_source = ?, updated_at = ? WHERE id = ?"
-        params: tuple[object, ...] = (name, name_source, _utcnow(), document_id)
+        query = (
+            "UPDATE documents SET name = ?, name_source = ?, updated_at = ?"
+            " WHERE id = ? AND owner_id = ?"
+        )
+        params: tuple[object, ...] = (name, name_source, _utcnow(), document_id, owner_id)
         if only_if_source is not None:
             query += " AND name_source = ?"
             params += (only_if_source,)
@@ -320,26 +334,28 @@ class DocumentStore:
         if cursor.rowcount == 0:
             # Either no such document, or (when guarded) it was renamed away
             # from `only_if_source` in the meantime: leave it as-is.
-            return self.get_document(document_id)
-        return self.get_document(document_id)
+            return self.get_document(document_id, owner_id=owner_id)
+        return self.get_document(document_id, owner_id=owner_id)
 
     def set_folder(
-        self, document_id: int, folder_id: int | None
+        self, document_id: int, folder_id: int | None, *, owner_id: int
     ) -> Document | None:
         """Organizational move; like set_name it never bumps revision, so a
         sidebar move can never 409 an in-flight autosave. Last move wins."""
         with self._connect() as conn:
             cursor = conn.execute(
-                "UPDATE documents SET folder_id = ?, updated_at = ? WHERE id = ?",
-                (folder_id, _utcnow(), document_id),
+                "UPDATE documents SET folder_id = ?, updated_at = ?"
+                " WHERE id = ? AND owner_id = ?",
+                (folder_id, _utcnow(), document_id, owner_id),
             )
         if cursor.rowcount == 0:
             return None
-        return self.get_document(document_id)
+        return self.get_document(document_id, owner_id=owner_id)
 
-    def delete_document(self, document_id: int) -> bool:
+    def delete_document(self, document_id: int, *, owner_id: int) -> bool:
         with self._connect() as conn:
             cursor = conn.execute(
-                "DELETE FROM documents WHERE id = ?", (document_id,)
+                "DELETE FROM documents WHERE id = ? AND owner_id = ?",
+                (document_id, owner_id),
             )
         return cursor.rowcount > 0
