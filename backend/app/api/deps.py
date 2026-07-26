@@ -63,6 +63,13 @@ def get_current_user(request: Request) -> CurrentUser:
             # match" rather than letting it 500 every request this user
             # makes.
             raise HTTPException(401, _UNAUTHENTICATED) from None
+        if changed_at.tzinfo is None:
+            # fromisoformat() parses a value like "2026-07-26T09:00:00"
+            # successfully, but as a *naive* datetime — comparing it against
+            # verified.issued_at (always tz-aware) below would raise
+            # TypeError and 500 the request instead of failing closed with
+            # the same 401 the ValueError guard above exists to guarantee.
+            raise HTTPException(401, _UNAUTHENTICATED)
         if verified.issued_at < changed_at:
             raise HTTPException(401, _UNAUTHENTICATED)
     return CurrentUser(

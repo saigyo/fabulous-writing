@@ -149,12 +149,22 @@ def test_patch_updates_fields_and_writes_one_audit_row_per_field(client):
 
 def test_patch_can_reset_a_password_without_logging_it(client):
     user = make_user(client)
+    assert user["password_changed_at"] is None
     response = client.patch(
         f"/api/admin/users/{user['id']}",
         json={"password": "a replacement password"},
         headers=admin_headers(client),
     )
     assert response.status_code == 200
+    # The response is the endpoint's contract (it returns User directly), so
+    # password_changed_at must reflect the reset that just happened, not the
+    # stale/null value fetched before set_password() ran.
+    body = response.json()
+    assert body["password_changed_at"] is not None
+    assert (
+        body["password_changed_at"]
+        == client.app.state.user_store.get_user(user["id"]).password_changed_at
+    )
     assert client.post(
         "/api/auth/login",
         json={"email": "ada@example.com", "password": "a replacement password"},

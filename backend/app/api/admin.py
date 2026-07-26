@@ -184,4 +184,8 @@ def patch_user(
         store.set_password(user_id, body.password)
         # Never record password material, not even its length.
         store.record_audit(actor_id=actor.id, target_id=user_id, field="password")
+        # Re-fetch: `updated` above was resolved before set_password() ran,
+        # so it still carries the pre-reset password_changed_at — part of
+        # this endpoint's response contract since it returns User directly.
+        updated = store.get_user(user_id)
     return updated

@@ -153,6 +153,23 @@ def test_a_corrupt_stored_password_changed_at_is_401_not_500(probe):
     assert response.status_code == 401
 
 
+def test_a_naive_stored_password_changed_at_is_401_not_500(probe):
+    # datetime.fromisoformat("2026-07-26T09:00:00") parses successfully, but
+    # into a *naive* datetime — comparing it against the verifier's tz-aware
+    # issued_at raises TypeError, not ValueError, so the earlier ValueError
+    # guard alone lets this one through as a 500. Same failure-closed
+    # contract as the corrupt-value test above, reached by a different input.
+    store = probe.state.user_store
+    user = store.create_user("ada@example.com", "correct horse battery")
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE users SET password_changed_at = ? WHERE id = ?",
+            ("2026-07-26T09:00:00", user.id),
+        )
+    response = TestClient(probe).get("/probe/user", headers=auth(user.id))
+    assert response.status_code == 401
+
+
 def test_require_admin_rejects_a_normal_user_and_admits_an_admin(probe):
     normal = probe.state.user_store.create_user("ada@example.com", "correct horse battery")
     admin = probe.state.user_store.create_user(
