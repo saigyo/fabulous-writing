@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from app.checkers.llm.provider import FakeProvider, LLMProvider
 from app.core.config import NlpSettings, Settings
 from app.main import create_app
+from tests.conftest import auth_headers
 
 RULES_DIR = Path(__file__).parent.parent / "rules"
 
@@ -29,7 +30,9 @@ def make_client(tmp_path: Path, provider: LLMProvider) -> TestClient:
     app.state.provider_factory = lambda name=None, model=None: provider
     # Context-managed use keeps one event loop across requests so that
     # background LLM tasks scheduled by POST survive into later requests.
-    return TestClient(app)
+    client = TestClient(app)
+    client.headers.update(auth_headers(client))
+    return client
 
 
 @pytest.fixture
@@ -97,6 +100,7 @@ def test_terminology_checker_requires_domain(client: TestClient) -> None:
 def client_with_two_domains(tmp_path: Path):
     settings = Settings(db_path=tmp_path / "t.db", rules_dir=RULES_DIR, seed_terminology=False)
     client = TestClient(create_app(settings))
+    client.headers.update(auth_headers(client))
     ids = []
     for name, preferred, forbidden in [
         ("Docs", "sign in", ["login"]),
@@ -125,6 +129,7 @@ def test_check_overlapping_domains_deduped(tmp_path: Path) -> None:
     """Two domains forbidding the same variant yield one finding, not two."""
     settings = Settings(db_path=tmp_path / "t.db", rules_dir=RULES_DIR, seed_terminology=False)
     client = TestClient(create_app(settings))
+    client.headers.update(auth_headers(client))
     ids = []
     for name, preferred in [("Docs", "sign in"), ("Style", "log in")]:
         domain = client.post("/api/domains", json={"name": name}).json()
@@ -168,7 +173,9 @@ def client_with_recording_provider(tmp_path: Path):
     app = create_app(settings)
     recorder = RecordingProvider()
     app.state.provider_factory = lambda name=None, model=None: recorder
-    with TestClient(app) as client:
+    client = TestClient(app)
+    client.headers.update(auth_headers(client))
+    with client:
         yield client, recorder
 
 
@@ -240,7 +247,9 @@ def test_missing_model_skips_nlp_rules_but_runs_regex(tmp_path: Path) -> None:
     )
     app = create_app(settings)
     app.state.provider_factory = lambda name=None, model=None: FakeProvider("[]")
-    with TestClient(app) as client:
+    client = TestClient(app)
+    client.headers.update(auth_headers(client))
+    with client:
         response = client.post(
             "/api/checks",
             json={

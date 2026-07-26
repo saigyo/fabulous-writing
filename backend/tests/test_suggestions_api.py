@@ -9,6 +9,7 @@ from app.checkers.llm.provider import FakeProvider, LLMProvider
 from app.core.config import Settings
 from app.core.models import Language
 from app.main import create_app
+from tests.conftest import auth_headers
 
 TEXT = "The results were very good. We move on."
 
@@ -17,7 +18,9 @@ def make_client(tmp_path: Path, provider: LLMProvider) -> TestClient:
     settings = Settings(db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules")
     app = create_app(settings)
     app.state.provider_factory = lambda name=None, model=None: provider
-    return TestClient(app)
+    client = TestClient(app)
+    client.headers.update(auth_headers(client))
+    return client
 
 
 def suggestion_request(start: int = 17, end: int = 26) -> dict:
@@ -188,7 +191,9 @@ class TestVetting:
         )
         app = create_app(settings)
         app.state.provider_factory = lambda name=None, model=None: provider
-        return TestClient(app)
+        client = TestClient(app)
+        client.headers.update(auth_headers(client))
+        return client
 
     DE_TEXT = "Ich würde Ihnen den Editor sofort empfehlen."
 

@@ -3,12 +3,15 @@ from fastapi.testclient import TestClient
 
 from app.core.config import Settings
 from app.main import create_app
+from tests.conftest import auth_headers
 
 
 @pytest.fixture()
 def client(tmp_path):
     settings = Settings(db_path=tmp_path / "test.db", seed_terminology=False)
-    return TestClient(create_app(settings))
+    client = TestClient(create_app(settings))
+    client.headers.update(auth_headers(client))
+    return client
 
 
 def _standard(client, language="en"):
