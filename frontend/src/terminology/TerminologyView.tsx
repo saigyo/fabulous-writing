@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   createDomain,
   createTerm,
@@ -53,13 +53,26 @@ export function TerminologyView() {
     }
   }, [domains, activeDomainId])
 
+  // Latest-request-wins: each call to loadTerms gets its own request id, so
+  // a stale fetch that resolves after the selection has moved on (e.g. an
+  // out-of-order domain switch, or a slow refetch after add/edit/delete) is
+  // discarded instead of overwriting the current domain's rows.
+  const termsRequestRef = useRef(0)
+  const loadTerms = useCallback((domainId: number) => {
+    const requestId = ++termsRequestRef.current
+    return getTerms(domainId).then((fetched) => {
+      if (termsRequestRef.current === requestId) setTerms(fetched)
+    })
+  }, [])
+
   useEffect(() => {
+    // Clear immediately on domain change so the previous domain's rows never
+    // stay interactive (or visible) while the new domain's fetch is in flight.
+    setTerms([])
     if (activeDomainId !== null) {
-      getTerms(activeDomainId).then(setTerms)
-    } else {
-      setTerms([])
+      void loadTerms(activeDomainId)
     }
-  }, [activeDomainId])
+  }, [activeDomainId, loadTerms])
 
   async function addDomain() {
     if (!newDomain.trim()) return
@@ -173,7 +186,7 @@ export function TerminologyView() {
         <TermTable
           domain={activeDomain}
           terms={terms}
-          onChanged={() => getTerms(activeDomain.id).then(setTerms)}
+          onChanged={() => void loadTerms(activeDomain.id)}
           run={run}
           readOnly={activeDomain.is_global && !isAdmin}
         />
