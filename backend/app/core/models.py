@@ -1,5 +1,6 @@
 import uuid
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -73,3 +74,24 @@ class Scorecard(BaseModel):
     vividness: ScoreDimension
     tone: ScoreDimension
     structure: ScoreDimension
+
+
+# The four quality tiers, as a request-validation type. Kept in lockstep with
+# app.core.config.TIERS (test_register_consistency pins it).
+QualityTier = Literal["quality", "balanced", "cheap", "local"]
+
+
+class LlmSelectionInfo(BaseModel):
+    tier: str | None = None
+    provider: str | None = None
+    model: str | None = None
+
+
+class EffectiveLlmReport(BaseModel):
+    """Requested vs. effective LLM selection (spec §6.2: degradation is
+    visible, never silent)."""
+
+    requested: LlmSelectionInfo
+    effective: LlmSelectionInfo
+    degraded: bool
+    skipped: str | None = None

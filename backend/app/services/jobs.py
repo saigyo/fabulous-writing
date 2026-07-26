@@ -4,7 +4,7 @@ from collections import OrderedDict
 from collections.abc import AsyncIterator
 from typing import Any
 
-from app.core.models import Finding, Scorecard
+from app.core.models import EffectiveLlmReport, Finding, Scorecard
 
 MAX_JOBS = 100
 MAX_JOBS_PER_OWNER = 10
@@ -24,6 +24,7 @@ class CheckJob:
         self.findings: list[Finding] = []
         self.skipped_rules: list[str] = []
         self.scorecard: Scorecard | None = None
+        self.effective_llm: EffectiveLlmReport | None = None
         self.events: list[tuple[str, dict[str, Any]]] = []
         self._task: asyncio.Task[None] | None = None
         self._new_event = asyncio.Event()

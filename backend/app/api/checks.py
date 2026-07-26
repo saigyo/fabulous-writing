@@ -8,12 +8,14 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, get_current_user
+from app.api.llm_gate import effective_llm_report, get_effective_provider
 from app.checkers.llm.checker import LLMChecker
 from app.checkers.llm.provider import LLMProvider
 from app.checkers.pipeline import drop_duplicates
 from app.checkers.rules.engine import RuleConfig
 from app.checkers.terminology import TerminologyChecker
-from app.core.models import Finding, Language, Scorecard
+from app.core.models import EffectiveLlmReport, Finding, Language, QualityTier, Scorecard
+from app.core.permissions import RequestedLLM
 from app.services.jobs import CheckJob, JobsAtCapacity
 
 router = APIRouter(prefix="/api", tags=["checks"])
@@ -34,6 +36,7 @@ class CheckRequest(BaseModel):
         default_factory=lambda: ["rules", "terminology", "llm"]
     )
     rule_config: RuleConfig | None = None
+    llm_tier: QualityTier | None = None
     llm_provider: str | None = None
     llm_model: str | None = None
     llm_instructions: str = ""
@@ -45,6 +48,7 @@ class CheckStatus(BaseModel):
     findings: list[Finding]
     skipped_rules: list[str] = Field(default_factory=list)
     scorecard: Scorecard | None = None
+    effective_llm: EffectiveLlmReport | None = None
 
 
 @router.post("/checks", status_code=202)
@@ -80,22 +84,32 @@ async def create_check(
             job.add_findings("terminology", findings)
 
         if "llm" in body.checkers:
-            provider: LLMProvider = app.state.provider_factory(
-                body.llm_provider, body.llm_model
+            requested = RequestedLLM(
+                tier=body.llm_tier, provider=body.llm_provider, model=body.llm_model
             )
-            job.attach_task(
-                asyncio.create_task(
-                    _run_llm(
-                        job,
-                        provider,
-                        body.text,
-                        body.language,
-                        vet=app.state.settings.vet_suggestions,
-                        dictionaries_dir=app.state.settings.dictionaries_dir,
-                        instructions=body.llm_instructions,
+            effective, provider = get_effective_provider(
+                app, user, requested, body.language.value
+            )
+            job.effective_llm = effective_llm_report(requested, effective)
+            # On the stream too (spec §6.2): SSE consumers see the same block
+            # the POST response carries.
+            job.emit("effective_llm", job.effective_llm.model_dump(mode="json"))
+            if provider is None:
+                job.finish()
+            else:
+                job.attach_task(
+                    asyncio.create_task(
+                        _run_llm(
+                            job,
+                            provider,
+                            body.text,
+                            body.language,
+                            vet=app.state.settings.vet_suggestions,
+                            dictionaries_dir=app.state.settings.dictionaries_dir,
+                            instructions=body.llm_instructions,
+                        )
                     )
                 )
-            )
         else:
             job.finish()
 
@@ -105,6 +119,7 @@ async def create_check(
             findings=job.findings,
             skipped_rules=job.skipped_rules,
             scorecard=job.scorecard,
+            effective_llm=job.effective_llm,
         )
     except Exception:
         app.state.jobs.discard(job.id)
@@ -159,6 +174,7 @@ def get_check(
         findings=job.findings,
         skipped_rules=job.skipped_rules,
         scorecard=job.scorecard,
+        effective_llm=job.effective_llm,
     )
 
 
