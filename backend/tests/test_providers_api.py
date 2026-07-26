@@ -7,7 +7,12 @@ from app.checkers.llm import bedrock
 from app.checkers.llm.claude import ClaudeProvider
 from app.core.config import ExtraProviderSettings, ProviderSettings, Settings
 from app.main import create_app
-from tests.conftest import auth_headers
+from tests.conftest import auth_headers, second_user_headers
+
+TIERS_CONFIG = {
+    "basic": {"llm": {"tiers": ["cheap", "local"], "providers": ["ollama"],
+                      "models": {"ollama": ["llama3.1"]}}, "features": []},
+}
 
 
 @pytest.fixture
@@ -143,3 +148,55 @@ def test_extra_provider_available_with_key(
     # Key present but model listing unreachable: available, fallback models.
     assert providers["deepseek"]["available"] is True
     assert providers["deepseek"]["models"] == ["deepseek-v4-pro"]
+
+
+def test_default_config_allows_direct_selection_of_every_provider(
+    client: TestClient,
+) -> None:
+    # No tiers configured: the "unchanged until tiers are configured"
+    # contract extends to 'allowed' too.
+    providers = {p["name"]: p for p in client.get("/api/providers").json()}
+    assert all(p["allowed"] is True for p in providers.values())
+
+
+def test_allowed_reflects_the_caller_s_direct_selection_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for key in (
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "MISTRAL_API_KEY",
+        "DEEPSEEK_API_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(bedrock, "credentials_available", lambda: False)
+    settings = Settings(
+        db_path=tmp_path / "test.db",
+        rules_dir=tmp_path / "rules",
+        providers=ProviderSettings(
+            ollama_base_url="http://127.0.0.1:9",
+            openai_base_url="http://127.0.0.1:9/v1",
+            mistral_base_url="http://127.0.0.1:9/v1",
+        ),
+        tiers=TIERS_CONFIG,
+    )
+    app_client = TestClient(create_app(settings))
+
+    basic_providers = {
+        p["name"]: p
+        for p in app_client.get(
+            "/api/providers", headers=second_user_headers(app_client)
+        ).json()
+    }
+    assert basic_providers["ollama"]["allowed"] is True
+    assert all(
+        p["allowed"] is False for name, p in basic_providers.items() if name != "ollama"
+    )
+
+    admin_providers = {
+        p["name"]: p
+        for p in app_client.get(
+            "/api/providers", headers=auth_headers(app_client)
+        ).json()
+    }
+    assert all(p["allowed"] is True for p in admin_providers.values())

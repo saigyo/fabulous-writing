@@ -3,13 +3,15 @@ import logging
 import os
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
+from app.api.deps import CurrentUser, get_current_user
 from app.checkers.llm import bedrock
 from app.checkers.llm.claude import ClaudeProvider
 from app.checkers.llm.ollama import OllamaProvider
 from app.checkers.llm.openai_compat import OpenAICompatProvider
 from app.core.config import BUILTIN_ENV_KEYS, ProviderSettings
+from app.core.permissions import policy_for
 
 router = APIRouter(prefix="/api", tags=["providers"])
 
@@ -122,7 +124,9 @@ async def _bedrock_entry(settings: ProviderSettings) -> dict[str, Any]:
 
 
 @router.get("/providers")
-async def list_providers(request: Request) -> list[dict[str, Any]]:
+async def list_providers(
+    request: Request, user: CurrentUser = Depends(get_current_user)
+) -> list[dict[str, Any]]:
     settings = request.app.state.settings.providers
     entries = [
         _ollama_entry(settings),
@@ -152,4 +156,13 @@ async def list_providers(request: Request) -> list[dict[str, Any]]:
         )
         for name, extra in settings.extra_providers.items()
     ]
-    return list(await asyncio.gather(*entries))
+    policy = policy_for(
+        tier=user.tier, is_admin=user.is_admin, settings=request.app.state.settings
+    )
+    results = list(await asyncio.gather(*entries))
+    for entry in results:
+        # 'allowed' means allowed for DIRECT selection (spec §7.2): a
+        # provider outside llm.providers can still serve a routed
+        # quality-tier run (§6.2 rule 5).
+        entry["allowed"] = policy.providers is None or entry["name"] in policy.providers
+    return results
