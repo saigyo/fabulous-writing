@@ -3055,3 +3055,84 @@ Full detail: `.superpowers/sdd/2026-07-25-multi-user-m2-enforcement/task-11-repo
 nullable `owner_id` + global built-ins for profiles/domains, 404-not-403
 semantics) and the per-user token epoch that closes this milestone's
 same-second revocation residual.
+
+## 2026-07-26 — M3: ownership scoping, global built-ins, per-user token epoch
+
+PR: [#26](https://github.com/saigyo/fabulous-writing/pull/26), branch
+`multi-user-m3-implementation` (plan: [#25](https://github.com/saigyo/fabulous-writing/pull/25)).
+
+**Why.** M2 authenticated every endpoint but scoped nothing: any logged-in
+account saw every document, folder, profile, and terminology domain. M3
+closes that — a caller now sees exactly what they created, plus whatever a
+seeder or an admin made global.
+
+**What.** A per-user `token_epoch` counter closes M2's documented same-second
+revocation residual exactly (equality check against a JWT `epoch` claim,
+rather than a wall-clock comparison) — `issue_token`/`VerifiedToken` both
+gained the field, and the roadmap's Cross-milestone interfaces section was
+updated to match. `documents` and `folders` gained enforced, required
+`owner_id` scoping on every store method, with a foreign id 404ing exactly
+like a missing one — never 403, which would leak that the id exists.
+`folders` needed a guarded table rebuild to drop its legacy global
+`UNIQUE(name)` and the inert `owner_id DEFAULT 1`, replaced by a per-owner
+case-insensitive index. `profiles` and `domains` gained a *nullable*
+`owner_id` instead: `NULL` is global (seeded built-ins, or anything an admin
+explicitly creates as global), visible to every caller but mutable only by
+an admin (`GlobalReadOnlyError` → 403, one shared exception across both
+stores). `profiles` got the same guarded-rebuild treatment for its legacy
+`UNIQUE(language, name)`, replaced by two partial unique indexes (SQLite
+treats every `NULL` as distinct, so one composite index can't enforce global
+uniqueness); `domains` never had a `UNIQUE` to drop but gained the matching
+index pair. Both index creations are preceded by a duplicate pre-scan that
+skips-with-a-warning instead of crashing startup on a pre-existing
+case-insensitive collision. Seeders (`seed_terminology`, `seed_profiles`)
+write with `owner_id=None` from a fresh install onward, so example content
+is global from day one, never accidentally owned by whichever account
+happens to trigger the first `create_app()` run. An owner decision made
+after M2 shipped brought the in-memory check-jobs registry into scope too:
+check ids are UUIDs (obscurity, not authorization) and findings carry quoted
+document spans, so `JobManager` now tracks `owner_id` and a foreign job id
+404s the same way a foreign document does. `is_global` (a `computed_field`,
+never the raw `owner_id`) reaches every profile/domain response and drives
+the frontend affordances: badges plus disabled/hidden controls for
+non-admins on global rows in both management views, and a generation guard
+on the two per-user domains fetches whose M2-era "no guard needed" comments
+expired the moment domains gained an owner.
+
+**Two facts worth recording precisely**, since an earlier plan draft got
+both wrong: (1) the Standard profile's rename/delete guard is **403 for a
+non-admin, 409 for an admin** — not a flat 409 for everyone — adjudicated
+against spec §7.2, with the router checking the general global-row guard
+before the Standard-specific business rule so a non-admin's rejection never
+leaks that the row happens to be Standard. (2) `POST /api/checks` does not
+filter `domain_ids` request-side; the terminology checker's store read is
+itself owner-scoped, so a foreign domain id simply yields no findings.
+
+**Deploy note**: pre-M3 tokens carry no `epoch` claim, and the verifier's
+required-claims list now includes it, so every outstanding session is
+signed out exactly once on upgrade — affected users just log in again.
+
+**Verification.** Rehearsed the migration on a `cp`-only copy of the live
+`backend/data/fabulous.db` (never opened, written, or pointed at from an
+app instance; SHA-256 confirmed unchanged afterward): two `create_app()`
+runs against the same copy showed identical row counts before and after
+every table (`users` 1, `profiles` 26, `domains` 2, `terms` 23, `folders` 2,
+`documents` 4, `profile_seed_markers` 7, `admin_audit` 0) — no row lost, no
+unexplained addition, both partial indexes created cleanly with no
+duplicate-skips needed on this data, `PRAGMA integrity_check` = `ok`, and
+the second run changed nothing (idempotent). Logging in as the admin
+against the migrated copy via the real API confirmed documents, folders,
+domains, terms, and profiles matched the pre-migration data exactly (the
+M2-deliverable check, inverted). Cross-user ownership sweep: a table-driven
+test module over every id-addressable endpoint, plus a store-method audit
+table — the structural answer to M2's recurring "guard applied to one
+directory, not its neighbour" defect shape.
+
+**Gates**: backend `uv run pytest -q` → 913 passed, zero warnings. Frontend
+`npx vitest run && npm run lint && npm run build` → 379 passed, `oxlint`
+clean, build succeeded.
+
+Full detail: `.superpowers/sdd/2026-07-26-multi-user-m3-ownership/task-8-report.md`.
+
+**Next**: M4 — tiered LLM access (`tiers:` config, `resolve_llm_selection`,
+feature gates, frontend gating and degradation notes).
