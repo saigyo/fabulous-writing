@@ -26,6 +26,7 @@ import { clearSnapshot, readSnapshot, writeSnapshot } from './buffer'
 import { applyFolderDefaults } from './folders'
 import { hydrateFromBuffer, hydrateFromDocument, recoverSnapshot } from './hydration'
 import { refreshDocuments, refreshFolders, summaryOf } from './list'
+import { resetProfileApplySuppression } from './profileApply'
 import { settingsPayload } from './settings'
 
 const LEGACY_TEXT_KEY = 'fabulous-writing-text'
@@ -58,13 +59,19 @@ export function clearLegacyText(): void {
  * holding the stale (already-invalidated) run, so the next mount's
  * `initInFlight ??=` hands the new user's mount that same stale promise
  * instead of starting a fresh run — the new user's document list and
- * folders then never initialise at all. Called by logout() and
- * expireSession() (auth/session.ts), never directly by UI code. */
+ * folders then never initialise at all. Also resets the one-shot
+ * profile-apply suppression (see profileApply.ts's
+ * resetProfileApplySuppression()): otherwise a suppression armed by the
+ * outgoing session's hydration and still pending when it ends could be
+ * consumed by the incoming session's own profile fetch instead. Called by
+ * logout() and expireSession() (auth/session.ts), never directly by UI
+ * code. */
 export function invalidateDocumentWork(): void {
   cancelDebounce()
   cancelRetry()
   bumpGeneration()
   resetCoordinationState()
+  resetProfileApplySuppression()
   initInFlight = null
 }
 

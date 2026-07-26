@@ -12,9 +12,23 @@ import { resolveModel } from './routing'
 let currentCheckId: string | null = null
 let unsubscribe: (() => void) | null = null
 
+// A controller-local request epoch, distinct from currentGeneration() (the
+// document/session-turnover counter). Switching documents does NOT bump
+// currentGeneration() — only logout()/expireSession() do, via
+// invalidateDocumentWork() — so a document switch mid-postCheck() would
+// otherwise pass that check unchanged and let a pending check's response
+// (findings, and worst of all onScorecard, which has no text guard) land on
+// the newly opened document and get autosaved onto it. cancelCheck() (called
+// by hydrateFromDocument() before every document switch) and each new
+// runCheck() both bump this, so a check whose postCheck() resolves after
+// either has happened is recognised as stale even though the session and
+// document-generation counter never changed.
+let checkEpoch = 0
+
 /** Drop any in-flight check: closes the SSE subscription so late results
  * cannot land on a different document (they would be autosaved onto it). */
 export function cancelCheck(): void {
+  checkEpoch++
   unsubscribe?.()
   unsubscribe = null
   currentCheckId = null
@@ -41,6 +55,8 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
 
   unsubscribe?.()
   unsubscribe = null
+  checkEpoch++
+  const epoch = checkEpoch
 
   if (!text.trim()) {
     view.dispatch({
@@ -96,7 +112,10 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
       llm_instructions: profile?.llm_instructions ?? '',
     })
   } catch (error) {
-    if (gen !== currentGeneration()) return // session ended: stale error, nothing to report
+    // gen guards session turnover; epoch guards a same-session document
+    // switch or a newer runCheck() — see checkEpoch above for why both are
+    // needed.
+    if (gen !== currentGeneration() || epoch !== checkEpoch) return // stale error, nothing to report
     useStore.setState({
       checkPhase: 'idle',
       llmError: currentMessages().llmCheckFailed(String(error)),
@@ -106,7 +125,14 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
     return
   }
 
-  if (gen !== currentGeneration()) return // session ended while postCheck was in flight: do not apply findings, flush, or subscribe
+  // gen !== currentGeneration(): the session ended while postCheck was in
+  // flight (logout/expiry). epoch !== checkEpoch: cancelCheck() or a newer
+  // runCheck() ran while postCheck was in flight — e.g. hydrateFromDocument()
+  // switched documents to a *different* document in the *same* session, so
+  // gen alone would not have caught it. Either way: do not apply findings,
+  // flush, or subscribe — this is what a stale check's late arrival would
+  // otherwise write onto the wrong document.
+  if (gen !== currentGeneration() || epoch !== checkEpoch) return
 
   applyFindings(text, ['rule', 'terminology'], fastFindings(result.findings))
   void flush()

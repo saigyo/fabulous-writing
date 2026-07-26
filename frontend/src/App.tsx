@@ -126,7 +126,13 @@ export function Header() {
       })
       .catch(() => {
         // A failed fetch must still consume the one-shot suppression, or it
-        // would strand and wrongly suppress the NEXT legitimate apply.
+        // would strand and wrongly suppress the NEXT legitimate apply — but
+        // only for ITS OWN generation: without this guard, a rejection that
+        // arrives after a session turnover could consume a suppression flag
+        // the *incoming* session has since armed for its own document open,
+        // silently discarding it before that session's own profile fetch
+        // gets to see it.
+        if (gen !== currentGeneration()) return
         consumeProfileApplySuppression()
       })
   }, [store.language])

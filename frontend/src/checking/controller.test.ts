@@ -144,4 +144,42 @@ describe('check controller', () => {
     expect(subscribeCheck).not.toHaveBeenCalled()
     expect(useStore.getState().scorecard).toBeNull()
   })
+
+  it('drops a check whose postCheck resolves after a same-session document switch', async () => {
+    // The same-session twin of the test above: no logout, no generation
+    // bump. hydrateFromDocument() calls cancelCheck() on every document
+    // switch — reproduced literally here — while postCheck() for document
+    // A is still pending. Before the fix, cancelCheck() only closed a
+    // *subscription* that did not exist yet, so runCheck() would re-arm
+    // currentCheckId and open a fresh one once postCheck() resolved,
+    // applying document A's findings/scorecard onto document B and
+    // autosaving them (void flush()).
+    let resolvePostCheck!: (value: Awaited<ReturnType<typeof postCheck>>) => void
+    vi.mocked(postCheck).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePostCheck = resolve
+        }),
+    )
+    const unsub = vi.fn()
+    vi.mocked(subscribeCheck).mockReturnValue(unsub)
+
+    const runPromise = runCheck(true) // document A's check starts
+
+    // The literal call hydrateFromDocument() makes before loading document
+    // B: cancel whatever check belongs to the outgoing document. Same
+    // session throughout — currentGeneration() never changes.
+    cancelCheck()
+    docText = 'document B text' // the editor now shows the newly opened doc
+
+    resolvePostCheck({ check_id: 'c-a', status: 'running', findings: [] } as never)
+    await runPromise
+
+    // No subscription opens for the stale check, and its findings/scorecard
+    // must never reach the store (which would mean they were autosaved onto
+    // document B).
+    expect(subscribeCheck).not.toHaveBeenCalled()
+    expect(dispatched).toHaveLength(0)
+    expect(useStore.getState().scorecard).toBeNull()
+  })
 })

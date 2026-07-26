@@ -38,6 +38,7 @@ export function AccountMenu() {
   const [open, setOpen] = useState(false)
   const [view, setView] = useState<'menu' | 'password'>('menu')
   const anchorRef = useRef<HTMLDivElement>(null)
+  const badgeRef = useRef<HTMLButtonElement>(null)
 
   // Every path that leaves the popover resets `view` alongside it — the
   // same shape DocumentSidebar's closeMenu uses for its `moving` submenu —
@@ -58,7 +59,16 @@ export function AccountMenu() {
   useEffect(() => {
     if (!open) return
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') closeMenu()
+      if (event.key === 'Escape') {
+        closeMenu()
+        // The password form's input can hold focus here (it's autoFocus'd),
+        // and closeMenu() unmounts it — without this, focus falls back to
+        // <body>, stranding keyboard/screen-reader users. Dismissal via
+        // useDismissOnOutsideClick (a click elsewhere) already has a natural
+        // focus target from the click itself, so this return-focus step is
+        // specific to the keyboard-dismiss path.
+        badgeRef.current?.focus()
+      }
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
@@ -71,9 +81,11 @@ export function AccountMenu() {
   return (
     <div className="account-menu-anchor" ref={anchorRef}>
       <button
+        ref={badgeRef}
         type="button"
         className="account-badge"
         aria-label={m.accountMenu}
+        aria-expanded={open}
         onClick={() => {
           // Toggling the trigger always resets to the menu view too, not
           // just closing paths — so reopening after drilling into the
