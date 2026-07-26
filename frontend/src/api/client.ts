@@ -19,6 +19,7 @@ import type {
 // cycle. That is a different relationship from session.ts (below), which
 // imports this module's values and therefore cannot be imported back.
 import { useStore } from '../state/store'
+import { createParser, type EventSourceMessage } from 'eventsource-parser'
 
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 
@@ -101,6 +102,13 @@ export function handleUnauthorized(tokenUsed: string | null): void {
   getUnauthorizedHandler()?.()
 }
 
+// Shared by requestWithOptions below and, from Task 5, the SSE reader — so
+// the `Bearer ${token}` string is assembled in exactly one place rather than
+// growing a second copy where the stream builds its own headers.
+function authHeader(token: string | null): Record<string, string> {
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
 async function requestWithOptions<T>(path: string, init?: RequestOptionsInternal): Promise<T> {
   const { keepSessionOn401, headers: callerHeaders, ...rest } = init ?? {}
   // Read at fetch time, not captured earlier: an in-flight request that
@@ -110,15 +118,15 @@ async function requestWithOptions<T>(path: string, init?: RequestOptionsInternal
   // api-function entry) risks a request built before a refresh picking up
   // a token that isn't its caller's anymore.
   const token = useStore.getState().token
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...callerHeaders,
-  }
   // Deliberately unconditional on keepSessionOn401: that flag has exactly
   // one effect (skipping the clear-auth branch below) and must never touch
   // header construction, or the first exempt endpoint that actually
   // carries a token would silently lose its Authorization header.
-  if (token) headers.Authorization = `Bearer ${token}`
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...callerHeaders,
+    ...authHeader(token),
+  }
 
   const response = await fetch(`${BASE}${path}`, { ...rest, headers })
 
@@ -214,36 +222,141 @@ export interface CheckEventHandlers {
   onScorecard?: (scorecard: Scorecard) => void
 }
 
+// EventSource cannot send an Authorization header, so the stream is read
+// over fetch()+AbortController instead. Framing (chunk splitting, \r\n vs
+// \n, multi-line data:, comments) comes from eventsource-parser — see spec
+// §7.3 for why a fuller SSE client was rejected: both alternatives
+// considered reconnect automatically, which is wrong for a one-shot check
+// stream, and one of them treats only HTTP 204 as terminal, so a 401 from
+// an expired token would loop invisibly to our 401 handler.
+function dispatchCheckEvent(event: EventSourceMessage, handlers: CheckEventHandlers): void {
+  switch (event.event) {
+    case 'checker_result': {
+      const data = JSON.parse(event.data)
+      handlers.onResult(data.checker, data.findings)
+      return
+    }
+    case 'llm_progress': {
+      const data = JSON.parse(event.data)
+      handlers.onProgress?.(data.tokens)
+      return
+    }
+    case 'scorecard': {
+      handlers.onScorecard?.(JSON.parse(event.data))
+      return
+    }
+    case 'checker_error': {
+      const data = JSON.parse(event.data)
+      handlers.onError(data.checker, data.error)
+      return
+    }
+    default:
+      return
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { name?: unknown }).name === 'AbortError'
+  )
+}
+
+async function readEvents(
+  checkId: string,
+  handlers: CheckEventHandlers,
+  signal: AbortSignal,
+): Promise<void> {
+  // Settle exactly once: `done` calls onDone(), and so does an ended or
+  // failed stream, and so does the non-OK-response path below. Without this
+  // flag a `done` frame immediately followed by natural end-of-stream would
+  // fire onDone() twice.
+  let settled = false
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+  const settle = (): void => {
+    if (settled) return
+    settled = true
+    handlers.onDone()
+  }
+
+  const parser = createParser({
+    onEvent(event) {
+      if (event.event === 'done') {
+        // "done" closes the stream: stop reading and settle, matching
+        // EventSource's own close-on-done behaviour above.
+        void reader?.cancel()
+        settle()
+        return
+      }
+      dispatchCheckEvent(event, handlers)
+    },
+  })
+
+  // Read at fetch time, same as request() above — not captured earlier,
+  // so a delayed 401 on this stream is scoped to the token it was opened
+  // with, not whatever token is current when the 401 arrives.
+  const token = useStore.getState().token
+  const headers: Record<string, string> = {
+    Accept: 'text/event-stream',
+    ...authHeader(token),
+  }
+
+  try {
+    const response = await fetch(`${BASE}/api/checks/${checkId}/events`, { headers, signal })
+
+    // fetch() resolves happily for a 401 — without this check the reader
+    // would parse the JSON error body as an event stream, emit nothing,
+    // reach end-of-stream and call onDone(), leaving the app believing the
+    // session is still valid. Route it through the same handler request()
+    // uses so a 401 reaches expireSession().
+    if (!response.ok) {
+      if (response.status === 401) handleUnauthorized(token)
+      settle()
+      return
+    }
+
+    reader = response.body?.getReader()
+    if (!reader) {
+      settle()
+      return
+    }
+
+    // { stream: true } and the trailing flush matter: a ReadableStream
+    // splits on byte boundaries, not code points, so decoding each chunk
+    // independently would replace a split multi-byte character with U+FFFD
+    // before the parser ever sees it. Findings and messages in this app
+    // carry German, French, Japanese and Chinese text, so that corruption
+    // would be routine.
+    const decoder = new TextDecoder()
+    while (!settled) {
+      const { done, value } = await reader.read()
+      if (done) break
+      parser.feed(decoder.decode(value, { stream: true }))
+    }
+    parser.feed(decoder.decode())
+    settle()
+  } catch (error) {
+    // AbortError is the normal cancellation path (cancelCheck() already
+    // resets the store itself), not a failure — it must not surface as an
+    // error and onDone() must not fire. Every other error (a dropped
+    // connection, DNS failure, ...) is indistinguishable from completion
+    // today, and this milestone deliberately keeps that.
+    if (isAbortError(error)) return
+    settle()
+  }
+}
+
 export function subscribeCheck(
   checkId: string,
   handlers: CheckEventHandlers,
 ): () => void {
-  const source = new EventSource(`${BASE}/api/checks/${checkId}/events`)
-  source.addEventListener('checker_result', (event) => {
-    const data = JSON.parse((event as MessageEvent).data)
-    handlers.onResult(data.checker, data.findings)
-  })
-  source.addEventListener('llm_progress', (event) => {
-    const data = JSON.parse((event as MessageEvent).data)
-    handlers.onProgress?.(data.tokens)
-  })
-  source.addEventListener('scorecard', (event) => {
-    const data = JSON.parse((event as MessageEvent).data)
-    handlers.onScorecard?.(data)
-  })
-  source.addEventListener('checker_error', (event) => {
-    const data = JSON.parse((event as MessageEvent).data)
-    handlers.onError(data.checker, data.error)
-  })
-  source.addEventListener('done', () => {
-    source.close()
-    handlers.onDone()
-  })
-  source.onerror = () => {
-    source.close()
-    handlers.onDone()
-  }
-  return () => source.close()
+  const controller = new AbortController()
+  void readEvents(checkId, handlers, controller.signal)
+  // AbortController.abort() is idempotent and never throws, so the returned
+  // function needs no guard of its own even though cancelCheck() and every
+  // new runCheck() call it unconditionally.
+  return () => controller.abort()
 }
 
 export interface SuggestionRequest {
