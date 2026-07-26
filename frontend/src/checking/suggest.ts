@@ -54,7 +54,13 @@ export async function fetchSuggestions(findingId: string): Promise<void> {
     if (gen !== currentGeneration()) return // session ended: stale error, nothing to report
     useStore.getState().setSuggestError(findingId, error instanceof Error ? error.message : String(error))
   } finally {
-    useStore.getState().setSuggestPending(null)
+    // Scoped to the captured generation: an outgoing session's completion
+    // must not clear the incoming session's own genuinely in-flight pending
+    // marker (llmActionPending() gates a second concurrent call on it being
+    // non-null) — unconditionally clearing here would let a second request
+    // through that should have been blocked, or drop the incoming session's
+    // spinner early.
+    if (gen === currentGeneration()) useStore.getState().setSuggestPending(null)
   }
 }
 
@@ -107,7 +113,8 @@ export async function fetchRewrite(findingId: string): Promise<void> {
     if (gen !== currentGeneration()) return // session ended: stale error, nothing to report
     useStore.getState().setRewriteError(findingId, error instanceof Error ? error.message : String(error))
   } finally {
-    useStore.getState().setRewritePending(null)
+    // Same reasoning as fetchSuggestions()'s finally block above.
+    if (gen === currentGeneration()) useStore.getState().setRewritePending(null)
   }
 }
 

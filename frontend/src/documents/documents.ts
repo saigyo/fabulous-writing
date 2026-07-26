@@ -19,6 +19,7 @@ import {
   cancelRetry,
   currentGeneration,
   flush,
+  resetCoordinationState,
   setConflictHandler,
 } from './autosave'
 import { clearSnapshot, readSnapshot, writeSnapshot } from './buffer'
@@ -49,17 +50,21 @@ export function clearLegacyText(): void {
  * debounce and backoff-retry timers so no queued write fires again, bumps
  * the generation counter so work already in flight — which cancelling a
  * timer cannot stop — no-ops instead of recreating the buffer for a session
- * that has since ended, and clears the memoised initDocuments() run. That
- * last part matters on its own: without it, a logout mid-initDocuments()
- * leaves `initInFlight` holding the stale (already-invalidated) run, so the
- * next mount's `initInFlight ??=` hands the new user's mount that same
- * stale promise instead of starting a fresh run — the new user's document
- * list and folders then never initialise at all. Called by logout() and
+ * that has since ended, releases autosave's coordination locks (`saving`,
+ * `pending`, `inFlight`) so a save genuinely in flight cannot block or drop
+ * the incoming session's own flush() (see resetCoordinationState()), and
+ * clears the memoised initDocuments() run. That last part matters on its
+ * own: without it, a logout mid-initDocuments() leaves `initInFlight`
+ * holding the stale (already-invalidated) run, so the next mount's
+ * `initInFlight ??=` hands the new user's mount that same stale promise
+ * instead of starting a fresh run — the new user's document list and
+ * folders then never initialise at all. Called by logout() and
  * expireSession() (auth/session.ts), never directly by UI code. */
 export function invalidateDocumentWork(): void {
   cancelDebounce()
   cancelRetry()
   bumpGeneration()
+  resetCoordinationState()
   initInFlight = null
 }
 

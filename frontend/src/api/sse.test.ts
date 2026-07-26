@@ -213,6 +213,32 @@ describe('subscribeCheck', () => {
     expect(h.onDone).toHaveBeenCalledTimes(1)
   })
 
+  it('a result frame framed after done in the same chunk is not dispatched', async () => {
+    // Mirrors the unsubscribe-mid-chunk test above, but for the `done`
+    // frame's own guard: a `done` frame sets `settled` but does not abort
+    // `signal`, and parser.feed() dispatches every event framed in one
+    // chunk synchronously — so a frame that follows `done` within that same
+    // chunk must not still reach its handler.
+    const { stream, push, close } = controllableStream()
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(streamResponse(stream))
+    const h = handlers()
+
+    subscribeCheck('check-1', h)
+
+    const chunk = new Uint8Array([
+      ...sseFrame('checker_result', { checker: 'llm', findings: ['first'] }),
+      ...sseFrame('done', {}),
+      ...sseFrame('checker_result', { checker: 'llm', findings: ['late'] }),
+    ])
+    push(chunk)
+    close()
+
+    await vi.waitFor(() => expect(h.onDone).toHaveBeenCalledTimes(1))
+
+    expect(h.onResult).toHaveBeenCalledTimes(1)
+    expect(h.onResult).toHaveBeenCalledWith('llm', ['first'])
+  })
+
   it('a stream that ends without done calls onDone() once (network-error path)', async () => {
     const { stream, push, close } = controllableStream()
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(streamResponse(stream))
