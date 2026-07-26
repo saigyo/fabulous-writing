@@ -7,6 +7,16 @@ import { useStore } from '../state/store'
 import type { CheckEventHandlers } from './client'
 import { setUnauthorizedHandler, subscribeCheck } from './client'
 
+// tsconfig.app.json (which tsc -b type-checks this file under) declares
+// only `"types": ["vite/client"]`, not "node" — pulling in @types/node
+// globally to type this one Node runtime global (present at test-run time
+// regardless) is a bigger footprint than this file needs, so it is typed
+// locally instead.
+declare const process: {
+  on(event: 'unhandledRejection', listener: (reason: unknown) => void): void
+  off(event: 'unhandledRejection', listener: (reason: unknown) => void): void
+}
+
 function user(id: number) {
   return {
     id,
@@ -78,6 +88,27 @@ function handlers() {
     onProgress: vi.fn<NonNullable<CheckEventHandlers['onProgress']>>(),
     onScorecard: vi.fn<NonNullable<CheckEventHandlers['onScorecard']>>(),
   } satisfies CheckEventHandlers
+}
+
+/** Runs `run`, collecting any `unhandledRejection` the process observes
+ * while it does. Both `reader.cancel()` (on a `done` frame racing an
+ * already-errored stream) and `readEvents()` itself (if a handler throws
+ * from inside settle()) are fire-and-forget promises with no caller
+ * awaiting them directly — a missing `.catch()` on either would surface
+ * here, not as a normal test assertion failure. */
+async function collectUnhandledRejections(run: () => void | Promise<void>): Promise<unknown[]> {
+  const rejections: unknown[] = []
+  const onUnhandled = (reason: unknown) => rejections.push(reason)
+  process.on('unhandledRejection', onUnhandled)
+  try {
+    await run()
+    // Unhandled rejections surface after the current microtask queue
+    // drains; a macrotask tick gives Node's own detection time to fire.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  } finally {
+    process.off('unhandledRejection', onUnhandled)
+  }
+  return rejections
 }
 
 beforeEach(() => {
@@ -247,6 +278,37 @@ describe('subscribeCheck', () => {
     expect(capturedSignal?.aborted).toBe(true)
   })
 
+  it('stops dispatching further events from the same chunk once a handler calls unsubscribe', async () => {
+    // parser.feed() dispatches every event framed in one chunk
+    // synchronously. If a handler calls the unsubscribe function mid-chunk
+    // (aborting the signal), later events already buffered in that same
+    // chunk must not still reach a handler the caller just tore down —
+    // unlike EventSource.close(), which stopped dispatch immediately.
+    const { stream, push, close } = controllableStream()
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(streamResponse(stream))
+    const h = handlers()
+    let unsubscribe!: () => void
+    h.onResult.mockImplementation(() => {
+      unsubscribe()
+    })
+
+    unsubscribe = subscribeCheck('check-1', h)
+
+    const chunk = new Uint8Array([
+      ...sseFrame('checker_result', { checker: 'llm', findings: ['first'] }),
+      ...sseFrame('checker_result', { checker: 'llm', findings: ['second'] }),
+    ])
+    push(chunk)
+    close()
+
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(h.onResult).toHaveBeenCalledTimes(1)
+    expect(h.onResult).toHaveBeenCalledWith('llm', ['first'])
+  })
+
   it('aborting before the response arrives does not call onDone()', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((_url, init) => {
       const signal = (init as RequestInit).signal
@@ -281,6 +343,24 @@ describe('subscribeCheck', () => {
     const state = useStore.getState()
     expect(state.authStatus).toBe('anonymous')
     expect(state.sessionExpired).toBe(true)
+    expect(h.onDone).toHaveBeenCalledTimes(1)
+  })
+
+  it('a 500 response does not clear auth state — only 401 reaches handleUnauthorized()', async () => {
+    // Pins the narrowing at the non-OK branch: without `response.status ===
+    // 401`, any non-OK response (a backend 500, a 404) would call
+    // handleUnauthorized() and silently log the user out mid-check.
+    useStore.setState({ token: 'tok', user: user(1), authStatus: 'authenticated' })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(500, {}))
+    const h = handlers()
+
+    subscribeCheck('check-1', h)
+
+    await vi.waitFor(() => expect(h.onDone).toHaveBeenCalledTimes(1))
+
+    const state = useStore.getState()
+    expect(state.authStatus).toBe('authenticated')
+    expect(state.sessionExpired).toBe(false)
     expect(h.onDone).toHaveBeenCalledTimes(1)
   })
 
@@ -332,5 +412,45 @@ describe('subscribeCheck', () => {
 
     const init = fetchMock.mock.calls[0][1] as { headers: Record<string, string> }
     expect(init.headers.Authorization).toBe('Bearer tok-abc')
+  })
+
+  it('does not produce an unhandled rejection when reader.cancel() rejects on a done frame', async () => {
+    // Simulates a `done` frame racing an already-errored connection:
+    // cancel() rejecting here must not escape as an unhandled rejection.
+    let cancelCalled = false
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(sseFrame('done', {}))
+      },
+      cancel() {
+        cancelCalled = true
+        return Promise.reject(new Error('stream already errored'))
+      },
+    })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(streamResponse(stream))
+    const h = handlers()
+
+    const rejections = await collectUnhandledRejections(async () => {
+      subscribeCheck('check-1', h)
+      await vi.waitFor(() => expect(h.onDone).toHaveBeenCalledTimes(1))
+    })
+
+    expect(cancelCalled).toBe(true)
+    expect(rejections).toHaveLength(0)
+  })
+
+  it('does not produce an unhandled rejection when handlers.onDone() throws from the network-error path', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('network down'))
+    const h = handlers()
+    h.onDone.mockImplementation(() => {
+      throw new Error('boom from onDone')
+    })
+
+    const rejections = await collectUnhandledRejections(async () => {
+      subscribeCheck('check-1', h)
+      await vi.waitFor(() => expect(h.onDone).toHaveBeenCalledTimes(1))
+    })
+
+    expect(rejections).toHaveLength(0)
   })
 })
