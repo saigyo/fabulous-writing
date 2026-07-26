@@ -141,6 +141,58 @@ describe('TerminologyView ownership affordances (non-admin)', () => {
   })
 })
 
+describe('TerminologyView terms fetch: latest-request-wins on domain switch', () => {
+  it('clears rows immediately on switch and discards an out-of-order stale fetch from the previous domain', async () => {
+    const privateA: Domain = { id: 2, name: 'Private A', description: '', is_global: false }
+    const privateB: Domain = { id: 3, name: 'Private B', description: '', is_global: false }
+    useStore.setState({ domains: [privateA, privateB] })
+    vi.mocked(getDomains).mockResolvedValue([privateA, privateB])
+
+    const termA: Term = { ...term, id: 201, domain_id: privateA.id, preferred: 'alpha' }
+    const termB: Term = { ...term, id: 202, domain_id: privateB.id, preferred: 'beta' }
+
+    let resolveA!: (terms: Term[]) => void
+    let resolveB!: (terms: Term[]) => void
+    const fetchA = new Promise<Term[]>((resolve) => {
+      resolveA = resolve
+    })
+    const fetchB = new Promise<Term[]>((resolve) => {
+      resolveB = resolve
+    })
+    vi.mocked(getTerms).mockImplementation((domainId: number) => {
+      if (domainId === privateA.id) return fetchA
+      if (domainId === privateB.id) return fetchB
+      return Promise.resolve([])
+    })
+
+    render(<TerminologyView />)
+    // domains[0] (Private A) auto-selects as the active domain on mount;
+    // its fetch is still in flight (deferred).
+    await waitFor(() => expect(getTerms).toHaveBeenCalledWith(privateA.id))
+
+    // Switch to Private B before A's fetch resolves.
+    const rowB = (await screen.findByText('Private B')).closest('.domain-row') as HTMLElement
+    await userEvent.click(within(rowB).getByText('Private B'))
+
+    // Immediately after the switch — before either fetch has resolved — there
+    // must be no interactive rows left over from the previous domain.
+    expect(screen.queryByTitle(en.editTermTitle)).toBeNull()
+    expect(screen.queryByText('alpha')).toBeNull()
+
+    // B's fetch (the current selection) resolves first.
+    resolveB([termB])
+    await screen.findByText('beta')
+
+    // A's fetch (now stale — selection has moved on) resolves after B's.
+    // Out-of-order completion must not let it overwrite the current view.
+    resolveA([termA])
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(screen.queryByText('alpha')).toBeNull()
+    expect(screen.getByText('beta')).toBeTruthy()
+  })
+})
+
 describe('TerminologyView refreshDomains generation guard', () => {
   it('discards a refreshDomains fetch that resolves after a session turnover', async () => {
     let resolveFetch!: (domains: Domain[]) => void
