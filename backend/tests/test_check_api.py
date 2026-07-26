@@ -505,3 +505,60 @@ def test_at_capacity_with_all_jobs_running_refuses_new_check_with_429(
             headers=other,
         )
         assert second.status_code == 429
+
+
+def test_failed_setup_discards_job_and_does_not_leak_running_entry(
+    tmp_path: Path,
+) -> None:
+    """POST /api/checks with unknown llm_provider errors and discards the job.
+
+    Repeated failures must not leak permanently-running jobs: the next valid
+    request for the same owner should succeed (not 429), proving the failed
+    job was cleaned up and did not consume the owner's quota.
+    """
+    from app.services.jobs import MAX_JOBS_PER_OWNER
+
+    class BrokenProviderFactory:
+        def __call__(self, name=None, model=None):
+            if name == "unknown":
+                raise ValueError(f"Unknown provider: {name}")
+            return FakeProvider(LLM_RESPONSE)
+
+    settings = Settings(db_path=tmp_path / "t.db", rules_dir=RULES_DIR)
+    app = create_app(settings)
+    app.state.provider_factory = BrokenProviderFactory()
+
+    with TestClient(app) as client:
+        headers = auth_headers(client)
+
+        # Trigger MAX_JOBS_PER_OWNER+1 failed checks with unknown provider.
+        # Each error should cause a job to be created and then discarded in the
+        # exception handler, so no jobs should accumulate to hit the per-owner cap.
+        for i in range(MAX_JOBS_PER_OWNER + 1):
+            # ValueError from provider_factory is re-raised by exception handler
+            # and escapes to TestClient, which re-raises it.
+            with pytest.raises(ValueError, match="Unknown provider"):
+                client.post(
+                    "/api/checks",
+                    json={
+                        "text": f"Text {i}",
+                        "language": "en",
+                        "checkers": ["llm"],
+                        "llm_provider": "unknown",
+                    },
+                    headers=headers,
+                )
+
+        # The next valid check must succeed (not 429), proving no leaked jobs.
+        valid = client.post(
+            "/api/checks",
+            json={
+                "text": "Valid text",
+                "language": "en",
+                "checkers": ["llm"],
+                "llm_provider": None,  # Will use default provider
+            },
+            headers=headers,
+        )
+        assert valid.status_code == 202
+        assert valid.json()["status"] == "running"
