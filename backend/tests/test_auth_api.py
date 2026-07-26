@@ -248,7 +248,11 @@ def test_password_change_requires_the_current_password(app_client):
         json={"current": "not it", "new": "a new long password"},
         headers=headers,
     )
-    assert wrong.status_code == 401
+    # 422, not 401: the bearer token authenticated fine, so a wrong current
+    # password must not share a status with get_current_user's "token
+    # rejected" 401 — see the docstring in app/api/auth.py.
+    assert wrong.status_code == 422
+    assert wrong.json()["detail"]["code"] == "wrong_current_password"
     ok = app_client.post(
         "/api/auth/password",
         json={"current": "bootstrap password", "new": "a new long password"},
@@ -267,7 +271,25 @@ def test_password_change_enforces_the_self_chosen_minimum(app_client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 422
-    assert "at least 8" in response.json()["detail"]
+    assert response.json()["detail"]["code"] == "password_too_short"
+
+
+def test_password_change_rejects_a_password_over_the_bcrypt_byte_ceiling(app_client):
+    token = login(app_client, "root@example.com", "bootstrap password").json()["token"]
+    # A multibyte string makes the byte-vs-character distinction real: 37
+    # "é" characters is 74 bytes (2 bytes each in UTF-8) but only 37
+    # characters — well past SELF_MIN_PASSWORD_LENGTH, so this can only trip
+    # the 72-byte ceiling, not the length-in-characters minimum.
+    over_long = "é" * 37
+    assert len(over_long) < 72  # characters: would pass the minimum alone
+    assert len(over_long.encode()) > 72  # bytes: trips bcrypt's ceiling
+    response = app_client.post(
+        "/api/auth/password",
+        json={"current": "bootstrap password", "new": over_long},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "password_too_long"
 
 
 def test_throttle_blocks_after_repeated_failures_then_recovers():

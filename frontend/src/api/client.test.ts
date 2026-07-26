@@ -9,6 +9,7 @@ import {
   HttpError,
   type MeResponse,
   postLogin,
+  postPasswordChange,
   request,
   setUnauthorizedHandler,
 } from './client'
@@ -168,13 +169,16 @@ describe('401 handling', () => {
     expect(init.headers.Authorization).toBe('Bearer tok')
   })
 
-  it('a 401 from POST /api/auth/password clears auth state (not exempt)', async () => {
+  it('a 401 from postPasswordChange clears auth state (not exempt)', async () => {
+    // Re-seated on the real function (Task 8) rather than calling request()
+    // against the path directly: postPasswordChange didn't exist when this
+    // test was first written (Task 4), so it exercised the seam through the
+    // bare path string. The real function is the better seam now — it pins
+    // the actual call site's behavior, not just a stand-in URL.
     useStore.setState({ token: 'tok', user: user(1), authStatus: 'authenticated' })
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(401, {}))
 
-    await expect(
-      request('/api/auth/password', { method: 'POST' }),
-    ).rejects.toBeInstanceOf(HttpError)
+    await expect(postPasswordChange('wrong', 'new-password')).rejects.toBeInstanceOf(HttpError)
 
     expect(useStore.getState().authStatus).toBe('anonymous')
   })

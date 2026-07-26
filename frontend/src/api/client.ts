@@ -180,6 +180,22 @@ export const postLogin = (email: string, password: string) =>
 
 export const getMe = () => request<MeResponse>('/api/auth/me')
 
+// The server's SELF_MIN_PASSWORD_LENGTH (backend/app/core/auth.py) is 8, and
+// no endpoint exposes it, so Task 8's password form hardcodes the same value
+// here to pre-validate before ever sending a request.
+export const MIN_PASSWORD_LENGTH = 8
+
+// Deliberately uses the public request(), not requestWithOptions: a 401 here
+// can only mean the bearer token was rejected (Task 8's backend change gives
+// "current password wrong" its own 422 + code instead), so this must flow
+// through expireSession() like any other endpoint — see postLogin's comment
+// for the contrasting case.
+export const postPasswordChange = (current: string, next: string) =>
+  request<void>('/api/auth/password', {
+    method: 'POST',
+    body: JSON.stringify({ current, new: next }),
+  })
+
 // Injected by auth/session.ts (avoids a module cycle): session.ts imports
 // this module for postLogin/getMe, so this module must not import
 // session.ts back to call expireSession() directly. getUnauthorizedHandler

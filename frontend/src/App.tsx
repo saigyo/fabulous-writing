@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import './App.css'
 import { getDomains, getLanguages, getProfiles, getProviders, getRouting } from './api/client'
+import { AccountMenu } from './auth/AccountMenu'
 import { runCheck } from './checking/controller'
 import { flush, noteChange } from './documents/autosave'
 import { initDocuments } from './documents/documents'
@@ -185,6 +186,7 @@ function Header() {
         >
           {store.checkPhase === 'idle' ? m.check : m.checking}
         </button>
+        <AccountMenu />
       </div>
     </header>
   )
