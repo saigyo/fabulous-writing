@@ -19,10 +19,44 @@ it. No milestone leaves main in a state where the UI cannot talk to the API.
 |---|---|---|---|
 | M1 | `multi-user-auth-core` | `users` + `admin_audit` tables, `UserStore`, password hashing, `TokenVerifier` + `LocalTokenVerifier`, `/api/auth/*`, `/api/admin/users*`, admin bootstrap, operator CLI. Dependencies exist but are **not applied** to existing routers. | Purely additive. Existing endpoints are untouched and unauthenticated, so the current frontend keeps working. |
 | M2 | `multi-user-enforcement` (planning branch for PR #22; implemented on `multi-user-m2-implementation`) | Auth applied to every `/api/*` router; CORS tightened; frontend auth slice, login gate, account menu, Bearer on every request, `fetch`-based SSE reader replacing `EventSource`. | Backend enforcement and the frontend that satisfies it ship in the same PR — the one place they cannot be split. |
-| M3 | `multi-user-ownership` | `owner_id` scoping for documents/folders; nullable `owner_id` + global built-ins for profiles/domains; the guarded table rebuilds; seeders write global rows; `is_global` in responses; 404-not-403 semantics. | Single-user data migrates to admin ownership; one logged-in user sees exactly what they saw before. |
+| M3 | `multi-user-ownership` | `owner_id` scoping for documents/folders; nullable `owner_id` + global built-ins for profiles/domains; **caller scoping for the in-memory check-jobs registry** (see the note below); the guarded table rebuilds; seeders write global rows; `is_global` in responses; 404-not-403 semantics. | Single-user data migrates to admin ownership; one logged-in user sees exactly what they saw before. |
 | M4 | `multi-user-tiers` | `tiers:` config, `resolve_llm_selection` with graceful degradation, feature gates, `effective_llm` reporting, `allowed` flags on `/api/routing` + `/api/providers`, `/api/auth/me` policy payload, frontend gating and degradation notes. | Default config grants the admin everything; behavior is unchanged until tiers are configured. |
 | M5 | `multi-user-metering` | `llm_usage` ledger, `reserve_llm_run` (quota + admin ceiling + concurrency in one transaction), startup/staleness sweep, size caps, 429 + backpressure, skip reasons on scorecard/SSE, frontend quota and skip notices. | Limits default high enough to be inert for existing usage; every denial degrades rather than erroring, except the documented 429. |
 | M6 | `multi-user-admin-ui` | Admin view as a fifth `activeView`, gated on `is_admin`; user table with create/edit/deactivate/reset. | Frontend-only addition over the M1 admin API. |
+
+## M3 must also scope check jobs — decided 2026-07-26
+
+`app/services/jobs.py` has no owner concept, and both id-addressable check
+endpoints look a job up by id alone with no caller check:
+`GET /api/checks/{check_id}` (`app/api/checks.py:132-136`) and
+`GET /api/checks/{check_id}/events` (`:146-150`). Both return findings, which
+carry **quoted spans of the document text**, plus the scorecard.
+
+In M2 that is consistent rather than broken — nothing is owner-scoped, so
+shared checks match shared documents. It becomes a privacy gap precisely when
+M3 makes documents private: the UI would look isolated while any authenticated
+account could read another's check results by id. Partial isolation is worse
+than either extreme, because nothing signals that it is partial. Check ids are
+UUIDs, which is obscurity, not authorization.
+
+Owner's decision (2026-07-26): anything that can reveal something about a
+user's document is in scope for M3 — this must not ship as a residual.
+
+**Scope note, verified rather than assumed:** suggestions and rewrites do
+*not* need the same treatment. `POST /api/suggestions`
+(`app/api/suggestions.py:49`) receives the text in the request body and slices
+`body.text[start:end]`; it stores nothing and exposes no id, so there is no
+artifact to read across accounts. Its frontend-side staleness window was real
+and was closed in M2 with generation guards in `checking/suggest.ts`.
+
+**Also re-evaluate the dated safety comments.** Several M2 guards are justified
+in-code by "this data has no owner, so a stale write is indistinguishable from
+a fresh one". That reasoning expires in this milestone. The two that matter
+write terminology domains into the shared store after an unguarded await —
+`frontend/src/App.tsx:96` and `frontend/src/terminology/TerminologyView.tsx:37`
+— and become genuine leaks of another user's domain names the moment domains
+carry an `owner_id`. Profile writes are already guarded. Grep for that
+justification and re-check every instance rather than trusting the comments.
 
 ## Cross-milestone interfaces
 
