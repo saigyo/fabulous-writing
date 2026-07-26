@@ -27,7 +27,7 @@ vi.mock('../documents/documents', () => ({
   clearLegacyText: vi.fn(),
 }))
 
-import { getDomains, getTerms } from '../api/client'
+import { getDomains, getTerms, updateTerm } from '../api/client'
 import { logout } from '../auth/session'
 import { TerminologyView } from './TerminologyView'
 
@@ -113,6 +113,31 @@ describe('TerminologyView ownership affordances (non-admin)', () => {
     screen.getByPlaceholderText(en.preferredPlaceholder)
     screen.getByTitle(en.editTermTitle)
     screen.getByTitle(en.deleteTermTitle)
+  })
+
+  it('exits edit mode when the selected domain changes mid-edit, so the stale Save button cannot fire', async () => {
+    // domains[0] is the global domain, so start on the private one to get
+    // an editable row in the first place.
+    vi.mocked(getTerms).mockResolvedValue([term])
+    render(<TerminologyView />)
+
+    const privateRow = (await screen.findByText('Private Domain')).closest('.domain-row') as HTMLElement
+    await userEvent.click(within(privateRow).getByText('Private Domain'))
+    await screen.findByText('widget')
+
+    await userEvent.click(screen.getByTitle(en.editTermTitle))
+    screen.getByDisplayValue('widget') // now editing: the row's input carries the term's value
+    screen.getByTitle(en.saveEditTitle)
+
+    // Switch to the global domain while still "editing" — terms haven't
+    // been refetched yet, so without a reset the same edit row (and its
+    // live Save button, wired to the private term's id) would still render.
+    const globalRow = (await screen.findByText('Global Domain')).closest('.domain-row') as HTMLElement
+    await userEvent.click(within(globalRow).getByText('Global Domain'))
+
+    expect(screen.queryByTitle(en.saveEditTitle)).toBeNull()
+    expect(screen.queryByDisplayValue('widget')).toBeNull()
+    expect(updateTerm).not.toHaveBeenCalled()
   })
 })
 
