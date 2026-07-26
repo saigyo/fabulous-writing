@@ -49,14 +49,18 @@ user's document is in scope for M3 — this must not ship as a residual.
 artifact to read across accounts. Its frontend-side staleness window was real
 and was closed in M2 with generation guards in `checking/suggest.ts`.
 
-**Also re-evaluate the dated safety comments.** Several M2 guards are justified
-in-code by "this data has no owner, so a stale write is indistinguishable from
-a fresh one". That reasoning expires in this milestone. The two that matter
-write terminology domains into the shared store after an unguarded await —
-`frontend/src/App.tsx:96` and `frontend/src/terminology/TerminologyView.tsx:37`
-— and become genuine leaks of another user's domain names the moment domains
-carry an `owner_id`. Profile writes are already guarded. Grep for that
-justification and re-check every instance rather than trusting the comments.
+**Also re-evaluate the dated safety comments.** Several M2 guards are
+justified in-code by reasoning of the shape "this data is not scoped to a
+user, so a stale write is indistinguishable from a fresh one". That reasoning
+expires in this milestone. The two writes that matter put terminology domains
+into the shared store after an unguarded await — grep `getDomains(` in
+`frontend/src`, which finds exactly them: `frontend/src/App.tsx:96` (whose
+effect carries the comment "No generation guard needed", `App.tsx:89`) and
+`frontend/src/terminology/TerminologyView.tsx:37` (which carries no comment at
+all). Both become genuine leaks of another user's domain names the moment
+domains carry an `owner_id`. Profile writes are already guarded. Audit by
+symbol — grep `getDomains(` and `No generation guard` — and re-check every
+hit rather than trusting the comments.
 
 ## Cross-milestone interfaces
 
