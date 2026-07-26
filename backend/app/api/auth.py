@@ -336,11 +336,26 @@ def change_password(
 ) -> Response:
     _require_local_mode(request)
     store = request.app.state.user_store
+    # 422, not 401: the bearer token authenticated this request fine — this
+    # is a validation failure of the submitted body, not a failure to
+    # authenticate. A wrong-current-password 401 here would be
+    # indistinguishable from get_current_user's "your token is dead" 401,
+    # and the two need different client responses (retry the form vs. sign
+    # in again).
     if store.verify_credentials(current.email, body.current) is None:
-        raise HTTPException(401, "Current password is incorrect")
+        raise HTTPException(422, {"code": "wrong_current_password"})
     try:
         validate_password(body.new, min_length=SELF_MIN_PASSWORD_LENGTH)
     except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
+        # validate_password conflates two distinct failures behind one
+        # exception type (too short vs. bcrypt's 72-byte ceiling); recover
+        # which one by re-checking the cheap condition, so the client gets a
+        # discriminator instead of a shared 422 it cannot act on.
+        code = (
+            "password_too_short"
+            if len(body.new) < SELF_MIN_PASSWORD_LENGTH
+            else "password_too_long"
+        )
+        raise HTTPException(422, {"code": code}) from exc
     store.set_password(current.id, body.new)
     return Response(status_code=204)
