@@ -45,13 +45,17 @@ def _store(request: Request) -> ProfileStore:
 
 
 def _pruned(request: Request, language: Language,
-            rule_exceptions: list[str], domain_ids: list[int]) -> tuple[list[str], list[int]]:
+            rule_exceptions: list[str], domain_ids: list[int],
+            *, owner_id: int) -> tuple[list[str], list[int]]:
     known_rules = {
         r.rule_id
         for r in request.app.state.rule_engine.list_rules()
         if r.language == language
     }
-    known_domains = {d.id for d in request.app.state.terminology_store.list_domains()}
+    known_domains = {
+        d.id
+        for d in request.app.state.terminology_store.list_domains(owner_id=owner_id)
+    }
     return (
         [r for r in rule_exceptions if r in known_rules],
         [d for d in domain_ids if d in known_domains],
@@ -75,7 +79,8 @@ def create_profile(
 ) -> Profile:
     name = validate_name(body.name, message="Profile name must not be empty")
     exceptions, domains = _pruned(
-        request, body.language, body.rule_exceptions, body.domain_ids
+        request, body.language, body.rule_exceptions, body.domain_ids,
+        owner_id=user.id,
     )
     try:
         return _store(request).create_profile(
@@ -116,7 +121,8 @@ def update_profile(
     if current.is_standard and name != current.name:
         raise HTTPException(409, "The Standard profile cannot be renamed")
     exceptions, domains = _pruned(
-        request, current.language, body.rule_exceptions, body.domain_ids
+        request, current.language, body.rule_exceptions, body.domain_ids,
+        owner_id=user.id,
     )
     try:
         updated = store.update_profile(

@@ -3,10 +3,11 @@ import json
 import logging
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.api.deps import CurrentUser, get_current_user
 from app.checkers.llm.checker import LLMChecker
 from app.checkers.llm.provider import LLMProvider
 from app.checkers.pipeline import drop_duplicates
@@ -47,7 +48,11 @@ class CheckStatus(BaseModel):
 
 
 @router.post("/checks", status_code=202)
-async def create_check(request: Request, body: CheckRequest) -> CheckStatus:
+async def create_check(
+    request: Request,
+    body: CheckRequest,
+    user: CurrentUser = Depends(get_current_user),
+) -> CheckStatus:
     app = request.app
     job: CheckJob = app.state.jobs.create()
 
@@ -63,7 +68,10 @@ async def create_check(request: Request, body: CheckRequest) -> CheckStatus:
         checker = TerminologyChecker(app.state.terminology_store, nlp=app.state.nlp)
         findings: list[Finding] = []
         for domain_id in body.domain_ids:
-            more = checker.check(body.text, body.language, domain_id)
+            # A foreign or deleted domain id yields no findings: the
+            # checker's store read is owner-scoped (spec §5.2), so there is
+            # no id vetting to do here and no existence leak to cause.
+            more = checker.check(body.text, body.language, domain_id, owner_id=user.id)
             findings.extend(drop_duplicates(more, findings))
         job.add_findings("terminology", findings)
 

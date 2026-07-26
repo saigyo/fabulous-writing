@@ -122,8 +122,8 @@ def test_demo_text_triggers_terminology(
 
     store = TerminologyStore(tmp_path / "test.db")
     seed_terminology(store)
-    domain = store.list_domains()[0]
+    domain = store.list_domains(owner_id=1)[0]
     checker = TerminologyChecker(store, nlp=registry)
     text = (DEMOS_DIR / f"{language.value}.txt").read_text(encoding="utf-8")
-    findings = checker.check(text, language, domain.id)
+    findings = checker.check(text, language, domain.id, owner_id=1)
     assert findings, f"demo text for {language.value} triggers no terminology finding"

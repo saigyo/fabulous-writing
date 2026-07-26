@@ -11,6 +11,10 @@ import pytest
 from uvicorn.importer import import_from_string
 
 import app.main as main_module
+from app.core.auth import AuthConfigError
+from app.core.config import Settings
+from app.main import create_app
+from app.services._sqlite import connect
 
 
 def test_lazy_app_attribute_builds_once_and_is_cached(monkeypatch):
@@ -50,3 +54,17 @@ def test_unknown_attribute_still_raises_attribute_error():
     # `app`, not swallow every missing-attribute lookup on the module.
     with pytest.raises(AttributeError, match="no attribute 'does_not_exist'"):
         main_module.does_not_exist
+
+
+def test_seeders_run_after_admin_bootstrap(tmp_path, monkeypatch):
+    # Spec §9 startup order: migrations -> admin seeding -> global
+    # seeders. With bootstrap credentials missing and no users, create_app
+    # must fail BEFORE the seeders write any global row.
+    monkeypatch.delenv("FW_ADMIN_EMAIL", raising=False)
+    monkeypatch.delenv("FW_ADMIN_PASSWORD", raising=False)
+    settings = Settings(db_path=tmp_path / "t.db", rules_dir=tmp_path / "rules")
+    with pytest.raises(AuthConfigError):
+        create_app(settings)
+    with connect(tmp_path / "t.db") as conn:
+        assert conn.execute("SELECT count(*) FROM domains").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM profiles").fetchone()[0] == 0

@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from app.checkers.llm.provider import FakeProvider, LLMProvider
 from app.core.config import NlpSettings, Settings
 from app.main import create_app
-from tests.conftest import auth_headers
+from tests.conftest import auth_headers, second_user_headers
 
 RULES_DIR = Path(__file__).parent.parent / "rules"
 
@@ -94,6 +94,37 @@ def test_terminology_checker_requires_domain(client: TestClient) -> None:
     findings = response.json()["findings"]
     assert len(findings) == 1
     assert findings[0]["suggestions"] == ["sign in"]
+
+
+def test_check_request_ignores_foreign_domain_ids(tmp_path: Path) -> None:
+    settings = Settings(db_path=tmp_path / "t.db", rules_dir=tmp_path / "rules")
+    client = TestClient(create_app(settings))
+    admin = auth_headers(client)
+    other = second_user_headers(client)
+    domain = client.post("/api/domains", json={"name": "Private"}, headers=admin).json()
+    client.post(
+        f"/api/domains/{domain['id']}/terms",
+        json={"language": "en", "preferred": "sign in", "forbidden_variants": ["login"]},
+        headers=admin,
+    )
+    # The owner's check flags the forbidden variant...
+    owner_check = client.post(
+        "/api/checks",
+        json={"text": "please login here", "language": "en",
+              "domain_ids": [domain["id"]], "checkers": ["terminology"]},
+        headers=admin,
+    ).json()
+    assert any(f["source"] == "terminology" for f in owner_check["findings"])
+    # ...the same request from another user yields nothing: the foreign id
+    # resolves to an invisible domain in the checker's scoped store read,
+    # exactly like a deleted one.
+    foreign_check = client.post(
+        "/api/checks",
+        json={"text": "please login here", "language": "en",
+              "domain_ids": [domain["id"]], "checkers": ["terminology"]},
+        headers=other,
+    ).json()
+    assert not any(f["source"] == "terminology" for f in foreign_check["findings"])
 
 
 @pytest.fixture()
