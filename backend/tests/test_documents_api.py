@@ -45,7 +45,9 @@ def test_get_document_prunes_dead_profile_id(authed_client):
 def test_get_document_preserves_live_profile_id(authed_client):
     from app.core.models import Language
 
-    profile = authed_client.app.state.profile_store.create_profile(Language.EN, "Formal")
+    profile = authed_client.app.state.profile_store.create_profile(
+        Language.EN, "Formal", owner_id=1
+    )
     doc = make_doc(authed_client, profile_id=profile.id)
     body = authed_client.get(f"/api/documents/{doc['id']}").json()
     assert body["profile_id"] == profile.id

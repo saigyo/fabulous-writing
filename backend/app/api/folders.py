@@ -37,13 +37,13 @@ def _validated_name(raw: str) -> str:
     return validate_name(raw, message="Folder name must not be empty", max_len=_MAX_NAME)
 
 
-def _pruned(request: Request, folder: Folder) -> Folder:
+def _pruned(request: Request, folder: Folder, *, owner_id: int) -> Folder:
     """Read-time view without dead references (the row keeps its raw values,
     exactly like the documents GET prunes deleted profiles)."""
     update: dict[str, object] = {}
     if folder.default_profile_id is not None:
         profile_store = request.app.state.profile_store
-        if profile_store.get_profile(folder.default_profile_id) is None:
+        if profile_store.get_profile(folder.default_profile_id, owner_id=owner_id) is None:
             update["default_profile_id"] = None
     if folder.default_domain_ids:
         known = {d.id for d in request.app.state.terminology_store.list_domains()}
@@ -58,7 +58,8 @@ def list_folders(
     request: Request, user: CurrentUser = Depends(get_current_user)
 ) -> list[Folder]:
     return [
-        _pruned(request, f) for f in _store(request).list_folders(owner_id=user.id)
+        _pruned(request, f, owner_id=user.id)
+        for f in _store(request).list_folders(owner_id=user.id)
     ]
 
 
@@ -91,7 +92,7 @@ def rename_folder(
         raise HTTPException(409, str(exc)) from exc
     if renamed is None:
         raise HTTPException(404, "Folder not found")
-    return _pruned(request, renamed)
+    return _pruned(request, renamed, owner_id=user.id)
 
 
 @router.put("/folders/{folder_id}/defaults")
@@ -107,7 +108,7 @@ def set_folder_defaults(
                 422, "A profile default requires a language default"
             )
         profile = request.app.state.profile_store.get_profile(
-            body.default_profile_id
+            body.default_profile_id, owner_id=user.id
         )
         if profile is None:
             raise HTTPException(422, "Unknown profile")
@@ -125,7 +126,7 @@ def set_folder_defaults(
     )
     if updated is None:
         raise HTTPException(404, "Folder not found")
-    return _pruned(request, updated)
+    return _pruned(request, updated, owner_id=user.id)
 
 
 @router.delete("/folders/{folder_id}", status_code=204)

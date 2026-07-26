@@ -124,7 +124,7 @@ def get_document(
         raise HTTPException(404, "Document not found")
     if document.profile_id is not None:
         profile_store = request.app.state.profile_store
-        if profile_store.get_profile(document.profile_id) is None:
+        if profile_store.get_profile(document.profile_id, owner_id=user.id) is None:
             # The referenced profile was deleted: present a read-time view
             # with no profile rather than a dangling id. This is not
             # persisted — the DB keeps the raw value.

@@ -1,13 +1,22 @@
 import json
+import logging
 import sqlite3
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 from app.core.models import Language
 from app.services._sqlite import connect, migrate_columns
+from app.services.ownership import GlobalReadOnlyError
 
-_SCHEMA = """
+logger = logging.getLogger(__name__)
+
+# The single source for both the migration's name-match backfill and the
+# seeder's example set (app/services/seed_profiles.py imports this — the
+# reverse import direction would be a cycle).
+SEED_EXAMPLE_NAMES: tuple[str, ...] = ("Marketing", "Technical Documentation", "Blog")
+
+_SCHEMA_TABLE = """
 CREATE TABLE IF NOT EXISTS profiles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     language TEXT NOT NULL,
@@ -22,12 +31,18 @@ CREATE TABLE IF NOT EXISTS profiles (
     llm_tier TEXT,
     llm_instructions TEXT NOT NULL DEFAULT '',
     example_text TEXT NOT NULL DEFAULT '',
-    UNIQUE(language, name)
+    owner_id INTEGER
 );
+"""
+
+_SCHEMA = (
+    _SCHEMA_TABLE
+    + """
 CREATE TABLE IF NOT EXISTS profile_seed_markers (
     language TEXT PRIMARY KEY
 );
 """
+)
 
 
 class Profile(BaseModel):
@@ -44,6 +59,12 @@ class Profile(BaseModel):
     llm_tier: str | None = None
     llm_instructions: str = ""
     example_text: str = ""
+    owner_id: int | None = Field(default=None, exclude=True)
+
+    @computed_field  # appears in every API response; owner_id itself does not
+    @property
+    def is_global(self) -> bool:
+        return self.owner_id is None
 
 
 def _row_to_profile(row: sqlite3.Row) -> Profile:
@@ -61,6 +82,7 @@ def _row_to_profile(row: sqlite3.Row) -> Profile:
         llm_tier=row["llm_tier"],
         llm_instructions=row["llm_instructions"],
         example_text=row["example_text"],
+        owner_id=row["owner_id"],
     )
 
 
@@ -81,23 +103,96 @@ class ProfileStore:
             "profiles",
             [("llm_tier", "TEXT"), ("packs_on", "TEXT NOT NULL DEFAULT '[]'")],
         )
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(profiles)")}
+        if "owner_id" not in columns:
+            # One-shot backfill against the pre-auth single-owner DB (spec
+            # §9 step 3): seed rows (name-matched, since there are no
+            # per-row seed markers) become global, everything else belongs
+            # to the admin (id 1). Never re-run: a later rename onto a seed
+            # name must not re-globalize a private row.
+            conn.execute("ALTER TABLE profiles ADD COLUMN owner_id INTEGER")
+            placeholders = ", ".join("?" for _ in SEED_EXAMPLE_NAMES)
+            conn.execute(
+                f"""UPDATE profiles SET owner_id = 1
+                    WHERE is_standard = 0
+                      AND NOT (name IN ({placeholders})
+                               AND language IN
+                                   (SELECT language FROM profile_seed_markers))""",
+                SEED_EXAMPLE_NAMES,
+            )
+            # is_standard rows and marker-matched seed names keep NULL.
+        # Rebuild, guarded by shape: the legacy table-level
+        # UNIQUE(language, name) enforces global cross-owner uniqueness and
+        # SQLite cannot drop it without the documented table rebuild.
+        sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='profiles'"
+        ).fetchone()[0]
+        if "UNIQUE" in sql.upper():
+            cols = (
+                "id, language, name, is_standard, categories_off,"
+                " rule_exceptions, packs_on, domain_ids, llm_provider,"
+                " llm_model, llm_tier, llm_instructions, example_text, owner_id"
+            )
+            conn.execute(_SCHEMA_TABLE.replace("IF NOT EXISTS profiles", "profiles_new"))
+            conn.execute(
+                f"INSERT INTO profiles_new ({cols}) SELECT {cols} FROM profiles"
+            )
+            conn.execute("DROP TABLE profiles")
+            conn.execute("ALTER TABLE profiles_new RENAME TO profiles")
+        # Two partial unique indexes (SQLite treats NULLs as distinct, so a
+        # single composite index would let duplicate global names pass),
+        # each preceded by the house duplicate pre-scan.
+        user_dupes = conn.execute(
+            "SELECT owner_id, language, name FROM profiles"
+            " WHERE owner_id IS NOT NULL"
+            " GROUP BY owner_id, language, lower(name) HAVING count(*) > 1"
+        ).fetchall()
+        if user_dupes:
+            logger.warning(
+                "profiles has per-owner duplicates %s; skipping owner index",
+                [tuple(row) for row in user_dupes],
+            )
+        else:
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_owner_lang_name"
+                " ON profiles(owner_id, language, name COLLATE NOCASE)"
+                " WHERE owner_id IS NOT NULL"
+            )
+        global_dupes = conn.execute(
+            "SELECT language, name FROM profiles WHERE owner_id IS NULL"
+            " GROUP BY language, lower(name) HAVING count(*) > 1"
+        ).fetchall()
+        if global_dupes:
+            logger.warning(
+                "profiles has global duplicates %s; skipping global index",
+                [tuple(row) for row in global_dupes],
+            )
+        else:
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_global_lang_name"
+                " ON profiles(language, name COLLATE NOCASE)"
+                " WHERE owner_id IS NULL"
+            )
 
     def _connect(self):  # thin delegate; the shared helper carries the docs
         return connect(self.db_path)
 
-    def list_profiles(self, language: Language) -> list[Profile]:
+    def list_profiles(self, language: Language, *, owner_id: int) -> list[Profile]:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM profiles WHERE language = ?"
+                " AND (owner_id IS NULL OR owner_id = ?)"
                 " ORDER BY is_standard DESC, name",
-                (language.value,),
+                (language.value, owner_id),
             ).fetchall()
         return [_row_to_profile(row) for row in rows]
 
-    def get_profile(self, profile_id: int) -> Profile | None:
+    def get_profile(self, profile_id: int, *, owner_id: int) -> Profile | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM profiles WHERE id = ?", (profile_id,)
+                "SELECT * FROM profiles WHERE id = ?"
+                " AND (owner_id IS NULL OR owner_id = ?)",
+                (profile_id, owner_id),
             ).fetchone()
         return _row_to_profile(row) if row else None
 
@@ -106,6 +201,7 @@ class ProfileStore:
         language: Language,
         name: str,
         *,
+        owner_id: int | None,
         is_standard: bool = False,
         categories_off: list[str] | None = None,
         rule_exceptions: list[str] | None = None,
@@ -123,8 +219,8 @@ class ProfileStore:
                     """INSERT INTO profiles
                        (language, name, is_standard, categories_off, rule_exceptions,
                         packs_on, domain_ids, llm_provider, llm_model, llm_tier,
-                        llm_instructions, example_text)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        llm_instructions, example_text, owner_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         language.value,
                         name,
@@ -138,13 +234,17 @@ class ProfileStore:
                         llm_tier,
                         llm_instructions,
                         example_text,
+                        owner_id,
                     ),
                 )
                 profile_id = cursor.lastrowid
         except sqlite3.IntegrityError as exc:
             raise ValueError(f"Profile '{name}' already exists for {language.value}") from exc
         assert profile_id is not None
-        profile = self.get_profile(profile_id)
+        # owner_id may be None (a global create): the scoped query's
+        # "owner_id IS NULL OR owner_id = ?" still matches such a row
+        # regardless of the bound parameter.
+        profile = self.get_profile(profile_id, owner_id=owner_id)
         assert profile is not None
         return profile
 
@@ -161,10 +261,14 @@ class ProfileStore:
         "example_text",
     )
 
-    def update_profile(self, profile_id: int, **fields: object) -> Profile | None:
-        current = self.get_profile(profile_id)
+    def update_profile(
+        self, profile_id: int, *, owner_id: int, is_admin: bool, **fields: object
+    ) -> Profile | None:
+        current = self.get_profile(profile_id, owner_id=owner_id)
         if current is None:
             return None
+        if current.is_global and not is_admin:
+            raise GlobalReadOnlyError("Only admins can change built-in items")
         unknown = set(fields) - set(self._UPDATABLE)
         assert not unknown, f"not updatable: {unknown}"
         merged = current.model_copy(update=fields)
@@ -196,13 +300,24 @@ class ProfileStore:
             ) from exc
         return merged
 
-    def delete_profile(self, profile_id: int) -> bool:
+    def delete_profile(self, profile_id: int, *, owner_id: int, is_admin: bool) -> bool:
+        current = self.get_profile(profile_id, owner_id=owner_id)
+        if current is None:
+            return False
+        if current.is_global and not is_admin:
+            raise GlobalReadOnlyError("Only admins can change built-in items")
         with self._connect() as conn:
             cursor = conn.execute("DELETE FROM profiles WHERE id = ?", (profile_id,))
         return cursor.rowcount > 0
 
     def remove_domain_everywhere(self, domain_id: int) -> None:
-        """Drop a deleted terminology domain from every profile."""
+        """Drop a deleted terminology domain from every profile.
+
+        Deliberately unscoped by owner: a domain deletion must drop the id
+        from every owner's profiles — it removes a dangling integer,
+        reveals nothing, and leaving foreign references would resurrect
+        meaning if ids are ever reused.
+        """
         with self._connect() as conn:
             rows = conn.execute("SELECT id, domain_ids FROM profiles").fetchall()
             for row in rows:
@@ -233,7 +348,8 @@ class ProfileStore:
     def standard_profile(self, language: Language) -> Profile | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM profiles WHERE language = ? AND is_standard = 1",
+                "SELECT * FROM profiles WHERE language = ?"
+                " AND is_standard = 1 AND owner_id IS NULL",
                 (language.value,),
             ).fetchone()
         return _row_to_profile(row) if row else None

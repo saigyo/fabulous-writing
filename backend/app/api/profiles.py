@@ -1,10 +1,12 @@
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from app.api.deps import CurrentUser, get_current_user
 from app.api.validation import validate_name
 from app.core.models import Language
+from app.services.ownership import GlobalReadOnlyError
 from app.services.profiles import Profile, ProfileStore
 from app.services.seed_profiles import standard_defaults
 
@@ -57,12 +59,20 @@ def _pruned(request: Request, language: Language,
 
 
 @router.get("/profiles")
-def list_profiles(request: Request, language: Language) -> list[Profile]:
-    return _store(request).list_profiles(language)
+def list_profiles(
+    request: Request,
+    language: Language,
+    user: CurrentUser = Depends(get_current_user),
+) -> list[Profile]:
+    return _store(request).list_profiles(language, owner_id=user.id)
 
 
 @router.post("/profiles", status_code=201)
-def create_profile(request: Request, body: ProfileCreate) -> Profile:
+def create_profile(
+    request: Request,
+    body: ProfileCreate,
+    user: CurrentUser = Depends(get_current_user),
+) -> Profile:
     name = validate_name(body.name, message="Profile name must not be empty")
     exceptions, domains = _pruned(
         request, body.language, body.rule_exceptions, body.domain_ids
@@ -71,6 +81,7 @@ def create_profile(request: Request, body: ProfileCreate) -> Profile:
         return _store(request).create_profile(
             body.language,
             name,
+            owner_id=user.id,
             categories_off=body.categories_off,
             rule_exceptions=exceptions,
             packs_on=body.packs_on,
@@ -86,11 +97,21 @@ def create_profile(request: Request, body: ProfileCreate) -> Profile:
 
 
 @router.put("/profiles/{profile_id}")
-def update_profile(request: Request, profile_id: int, body: ProfileUpdate) -> Profile:
+def update_profile(
+    request: Request,
+    profile_id: int,
+    body: ProfileUpdate,
+    user: CurrentUser = Depends(get_current_user),
+) -> Profile:
     store = _store(request)
-    current = store.get_profile(profile_id)
+    current = store.get_profile(profile_id, owner_id=user.id)
     if current is None:
         raise HTTPException(404, "Profile not found")
+    # As in delete: the rename-guard 409 only fires for callers who may
+    # mutate the row at all — a non-admin blocked from a global row gets
+    # 403 first, not a business-rule 409 about the rename itself.
+    if current.is_global and not user.is_admin:
+        raise HTTPException(403, "Only admins can change built-in items")
     name = validate_name(body.name, message="Profile name must not be empty")
     if current.is_standard and name != current.name:
         raise HTTPException(409, "The Standard profile cannot be renamed")
@@ -100,6 +121,8 @@ def update_profile(request: Request, profile_id: int, body: ProfileUpdate) -> Pr
     try:
         updated = store.update_profile(
             profile_id,
+            owner_id=user.id,
+            is_admin=user.is_admin,
             name=name,
             categories_off=body.categories_off,
             rule_exceptions=exceptions,
@@ -118,27 +141,45 @@ def update_profile(request: Request, profile_id: int, body: ProfileUpdate) -> Pr
 
 
 @router.delete("/profiles/{profile_id}", status_code=204)
-def delete_profile(request: Request, profile_id: int) -> Response:
+def delete_profile(
+    request: Request,
+    profile_id: int,
+    user: CurrentUser = Depends(get_current_user),
+) -> Response:
     store = _store(request)
-    profile = store.get_profile(profile_id)
+    profile = store.get_profile(profile_id, owner_id=user.id)
     if profile is None:
         raise HTTPException(404, "Profile not found")
+    # The is_standard 409 only fires for callers who may mutate the row at
+    # all: a non-admin blocked from touching a global row gets 403, not a
+    # business-rule 409 about a mutation they were never going to make.
+    if profile.is_global and not user.is_admin:
+        raise HTTPException(403, "Only admins can change built-in items")
     if profile.is_standard:
         raise HTTPException(409, "The Standard profile cannot be deleted")
-    store.delete_profile(profile_id)
+    store.delete_profile(profile_id, owner_id=user.id, is_admin=user.is_admin)
     return Response(status_code=204)
 
 
 @router.post("/profiles/{profile_id}/reset")
-def reset_profile(request: Request, profile_id: int) -> Profile:
+def reset_profile(
+    request: Request,
+    profile_id: int,
+    user: CurrentUser = Depends(get_current_user),
+) -> Profile:
     store = _store(request)
-    profile = store.get_profile(profile_id)
+    profile = store.get_profile(profile_id, owner_id=user.id)
     if profile is None:
         raise HTTPException(404, "Profile not found")
     if not profile.is_standard:
         raise HTTPException(409, "Only the Standard profile can be reset")
     settings = request.app.state.settings
     defaults = standard_defaults(profile.language, settings.demos_dir)
-    updated = store.update_profile(profile_id, **defaults)
+    try:
+        updated = store.update_profile(
+            profile_id, owner_id=user.id, is_admin=user.is_admin, **defaults
+        )
+    except GlobalReadOnlyError:
+        raise HTTPException(403, "Only admins can change built-in items") from None
     assert updated is not None
     return updated

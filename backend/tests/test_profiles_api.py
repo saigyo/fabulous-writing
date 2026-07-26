@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 from app.core.config import Settings
 from app.main import create_app
-from tests.conftest import auth_headers
+from tests.conftest import auth_headers, second_user_headers
 
 
 @pytest.fixture()
@@ -49,7 +49,12 @@ def test_create_update_delete_profile(client):
 
 
 def test_duplicate_name_conflict(client):
-    body = {"language": "en", "name": "Standard", "llm_provider": "ollama"}
+    # Creating a profile named "Standard" no longer conflicts with the
+    # global built-in — a caller's own profiles live in a separate
+    # partition and may shadow a global name (ownership model, Task 3).
+    # The remaining invariant is uniqueness within one owner's partition.
+    body = {"language": "en", "name": "Notes", "llm_provider": "ollama"}
+    assert client.post("/api/profiles", json=body).status_code == 201
     assert client.post("/api/profiles", json=body).status_code == 409
 
 
@@ -164,3 +169,53 @@ def test_profile_api_carries_packs_on(client) -> None:
         },
     ).json()
     assert updated["packs_on"] == ["marketing", "blog"]
+
+
+def test_profiles_api_ownership(tmp_path):
+    settings = Settings(db_path=tmp_path / "t.db", rules_dir=tmp_path / "rules")
+    client = TestClient(create_app(settings))
+    admin = auth_headers(client)
+    other = second_user_headers(client)
+    listed = client.get("/api/profiles?language=en", headers=other).json()
+    # Non-admin sees the seeded globals, flagged as such.
+    assert listed and all(p["is_global"] for p in listed)
+    assert all("owner_id" not in p for p in listed)
+    standard = next(p for p in listed if p["name"] == "Standard")
+    # Global mutation as non-admin: 403 (the one non-404 case).
+    body = {k: v for k, v in standard.items() if k not in ("id", "is_standard", "is_global")}
+    assert (
+        client.put(
+            f"/api/profiles/{standard['id']}", json={**body, "example_text": "x"},
+            headers=other,
+        ).status_code
+        == 403
+    )
+    assert client.delete(f"/api/profiles/{standard['id']}", headers=other).status_code == 403
+    assert client.post(f"/api/profiles/{standard['id']}/reset", headers=other).status_code == 403
+    # Admin may still edit and reset the global Standard.
+    assert client.post(f"/api/profiles/{standard['id']}/reset", headers=admin).status_code == 200
+    # Creation is always as the caller; shadowing a global name is fine.
+    created = client.post(
+        "/api/profiles", json={**body, "name": "Standard"}, headers=other
+    ).json()
+    assert created["is_global"] is False
+    # The other user's private profile is invisible to the admin — admins
+    # are ordinary callers for private data (Global Constraints): absent
+    # from the listing, 404 on direct access.
+    admin_names = {
+        p["name"] for p in client.get("/api/profiles?language=en", headers=admin).json()
+    }
+    assert "Standard" in admin_names          # the global one
+    assert created["id"] not in {
+        p["id"] for p in client.get("/api/profiles?language=en", headers=admin).json()
+    }
+    assert (
+        client.put(
+            f"/api/profiles/{created['id']}", json=body, headers=admin
+        ).status_code
+        == 404
+    )
+    assert (
+        client.delete(f"/api/profiles/{created['id']}", headers=admin).status_code
+        == 404
+    )
