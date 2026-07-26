@@ -325,6 +325,208 @@ def _read_sse_events(stream) -> list[tuple[str, dict]]:
     return events
 
 
+TIERS_CONFIG = {
+    "basic": {"llm": {"tiers": ["local"], "providers": ["ollama"]}},
+}
+
+
+class RecordingFactory:
+    """Fake provider factory that records the (provider, model) it was asked
+    to build, so tests can assert what the gate actually resolved to."""
+
+    def __init__(self, response: str = LLM_RESPONSE) -> None:
+        self.response = response
+        self.calls: list[tuple[str | None, str | None]] = []
+
+    def __call__(self, name: str | None = None, model: str | None = None) -> LLMProvider:
+        self.calls.append((name, model))
+        return FakeProvider(self.response)
+
+
+def _app_with_tiers(tmp_path: Path, tiers: dict | None = None):
+    settings = Settings(
+        db_path=tmp_path / "t.db", rules_dir=RULES_DIR, tiers=tiers or {}
+    )
+    app = create_app(settings)
+    factory = RecordingFactory()
+    app.state.provider_factory = factory
+    return app, factory
+
+
+class TestEffectiveLlm:
+    def test_unrestricted_tier_request_resolves_via_routing(self, tmp_path: Path) -> None:
+        app, factory = _app_with_tiers(tmp_path)
+        with TestClient(app) as client:
+            headers = auth_headers(client)
+            post = client.post(
+                "/api/checks",
+                json={
+                    "text": "A nice text.",
+                    "language": "en",
+                    "checkers": ["llm"],
+                    "llm_tier": "balanced",
+                },
+                headers=headers,
+            )
+            assert post.status_code == 202
+            body = post.json()
+            expected = {
+                "requested": {"tier": "balanced", "provider": None, "model": None},
+                "effective": {
+                    "tier": "balanced",
+                    "provider": "claude",
+                    "model": "claude-sonnet-5",
+                },
+                "degraded": False,
+                "skipped": None,
+            }
+            assert body["effective_llm"] == expected
+            check_id = body["check_id"]
+
+            with client.stream(
+                "GET", f"/api/checks/{check_id}/events", headers=headers
+            ) as stream:
+                events = _read_sse_events(stream)
+            effective_events = [data for name, data in events if name == "effective_llm"]
+            assert effective_events == [expected]
+
+            final = client.get(f"/api/checks/{check_id}", headers=headers).json()
+            assert final["effective_llm"] == expected
+        assert factory.calls == [("claude", "claude-sonnet-5")]
+
+    def test_restricted_user_degrades_balanced_to_local(self, tmp_path: Path) -> None:
+        app, factory = _app_with_tiers(tmp_path, TIERS_CONFIG)
+        with TestClient(app) as client:
+            headers = second_user_headers(client)  # non-admin, tier 'basic'
+            post = client.post(
+                "/api/checks",
+                json={
+                    "text": "A nice text.",
+                    "language": "en",
+                    "checkers": ["llm"],
+                    "llm_tier": "balanced",
+                },
+                headers=headers,
+            )
+            assert post.status_code == 202
+            body = post.json()
+            expected = {
+                "requested": {"tier": "balanced", "provider": None, "model": None},
+                "effective": {
+                    "tier": "local",
+                    "provider": "ollama",
+                    "model": "mistral-nemo:12b-instruct-2407-q6_K",
+                },
+                "degraded": True,
+                "skipped": None,
+            }
+            assert body["effective_llm"] == expected
+            check_id = body["check_id"]
+
+            with client.stream(
+                "GET", f"/api/checks/{check_id}/events", headers=headers
+            ) as stream:
+                _read_sse_events(stream)
+            final = client.get(f"/api/checks/{check_id}", headers=headers).json()
+            assert final["effective_llm"] == expected
+        assert factory.calls == [("ollama", "mistral-nemo:12b-instruct-2407-q6_K")]
+
+    def test_floor_user_gets_skipped_not_error(self, tmp_path: Path) -> None:
+        tiers = {"basic": {"llm": {"tiers": [], "providers": []}}}
+        app, factory = _app_with_tiers(tmp_path, tiers)
+        with TestClient(app) as client:
+            headers = second_user_headers(client)  # non-admin, tier 'basic'
+            post = client.post(
+                "/api/checks",
+                json={"text": "A nice text.", "language": "en", "checkers": ["llm"]},
+                headers=headers,
+            )
+            assert post.status_code == 202
+            body = post.json()
+            assert body["status"] == "done"
+            assert body["findings"] == []
+            assert body["effective_llm"]["skipped"] == "llm_unavailable"
+            check_id = body["check_id"]
+
+            final = client.get(f"/api/checks/{check_id}", headers=headers).json()
+            assert final["effective_llm"]["skipped"] == "llm_unavailable"
+        assert factory.calls == []
+
+    def test_unknown_llm_provider_is_422(self, tmp_path: Path) -> None:
+        app, factory = _app_with_tiers(tmp_path)
+        with TestClient(app) as client:
+            headers = auth_headers(client)
+            post = client.post(
+                "/api/checks",
+                json={
+                    "text": "A nice text.",
+                    "language": "en",
+                    "checkers": ["llm"],
+                    "llm_provider": "nope",
+                },
+                headers=headers,
+            )
+            assert post.status_code == 422
+            # No job leaked as permanently-running (mirrors test_jobs.py's
+            # direct use of the private store to assert retention behavior).
+            assert len(app.state.jobs._jobs) == 0
+        assert factory.calls == []
+
+    def test_invalid_llm_tier_is_422(self, tmp_path: Path) -> None:
+        app, factory = _app_with_tiers(tmp_path)
+        with TestClient(app) as client:
+            headers = auth_headers(client)
+            post = client.post(
+                "/api/checks",
+                json={
+                    "text": "A nice text.",
+                    "language": "en",
+                    "checkers": ["llm"],
+                    "llm_tier": "turbo",
+                },
+                headers=headers,
+            )
+            assert post.status_code == 422
+        assert factory.calls == []
+
+    def test_tier_request_ignores_bogus_provider(self, tmp_path: Path) -> None:
+        app, factory = _app_with_tiers(tmp_path)
+        with TestClient(app) as client:
+            headers = auth_headers(client)
+            post = client.post(
+                "/api/checks",
+                json={
+                    "text": "A nice text.",
+                    "language": "en",
+                    "checkers": ["llm"],
+                    "llm_tier": "local",
+                    "llm_provider": "nope",
+                },
+                headers=headers,
+            )
+            assert post.status_code == 202
+            body = post.json()
+            assert body["effective_llm"]["requested"]["tier"] == "local"
+            assert body["effective_llm"]["effective"]["provider"] == "ollama"
+        assert factory.calls == [("ollama", "mistral-nemo:12b-instruct-2407-q6_K")]
+
+    def test_no_llm_checker_has_no_effective_llm(self, tmp_path: Path) -> None:
+        app, factory = _app_with_tiers(tmp_path)
+        with TestClient(app) as client:
+            headers = auth_headers(client)
+            post = client.post(
+                "/api/checks",
+                json={"text": "A nice text.", "language": "en", "checkers": ["rules"]},
+                headers=headers,
+            )
+            assert post.status_code == 202
+            body = post.json()
+            assert body["effective_llm"] is None
+            final = client.get(f"/api/checks/{body['check_id']}", headers=headers).json()
+            assert final["effective_llm"] is None
+        assert factory.calls == []
+
+
 def test_llm_progress_events_stream(tmp_path: Path) -> None:
     provider = FakeProvider(LLM_RESPONSE, progress_steps=[5, 40, 41])
     with make_client(tmp_path, provider) as client:
@@ -510,7 +712,8 @@ def test_at_capacity_with_all_jobs_running_refuses_new_check_with_429(
 def test_failed_setup_discards_job_and_does_not_leak_running_entry(
     tmp_path: Path,
 ) -> None:
-    """POST /api/checks with unknown llm_provider errors and discards the job.
+    """POST /api/checks with an unknown llm_provider is rejected by the gate
+    (422, spec §7.2) before the factory is ever called, and discards the job.
 
     Repeated failures must not leak permanently-running jobs: the next valid
     request for the same owner should succeed (not 429), proving the failed
@@ -518,36 +721,32 @@ def test_failed_setup_discards_job_and_does_not_leak_running_entry(
     """
     from app.services.jobs import MAX_JOBS_PER_OWNER
 
-    class BrokenProviderFactory:
-        def __call__(self, name=None, model=None):
-            if name == "unknown":
-                raise ValueError(f"Unknown provider: {name}")
-            return FakeProvider(LLM_RESPONSE)
-
     settings = Settings(db_path=tmp_path / "t.db", rules_dir=RULES_DIR)
     app = create_app(settings)
-    app.state.provider_factory = BrokenProviderFactory()
+    factory = RecordingFactory()
+    app.state.provider_factory = factory
 
     with TestClient(app) as client:
         headers = auth_headers(client)
 
-        # Trigger MAX_JOBS_PER_OWNER+1 failed checks with unknown provider.
-        # Each error should cause a job to be created and then discarded in the
-        # exception handler, so no jobs should accumulate to hit the per-owner cap.
+        # Trigger MAX_JOBS_PER_OWNER+1 failed checks with an unknown provider.
+        # Each 422 comes from the gate's known-provider check, raised inside
+        # create_check's existing try/except discard net -- no jobs should
+        # accumulate to hit the per-owner cap.
         for i in range(MAX_JOBS_PER_OWNER + 1):
-            # ValueError from provider_factory is re-raised by exception handler
-            # and escapes to TestClient, which re-raises it.
-            with pytest.raises(ValueError, match="Unknown provider"):
-                client.post(
-                    "/api/checks",
-                    json={
-                        "text": f"Text {i}",
-                        "language": "en",
-                        "checkers": ["llm"],
-                        "llm_provider": "unknown",
-                    },
-                    headers=headers,
-                )
+            response = client.post(
+                "/api/checks",
+                json={
+                    "text": f"Text {i}",
+                    "language": "en",
+                    "checkers": ["llm"],
+                    "llm_provider": "unknown",
+                },
+                headers=headers,
+            )
+            assert response.status_code == 422
+
+        assert factory.calls == []  # the gate blocked it before the factory ran
 
         # The next valid check must succeed (not 429), proving no leaked jobs.
         valid = client.post(

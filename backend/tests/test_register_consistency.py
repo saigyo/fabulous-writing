@@ -135,6 +135,15 @@ class TestTuLei:
 ZH_RULE = "grammar.ni-nin"
 
 
+def test_quality_tier_literal_matches_config_tiers():
+    from typing import get_args
+
+    from app.core.config import TIERS
+    from app.core.models import QualityTier
+
+    assert tuple(get_args(QualityTier)) == TIERS
+
+
 class TestNiNin:
     def test_minority_formal_flagged(self) -> None:
         text = "你可以先看第一章。等你有空我们再讨论。您需要重新登录。"
