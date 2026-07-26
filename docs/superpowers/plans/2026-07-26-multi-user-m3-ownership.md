@@ -41,11 +41,11 @@ Binding for every task; copied from the spec/roadmap where they originate.
 | `backend/app/services/documents.py` | required `owner_id` on every method; owner-scoped SQL |
 | `backend/app/services/folders.py` | required `owner_id`; **guarded table rebuild** (drop inline `UNIQUE` + `DEFAULT 1`); per-owner NOCASE unique index |
 | `backend/app/services/profiles.py` | nullable `owner_id` + backfill; **guarded rebuild** (drop `UNIQUE(language, name)`); two partial unique indexes; visibility-scoped methods; `is_global` |
-| `backend/app/services/terminology.py` | nullable `owner_id` on `domains` + backfill; two partial unique indexes; visibility-scoped domain/term methods; `is_global`; `terms_for_check` |
+| `backend/app/services/terminology.py` | nullable `owner_id` on `domains` + backfill; two partial unique indexes; visibility-scoped domain/term methods; `is_global` |
 | `backend/app/services/seed.py`, `seed_profiles.py` | create global rows; global-scoped presence checks |
 | `backend/app/services/jobs.py` | jobs carry `owner_id`; `get` takes the caller |
 | `backend/app/api/documents.py`, `folders.py`, `profiles.py`, `terminology.py`, `checks.py` | thread `CurrentUser`; 404/403 mapping; visible-set validation |
-| `backend/app/checkers/terminology.py` | switch to `terms_for_check` |
+| `backend/app/checkers/terminology.py` | `check` threads `owner_id` into the scoped `list_terms` |
 | `backend/tests/conftest.py` | `second_user_headers` helper |
 | `backend/tests/test_ownership.py` | **Create**: cross-user isolation sweep |
 | `frontend/src/types.ts`, `api/client.ts` | `is_global` on `Domain`/`Profile` |
@@ -637,7 +637,7 @@ git commit -m "feat(ownership): owner-scoped documents and folders with per-owne
         return self.owner_id is None
 ```
 
-  - `_SEED_EXAMPLE_NAMES: tuple[str, ...] = ("Marketing", "Technical Documentation", "Blog")` — module constant in `profiles.py`, the migration's single source for the name-match backfill.
+  - `SEED_EXAMPLE_NAMES: tuple[str, ...] = ("Marketing", "Technical Documentation", "Blog")` — **public** module constant in `profiles.py`, the single source for both the migration's name-match backfill and the seeder's example set. `seed_profiles.py` imports it (that import direction already exists — the reverse would be a cycle) and drives its example seeding from a `_EXAMPLE_SPECS` dict keyed by these names, with an import-time `assert set(_EXAMPLE_SPECS) == set(SEED_EXAMPLE_NAMES)` — so adding an example to either side without the other fails loudly instead of silently mis-assigning the new seed row to admin ownership at migration time.
 
 - [ ] **Step 1: `ownership.py`**
 
@@ -767,13 +767,12 @@ def test_backfill_runs_exactly_once(tmp_path):
     assert store.get_profile(mine.id, owner_id=1).is_global is False
 
 
-def test_seed_name_constant_matches_the_seeder():
-    from app.services import seed_profiles
-    import inspect
+def test_seed_names_are_one_set_between_migration_and_seeder():
+    # Two-way: a name added to either side without the other must fail.
+    from app.services.profiles import SEED_EXAMPLE_NAMES
+    from app.services.seed_profiles import _EXAMPLE_SPECS
 
-    source = inspect.getsource(seed_profiles.seed_profiles)
-    for name in _SEED_EXAMPLE_NAMES:
-        assert f'"{name}"' in source, name
+    assert set(_EXAMPLE_SPECS) == set(SEED_EXAMPLE_NAMES)
 ```
 
 Run — FAIL.
@@ -781,7 +780,7 @@ Run — FAIL.
 - [ ] **Step 3: Store implementation** — in `services/profiles.py`:
   - `_SCHEMA`: drop `UNIQUE(language, name)`, add `owner_id INTEGER` (nullable, no default) to the fresh-create DDL.
   - `Profile` model changes as in Interfaces (`from pydantic import computed_field`); `_row_to_profile` maps `owner_id=row["owner_id"]`.
-  - `_migrate` (full replacement; `_SEED_EXAMPLE_NAMES` at module top):
+  - `_migrate` (full replacement; `SEED_EXAMPLE_NAMES` at module top):
 
 ```python
     def _migrate(self, conn: sqlite3.Connection) -> None:
@@ -799,14 +798,14 @@ Run — FAIL.
             # to the admin (id 1). Never re-run: a later rename onto a seed
             # name must not re-globalize a private row.
             conn.execute("ALTER TABLE profiles ADD COLUMN owner_id INTEGER")
-            placeholders = ", ".join("?" for _ in _SEED_EXAMPLE_NAMES)
+            placeholders = ", ".join("?" for _ in SEED_EXAMPLE_NAMES)
             conn.execute(
                 f"""UPDATE profiles SET owner_id = 1
                     WHERE is_standard = 0
                       AND NOT (name IN ({placeholders})
                                AND language IN
                                    (SELECT language FROM profile_seed_markers))""",
-                _SEED_EXAMPLE_NAMES,
+                SEED_EXAMPLE_NAMES,
             )
             # is_standard rows and marker-matched seed names keep NULL.
         # Rebuild, guarded by shape: the legacy table-level
@@ -888,7 +887,41 @@ Run — FAIL.
 ```
 
     `create_profile(language, name, *, owner_id: int | None, ...)`: INSERT lists `owner_id`. `update_profile(profile_id, *, owner_id: int, is_admin: bool, **fields)` and `delete_profile(profile_id, *, owner_id: int, is_admin: bool)`: fetch via the scoped `get_profile` (invisible → `None`/`False`), then `if current.is_global and not is_admin: raise GlobalReadOnlyError(...)`, then the existing UPDATE/DELETE by bare id (safe: visibility was just proven). `standard_profile` adds `AND owner_id IS NULL`. `remove_domain_everywhere` stays deliberately unscoped, with this comment: a domain deletion must drop the id from **every** owner's profiles — it removes a dangling integer, reveals nothing, and leaving foreign references would resurrect meaning if ids are ever reused.
-  - `seed_profiles.py`: both `_create_ignoring_collision` call paths pass `owner_id=None` (add the parameter to `_create_ignoring_collision` and thread it); the presence checks are already global-scoped via the changed `standard_profile` and the marker table.
+  - `seed_profiles.py`: every `_create_ignoring_collision` call passes `owner_id=None` (add the parameter and thread it); the presence checks are already global-scoped via the changed `standard_profile` and the marker table. Restructure the example seeding to consume the shared constant — per-name field factories replace the three inline calls:
+
+```python
+from app.services.profiles import ProfileStore, SEED_EXAMPLE_NAMES
+
+_EXAMPLE_SPECS = {
+    "Marketing": lambda language, demos_dir: dict(
+        packs_on=["marketing"],
+        llm_tier="balanced",
+        llm_instructions=_MARKETING_INSTRUCTIONS[language],
+        example_text=_demo(demos_dir, f"{language.value}-marketing.txt"),
+    ),
+    "Technical Documentation": lambda language, demos_dir: dict(
+        categories_off=["vividness"],
+        packs_on=["techdocs"],
+        llm_tier="balanced",
+        llm_instructions=_TECHDOC_INSTRUCTIONS[language],
+        example_text=_demo(
+            demos_dir, f"{language.value}-technical-documentation.txt"
+        ),
+    ),
+    "Blog": lambda language, demos_dir: dict(
+        packs_on=["blog"],
+        llm_tier="balanced",
+        llm_instructions=_BLOG_INSTRUCTIONS[language],
+        example_text=_demo(demos_dir, f"{language.value}-blog.txt"),
+    ),
+}
+# Import-time tie to the migration's backfill set: adding an example on
+# either side without the other must fail loudly, not silently hand the
+# new seed row to admin ownership at migration time.
+assert set(_EXAMPLE_SPECS) == set(SEED_EXAMPLE_NAMES)
+```
+
+    and the seeding loop becomes `for name in SEED_EXAMPLE_NAMES: _create_ignoring_collision(store, language, name, owner_id=None, **_EXAMPLE_SPECS[name](language, demos_dir))` inside the existing `seed_examples` branch, still followed by `store.mark_example_seeded(language)`.
 
 Run Step 2's tests — PASS.
 
@@ -971,13 +1004,13 @@ git commit -m "feat(ownership): profiles gain nullable owner_id, global built-in
 
 ---
 
-### Task 4: Terminology — domains, terms-through-domains, check-request filtering
+### Task 4: Terminology — domains, terms-through-domains, owner-threaded checking
 
-Domains mirror profiles (nullable `owner_id`, no rebuild needed — no existing unique constraint; two partial unique indexes make names per-owner **for the first time**, so the duplicate pre-scan genuinely matters here). Terms have no own column: every term operation resolves the parent domain in the store. `POST /api/checks` filters `domain_ids` to the caller's visible set **in this task**, because this is what makes the checker's unscoped read safe.
+Domains mirror profiles (nullable `owner_id`, no rebuild needed — no existing unique constraint; two partial unique indexes make names per-owner **for the first time**, so the duplicate pre-scan genuinely matters here). Terms have no own column: every term operation resolves the parent domain in the store. `POST /api/checks` threads the caller into the terminology checker **in this task**: the checker's term read goes through the same scoped store path as every other (spec §5.2 — the check is in the store API, not router-side vetting), so a foreign domain id simply yields no findings.
 
 **Files:**
 - Modify: `backend/app/services/terminology.py`, `backend/app/services/seed.py`
-- Modify: `backend/app/api/terminology.py`, `backend/app/api/checks.py` (filter only), `backend/app/checkers/terminology.py:87`
+- Modify: `backend/app/api/terminology.py`, `backend/app/api/checks.py` (owner threading), `backend/app/checkers/terminology.py:87`
 - Modify (caller threading): `backend/app/api/folders.py:48,98`, `backend/app/api/profiles.py:52`
 - Modify: `backend/app/main.py:109-135` (startup reorder, Step 4a)
 - Test: `backend/tests/test_terminology.py`, `test_terminology_api.py`, `test_seed.py`, `test_check_api.py`, `test_main.py`
@@ -988,7 +1021,7 @@ Domains mirror profiles (nullable `owner_id`, no rebuild needed — no existing 
   - `has_global_domains() -> bool` — the seeder's presence check (spec: seeders query only `owner_id IS NULL` rows)
   - `list_terms(domain_id, *, owner_id: int, language=None) -> list[Term] | None` — **`None` means the domain is invisible** (router: 404), `[]` means visible-but-empty
   - `get_term(term_id, *, owner_id: int)`, `create_term(domain_id, *, owner_id: int, is_admin: bool, ...) -> Term | None` (`None` = invisible domain; `GlobalReadOnlyError` = global domain, non-admin), `update_term(term_id, *, owner_id: int, is_admin: bool, ...)`, `delete_term(term_id, *, owner_id: int, is_admin: bool) -> bool`
-  - `terms_for_check(domain_id, language=None) -> list[Term]` — deliberately unscoped read for the checker; its docstring states the contract: *callers must have validated domain visibility first* (`api/checks.py` does, in this task).
+  - `TerminologyChecker.check(text, language, domain_id, *, owner_id: int)` — the checker threads the caller through to the scoped `list_terms` and treats `None` (invisible domain) as "no findings". **No unscoped term read exists**: spec §5.2 puts the ownership check in the store API, not in router-side validation, and this is the one read path that could otherwise bypass it.
   - `Domain` model: `owner_id` excluded + `is_global` computed, exactly like `Profile`.
 
 - [ ] **Step 1: Failing store tests** — in `test_terminology.py` (thread the new keywords through existing calls as in Task 3; then add):
@@ -1130,8 +1163,8 @@ def test_seed_domain_name_constant_matches_the_seeder():
 ```
 
     `get_term` joins: `SELECT t.* FROM terms t JOIN domains d ON d.id = t.domain_id WHERE t.id = ? AND (d.owner_id IS NULL OR d.owner_id = ?)`. Mutations fetch the term's parent row, apply invisible→`None`/`False`, global-and-not-admin→`GlobalReadOnlyError`, then mutate by bare id.
-  - `terms_for_check(domain_id, language=None)`: the old unscoped `list_terms` body, renamed, with the caller-must-validate docstring. `app/checkers/terminology.py:87` switches to it.
-  - `seed.py`: `seed_terminology` presence check becomes `if store.has_global_domains(): return False`; `create_domain(DOMAIN_NAME, DOMAIN_DESCRIPTION, owner_id=None)`; `create_term(domain.id, owner_id=1, is_admin=True, ...)` — wait, no: the seeder writes global rows without a caller. Give it the honest path: terms under the global domain are created by the seeder as the global maintainer — call `create_term(domain.id, owner_id=0, is_admin=True, ...)`? No. **Decision:** the seeder uses `terms_for_check`'s sibling, a plain internal write — but that reintroduces an unscoped mutator. Simplest correct call: `create_term(domain.id, owner_id=1, is_admin=True, ...)` is wrong (hardcodes a user). Instead `create_term` accepts the seeder's case naturally: `owner_id` is only used for *visibility* of the parent domain, and a global domain is visible to every owner — so any owner value works when `is_admin=True`. Call it with `owner_id=1, is_admin=True` and this comment in `seed.py`: "owner_id here is only a visibility key; the domain is global (visible to all), and is_admin=True authorizes the global write — no ownership is recorded on terms."
+  - `app/checkers/terminology.py`: `check` gains keyword-only `*, owner_id: int` and line 87 becomes `terms = self.store.list_terms(domain_id, owner_id=owner_id, language=language)`, followed by `if terms is None: return []` — an invisible domain yields no findings through the same store-level check every other term read goes through (spec §5.2). Existing checker tests thread an `owner_id=` matching their fixture's domain owner.
+  - `seed.py`: `seed_terminology` presence check becomes `if store.has_global_domains(): return False`; the domain is created with `create_domain(DOMAIN_NAME, DOMAIN_DESCRIPTION, owner_id=None)`; terms with `create_term(domain.id, owner_id=1, is_admin=True, ...)` plus this comment: "owner_id here is only a visibility key — the domain is global, visible to every owner, so any value passes — and is_admin=True authorizes the global write; no ownership is recorded on terms." (No unscoped seeder-only mutator: the ordinary store API already accommodates this case.)
 
 Run Step 1's tests — PASS.
 
@@ -1218,7 +1251,8 @@ def test_check_request_ignores_foreign_domain_ids(tmp_path):
     ).json()
     assert any(f["source"] == "terminology" for f in owner_check["findings"])
     # ...the same request from another user yields nothing: the foreign id
-    # is filtered before the checker runs, exactly like a deleted domain.
+    # resolves to an invisible domain in the checker's scoped store read,
+    # exactly like a deleted one.
     foreign_check = client.post(
         "/api/checks",
         json={"text": "please login here", "language": "en",
@@ -1230,20 +1264,19 @@ def test_check_request_ignores_foreign_domain_ids(tmp_path):
 
 Run — FAIL.
 
-- [ ] **Step 4: Router implementation** — `api/terminology.py`: thread `user`; map store results: `None` → 404 (`"Domain not found"` / `"Term not found"` — never a different message for foreign vs missing), `GlobalReadOnlyError` → the same 403 constant as profiles, `ValueError` on create/rename → 409. `list_terms` handles the new `None`. `delete_domain` keeps calling `remove_domain_everywhere` after a successful delete. In `api/checks.py` `create_check`, add `user: CurrentUser = Depends(get_current_user)` and immediately before the terminology block:
+- [ ] **Step 4: Router implementation** — `api/terminology.py`: thread `user`; map store results: `None` → 404 (`"Domain not found"` / `"Term not found"` — never a different message for foreign vs missing), `GlobalReadOnlyError` → the same 403 constant as profiles, `ValueError` on create/rename → 409. `list_terms` handles the new `None`. `delete_domain` keeps calling `remove_domain_everywhere` after a successful delete. In `api/checks.py` `create_check`, add `user: CurrentUser = Depends(get_current_user)` and thread it into the terminology loop:
 
 ```python
-    # Ownership filter, not validation: a foreign domain id behaves exactly
-    # like a deleted one (the codebase's pruning idiom) — no existence leak,
-    # and the unscoped terms_for_check below only ever sees vetted ids.
-    if body.domain_ids:
-        visible = {
-            d.id
-            for d in app.state.terminology_store.list_domains(owner_id=user.id)
-        }
-        body = body.model_copy(
-            update={"domain_ids": [i for i in body.domain_ids if i in visible]}
-        )
+    if "terminology" in body.checkers and body.domain_ids:
+        checker = TerminologyChecker(app.state.terminology_store, nlp=app.state.nlp)
+        findings: list[Finding] = []
+        for domain_id in body.domain_ids:
+            # A foreign or deleted domain id yields no findings: the
+            # checker's store read is owner-scoped (spec §5.2), so there is
+            # no id vetting to do here and no existence leak to cause.
+            more = checker.check(body.text, body.language, domain_id, owner_id=user.id)
+            findings.extend(drop_duplicates(more, findings))
+        job.add_findings("terminology", findings)
 ```
 
   Update the remaining `list_domains()` callers: `api/folders.py:48` and `:98`, `api/profiles.py:52` → `list_domains(owner_id=user.id)` (both routers already carry `user`). A foreign domain id in folder defaults now 422s as "Unknown domain ids", indistinguishable from nonexistent; in profile payloads it prunes silently — both are the pre-existing behaviors for unknown ids, inherited correctly.
@@ -1267,7 +1300,9 @@ def test_seeders_run_after_admin_bootstrap(tmp_path, monkeypatch):
         assert conn.execute("SELECT count(*) FROM profiles").fetchone()[0] == 0
 ```
 
-  Run — FAIL (rows exist: the seeders ran first). Then reorder `create_app`: keep every store constructor where it is (constructors are the migrations), move the two seeder calls to after `seed_admin(...)`, with this comment: `# Global seeders last (spec §9): migrations (store constructors) -> admin bootstrap -> seeders, so a failing bootstrap aborts before any global row is written.` Run — PASS. — `test_terms_inherit_domain_ownership` and the API 404s must FAIL. Restore. (2) Remove the `create_check` filter — `test_check_request_ignores_foreign_domain_ids` must FAIL. Restore. (3) Change `has_global_domains` back to "any domains" — `test_seeder_presence_check_is_global_only` must FAIL. Restore. Record.
+  Run — FAIL (rows exist: the seeders ran first). Then reorder `create_app`: keep every store constructor where it is (constructors are the migrations), move the two seeder calls to after `seed_admin(...)`, with this comment: `# Global seeders last (spec §9): migrations (store constructors) -> admin bootstrap -> seeders, so a failing bootstrap aborts before any global row is written.` Run — PASS.
+
+- [ ] **Step 5: Mutation verification.** (1) Remove the visibility predicate from `_visible_domain_row` — `test_terms_inherit_domain_ownership`, the API 404 assertions, **and** `test_check_request_ignores_foreign_domain_ids` must all FAIL (one guard, three surfaces — record all three observations). Restore. (2) Change `has_global_domains` back to "any domains" — `test_seeder_presence_check_is_global_only` must FAIL. Restore. (3) Move the two seeder calls in `create_app` back before `seed_admin` — `test_seeders_run_after_admin_bootstrap` must FAIL. Restore. Record.
 
 - [ ] **Step 6: Full gate + commit**
 
@@ -1275,7 +1310,7 @@ Run: `uv run pytest -q` (zero warnings).
 
 ```bash
 git add -A backend
-git commit -m "feat(ownership): domains and terms are owner-scoped; check requests filter to visible domains"
+git commit -m "feat(ownership): domains and terms are owner-scoped, through the checker too"
 ```
 
 ---
@@ -1535,7 +1570,7 @@ def test_global_mutation_as_non_admin_is_403_everywhere(two_users):
 
 - [ ] **Step 2: Run and reconcile.** `uv run pytest tests/test_ownership.py -q`. Every failure here is a Task 2–5 gap: fix it in the store/router it belongs to (not by weakening the row), and note in the report which rows failed on first run — that list is the sweep's yield.
 
-- [ ] **Step 3: The audit table.** In the task report, list **every public method** of `DocumentStore`, `FolderStore`, `ProfileStore`, `TerminologyStore`, `JobManager` with one of: "scoped (owner param)" / "global-check (admin param)" / "safe because X" (e.g. `remove_domain_everywhere`, `terms_for_check`, `has_global_domains`, `standard_profile` — each with its stated reason). An audit that omits a method is a failed step; M2's `folders.ts` omission is the precedent.
+- [ ] **Step 3: The audit table.** In the task report, list **every public method** of `DocumentStore`, `FolderStore`, `ProfileStore`, `TerminologyStore`, `JobManager` with one of: "scoped (owner param)" / "global-check (admin param)" / "safe because X" (e.g. `remove_domain_everywhere`, `has_global_domains`, `standard_profile` — each with its stated reason; `TerminologyChecker.check` belongs in the table as "scoped (owner threaded to list_terms)"). An audit that omits a method is a failed step; M2's `folders.ts` omission is the precedent.
 
 - [ ] **Step 4: Full gate + commit**
 
@@ -1635,13 +1670,13 @@ it('discards a domains fetch that resolves after a session turnover', async () =
   - a private domain row keeps both buttons;
   - with a global domain active, the term table renders no add-term row and no per-term ✎/✕ buttons;
   - flipping `is_admin: true` restores every control on the same fixtures;
-  - `ProfilesView`: a global profile card as non-admin renders the badge; its name input, domain select, tier buttons, provider/model selects and both textareas are `disabled`; no delete and no reset button. A private card is fully editable. As admin, global cards behave exactly as in M2 (Standard: name disabled + reset; examples: editable + delete).
+  - `ProfilesView`: a global profile card as non-admin renders the badge; **every control that can reach `onSave` is `disabled`** — name input, domain select, tier buttons, provider/model selects, the rule-pack toggle buttons (`ProfilesView.tsx:332-354`), the pin/clear-pin buttons (`:271-329`) and both textareas — and the test clicks at least one pack button and one pin button asserting no `onSave` call resulted; no delete and no reset button. A private card is fully editable. As admin, global cards behave exactly as in M2 (Standard: name disabled + reset; examples: editable + delete).
 
   Run — FAIL.
 
 - [ ] **Step 6: Affordance implementation.**
   - `TerminologyView`: `const isAdmin = useStore((s) => s.user?.is_admin ?? false)`; per domain `const editable = !domain.is_global || isAdmin`; render ✎/✕ and the `onDoubleClick` rename only when `editable`; render `<span className="global-badge" title={m.globalBadgeTitle}>{m.globalBadge}</span>` when `domain.is_global`. Pass `readOnly={activeDomain.is_global && !isAdmin}` into `TermTable` (it needs the active `Domain`, not just the id — change the prop) and gate the add-term row and the ✎/✕ cells on it.
-  - `ProfilesView`: in the profile card component, `const readOnly = profile.is_global && !isAdmin`; thread `disabled={readOnly || ...existing conditions}` into every control (the name input keeps its `is_standard` disable for admins), early-return from `onSave` handlers when `readOnly` (belt for the disabled braces), hide ✕/↺ when `readOnly`, render the badge beside the title when `profile.is_global`.
+  - `ProfilesView`: in the profile card component, `const readOnly = profile.is_global && !isAdmin`; thread `disabled={readOnly || ...existing conditions}` into **every** control that can reach `onSave` — enumerate them from the component rather than from memory: name input (keeps its `is_standard` disable for admins), domain multi-select, tier buttons, provider/model selects, rule-pack toggle buttons, pin/clear-pin buttons, both textareas — early-return from `onSave` handlers when `readOnly` (belt for the disabled braces), hide ✕/↺ when `readOnly`, render the badge beside the title when `profile.is_global`. The report's audit lists each control with "disabled" — a control missing from the list is the M2 directory-sweep failure in miniature.
   - `App.css`: one `.global-badge` rule matching the existing `.case-badge` pattern (small, muted, uppercase); check specificity against `.domain-row` / `.profile-card-title` children — M2 shipped a white-on-white button because no test covers CSS, so **manually verify both views in the running dev app** (owner's servers on 5173/8000 — look, don't restart).
 
   Run Step 5's tests — PASS.
