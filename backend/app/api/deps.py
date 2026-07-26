@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from fastapi import Depends, HTTPException, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.auth import InvalidToken
 
@@ -26,7 +27,29 @@ class CurrentUser:
     is_admin: bool
 
 
-def get_current_user(request: Request) -> CurrentUser:
+# Declared so the OpenAPI document carries a bearer securityScheme and
+# Swagger UI renders its Authorize button. auto_error=False is load-bearing:
+# the auto_error=True form raises 403 on a missing header, and every route
+# here must answer 401 -- the enforcement test asserts it and the frontend's
+# central 401 handler depends on it.
+_bearer = HTTPBearer(
+    auto_error=False,
+    bearerFormat="JWT",
+    description=(
+        "POST /api/auth/login with your email and password, then paste the "
+        "returned `token` here."
+    ),
+)
+
+
+def get_current_user(
+    request: Request,
+    _credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> CurrentUser:
+    # _credentials is unused: it exists only so this dependency's signature
+    # advertises the bearer scheme to OpenAPI/Swagger. Token extraction below
+    # is untouched -- it has its own scheme/emptiness check, latin-1 length
+    # cap, and verification, none of which HTTPBearer's own parsing replaces.
     scheme, _, token = request.headers.get("Authorization", "").partition(" ")
     token = token.strip()
     if scheme.lower() != "bearer" or not token:

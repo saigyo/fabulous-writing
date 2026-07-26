@@ -1104,6 +1104,15 @@ both the enforcement loop in `create_app()` and the route-tree walk in
 environment** (see `environment` above): outside dev, `create_app()` passes
 `docs_url=None, redoc_url=None, openapi_url=None` to `FastAPI(...)`, so the routes
 are never registered and all three 404 for every caller, authenticated or not.
+In `dev`, Swagger's **Authorize** button works: `get_current_user`
+(`app/api/deps.py`) declares an `HTTPBearer(auto_error=False, ...)` dependency
+purely so the OpenAPI document carries a bearer `securityScheme` — the actual
+header parsing and verification are unchanged. `auto_error=False` is
+deliberate: the default `auto_error=True` mode answers a missing header with
+403, but every route here must answer 401. To use it, `POST /api/auth/login`
+with an email and password, then paste the response's `token` into Authorize.
+
+
 
 ## Testing
 
