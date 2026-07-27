@@ -30,6 +30,7 @@ import {
   expireSession,
   login,
   logout,
+  refreshUser,
   restoreSession,
   sessionGeneration,
 } from './session'
@@ -341,5 +342,75 @@ describe('restoreSession', () => {
     expect(state.token).toBeNull()
     expect(state.user).toBeNull()
     expect(state.authStatus).toBe('anonymous')
+  })
+})
+
+describe('refreshUser', () => {
+  it('returns without calling the API when there is no token', async () => {
+    useStore.setState({ token: null, user: null })
+    await refreshUser()
+    expect(getMe).not.toHaveBeenCalled()
+  })
+
+  it('commits the fresh user under the same token on a clean round trip', async () => {
+    useStore.setState({ token: 'tok', user: user(1), authStatus: 'authenticated' })
+    vi.mocked(getMe).mockResolvedValue(user(1, { usage: { used_today: 5, limit: 500 } }))
+    await refreshUser()
+    const state = useStore.getState()
+    expect(state.token).toBe('tok')
+    expect(state.user).toEqual(user(1, { usage: { used_today: 5, limit: 500 } }))
+  })
+
+  it('drops the response when logout() runs while getMe() is in flight', async () => {
+    useStore.setState({ token: 'tok', user: user(1), authStatus: 'authenticated' })
+    let resolveMe!: (u: MeResponse) => void
+    vi.mocked(getMe).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveMe = resolve
+        }),
+    )
+    const pending = refreshUser()
+    logout() // fires while getMe() is still in flight; bumps generation
+
+    resolveMe(user(2))
+    await pending
+
+    const state = useStore.getState()
+    expect(state.token).toBeNull()
+    expect(state.user).toBeNull()
+  })
+
+  it("drops the response when the store's token has moved on mid-flight", async () => {
+    useStore.setState({ token: 'tok', user: user(1), authStatus: 'authenticated' })
+    let resolveMe!: (u: MeResponse) => void
+    vi.mocked(getMe).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveMe = resolve
+        }),
+    )
+    const pending = refreshUser()
+    // A token change with no generation bump: refreshUser()'s own
+    // token-equality guard is what has to catch this, not the generation
+    // check restoreSession()/login() rely on.
+    useStore.setState({ token: 'other-tok' })
+
+    resolveMe(user(2))
+    await pending
+
+    const state = useStore.getState()
+    expect(state.token).toBe('other-tok')
+    expect(state.user).toEqual(user(1))
+  })
+
+  it('leaves auth state untouched when getMe() rejects', async () => {
+    useStore.setState({ token: 'tok', user: user(1), authStatus: 'authenticated' })
+    vi.mocked(getMe).mockRejectedValue(new HttpError(500, 'boom'))
+    await expect(refreshUser()).resolves.toBeUndefined()
+    const state = useStore.getState()
+    expect(state.token).toBe('tok')
+    expect(state.user).toEqual(user(1))
+    expect(state.authStatus).toBe('authenticated')
   })
 })
