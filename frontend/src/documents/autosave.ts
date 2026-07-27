@@ -252,28 +252,29 @@ async function push(snapshot: DocSnapshot): Promise<void> {
       } catch {
         // Silent: buffer stays as the handler left it.
       }
-    } else if (
-      error instanceof HttpError &&
-      error.status === 413 &&
-      error.code === 'document_too_large'
-    ) {
-      // Over limits.max_document_chars: permanent until the text shrinks
-      // back under the cap, so no backoff retry is scheduled here — one
-      // would just re-send the same doomed PUT every ~30s forever. The
-      // snapshot is left dirty (as written before this push started); the
-      // next noteChange() edit naturally triggers a fresh save attempt,
-      // which succeeds once the text is back under the cap. The Task 9
-      // char-count threshold mark already gives the user a visible signal.
+    } else if (error instanceof HttpError && error.status === 413) {
+      // Every 413 is permanent for the CURRENT snapshot, coded or not: over
+      // limits.max_document_chars ('document_too_large') is deterministic
+      // until the text shrinks back under the cap, but the byte-budget
+      // middleware's uncoded 413 (the whole JSON body — text + findings +
+      // scorecard — crosses its own budget, even with text under the char
+      // cap) is equally deterministic for THIS snapshot: re-sending the
+      // identical oversized payload every ~30s is just as futile. So no
+      // backoff retry is scheduled here for either case. The snapshot is
+      // left dirty (as written before this push started); any edit OR a
+      // completed check produces a new snapshot (different text, findings,
+      // or scorecard), and that snapshot's own noteChange()/flush() call
+      // naturally triggers a fresh save attempt, which succeeds once the new
+      // snapshot is back under budget. The Task 9 char-count threshold mark
+      // already gives the user a visible signal for the char-cap case.
       // (`overLimit` lets the `finally` below tell this apart from the other
       // failure branches, which each already have their own way of picking
       // a pending edit back up — see the comment there.)
       //
-      // Not every 413 is this: the byte-budget middleware also 413s when
-      // the whole JSON body (text + findings + scorecard) crosses its own
-      // budget, even with text under the char cap — and that one has no
-      // `document_too_large` code. That case is transient (the body shrinks
-      // once findings/scorecard change) and must fall through to the retry
-      // branch below rather than being left silently dirty forever.
+      // The backend's structured `document_too_large` code is still kept —
+      // it remains the right vocabulary for future UI surfacing (e.g.
+      // distinguishing the two causes in a message) — but the retry
+      // decision no longer branches on it: every 413 takes this branch.
       overLimit = true
     } else {
       scheduleRetry()

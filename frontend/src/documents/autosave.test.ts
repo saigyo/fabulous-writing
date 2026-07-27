@@ -208,14 +208,19 @@ describe('autosave', () => {
   })
 
   it('a 413 without the document_too_large code (the byte-budget middleware, ' +
-    'not the char cap) is treated as transient and retried', async () => {
+    'not the char cap) is equally non-retryable for the current snapshot, but a ' +
+    'later edit saves again', async () => {
     vi.mocked(updateDocument).mockRejectedValueOnce(new HttpError(413, 'body too large'))
     await flush()
     expect(readSnapshot()?.dirty).toBe(true)
 
-    await vi.advanceTimersByTimeAsync(2000) // first backoff retry
-    expect(updateDocument).toHaveBeenCalledTimes(2)
-    expect(readSnapshot()?.dirty).toBe(false)
+    await vi.advanceTimersByTimeAsync(60000) // well past any backoff interval
+    expect(updateDocument).toHaveBeenCalledTimes(1) // no retry fired
+
+    docText = 'hello world, edited'
+    noteChange()
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(updateDocument).toHaveBeenCalledTimes(2) // the edit triggers a fresh save
   })
 
   it('generates a title once when a fallback-named doc passes 20 words', async () => {
