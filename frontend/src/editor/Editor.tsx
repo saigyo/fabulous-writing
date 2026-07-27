@@ -5,7 +5,7 @@ import { basicSetup } from 'codemirror'
 import { runCheck } from '../checking/controller'
 import { createCheckScheduler } from '../checking/scheduler'
 import { flush, noteChange } from '../documents/autosave'
-import { wordCount } from '../scoring/score'
+import { codePoints, wordCount } from '../scoring/score'
 import { useStore } from '../state/store'
 import { findingIdAt, findingsField, selectFindingEffect } from './findings'
 import { setEditorView } from './editorRef'
@@ -35,8 +35,9 @@ export function Editor() {
             noteChange()
             scheduler.onInput()
             const store = useStore.getState()
-            store.setDocWords(wordCount(update.state.doc.toString()))
-            store.setDocChars(update.state.doc.length)
+            const text = update.state.doc.toString()
+            store.setDocWords(wordCount(text))
+            store.setDocChars(codePoints(text))
             store.markScorecardStale()
           }
           const field = update.state.field(findingsField)
@@ -57,8 +58,9 @@ export function Editor() {
       ],
     })
     setEditorView(view)
-    useStore.getState().setDocWords(wordCount(view.state.doc.toString()))
-    useStore.getState().setDocChars(view.state.doc.length)
+    const initialText = view.state.doc.toString()
+    useStore.getState().setDocWords(wordCount(initialText))
+    useStore.getState().setDocChars(codePoints(initialText))
 
     const onBeforeUnload = () => void flush()
     window.addEventListener('beforeunload', onBeforeUnload)

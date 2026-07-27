@@ -15,7 +15,13 @@ def byte_budget(max_document_chars: int) -> int:
 class RequestSizeLimitMiddleware:
     """Pure ASGI on purpose: BaseHTTPMiddleware's response buffering would
     fight the SSE stream. Rejects on Content-Length before reading anything,
-    and counts the bytes actually received for chunked bodies."""
+    and counts the bytes actually received for chunked bodies.
+
+    Deliberate scope: the chunked-body cap meters bytes the application
+    actually reads. A handler that never reads its body allocates nothing, so
+    an oversized chunked body sent to a bodyless endpoint is answered
+    normally rather than 413'd -- draining/metering it before dispatch would
+    require exactly the buffering this middleware exists to avoid."""
     def __init__(self, app, max_bytes: int) -> None:
         self.app = app
         self.max_bytes = max_bytes

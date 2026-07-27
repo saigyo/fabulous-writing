@@ -51,6 +51,19 @@ export function wordCount(text: string): number {
 }
 
 /**
+ * Unicode code point count, matching the backend's Python len() (spec
+ * consistency for the UI char count): astral characters (e.g. emoji) are one
+ * code point here despite being two UTF-16 code units, unlike text.length.
+ * Iterates rather than spreading into an array to avoid allocating one for
+ * long documents.
+ */
+export function codePoints(text: string): number {
+  let n = 0
+  for (const _ of text) n++
+  return n
+}
+
+/**
  * Mechanics component from the current findings; null below the minimum
  * text length (no score exists at all, see docs/scoring.md).
  */

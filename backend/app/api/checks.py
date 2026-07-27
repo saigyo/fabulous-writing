@@ -131,6 +131,14 @@ async def create_check(
             scorecard=job.scorecard,
             effective_llm=job.effective_llm,
         )
+    except asyncio.CancelledError:
+        # The gate's backpressure sleep (llm_gate.py) can be cancelled after
+        # the job was already created; asyncio.CancelledError does not match
+        # the `except Exception` below, so without this it would leak a
+        # permanently-'running' job that counts against the owner's
+        # MAX_JOBS_PER_OWNER cap forever.
+        app.state.jobs.discard(job.id)
+        raise
     except Exception:
         app.state.jobs.discard(job.id)
         raise
