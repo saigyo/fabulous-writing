@@ -1,5 +1,6 @@
-import { postSuggestions } from '../api/client'
-import { llmDisabled, tierAllowed } from '../auth/policy'
+import { HttpError, postSuggestions } from '../api/client'
+import { tierAllowed } from '../auth/policy'
+import { refreshUserNow } from '../auth/refreshSlot'
 import { currentGeneration } from '../documents/autosave'
 import { getEditorView } from '../editor/editorRef'
 import { findingsField } from '../editor/findings'
@@ -7,6 +8,7 @@ import { currentMessages } from '../i18n'
 import { activeProfile } from '../profiles/profile'
 import { useStore } from '../state/store'
 import { resolveModel } from './routing'
+import { skipNoticeText } from './skipNotice'
 import { noReliableSuggestionMessage } from './vetMessage'
 
 /**
@@ -31,14 +33,11 @@ export async function fetchSuggestions(findingId: string): Promise<void> {
     if (gen !== currentGeneration()) return // session ended: drop the response
     if (result) {
       if (result.skipped) {
-        useStore
-          .getState()
-          .setSuggestError(
-            findingId,
-            llmDisabled(useStore.getState().user)
-              ? currentMessages().llmNotIncluded
-              : currentMessages().llmSkippedServer,
-          )
+        useStore.getState().setSuggestError(
+          findingId,
+          skipNoticeText(result.skipped, useStore.getState().user,
+            currentMessages()) ?? currentMessages().llmSkippedServer,
+        )
         return
       }
       const vetoed = noReliableSuggestionMessage(
@@ -61,9 +60,14 @@ export async function fetchSuggestions(findingId: string): Promise<void> {
         store.setExtraSuggestions(findingId, result.suggestions)
         store.setSuggestHeldBack(findingId, null)
       }
+      refreshUserNow()
     }
   } catch (error) {
     if (gen !== currentGeneration()) return // session ended: stale error, nothing to report
+    if (error instanceof HttpError && error.status === 429) {
+      useStore.getState().setSuggestError(findingId, currentMessages().serverBusy)
+      return
+    }
     useStore.getState().setSuggestError(findingId, error instanceof Error ? error.message : String(error))
   } finally {
     // Scoped to the captured generation: an outgoing session's completion
@@ -96,14 +100,11 @@ export async function fetchRewrite(findingId: string): Promise<void> {
     if (gen !== currentGeneration()) return // session ended: drop the response
     if (result) {
       if (result.skipped) {
-        useStore
-          .getState()
-          .setRewriteError(
-            findingId,
-            llmDisabled(useStore.getState().user)
-              ? currentMessages().llmNotIncluded
-              : currentMessages().llmSkippedServer,
-          )
+        useStore.getState().setRewriteError(
+          findingId,
+          skipNoticeText(result.skipped, useStore.getState().user,
+            currentMessages()) ?? currentMessages().llmSkippedServer,
+        )
         return
       }
       const vetoed = noReliableSuggestionMessage(
@@ -131,9 +132,14 @@ export async function fetchRewrite(findingId: string): Promise<void> {
         })
         store.setRewriteHeldBack(findingId, null)
       }
+      refreshUserNow()
     }
   } catch (error) {
     if (gen !== currentGeneration()) return // session ended: stale error, nothing to report
+    if (error instanceof HttpError && error.status === 429) {
+      useStore.getState().setRewriteError(findingId, currentMessages().serverBusy)
+      return
+    }
     useStore.getState().setRewriteError(findingId, error instanceof Error ? error.message : String(error))
   } finally {
     // Same reasoning as fetchSuggestions()'s finally block above.

@@ -56,6 +56,15 @@ export const de: Messages = {
     `LLM-Prüfung lief mit ${effective} — ${requested} ist im aktuellen Tarif nicht verfügbar.`,
   llmNotIncluded: 'Die LLM-Prüfung ist im aktuellen Tarif nicht enthalten.',
   llmSkippedServer: 'LLM-Prüfung übersprungen: auf dem Server nicht verfügbar.',
+  serverBusy: 'Server ausgelastet — bitte gleich erneut versuchen.',
+  llmQuotaExhausted: (limit) =>
+    `Tageskontingent für LLM-Prüfungen aufgebraucht (${limit}). Zurücksetzung um Mitternacht (UTC).`,
+  llmDocumentTooLarge: (limit) =>
+    `Der Text überschreitet das LLM-Limit von ${limit.toLocaleString('de-DE')} Zeichen.`,
+  quotaIndicatorTitle: 'Heute genutzte LLM-Prüfungen',
+  charCount: (n) => `${n.toLocaleString('de-DE')} Zeichen`,
+  charCountOverLlm: 'über dem LLM-Limit',
+  charCountOverDoc: 'über dem Dokumentlimit',
 
   findings: 'Ergebnisse',
   fastChecking: 'prüft…',

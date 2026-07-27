@@ -60,6 +60,15 @@ export const es: Messages = {
     `La verificación LLM se ejecutó con ${effective} — ${requested} no está disponible en el plan actual.`,
   llmNotIncluded: 'La verificación LLM no está incluida en el plan actual.',
   llmSkippedServer: 'Verificación LLM omitida: no disponible en el servidor.',
+  serverBusy: 'Servidor ocupado; vuelva a intentarlo en unos instantes.',
+  llmQuotaExhausted: (limit) =>
+    `Cuota diaria de comprobaciones LLM agotada (${limit}). Se restablece a medianoche (UTC).`,
+  llmDocumentTooLarge: (limit) =>
+    `El texto supera el límite LLM de ${limit.toLocaleString('es-ES')} caracteres.`,
+  quotaIndicatorTitle: 'Comprobaciones LLM utilizadas hoy',
+  charCount: (n) => `${n.toLocaleString('es-ES')} caracteres`,
+  charCountOverLlm: 'por encima del límite LLM',
+  charCountOverDoc: 'por encima del límite del documento',
 
   findings: 'Resultados',
   fastChecking: 'comprobando…',

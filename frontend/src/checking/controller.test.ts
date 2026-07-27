@@ -22,8 +22,9 @@ vi.mock('../documents/autosave', async (importOriginal) => ({
   flush: vi.fn().mockResolvedValue(undefined),
 }))
 
-import { postCheck, subscribeCheck } from '../api/client'
+import { HttpError, postCheck, subscribeCheck } from '../api/client'
 import { bumpGeneration, resetAutosaveForTests } from '../documents/autosave'
+import { en as messages } from '../i18n/en'
 import { cancelInFlightCheck } from './cancelSlot'
 import { cancelCheck, runCheck } from './controller'
 import { resolveModel } from './routing'
@@ -36,6 +37,13 @@ function user(policy: MeResponse['policy']): MeResponse {
     tier: 'basic',
     is_admin: false,
     policy,
+    usage: { used_today: 0, limit: 500 },
+    limits: {
+      max_document_chars: 200000,
+      max_llm_document_chars: 200000,
+      concurrent_llm_runs: 5,
+    },
+    allow_additional_admins: false,
   }
 }
 
@@ -311,5 +319,17 @@ describe('check controller', () => {
     await runCheck(true)
 
     expect(useStore.getState().llmEffective).toBeNull()
+  })
+
+  it('maps a 429 from postCheck to serverBusy without touching auth state', async () => {
+    useStore.setState({ token: 'tok', user: user(FLOOR) })
+    vi.mocked(postCheck).mockRejectedValue(new HttpError(429, 'busy'))
+
+    await runCheck(true)
+
+    expect(useStore.getState().llmError).toBe(messages.serverBusy)
+    expect(useStore.getState().checkPhase).toBe('idle')
+    expect(useStore.getState().token).toBe('tok')
+    expect(useStore.getState().user).toEqual(user(FLOOR))
   })
 })

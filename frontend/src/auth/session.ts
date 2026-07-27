@@ -3,6 +3,7 @@ import { cancelInFlightCheck } from '../checking/cancelSlot'
 import { clearLegacyText, invalidateDocumentWork } from '../documents/documents'
 import { clearSnapshot, readSnapshot } from '../documents/buffer'
 import { resetSessionState, useStore } from '../state/store'
+import { setRefreshUserHandler } from './refreshSlot'
 
 /** Discards the buffered document unless it belongs to the user now signing
  * in — including a buffer with no ownerId at all (written by an older
@@ -129,3 +130,26 @@ async function runRestore(): Promise<void> {
 // the 401. client.ts must not import session.ts back — see its own
 // setUnauthorizedHandler comment.
 setUnauthorizedHandler(expireSession)
+
+/**
+ * Best-effort /me re-fetch so quota display tracks reality after an LLM
+ * run. Generation- and token-guarded exactly like runRestore(): a session
+ * change mid-flight must drop the response, and any failure leaves the
+ * last-known user in place (freshness is cosmetic; the backend enforces).
+ */
+export async function refreshUser(): Promise<void> {
+  const startedAt = generation
+  const token = useStore.getState().token
+  if (!token) return
+  try {
+    const user = await getMe()
+    if (startedAt !== generation) return
+    if (useStore.getState().token !== token) return
+    useStore.getState().setAuth(token, user)
+  } catch {
+    // Cosmetic refresh only — never surface, never clear state (a real 401
+    // already went through handleUnauthorized inside request()).
+  }
+}
+
+setRefreshUserHandler(refreshUser)
