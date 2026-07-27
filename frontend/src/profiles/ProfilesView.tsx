@@ -6,6 +6,7 @@ import {
   resetProfile,
   updateProfile,
 } from '../api/client'
+import { hasFeature, modelAllowed, providerAllowed, tierAllowed } from '../auth/policy'
 import { currentGeneration } from '../documents/autosave'
 import { PinIcon } from '../header/LlmSelector'
 import { useCrudError } from '../hooks/useCrudError'
@@ -19,6 +20,8 @@ export function ProfilesView() {
   const profiles = useStore((s) => s.profiles)
   const profileId = useStore((s) => s.profileId)
   const language = useStore((s) => s.language)
+  const user = useStore((s) => s.user)
+  const canCreate = hasFeature(user, 'custom_profiles')
   const m = useMessages()
   const [newName, setNewName] = useState('')
   const { error, run } = useCrudError(m.profileChangeFailed)
@@ -124,17 +127,19 @@ export function ProfilesView() {
     <div className="profiles-view">
       <header className="profiles-header">
         <h2>{m.profilesTitle}</h2>
-        <div className="profiles-create">
-          <input
-            placeholder={m.newProfilePlaceholder}
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && void create()}
-          />
-          <button title={m.createProfileTitle} onClick={() => void create()}>
-            {m.add}
-          </button>
-        </div>
+        {canCreate && (
+          <div className="profiles-create">
+            <input
+              placeholder={m.newProfilePlaceholder}
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && void create()}
+            />
+            <button title={m.createProfileTitle} onClick={() => void create()}>
+              {m.add}
+            </button>
+          </div>
+        )}
       </header>
       {error && <p className="profiles-error">{error}</p>}
       <div className="profiles-list">
@@ -180,7 +185,8 @@ function ProfileCard({
   const providers = useStore((s) => s.providers)
   const routing = useStore((s) => s.routing)
   const domains = useStore((s) => s.domains)
-  const isAdmin = useStore((s) => s.user?.is_admin ?? false)
+  const user = useStore((s) => s.user)
+  const isAdmin = user?.is_admin ?? false
   const readOnly = profile.is_global && !isAdmin
   const [name, setName] = useState(profile.name)
   const [instructions, setInstructions] = useState(profile.llm_instructions)
@@ -259,22 +265,26 @@ function ProfileCard({
         <div className="profile-card-llm">
           <span className="field-label">{m.llm}</span>
           <div className="tier-options" role="radiogroup">
-            {TIERS.map((tier) => (
-              <button
-                key={tier}
-                disabled={readOnly}
-                className={`tier-option${
-                  profile.llm_provider === null && profile.llm_tier === tier
-                    ? ' selected'
-                    : ''
-                }`}
-                onClick={() =>
-                  guardedSave({ llm_tier: tier, llm_provider: null, llm_model: null })
-                }
-              >
-                {m.tierName(tier as Tier)}
-              </button>
-            ))}
+            {TIERS.map((tier) => {
+              const notOnPlan = !tierAllowed(user, tier)
+              return (
+                <button
+                  key={tier}
+                  disabled={readOnly || notOnPlan}
+                  className={`tier-option${
+                    profile.llm_provider === null && profile.llm_tier === tier
+                      ? ' selected'
+                      : ''
+                  }`}
+                  onClick={() =>
+                    guardedSave({ llm_tier: tier, llm_provider: null, llm_model: null })
+                  }
+                >
+                  {m.tierName(tier as Tier)}
+                  {notOnPlan ? m.planSuffix : ''}
+                </button>
+              )
+            })}
           </div>
           {resolution && (pinnedProfile || routingLoaded) && (
             <span
@@ -312,9 +322,15 @@ function ProfileCard({
                   }
                 >
                   {shownProvider === '' && <option value="" />}
-                  {providers.map((p) => (
-                    <option key={p.name} value={p.name}>{p.name}</option>
-                  ))}
+                  {providers.map((p) => {
+                    const notOnPlan = !providerAllowed(user, p.name)
+                    return (
+                      <option key={p.name} value={p.name} disabled={readOnly || notOnPlan}>
+                        {p.name}
+                        {notOnPlan ? m.planSuffix : ''}
+                      </option>
+                    )
+                  })}
                 </select>
               </label>
               <label>
@@ -329,26 +345,34 @@ function ProfileCard({
                     })
                   }
                 >
-                  {modelOptions.map((model) => (
-                    <option key={model} value={model}>{model}</option>
-                  ))}
+                  {modelOptions.map((model) => {
+                    const notOnPlan = !modelAllowed(user, shownProvider, model)
+                    return (
+                      <option key={model} value={model} disabled={readOnly || notOnPlan}>
+                        {model}
+                        {notOnPlan ? m.planSuffix : ''}
+                      </option>
+                    )
+                  })}
                 </select>
               </label>
-              {!pinnedProfile && resolution?.ok && (
-                <button
-                  className="icon-button llm-pin-button"
-                  disabled={readOnly}
-                  title={m.pinThisModel}
-                  onClick={() =>
-                    guardedSave({
-                      llm_provider: shownProvider,
-                      llm_model: shownModel || null,
-                    })
-                  }
-                >
-                  <PinIcon />
-                </button>
-              )}
+              {!pinnedProfile &&
+                resolution?.ok &&
+                modelAllowed(user, shownProvider, shownModel) && (
+                  <button
+                    className="icon-button llm-pin-button"
+                    disabled={readOnly}
+                    title={m.pinThisModel}
+                    onClick={() =>
+                      guardedSave({
+                        llm_provider: shownProvider,
+                        llm_model: shownModel || null,
+                      })
+                    }
+                  >
+                    <PinIcon />
+                  </button>
+                )}
             </div>
           </details>
           {packs.length > 0 && (
