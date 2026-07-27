@@ -41,6 +41,7 @@ function user(id: number, overrides: Partial<MeResponse> = {}): MeResponse {
     display_name: null,
     tier: 'basic',
     is_admin: false,
+    policy: { llm: { tiers: null, providers: null, models: null }, features: [] },
     ...overrides,
   }
 }

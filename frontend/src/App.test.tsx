@@ -1,13 +1,15 @@
 // @vitest-environment happy-dom
-import { cleanup, render, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { bumpGeneration, resetAutosaveForTests } from './documents/autosave'
 import {
   consumeProfileApplySuppression,
   setProfileApplySuppressed,
 } from './documents/profileApply'
+import { en } from './i18n/en'
 import { useStore } from './state/store'
 import type { Profile } from './types'
+import type { MeResponse } from './api/client'
 
 // Only the catalog fetches Header's mount effect fires, plus getProfiles
 // (the effect under test), are replaced — everything else in api/client
@@ -47,6 +49,23 @@ function profile(overrides: Partial<Profile> = {}): Profile {
     is_global: true,
     ...overrides,
   }
+}
+
+function user(overrides: Partial<MeResponse> = {}): MeResponse {
+  return {
+    id: 1,
+    email: 'ada@example.com',
+    display_name: null,
+    tier: 'basic',
+    is_admin: false,
+    policy: { llm: { tiers: null, providers: null, models: null }, features: [] },
+    ...overrides,
+  }
+}
+
+const FLOOR_POLICY: MeResponse['policy'] = {
+  llm: { tiers: [], providers: [], models: null },
+  features: [],
 }
 
 afterEach(() => {
@@ -149,5 +168,21 @@ describe('Header profile-fetch generation guard', () => {
     await new Promise((r) => setTimeout(r, 0))
 
     expect(consumeProfileApplySuppression()).toBe(true)
+  })
+})
+
+describe('Header LLM-phase gating', () => {
+  it('carries no LLM affordance for a floor-policy user (no selector, no auto-check toggle)', async () => {
+    vi.mocked(getProfiles).mockResolvedValue([])
+    useStore.setState({ user: user({ policy: FLOOR_POLICY }) })
+    render(<Header />)
+    await waitFor(() => expect(getProfiles).toHaveBeenCalled())
+
+    // LlmSelector is mocked to () => null at the top of this file; its own
+    // floor case (rendering nothing) is covered directly by
+    // header/LlmSelector.test.tsx. What this test actually pins is the
+    // auto-check toggle, which App.tsx renders inline in Header and must
+    // gate on the same llmDisabled(store.user) check.
+    expect(screen.queryByTitle(en.autoTitle)).toBeNull()
   })
 })

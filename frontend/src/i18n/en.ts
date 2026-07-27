@@ -44,6 +44,11 @@ export const en: Messages = {
   llmSkipped: (reason) => `LLM check skipped: ${reason}`,
   pinThisModel: 'Pin this model',
   advancedTitle: 'Advanced model selection',
+  planSuffix: ' (not on your plan)',
+  llmDegraded: (effective, requested) =>
+    `LLM ran on ${effective} — ${requested} is not available on your plan.`,
+  llmNotIncluded: 'LLM checking is not included in your plan.',
+  llmSkippedServer: 'LLM check skipped: not available on the server.',
 
   findings: 'Findings',
   fastChecking: 'checking…',

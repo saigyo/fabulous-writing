@@ -180,7 +180,13 @@ describe('tier-aware profile semantics', () => {
 
 describe('resolveProfileModel', () => {
   const providers = [
-    { name: 'claude', available: true, models: ['claude-sonnet-5'], default_model: 'claude-sonnet-5' },
+    {
+      name: 'claude',
+      available: true,
+      models: ['claude-sonnet-5'],
+      default_model: 'claude-sonnet-5',
+      allowed: true,
+    },
   ]
   const routing = {
     default_tier: 'balanced' as const,
@@ -188,11 +194,11 @@ describe('resolveProfileModel', () => {
     languages: {
       en: {
         balanced: {
-          provider: 'claude', model: 'claude-sonnet-5', available: true, reason: null,
+          provider: 'claude', model: 'claude-sonnet-5', available: true, reason: null, allowed: true,
         },
         quality: {
           provider: 'deepseek', model: 'deepseek-v4-pro',
-          available: false, reason: 'missing DEEPSEEK_API_KEY',
+          available: false, reason: 'missing DEEPSEEK_API_KEY', allowed: true,
         },
       },
     },

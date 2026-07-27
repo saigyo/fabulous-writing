@@ -27,7 +27,14 @@ import { generateDocumentName, updateDocument } from '../api/client'
 
 let docText = 'hello world'
 
-const USER = { id: 1, email: 'ada@example.com', display_name: null, tier: 'basic', is_admin: false }
+const USER = {
+  id: 1,
+  email: 'ada@example.com',
+  display_name: null,
+  tier: 'basic',
+  is_admin: false,
+  policy: { llm: { tiers: null, providers: null, models: null }, features: [] },
+}
 
 function seedStore(): void {
   useStore.getState().setDocMeta({ id: 5, name: 'Doc', nameSource: 'user', revision: 2 })

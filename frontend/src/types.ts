@@ -103,6 +103,20 @@ export interface ProviderInfo {
   available: boolean
   models: string[]
   default_model: string
+  allowed: boolean
+}
+
+export interface LlmSelectionInfo {
+  tier: Tier | null
+  provider: string | null
+  model: string | null
+}
+
+export interface EffectiveLlm {
+  requested: LlmSelectionInfo
+  effective: LlmSelectionInfo
+  degraded: boolean
+  skipped: string | null
 }
 
 export interface CheckStatus {
@@ -110,6 +124,7 @@ export interface CheckStatus {
   status: string
   findings: Finding[]
   scorecard: Scorecard | null
+  effective_llm: EffectiveLlm | null
 }
 
 export interface Profile {
@@ -138,10 +153,22 @@ export interface RoutingEntry {
   model: string
   available: boolean
   reason: string | null
+  allowed: boolean
 }
 
 export interface RoutingTable {
   default_tier: Tier
   tiers: Tier[]
   languages: Partial<Record<Language, Partial<Record<Tier, RoutingEntry>>>>
+}
+
+export interface LlmPolicy {
+  tiers: Tier[] | null
+  providers: string[] | null
+  models: Record<string, string[]> | null
+}
+
+export interface PolicyPayload {
+  llm: LlmPolicy
+  features: string[]
 }

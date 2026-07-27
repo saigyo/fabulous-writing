@@ -8,8 +8,15 @@ const providers: ProviderInfo[] = [
     available: true,
     models: ['gemma4:12b', 'qwen3.5:2b'],
     default_model: 'gemma4:12b',
+    allowed: true,
   },
-  { name: 'claude', available: false, models: [], default_model: 'claude-sonnet-5' },
+  {
+    name: 'claude',
+    available: false,
+    models: [],
+    default_model: 'claude-sonnet-5',
+    allowed: true,
+  },
 ]
 
 describe('effectiveModel', () => {

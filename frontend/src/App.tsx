@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import './App.css'
 import { getDomains, getLanguages, getProfiles, getProviders, getRouting } from './api/client'
 import { AccountMenu } from './auth/AccountMenu'
+import { llmDisabled } from './auth/policy'
 import { sessionGeneration } from './auth/session'
 import { runCheck } from './checking/controller'
 import { currentGeneration, flush, noteChange } from './documents/autosave'
@@ -207,15 +208,17 @@ export function Header() {
           <DomainMultiSelect />
         </label>
         <LlmSelector />
-        <button
-          type="button"
-          className="auto-toggle"
-          aria-pressed={store.llmAuto}
-          title={m.autoTitle}
-          onClick={() => store.setLlmAuto(!store.llmAuto)}
-        >
-          ✳
-        </button>
+        {!llmDisabled(store.user) && (
+          <button
+            type="button"
+            className="auto-toggle"
+            aria-pressed={store.llmAuto}
+            title={m.autoTitle}
+            onClick={() => store.setLlmAuto(!store.llmAuto)}
+          >
+            ✳
+          </button>
+        )}
         <button
           className="check-button"
           disabled={store.checkPhase !== 'idle'}

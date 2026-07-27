@@ -3,7 +3,13 @@ import type { ProviderInfo, RoutingTable } from '../types'
 import { resolveModel } from './routing'
 
 const providers: ProviderInfo[] = [
-  { name: 'claude', available: true, models: ['claude-sonnet-5'], default_model: 'claude-sonnet-5' },
+  {
+    name: 'claude',
+    available: true,
+    models: ['claude-sonnet-5'],
+    default_model: 'claude-sonnet-5',
+    allowed: true,
+  },
 ]
 
 const routing: RoutingTable = {
@@ -11,8 +17,20 @@ const routing: RoutingTable = {
   tiers: ['quality', 'balanced', 'cheap', 'local'],
   languages: {
     de: {
-      balanced: { provider: 'mistral', model: 'mistral-large-latest', available: true, reason: null },
-      quality: { provider: 'claude', model: 'claude-opus-4-8', available: false, reason: 'missing ANTHROPIC_API_KEY' },
+      balanced: {
+        provider: 'mistral',
+        model: 'mistral-large-latest',
+        available: true,
+        reason: null,
+        allowed: true,
+      },
+      quality: {
+        provider: 'claude',
+        model: 'claude-opus-4-8',
+        available: false,
+        reason: 'missing ANTHROPIC_API_KEY',
+        allowed: true,
+      },
     },
   },
 }

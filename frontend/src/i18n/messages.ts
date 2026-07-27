@@ -54,6 +54,10 @@ export interface Messages {
   llmSkipped: (reason: string) => string
   pinThisModel: string
   advancedTitle: string
+  planSuffix: string
+  llmDegraded: (effective: string, requested: string) => string
+  llmNotIncluded: string
+  llmSkippedServer: string
 
   // Findings sidebar
   findings: string

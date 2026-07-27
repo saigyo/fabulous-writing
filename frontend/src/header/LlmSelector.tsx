@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { modelAllowed, providerAllowed, tierAllowed, llmDisabled } from '../auth/policy'
 import { resolveModel } from '../checking/routing'
 import { useDismissOnOutsideClick } from '../hooks/useDismissOnOutsideClick'
 import { useMessages } from '../i18n'
@@ -21,6 +22,11 @@ export function LlmSelector() {
   const ref = useRef<HTMLDivElement>(null)
 
   useDismissOnOutsideClick(ref, advancedOpen, () => setAdvancedOpen(false))
+
+  const user = store.user
+  // The §6.2 floor hides the whole LLM phase — after the hooks above, so
+  // React's rules of hooks hold regardless of which branch this takes.
+  if (llmDisabled(user)) return null
 
   const entryFor = (tier: Tier) => store.routing?.languages[store.language]?.[tier]
   const resolution = resolveModel(store)
@@ -62,10 +68,11 @@ export function LlmSelector() {
               // not dead-lock the control — resolution still fails explicitly
               // at check time.
               const unavailable = routingLoaded && (!entry || !entry.available)
+              const notOnPlan = !tierAllowed(user, tier)
               return (
-                <option key={tier} value={tier} disabled={unavailable}>
+                <option key={tier} value={tier} disabled={unavailable || notOnPlan}>
                   {m.tierName(tier)}
-                  {unavailable ? m.offlineSuffix : ''}
+                  {notOnPlan ? m.planSuffix : unavailable ? m.offlineSuffix : ''}
                 </option>
               )
             })}
@@ -103,12 +110,23 @@ export function LlmSelector() {
               value={shownProvider}
               onChange={(e) => store.setPinned(e.target.value, null)}
             >
-              {store.providers.map((provider) => (
-                <option key={provider.name} value={provider.name}>
-                  {provider.name}
-                  {provider.available ? '' : m.offlineSuffix}
-                </option>
-              ))}
+              {store.providers.map((provider) => {
+                const notOnPlan = !providerAllowed(user, provider.name)
+                return (
+                  <option
+                    key={provider.name}
+                    value={provider.name}
+                    disabled={notOnPlan}
+                  >
+                    {provider.name}
+                    {notOnPlan
+                      ? m.planSuffix
+                      : provider.available
+                        ? ''
+                        : m.offlineSuffix}
+                  </option>
+                )
+              })}
             </select>
           </label>
           <label>
@@ -117,14 +135,18 @@ export function LlmSelector() {
               value={shownModel}
               onChange={(e) => store.setPinned(shownProvider, e.target.value)}
             >
-              {modelOptions.map((model) => (
-                <option key={model} value={model}>
-                  {model}
-                </option>
-              ))}
+              {modelOptions.map((model) => {
+                const notOnPlan = !modelAllowed(user, shownProvider, model)
+                return (
+                  <option key={model} value={model} disabled={notOnPlan}>
+                    {model}
+                    {notOnPlan ? m.planSuffix : ''}
+                  </option>
+                )
+              })}
             </select>
           </label>
-          {!pinned && (
+          {!pinned && modelAllowed(user, shownProvider, shownModel) && (
             <button
               className="icon-button llm-pin-button"
               title={m.pinThisModel}
