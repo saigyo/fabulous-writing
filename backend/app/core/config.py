@@ -212,10 +212,9 @@ class AuthSettings(BaseModel):
 
 
 class TierLimitsSettings(BaseModel):
-    """Per-user-tier numeric limits (spec §6.1): a supplied limits block is
-    all-or-nothing — a missing or null member is a load-time error, because
-    it would fail open the moment M5 starts enforcing. The block itself
-    stays optional on TierSettings until M5 requires it."""
+    """Per-user-tier numeric limits (spec §6.1): the block is all-or-nothing
+    and, since M5, required on every configured tier — a missing member (or
+    block) would fail open now that reservation enforces these numbers."""
 
     # Access policy must not fail open on a typo: a misspelled key in any
     # tier block is a config error, not a silently-ignored extra.
@@ -230,6 +229,50 @@ class TierLimitsSettings(BaseModel):
     def _positive(cls, value: int, info) -> int:
         if value <= 0:
             raise ValueError(f"{info.field_name} must be a positive integer")
+        return value
+
+
+def _default_admin_limits() -> TierLimitsSettings:
+    # Deliberately generous: the inert-by-default numbers from spec §6.1.
+    return TierLimitsSettings(
+        llm_checks_per_day=500,
+        max_llm_document_chars=200000,
+        concurrent_llm_runs=5,
+    )
+
+
+class LimitsSettings(BaseModel):
+    """Global, server-level limits (spec §6.1) plus the admin blast-radius
+    ceiling. The ceiling is config-only by design — no API surface may read
+    it as input or mutate it (spec §6.1); a partial admin block is a config
+    error because a missing member would fail open on the one account that
+    carries an explicit "not unlimited" guarantee."""
+
+    model_config = ConfigDict(extra="forbid")  # see TierLimitsSettings
+
+    max_document_chars: int = 200000
+    max_concurrent_llm_runs: int = 20
+    # Seconds; 'started' ledger rows older than this are swept (spec §6.6).
+    llm_run_max_age: int = 900
+    # Seconds of backpressure before a per-user-cap 429 (spec §6.6).
+    concurrency_reject_delay: float = 0.25
+    admin: TierLimitsSettings = Field(default_factory=_default_admin_limits)
+
+    @field_validator("max_document_chars", "max_concurrent_llm_runs", "llm_run_max_age")
+    @classmethod
+    def _positive(cls, value: int, info) -> int:
+        if value <= 0:
+            raise ValueError(f"{info.field_name} must be a positive integer")
+        return value
+
+    @field_validator("concurrency_reject_delay")
+    @classmethod
+    def _delay_in_range(cls, value: float) -> float:
+        if not 0 <= value <= 2:
+            raise ValueError(
+                "concurrency_reject_delay must be within [0, 2] seconds"
+                " (a longer pause would amplify load, spec §6.6)"
+            )
         return value
 
 
@@ -262,7 +305,7 @@ class TierSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")  # see TierLimitsSettings
 
     llm: TierLLMSettings = Field(default_factory=TierLLMSettings)
-    limits: TierLimitsSettings | None = None
+    limits: TierLimitsSettings
     features: list[str] = Field(default_factory=list)
 
     @field_validator("features")
@@ -308,6 +351,7 @@ class Settings(BaseModel):
     # the quality tiers in TIERS. Empty (the default) = no policy anywhere —
     # every user unrestricted, behavior identical to pre-M4.
     tiers: dict[str, TierSettings] = Field(default_factory=dict)
+    limits: LimitsSettings = Field(default_factory=LimitsSettings)
 
     @model_validator(mode="after")
     def _validate_tier_provider_names(self) -> "Settings":
@@ -336,6 +380,20 @@ class Settings(BaseModel):
                             f"tiers.{tier_name}.llm.models.{name}: empty model allowlist"
                             " — omit the provider from llm.providers instead"
                         )
+
+        cap = self.limits.max_concurrent_llm_runs
+        if self.limits.admin.concurrent_llm_runs > cap:
+            raise ValueError(
+                "limits.admin.concurrent_llm_runs exceeds max_concurrent_llm_runs"
+                " — a single account could starve the shared pool"
+            )
+        for tier_name, tier in self.tiers.items():
+            if tier.limits.concurrent_llm_runs > cap:
+                raise ValueError(
+                    f"tiers.{tier_name}.limits.concurrent_llm_runs exceeds"
+                    " max_concurrent_llm_runs — a single user could starve"
+                    " the shared pool"
+                )
         return self
 
 

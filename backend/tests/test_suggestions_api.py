@@ -306,7 +306,9 @@ class TestSuggestionsGate:
         # factory receives ("ollama", ...) (best allowed tier "local" routes
         # there), never "claude". Spec §10: "a basic user cannot obtain a
         # premium provider through them".
-        tiers = {"basic": {"llm": {"tiers": ["local"], "providers": ["ollama"]}}}
+        tiers = {"basic": {"llm": {"tiers": ["local"], "providers": ["ollama"]}, "limits": {
+            "llm_checks_per_day": 100, "max_llm_document_chars": 100000, "concurrent_llm_runs": 5,
+        }}}
         app, factory = _app_with_tiers(tmp_path, tiers)
         with TestClient(app) as client:
             headers = second_user_headers(client)  # non-admin, tier 'basic'
@@ -323,7 +325,9 @@ class TestSuggestionsGate:
         # /api/suggestions -> 200, suggestions == [], skipped ==
         # "llm_unavailable", span/original still filled; factory never called.
         # Never 403 (spec §7.2).
-        tiers = {"basic": {"llm": {"tiers": [], "providers": []}}}
+        tiers = {"basic": {"llm": {"tiers": [], "providers": []}, "limits": {
+            "llm_checks_per_day": 100, "max_llm_document_chars": 100000, "concurrent_llm_runs": 5,
+        }}}
         app, factory = _app_with_tiers(tmp_path, tiers)
         with TestClient(app) as client:
             headers = second_user_headers(client)  # non-admin, tier 'basic'

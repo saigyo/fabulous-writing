@@ -164,13 +164,18 @@ class TestTiersConfig:
         assert Settings().tiers == {}
 
     def test_minimal_tier_defaults_to_all(self):
-        settings = Settings.model_validate({"tiers": {"basic": {}}})
+        # M5: limits is required, so the minimal valid tier must supply one.
+        settings = Settings.model_validate({"tiers": {"basic": {"limits": {
+            "llm_checks_per_day": 100,
+            "max_llm_document_chars": 100000,
+            "concurrent_llm_runs": 5,
+        }}}})
         tier = settings.tiers["basic"]
         assert tier.llm.tiers == "all"
         assert tier.llm.providers == "all"
         assert tier.llm.models == "all"
         assert tier.features == []
-        assert tier.limits is None
+        assert tier.limits.llm_checks_per_day == 100
 
     def test_spec_sample_config_loads(self):
         settings = Settings.model_validate({
@@ -186,6 +191,11 @@ class TestTiersConfig:
                 },
                 "premium": {
                     "llm": {"tiers": "all", "providers": "all", "models": "all"},
+                    "limits": {
+                        "llm_checks_per_day": 100,
+                        "max_llm_document_chars": 100000,
+                        "concurrent_llm_runs": 5,
+                    },
                     "features": ["custom_profiles", "custom_domains"],
                 },
             }
@@ -194,9 +204,14 @@ class TestTiersConfig:
         assert settings.tiers["premium"].features == ["custom_profiles", "custom_domains"]
 
     def test_empty_llm_lists_are_the_valid_floor(self):
-        settings = Settings.model_validate(
-            {"tiers": {"basic": {"llm": {"tiers": [], "providers": []}}}}
-        )
+        settings = Settings.model_validate({"tiers": {"basic": {
+            "llm": {"tiers": [], "providers": []},
+            "limits": {
+                "llm_checks_per_day": 100,
+                "max_llm_document_chars": 100000,
+                "concurrent_llm_runs": 5,
+            },
+        }}})
         assert settings.tiers["basic"].llm.tiers == []
         assert settings.tiers["basic"].llm.providers == []
 
@@ -208,15 +223,27 @@ class TestTiersConfig:
         with pytest.raises(ValidationError, match="unknown feature 'teleport'"):
             Settings.model_validate({"tiers": {"basic": {"features": ["teleport"]}}})
 
+    # Generous, complete limits block: these tests exercise llm/features
+    # validation and must not trip on the (now required) limits block.
+    _LIMITS = {
+        "llm_checks_per_day": 100,
+        "max_llm_document_chars": 100000,
+        "concurrent_llm_runs": 5,
+    }
+
     def test_unknown_provider_rejected(self):
         with pytest.raises(ValidationError, match="unknown provider 'nope'"):
-            Settings.model_validate({"tiers": {"basic": {"llm": {"providers": ["nope"]}}}})
+            Settings.model_validate({"tiers": {"basic": {
+                "llm": {"providers": ["nope"]}, "limits": self._LIMITS,
+            }}})
 
     def test_models_key_unknown_provider_rejected(self):
         # A typo in a models key must not silently narrow a policy (spec §6.1).
         with pytest.raises(ValidationError, match="unknown provider 'nope'"):
             Settings.model_validate(
-                {"tiers": {"basic": {"llm": {"models": {"nope": ["x"]}}}}}
+                {"tiers": {"basic": {
+                    "llm": {"models": {"nope": ["x"]}}, "limits": self._LIMITS,
+                }}}
             )
 
     def test_models_key_outside_providers_rejected(self):
@@ -224,7 +251,7 @@ class TestTiersConfig:
             Settings.model_validate({
                 "tiers": {"basic": {"llm": {
                     "providers": ["ollama"], "models": {"claude": ["claude-sonnet-5"]},
-                }}}
+                }, "limits": self._LIMITS}}
             })
 
     def test_empty_model_allowlist_rejected(self):
@@ -232,7 +259,9 @@ class TestTiersConfig:
         # (spec §6.1); "no models" is expressed by omitting the provider.
         with pytest.raises(ValidationError, match="empty model allowlist"):
             Settings.model_validate(
-                {"tiers": {"basic": {"llm": {"models": {"ollama": []}}}}}
+                {"tiers": {"basic": {
+                    "llm": {"models": {"ollama": []}}, "limits": self._LIMITS,
+                }}}
             )
 
     def test_extra_provider_usable_in_tier_policy(self):
@@ -240,7 +269,9 @@ class TestTiersConfig:
             "providers": {"extra_providers": {"deepseek": {
                 "base_url": "https://api.deepseek.com/v1", "default_model": "deepseek-v4-pro",
             }}},
-            "tiers": {"basic": {"llm": {"providers": ["deepseek"]}}},
+            "tiers": {"basic": {
+                "llm": {"providers": ["deepseek"]}, "limits": self._LIMITS,
+            }},
         })
         assert "deepseek" in known_provider_names(settings.providers)
 
@@ -281,3 +312,85 @@ class TestTiersConfig:
             )
         with pytest.raises(ValidationError):  # top-level: 'tier' for 'tiers'
             Settings.model_validate({"tier": {"basic": {}}})
+
+
+class TestLimitsSettings:
+    def test_defaults_are_inert(self):
+        settings = Settings()
+        assert settings.limits.max_document_chars == 200000
+        assert settings.limits.max_concurrent_llm_runs == 20
+        assert settings.limits.llm_run_max_age == 900
+        assert settings.limits.concurrency_reject_delay == 0.25
+        assert settings.limits.admin.llm_checks_per_day == 500
+        assert settings.limits.admin.max_llm_document_chars == 200000
+        assert settings.limits.admin.concurrent_llm_runs == 5
+
+    def test_partial_admin_block_is_rejected(self):
+        # Spec §6.1: the admin ceiling is all-or-nothing — a missing member
+        # would fail open on the one account with a "not unlimited" guarantee.
+        with pytest.raises(ValidationError, match="concurrent_llm_runs"):
+            Settings.model_validate(
+                {"limits": {"admin": {"llm_checks_per_day": 100,
+                                      "max_llm_document_chars": 1000}}}
+            )
+
+    def test_unknown_key_in_limits_is_rejected(self):
+        with pytest.raises(ValidationError):
+            Settings.model_validate({"limits": {"max_documents_chars": 1}})
+
+    @pytest.mark.parametrize("field", [
+        "max_document_chars", "max_concurrent_llm_runs", "llm_run_max_age",
+    ])
+    def test_non_positive_limits_are_rejected(self, field):
+        with pytest.raises(ValidationError, match=field):
+            Settings.model_validate({"limits": {field: 0}})
+
+    @pytest.mark.parametrize("value", [-0.1, 2.5, 25])
+    def test_reject_delay_outside_0_to_2_is_rejected(self, value):
+        # A 25 typed for 0.25 would turn backpressure into an amplification
+        # vector (spec §6.1).
+        with pytest.raises(ValidationError, match="concurrency_reject_delay"):
+            Settings.model_validate({"limits": {"concurrency_reject_delay": value}})
+
+    @pytest.mark.parametrize("value", [0, 0.25, 2])
+    def test_reject_delay_boundaries_are_accepted(self, value):
+        settings = Settings.model_validate(
+            {"limits": {"concurrency_reject_delay": value}}
+        )
+        assert settings.limits.concurrency_reject_delay == value
+
+    def test_tier_concurrency_above_server_cap_is_rejected(self):
+        # The one configuration where a single user could starve the shared
+        # pool (spec §6.1). The explicit admin block matters: the DEFAULT
+        # admin ceiling carries concurrent_llm_runs=5, which would trip the
+        # ADMIN comparison first and let this pass for the wrong reason.
+        with pytest.raises(ValidationError, match=r"tiers\.basic"):
+            Settings.model_validate({
+                "limits": {
+                    "max_concurrent_llm_runs": 4,
+                    "admin": {"llm_checks_per_day": 500,
+                              "max_llm_document_chars": 200000,
+                              "concurrent_llm_runs": 4},
+                },
+                "tiers": {"basic": {"limits": {
+                    "llm_checks_per_day": 20,
+                    "max_llm_document_chars": 20000,
+                    "concurrent_llm_runs": 5,
+                }}},
+            })
+
+    def test_admin_concurrency_above_server_cap_is_rejected(self):
+        with pytest.raises(ValidationError, match="limits.admin"):
+            Settings.model_validate({
+                "limits": {
+                    "max_concurrent_llm_runs": 4,
+                    "admin": {"llm_checks_per_day": 500,
+                              "max_llm_document_chars": 200000,
+                              "concurrent_llm_runs": 5},
+                },
+            })
+
+    def test_tier_without_limits_block_is_rejected(self):
+        # M4 kept the block optional "until M5 requires it" — M5 requires it.
+        with pytest.raises(ValidationError, match="limits"):
+            Settings.model_validate({"tiers": {"basic": {}}})

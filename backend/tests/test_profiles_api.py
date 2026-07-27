@@ -221,8 +221,11 @@ def test_profiles_api_ownership(tmp_path):
     )
 
 
-NO_FEATURES = {"basic": {"llm": {}, "features": []}}
-WITH_FEATURES = {"basic": {"llm": {}, "features": ["custom_profiles", "custom_domains"]}}
+_LIMITS = {"llm_checks_per_day": 100, "max_llm_document_chars": 100000, "concurrent_llm_runs": 5}
+NO_FEATURES = {"basic": {"llm": {}, "features": [], "limits": _LIMITS}}
+WITH_FEATURES = {
+    "basic": {"llm": {}, "features": ["custom_profiles", "custom_domains"], "limits": _LIMITS}
+}
 
 _PROFILE_BODY = {"language": "en", "name": "Notes"}
 

@@ -26,7 +26,9 @@ from tests.conftest import (
 
 TIERS_CONFIG = {
     "basic": {"llm": {"tiers": ["cheap", "local"], "providers": ["ollama"],
-                      "models": {"ollama": ["llama3.1"]}}, "features": []},
+                      "models": {"ollama": ["llama3.1"]}}, "features": [],
+               "limits": {"llm_checks_per_day": 100, "max_llm_document_chars": 100000,
+                          "concurrent_llm_runs": 5}},
 }
 
 # 64 bytes, not merely the 32-byte minimum: kept consistent with the secret

@@ -22,10 +22,19 @@ from app.core.permissions import (
 
 SETTINGS = Settings()  # default routing table + default providers
 
+_LIMITS = {
+    "llm_checks_per_day": 100, "max_llm_document_chars": 100000, "concurrent_llm_runs": 5,
+}
+
 TIERED = Settings.model_validate({
     "tiers": {
-        "basic": {"llm": {"tiers": ["cheap", "local"], "providers": ["ollama"]}},
-        "premium": {"llm": {}, "features": ["custom_profiles", "custom_domains"]},
+        "basic": {
+            "llm": {"tiers": ["cheap", "local"], "providers": ["ollama"]},
+            "limits": _LIMITS,
+        },
+        "premium": {
+            "llm": {}, "features": ["custom_profiles", "custom_domains"], "limits": _LIMITS,
+        },
     }
 })
 

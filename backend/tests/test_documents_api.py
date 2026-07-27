@@ -212,7 +212,9 @@ def test_generate_name_floor_user_falls_back_silently(tmp_path):
     # Floor-tier user POSTs generate-name on their own fallback-named
     # document with text: 200, name_source "fallback" (local naming), no
     # factory call, no error field anywhere.
-    tiers = {"basic": {"llm": {"tiers": [], "providers": []}}}
+    tiers = {"basic": {"llm": {"tiers": [], "providers": []}, "limits": {
+        "llm_checks_per_day": 100, "max_llm_document_chars": 100000, "concurrent_llm_runs": 5,
+    }}}
     app, factory = _app_with_tiers(tmp_path, tiers)
     with TestClient(app) as client:
         headers = second_user_headers(client)  # non-admin, tier 'basic'

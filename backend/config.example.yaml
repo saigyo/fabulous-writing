@@ -29,11 +29,28 @@ auth:
   # When false, no API call may create or promote an admin account.
   allow_additional_admins: false
 
+# Global, server-level limits (metering). max_document_chars/
+# max_concurrent_llm_runs/llm_run_max_age/concurrency_reject_delay apply to
+# the whole server; `admin:` is the ceiling every admin account is metered
+# against instead of a tier's `limits:` block. It is config-only: no API
+# surface may read it as input or change it. concurrency_reject_delay must
+# be within [0, 2] seconds -- the backpressure pause before a per-user-cap
+# 429, never a longer stall.
+# limits:
+#   max_document_chars: 200000
+#   max_concurrent_llm_runs: 20
+#   llm_run_max_age: 900              # seconds before a 'started' row is swept
+#   concurrency_reject_delay: 0.25    # seconds, within [0, 2]
+#   admin:
+#     llm_checks_per_day: 500
+#     max_llm_document_chars: 200000
+#     concurrent_llm_runs: 5
+
 # User tiers (multi-user): what each account tier may run and create.
 # With no tiers block, every user is unrestricted. Admins always bypass
 # tier policy. `tiers` inside `llm:` are the quality tiers
-# (quality/balanced/cheap/local); `limits:` is parsed now, enforced by
-# the metering milestone.
+# (quality/balanced/cheap/local). `limits:` is required on every configured
+# tier since M5 -- a tier without one aborts startup.
 # tiers:
 #   basic:
 #     llm:
@@ -42,12 +59,20 @@ auth:
 #       models: all             # or a per-provider allowlist, e.g.
 #                               #   models:
 #                               #     ollama: [mistral-nemo:12b-instruct-2407-q6_K]
+#     limits:
+#       llm_checks_per_day: 20
+#       max_llm_document_chars: 20000
+#       concurrent_llm_runs: 3
 #     features: []
 #   premium:
 #     llm:
 #       tiers: all
 #       providers: all
 #       models: all
+#     limits:
+#       llm_checks_per_day: 200
+#       max_llm_document_chars: 100000
+#       concurrent_llm_runs: 5
 #     features: [custom_profiles, custom_domains]
 
 # CORS: browser origins permitted to call the API. Non-browser clients are
