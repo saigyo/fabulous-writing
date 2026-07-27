@@ -5,6 +5,7 @@ import {
   type Folder,
   type FolderDefaults,
 } from '../api/client'
+import { tierAllowed } from '../auth/policy'
 import { useMessages } from '../i18n'
 import { languageLabel } from '../languages'
 import { ownershipLabel } from '../ownership'
@@ -72,6 +73,7 @@ export function FolderDefaultsDialog({
   const m = useMessages()
   const languages = useStore((s) => s.languages)
   const domains = useStore((s) => s.domains)
+  const user = useStore((s) => s.user)
   const [draft, setDraft] = useState<FolderDefaults>(() => defaultsOf(folder))
   const [profiles, setProfiles] = useState<Profile[]>([])
   const [profilesLoading, setProfilesLoading] = useState(false)
@@ -240,11 +242,15 @@ export function FolderDefaultsDialog({
             }}
           >
             <option value="none">{m.folderDefaultsNone}</option>
-            {TIERS.map((tier) => (
-              <option key={tier} value={tier}>
-                {m.tierName(tier)}
-              </option>
-            ))}
+            {TIERS.map((tier) => {
+              const notOnPlan = !tierAllowed(user, tier)
+              return (
+                <option key={tier} value={tier} disabled={notOnPlan}>
+                  {m.tierName(tier)}
+                  {notOnPlan ? m.planSuffix : ''}
+                </option>
+              )
+            })}
             {pinned && (
               <option value="pinned">
                 {m.tierPinnedOption(

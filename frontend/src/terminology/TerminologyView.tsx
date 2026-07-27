@@ -9,6 +9,7 @@ import {
   updateDomain,
   updateTerm,
 } from '../api/client'
+import { hasFeature } from '../auth/policy'
 import { sessionGeneration } from '../auth/session'
 import { useCrudError } from '../hooks/useCrudError'
 import { useMessages } from '../i18n'
@@ -29,7 +30,9 @@ import {
 export function TerminologyView() {
   const domains = useStore((s) => s.domains)
   const setDomains = useStore((s) => s.setDomains)
-  const isAdmin = useStore((s) => s.user?.is_admin ?? false)
+  const user = useStore((s) => s.user)
+  const isAdmin = user?.is_admin ?? false
+  const canCreate = hasFeature(user, 'custom_domains')
   // Bumped only by login() committing (see its own comment in
   // state/store.ts) — including the silent same-user re-login the
   // password-change flow performs (auth/AccountMenu.tsx). Depending on it
@@ -191,15 +194,17 @@ export function TerminologyView() {
             </div>
           )
         })}
-        <div className="add-domain">
-          <input
-            value={newDomain}
-            placeholder={m.newDomainPlaceholder}
-            onChange={(event) => setNewDomain(event.target.value)}
-            onKeyDown={(event) => event.key === 'Enter' && void addDomain()}
-          />
-          <button onClick={() => void addDomain()}>{m.add}</button>
-        </div>
+        {canCreate && (
+          <div className="add-domain">
+            <input
+              value={newDomain}
+              placeholder={m.newDomainPlaceholder}
+              onChange={(event) => setNewDomain(event.target.value)}
+              onKeyDown={(event) => event.key === 'Enter' && void addDomain()}
+            />
+            <button onClick={() => void addDomain()}>{m.add}</button>
+          </div>
+        )}
       </aside>
       {activeDomain !== null && (
         <TermTable
@@ -208,6 +213,7 @@ export function TerminologyView() {
           onChanged={() => void loadTerms(activeDomain.id)}
           run={run}
           readOnly={activeDomain.is_global && !isAdmin}
+          canCreate={canCreate}
         />
       )}
     </div>
@@ -220,9 +226,10 @@ interface TermTableProps {
   onChanged: () => void
   run: (action: () => Promise<void>) => Promise<void>
   readOnly: boolean
+  canCreate: boolean
 }
 
-function TermTable({ domain, terms, onChanged, run, readOnly }: TermTableProps) {
+function TermTable({ domain, terms, onChanged, run, readOnly, canCreate }: TermTableProps) {
   const domainId = domain.id
   const languages = useStore((s) => s.languages)
   const m = useMessages()
@@ -400,7 +407,7 @@ function TermTable({ domain, terms, onChanged, run, readOnly }: TermTableProps) 
               </tr>
             ),
           )}
-          {!readOnly && (
+          {!readOnly && canCreate && (
             <tr className="add-term">
               <TermFieldCells draft={addDraft} onChange={setAddDraft} onSubmit={() => void addTerm()} />
               <td>

@@ -105,7 +105,17 @@ describe('TerminologyView ownership affordances (non-admin)', () => {
   })
 
   it('restores every control once is_admin flips to true, on the same fixtures', async () => {
-    useStore.setState({ user: user({ is_admin: true }) })
+    // An admin's /me policy already carries every feature (M4 §8) — the
+    // add-term row is gated on custom_domains, not on is_admin itself.
+    useStore.setState({
+      user: user({
+        is_admin: true,
+        policy: {
+          llm: { tiers: null, providers: null, models: null },
+          features: ['custom_domains'],
+        },
+      }),
+    })
     vi.mocked(getTerms).mockResolvedValue([term])
     render(<TerminologyView />)
 
