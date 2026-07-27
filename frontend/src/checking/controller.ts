@@ -152,19 +152,6 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
     return
   }
 
-  // gen !== currentGeneration(): the session ended while postCheck was in
-  // flight (logout/expiry). epoch !== checkEpoch: cancelCheck() or a newer
-  // runCheck() ran while postCheck was in flight — e.g. hydrateFromDocument()
-  // switched documents to a *different* document in the *same* session, so
-  // gen alone would not have caught it. Either way: do not apply findings,
-  // flush, or subscribe — this is what a stale check's late arrival would
-  // otherwise write onto the wrong document.
-  if (gen !== currentGeneration() || epoch !== checkEpoch) return
-
-  useStore.setState({ llmEffective: result.effective_llm ?? null })
-  applyFindings(text, ['rule', 'terminology'], fastFindings(result.findings))
-  void flush()
-
   // used_today is status-blind (spec §7.1): reserve_llm_run() inserts the
   // ledger row at ADMISSION time — inside this very request/response cycle —
   // and used_today counts every row for the day regardless of status, so the
@@ -177,15 +164,45 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
   // avoidable /me load). An admitted run reports status 'running', so this
   // check fires before the done/skip branch below, which only ever sees a
   // skip (status 'done', provider None) or an LLM-less check (wantLlm
-  // false). Refreshing here — rather than in onDone — is what closes the
-  // detach hole: cancelCheck() (document switch) or a newer runCheck()
-  // unsubscribes from the SSE stream without onDone ever firing, but the
-  // admitted backend run keeps its quota row regardless. One refresh per
-  // admitted check, fired unconditionally of what happens to the
-  // subscription afterwards — no separate onDone refresh is needed.
-  if (wantLlm && result.effective_llm && result.effective_llm.skipped == null) {
+  // false).
+  //
+  // This must run BEFORE the epoch check below, not after: cancelCheck()
+  // (document switch) or a newer runCheck() bumps checkEpoch while this very
+  // postCheck() is still in flight, tearing down the SSE subscription before
+  // onDone ever fires — but the admitted backend run keeps its quota row
+  // regardless, so skipping the refresh just because the epoch moved on
+  // would leave the quota indicator silently behind the ledger. Only `gen` is
+  // checked here, not `epoch`: gen !== currentGeneration() means the session
+  // itself ended (logout/expireSession, via invalidateDocumentWork()) while
+  // postCheck was in flight, and refreshing then would race the *next*
+  // session's own /me fetch. refreshUserNow() is itself generation-guarded,
+  // so that race can't land the wrong user's data — but the explicit check
+  // here keeps the guarantee visible at the call site rather than relying on
+  // that alone. One refresh per admitted check, fired unconditionally of
+  // what happens to the epoch/subscription afterwards — no separate onDone
+  // refresh is needed.
+  if (
+    gen === currentGeneration() &&
+    wantLlm &&
+    result.effective_llm &&
+    result.effective_llm.skipped == null
+  ) {
     refreshUserNow()
   }
+
+  // gen !== currentGeneration(): the session ended while postCheck was in
+  // flight (logout/expiry). epoch !== checkEpoch: cancelCheck() or a newer
+  // runCheck() ran while postCheck was in flight — e.g. hydrateFromDocument()
+  // switched documents to a *different* document in the *same* session, so
+  // gen alone would not have caught it. Either way: do not apply findings,
+  // flush, or subscribe — this is what a stale check's late arrival would
+  // otherwise write onto the wrong document. (The admission-time /me refresh
+  // above is a deliberate exception to this guard — see its own comment.)
+  if (gen !== currentGeneration() || epoch !== checkEpoch) return
+
+  useStore.setState({ llmEffective: result.effective_llm ?? null })
+  applyFindings(text, ['rule', 'terminology'], fastFindings(result.findings))
+  void flush()
 
   if (!wantLlm || result.status === 'done') {
     useStore.setState({ checkPhase: 'idle', llmStartedAt: null, llmTokens: null })
