@@ -77,6 +77,12 @@ def _store(request: Request) -> DocumentStore:
     return request.app.state.document_store
 
 
+def _enforce_document_cap(request: Request, text: str) -> None:
+    cap = request.app.state.settings.limits.max_document_chars
+    if len(text) > cap:
+        raise HTTPException(413, f"Text exceeds the {cap} character limit")
+
+
 @router.get("/documents")
 def list_documents(
     request: Request, user: CurrentUser = Depends(get_current_user)
@@ -90,6 +96,7 @@ def create_document(
     body: DocumentCreate,
     user: CurrentUser = Depends(get_current_user),
 ) -> Document:
+    _enforce_document_cap(request, body.text)
     name = validate_name(body.name, message="Document name must not be empty")
     if body.folder_id is not None:
         if (
@@ -150,6 +157,7 @@ def update_document(
         )
         fields["name_source"] = "user"
     if body.content is not None:
+        _enforce_document_cap(request, body.content.text)
         fields["text"] = body.content.text
         fields["last_findings"] = body.content.findings
         fields["scorecard"] = body.content.scorecard
