@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 
@@ -6,9 +7,10 @@ from fastapi.testclient import TestClient
 
 from app.checkers.llm.prompts import build_rewrite_prompt, build_suggestion_prompt
 from app.checkers.llm.provider import FakeProvider, LLMProvider
-from app.core.config import Settings
+from app.core.config import LimitsSettings, Settings, TierLimitsSettings
 from app.core.models import Language
 from app.main import create_app
+from app.services._sqlite import connect as sqlite_connect
 from tests.conftest import auth_headers, second_user_headers
 
 TEXT = "The results were very good. We move on."
@@ -357,3 +359,148 @@ class TestSuggestionsGate:
         # No explicit tier/provider requested: resolves to the server's
         # configured default provider (pre-M4 behavior), not tier routing.
         assert factory.calls == [("ollama", "llama3.1")]
+
+
+def _read_usage_rows(db_path: Path) -> list:
+    with sqlite_connect(db_path) as conn:
+        return conn.execute("SELECT * FROM llm_usage ORDER BY id").fetchall()
+
+
+class HangingProvider:
+    """Never resolves, so its reservation stays 'started' and keeps holding
+    its concurrency slot for the rest of the test."""
+
+    name = "hanging"
+
+    async def generate(self, system: str, user: str, on_progress=None) -> str:
+        await asyncio.Event().wait()
+
+
+class TestSuggestionsMetering:
+    def test_quota_exhausted_returns_200_with_skip_code(self, tmp_path: Path) -> None:
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            rules_dir=tmp_path / "rules",
+            limits=LimitsSettings(
+                admin=TierLimitsSettings(
+                    llm_checks_per_day=1,
+                    max_llm_document_chars=200000,
+                    concurrent_llm_runs=5,
+                ),
+            ),
+        )
+        app = create_app(settings)
+        app.state.provider_factory = lambda name=None, model=None: FakeProvider(
+            json.dumps(["excellent"])
+        )
+        client = TestClient(app)
+        client.headers.update(auth_headers(client))
+
+        first = client.post("/api/suggestions", json=suggestion_request())
+        assert first.status_code == 200
+        assert first.json()["suggestions"] == ["excellent"]
+
+        second = client.post("/api/suggestions", json=suggestion_request())
+        assert second.status_code == 200
+        body = second.json()
+        assert body["suggestions"] == []
+        assert body["skipped"] == "quota_exhausted"
+
+    def test_document_too_large_returns_200_with_skip_code(self, tmp_path: Path) -> None:
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            rules_dir=tmp_path / "rules",
+            limits=LimitsSettings(
+                admin=TierLimitsSettings(
+                    llm_checks_per_day=500,
+                    max_llm_document_chars=5,  # below len(body.text)
+                    concurrent_llm_runs=5,
+                ),
+            ),
+        )
+        app = create_app(settings)
+        app.state.provider_factory = lambda name=None, model=None: FakeProvider(
+            json.dumps(["excellent"])
+        )
+        client = TestClient(app)
+        client.headers.update(auth_headers(client))
+
+        response = client.post("/api/suggestions", json=suggestion_request())
+        assert response.status_code == 200
+        body = response.json()
+        assert body["suggestions"] == []
+        assert body["skipped"] == "document_too_large"
+        assert _read_usage_rows(settings.db_path) == []
+
+    def test_suggestion_writes_a_completed_ledger_row(self, tmp_path: Path) -> None:
+        settings = Settings(db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules")
+        app = create_app(settings)
+        app.state.provider_factory = lambda name=None, model=None: FakeProvider(
+            json.dumps(["excellent"])
+        )
+        client = TestClient(app)
+        client.headers.update(auth_headers(client))
+
+        response = client.post("/api/suggestions", json=suggestion_request())
+        assert response.status_code == 200
+
+        rows = _read_usage_rows(settings.db_path)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["source"] == "suggestion"
+        assert row["status"] == "completed"
+        assert isinstance(row["run_id"], str) and row["run_id"]
+        assert row["text_chars"] == len(TEXT)
+
+    def test_provider_failure_writes_failed_and_returns_502(self, tmp_path: Path) -> None:
+        class BrokenProvider:
+            name = "broken"
+
+            async def generate(self, system: str, user: str) -> str:
+                raise RuntimeError("model exploded")
+
+        settings = Settings(db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules")
+        app = create_app(settings)
+        app.state.provider_factory = lambda name=None, model=None: BrokenProvider()
+        client = TestClient(app)
+        client.headers.update(auth_headers(client))
+
+        response = client.post("/api/suggestions", json=suggestion_request())
+        assert response.status_code == 502
+
+        rows = _read_usage_rows(settings.db_path)
+        assert len(rows) == 1
+        assert rows[0]["status"] == "failed"  # a burned run still spends quota
+
+    def test_concurrency_cap_gives_429(self, tmp_path: Path) -> None:
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            rules_dir=tmp_path / "rules",
+            limits=LimitsSettings(
+                concurrency_reject_delay=0,
+                admin=TierLimitsSettings(
+                    llm_checks_per_day=500,
+                    max_llm_document_chars=200000,
+                    concurrent_llm_runs=1,
+                ),
+            ),
+        )
+        app = create_app(settings)
+        app.state.provider_factory = lambda name=None, model=None: HangingProvider()
+        with TestClient(app) as client:
+            client.headers.update(auth_headers(client))
+            # A hanging /api/checks run holds the caller's single
+            # concurrency slot open (its reservation stays 'started').
+            held = client.post(
+                "/api/checks",
+                json={
+                    "text": "hold the slot",
+                    "language": "en",
+                    "checkers": ["llm"],
+                },
+            )
+            assert held.json()["status"] == "running"
+
+            response = client.post("/api/suggestions", json=suggestion_request())
+            assert response.status_code == 429
+            assert "Retry-After" in response.headers
