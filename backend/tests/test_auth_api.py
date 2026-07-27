@@ -15,6 +15,7 @@ from app.api.auth import LoginThrottle, _throttle_key
 from app.api.deps import MAX_TOKEN_BYTES, CurrentUser, get_current_user, require_admin
 from app.core.auth import LocalTokenVerifier, VerifiedToken, issue_token
 from app.core.config import Settings
+from app.core.permissions import EffectiveSelection, RequestedLLM
 from app.main import create_app
 from app.services.users import UserStore
 from tests.conftest import (
@@ -365,6 +366,96 @@ class TestMePolicy:
             "llm": {"tiers": None, "providers": None, "models": None},
             "features": ["custom_profiles", "custom_domains"],
         }
+
+
+class TestMeUsageAndLimits:
+    @pytest.mark.parametrize("allow_additional_admins", [False, True])
+    def test_me_reports_usage_and_limits_shape(
+        self, tmp_path: Path, allow_additional_admins: bool
+    ):
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            rules_dir=tmp_path / "rules",
+            auth={"allow_additional_admins": allow_additional_admins},
+        )
+        client = TestClient(create_app(settings))
+        body = client.get("/api/auth/me", headers=auth_headers(client)).json()
+        admin_limits = settings.limits.admin
+        assert body["usage"] == {
+            "used_today": 0,
+            "limit": admin_limits.llm_checks_per_day,
+        }
+        assert body["limits"] == {
+            "max_document_chars": settings.limits.max_document_chars,
+            "max_llm_document_chars": admin_limits.max_llm_document_chars,
+            "concurrent_llm_runs": admin_limits.concurrent_llm_runs,
+        }
+        assert body["allow_additional_admins"] is allow_additional_admins
+
+    def test_used_today_counts_every_status(self, app_client):
+        # spec §7.1: used_today is defined identically to reserve_llm_run's
+        # count — completed, failed, and still-started rows all count.
+        app = app_client.app
+        store = app.state.usage_store
+        settings = app.state.settings
+        admin = app.state.user_store.get_by_email(TEST_ADMIN_EMAIL)
+        limits = settings.limits.admin
+        requested = RequestedLLM(tier="cheap")
+        effective = EffectiveSelection(
+            tier="cheap", provider="ollama", model="m", degraded=False
+        )
+        now = datetime.now(UTC)
+        for i, status in enumerate(("completed", "failed")):
+            decision = store.reserve_llm_run(
+                admin, limits, settings.limits, requested, effective,
+                10, "check", f"r{i}", now=now,
+            )
+            store.finish_run(decision.reservation_id, status)
+        store.reserve_llm_run(  # left 'started' on purpose
+            admin, limits, settings.limits, requested, effective,
+            10, "check", "r-started", now=now,
+        )
+        headers = auth_headers(app_client)
+        body = app_client.get("/api/auth/me", headers=headers).json()
+        assert body["usage"]["used_today"] == 3
+
+    def test_admin_sees_the_admin_ceiling(self, tmp_path: Path):
+        settings = Settings(
+            db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules", tiers=TIERS_CONFIG
+        )
+        client = TestClient(create_app(settings))
+        body = client.get("/api/auth/me", headers=auth_headers(client)).json()
+        admin_limits = settings.limits.admin
+        assert body["is_admin"] is True
+        assert body["usage"]["limit"] == admin_limits.llm_checks_per_day
+        assert body["limits"]["max_llm_document_chars"] == admin_limits.max_llm_document_chars
+        assert body["limits"]["concurrent_llm_runs"] == admin_limits.concurrent_llm_runs
+
+    def test_tier_user_sees_their_tier_block(self, tmp_path: Path):
+        settings = Settings(
+            db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules", tiers=TIERS_CONFIG
+        )
+        client = TestClient(create_app(settings))
+        headers = second_user_headers(client)  # non-admin, tier 'basic'
+        body = client.get("/api/auth/me", headers=headers).json()
+        assert body["tier"] == "basic"
+        assert body["usage"]["limit"] == 100
+        assert body["limits"] == {
+            "max_document_chars": settings.limits.max_document_chars,
+            "max_llm_document_chars": 100000,
+            "concurrent_llm_runs": 5,
+        }
+
+    def test_login_response_carries_the_same_fields(self, app_client):
+        response = login(app_client, TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD)
+        assert response.status_code == 200
+        user = response.json()["user"]
+        assert user["usage"] == {
+            "used_today": 0,
+            "limit": app_client.app.state.settings.limits.admin.llm_checks_per_day,
+        }
+        assert "limits" in user
+        assert "allow_additional_admins" in user
 
 
 def test_password_change_requires_the_current_password(app_client):

@@ -229,6 +229,27 @@ def test_switch_on_permits_creation(tmp_path):
     assert response.status_code == 201 and response.json()["is_admin"] is True
 
 
+def test_no_admin_endpoint_can_raise_the_ceiling(client):
+    # spec §10: the admin ceiling's value comes only from config. A `limits`
+    # key in the PATCH body has no corresponding field on UserPatch, so
+    # pydantic's default extra="ignore" drops it silently; the endpoint must
+    # not raise the ceiling for the admin either way, and a subsequent /me
+    # must still report the unchanged config value.
+    headers = admin_headers(client)
+    response = client.patch(
+        "/api/admin/users/1",
+        json={"limits": {"llm_checks_per_day": 999999}},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert "limits" not in response.json()
+    me = client.get("/api/auth/me", headers=headers).json()
+    admin_limits = client.app.state.settings.limits.admin
+    assert me["usage"]["limit"] == admin_limits.llm_checks_per_day
+    assert me["limits"]["max_llm_document_chars"] == admin_limits.max_llm_document_chars
+    assert me["limits"]["concurrent_llm_runs"] == admin_limits.concurrent_llm_runs
+
+
 def test_patch_explicit_null_clears_a_field_and_writes_an_audit_row(client):
     # `{"display_name": null}` is the natural way to clear a display name.
     # It must not be indistinguishable from omitting the field entirely.
