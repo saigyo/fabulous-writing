@@ -28,8 +28,9 @@ vi.mock('./routing', () => ({
   resolveModel: vi.fn(() => ({ ok: true, provider: 'fake', model: 'fake-model' })),
 }))
 
-import { postSuggestions } from '../api/client'
+import { HttpError, postSuggestions } from '../api/client'
 import { bumpGeneration, resetAutosaveForTests } from '../documents/autosave'
+import { en as messages } from '../i18n/en'
 import { fetchRewrite, fetchSuggestions, llmActionPending } from './suggest'
 import { resolveModel } from './routing'
 
@@ -41,6 +42,13 @@ function user(policy: MeResponse['policy']): MeResponse {
     tier: 'basic',
     is_admin: false,
     policy,
+    usage: { used_today: 0, limit: 500 },
+    limits: {
+      max_document_chars: 200000,
+      max_llm_document_chars: 200000,
+      concurrent_llm_runs: 5,
+    },
+    allow_additional_admins: false,
   }
 }
 
@@ -244,6 +252,33 @@ describe('fetchSuggestions', () => {
     expect(postSuggestions).not.toHaveBeenCalled()
     expect(useStore.getState().suggestErrors.f1).toBeTruthy()
   })
+
+  it('maps a quota_exhausted skip to the shared notice, with the caller limit', async () => {
+    useStore.setState({ user: user(RESTRICTED) })
+    vi.mocked(postSuggestions).mockResolvedValue({
+      suggestions: [],
+      span: { start: 0, end: 4 },
+      original: 'orig',
+      rejected: 0,
+      held_back: [],
+      advice: [],
+      skipped: 'quota_exhausted',
+    })
+
+    await fetchSuggestions('f1')
+
+    expect(useStore.getState().suggestErrors.f1).toBe(
+      messages.llmQuotaExhausted(user(RESTRICTED).usage.limit),
+    )
+  })
+
+  it('maps a 429 rejection to serverBusy', async () => {
+    vi.mocked(postSuggestions).mockRejectedValue(new HttpError(429, 'busy'))
+
+    await fetchSuggestions('f1')
+
+    expect(useStore.getState().suggestErrors.f1).toBe(messages.serverBusy)
+  })
 })
 
 describe('fetchRewrite', () => {
@@ -348,5 +383,13 @@ describe('fetchRewrite', () => {
 
     expect(postSuggestions).not.toHaveBeenCalled()
     expect(useStore.getState().rewriteErrors.f1).toBeTruthy()
+  })
+
+  it('maps a 429 rejection to serverBusy', async () => {
+    vi.mocked(postSuggestions).mockRejectedValue(new HttpError(429, 'busy'))
+
+    await fetchRewrite('f1')
+
+    expect(useStore.getState().rewriteErrors.f1).toBe(messages.serverBusy)
   })
 })

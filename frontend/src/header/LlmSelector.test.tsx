@@ -16,6 +16,13 @@ function user(policy: MeResponse['policy']): MeResponse {
     tier: 'basic',
     is_admin: false,
     policy,
+    usage: { used_today: 0, limit: 500 },
+    limits: {
+      max_document_chars: 200000,
+      max_llm_document_chars: 200000,
+      concurrent_llm_runs: 5,
+    },
+    allow_additional_admins: false,
   }
 }
 

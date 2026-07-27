@@ -54,6 +54,15 @@ export const ja: Messages = {
     `LLMチェックは${effective}で実行されました。${requested}は現在のプランでは利用できません。`,
   llmNotIncluded: 'LLMチェックは現在のプランに含まれていません。',
   llmSkippedServer: 'LLMチェックをスキップしました：サーバーで利用できません。',
+  serverBusy: 'サーバーが混み合っています。しばらくしてから再試行してください。',
+  llmQuotaExhausted: (limit) =>
+    `本日のLLMチェック上限（${limit}回）に達しました。UTCの午前0時にリセットされます。`,
+  llmDocumentTooLarge: (limit) =>
+    `テキストがプランのLLM上限（${limit.toLocaleString('ja-JP')}文字）を超えています。`,
+  quotaIndicatorTitle: '本日使用したLLMチェック数',
+  charCount: (n) => `${n.toLocaleString('ja-JP')}文字`,
+  charCountOverLlm: 'LLM上限超過',
+  charCountOverDoc: '文書上限超過',
 
   findings: '検出結果',
   fastChecking: 'チェック中…',

@@ -5,6 +5,7 @@ import type {
   Finding,
   Language,
   LanguageInfo,
+  LimitsPayload,
   PolicyPayload,
   Profile,
   ProviderInfo,
@@ -14,6 +15,7 @@ import type {
   Scorecard,
   Tier,
   Term,
+  UsagePayload,
 } from '../types'
 // store.ts only imports this module's *types* (`import type`), which are
 // erased at build time — so this value import does not close a runtime
@@ -149,10 +151,10 @@ export async function request<T>(path: string, init?: RequestOptions): Promise<T
   return requestWithOptions<T>(path, init)
 }
 
-/** Mirrors the backend's own response (`backend/app/api/auth.py`). M4 adds
- * `policy` (LLM tier/provider/model gating, spec §8); M5 extends this same
- * type further (quota/size/concurrency limits) rather than adding a second
- * one. */
+/** Mirrors the backend's own response (`backend/app/api/auth.py`). M4 added
+ * `policy` (LLM tier/provider/model gating, spec §8); M5 delivers the
+ * promised extension — `usage`/`limits` (quota/size/concurrency) and
+ * `allow_additional_admins` — onto this same type rather than a second one. */
 export interface MeResponse {
   id: number
   email: string
@@ -160,6 +162,9 @@ export interface MeResponse {
   tier: string
   is_admin: boolean
   policy: PolicyPayload
+  usage: UsagePayload
+  limits: LimitsPayload
+  allow_additional_admins: boolean
 }
 
 export interface LoginResponse {

@@ -49,6 +49,15 @@ export const en: Messages = {
     `LLM ran on ${effective} — ${requested} is not available on your plan.`,
   llmNotIncluded: 'LLM checking is not included in your plan.',
   llmSkippedServer: 'LLM check skipped: not available on the server.',
+  serverBusy: 'Server busy — please retry shortly.',
+  llmQuotaExhausted: (limit) =>
+    `Daily LLM allowance used (${limit} checks). Resets at midnight UTC.`,
+  llmDocumentTooLarge: (limit) =>
+    `The text exceeds the plan's LLM limit of ${limit.toLocaleString('en-US')} characters.`,
+  quotaIndicatorTitle: 'LLM checks used today',
+  charCount: (n) => `${n.toLocaleString('en-US')} characters`,
+  charCountOverLlm: 'over the LLM limit',
+  charCountOverDoc: 'over the document limit',
 
   findings: 'Findings',
   fastChecking: 'checking…',

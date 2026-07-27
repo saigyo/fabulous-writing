@@ -1,5 +1,6 @@
-import { postCheck, subscribeCheck } from '../api/client'
+import { HttpError, postCheck, subscribeCheck } from '../api/client'
 import { llmDisabled, tierAllowed } from '../auth/policy'
+import { refreshUserNow } from '../auth/refreshSlot'
 import { currentGeneration, flush } from '../documents/autosave'
 import { getEditorView } from '../editor/editorRef'
 import { mergeFindingsEffect } from '../editor/findings'
@@ -131,6 +132,17 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
     // switch or a newer runCheck() — see checkEpoch above for why both are
     // needed.
     if (gen !== currentGeneration() || epoch !== checkEpoch) return // stale error, nothing to report
+    if (error instanceof HttpError && error.status === 429) {
+      // Transient (spec §8): the server is busy, nothing is wrong with the
+      // request — a retry note, not a failure, and never an auth event.
+      useStore.setState({
+        checkPhase: 'idle',
+        llmError: currentMessages().serverBusy,
+        llmStartedAt: null,
+        llmTokens: null,
+      })
+      return
+    }
     useStore.setState({
       checkPhase: 'idle',
       llmError: currentMessages().llmCheckFailed(String(error)),
@@ -155,6 +167,7 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
 
   if (!wantLlm || result.status === 'done') {
     useStore.setState({ checkPhase: 'idle', llmStartedAt: null, llmTokens: null })
+    if (wantLlm) refreshUserNow()
     return
   }
 
@@ -189,6 +202,7 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
       if (currentCheckId === checkId) {
         useStore.setState({ checkPhase: 'idle', llmStartedAt: null, llmTokens: null })
         currentCheckId = null
+        refreshUserNow()
       }
     },
   })

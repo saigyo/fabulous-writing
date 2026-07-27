@@ -172,3 +172,16 @@ export interface PolicyPayload {
   llm: LlmPolicy
   features: string[]
 }
+
+/** Mirrors backend UsagePayload (app/api/auth.py). */
+export interface UsagePayload {
+  used_today: number
+  limit: number
+}
+
+/** Mirrors backend LimitsPayload (app/api/auth.py). */
+export interface LimitsPayload {
+  max_document_chars: number
+  max_llm_document_chars: number
+  concurrent_llm_runs: number
+}

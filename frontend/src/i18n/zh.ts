@@ -54,6 +54,15 @@ export const zh: Messages = {
     `LLM 检查已使用${effective}运行，${requested}不在当前套餐内。`,
   llmNotIncluded: 'LLM 检查不包含在当前套餐内。',
   llmSkippedServer: 'LLM 检查已跳过：服务器上不可用。',
+  serverBusy: '服务器繁忙，请稍后重试。',
+  llmQuotaExhausted: (limit) =>
+    `今日 LLM 检查额度已用完（${limit} 次），将于 UTC 午夜重置。`,
+  llmDocumentTooLarge: (limit) =>
+    `文本超出套餐的 LLM 上限（${limit.toLocaleString('zh-CN')} 个字符）。`,
+  quotaIndicatorTitle: '今日已用 LLM 检查次数',
+  charCount: (n) => `${n.toLocaleString('zh-CN')} 个字符`,
+  charCountOverLlm: '超出 LLM 上限',
+  charCountOverDoc: '超出文档上限',
 
   findings: '检查结果',
   fastChecking: '检查中…',

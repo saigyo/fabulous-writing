@@ -58,6 +58,13 @@ export interface Messages {
   llmDegraded: (effective: string, requested: string) => string
   llmNotIncluded: string
   llmSkippedServer: string
+  serverBusy: string
+  llmQuotaExhausted: (limit: number) => string
+  llmDocumentTooLarge: (limit: number) => string
+  quotaIndicatorTitle: string
+  charCount: (n: number) => string
+  charCountOverLlm: string
+  charCountOverDoc: string
 
   // Findings sidebar
   findings: string
