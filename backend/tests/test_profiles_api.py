@@ -219,3 +219,73 @@ def test_profiles_api_ownership(tmp_path):
         client.delete(f"/api/profiles/{created['id']}", headers=admin).status_code
         == 404
     )
+
+
+NO_FEATURES = {"basic": {"llm": {}, "features": []}}
+WITH_FEATURES = {"basic": {"llm": {}, "features": ["custom_profiles", "custom_domains"]}}
+
+_PROFILE_BODY = {"language": "en", "name": "Notes"}
+
+
+class TestCustomProfilesGate:
+    def test_create_without_feature_is_403(self, tmp_path):
+        settings = Settings(db_path=tmp_path / "test.db", tiers=NO_FEATURES)
+        client = TestClient(create_app(settings))
+        client.headers.update(second_user_headers(client))
+        response = client.post("/api/profiles", json=_PROFILE_BODY)
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Your plan does not include custom profiles"
+        # Global profiles remain listable/usable.
+        listed = client.get("/api/profiles?language=en")
+        assert listed.status_code == 200
+        assert any(p["is_standard"] for p in listed.json())
+
+    def test_create_with_feature_succeeds(self, tmp_path):
+        settings = Settings(db_path=tmp_path / "test.db", tiers=WITH_FEATURES)
+        client = TestClient(create_app(settings))
+        client.headers.update(second_user_headers(client))
+        response = client.post("/api/profiles", json=_PROFILE_BODY)
+        assert response.status_code == 201
+
+    def test_admin_bypasses_gate(self, tmp_path):
+        settings = Settings(db_path=tmp_path / "test.db", tiers=NO_FEATURES)
+        client = TestClient(create_app(settings))
+        client.headers.update(auth_headers(client))
+        response = client.post("/api/profiles", json=_PROFILE_BODY)
+        assert response.status_code == 201
+
+    def test_default_config_is_ungated(self, tmp_path):
+        settings = Settings(db_path=tmp_path / "test.db")
+        client = TestClient(create_app(settings))
+        client.headers.update(second_user_headers(client))
+        response = client.post("/api/profiles", json=_PROFILE_BODY)
+        assert response.status_code == 201
+
+    def test_existing_items_stay_editable_after_flag_removal(self, tmp_path):
+        db_path = tmp_path / "test.db"
+        app_a = TestClient(create_app(Settings(db_path=db_path, tiers=WITH_FEATURES)))
+        headers_a = second_user_headers(app_a)
+        created = app_a.post("/api/profiles", json=_PROFILE_BODY, headers=headers_a)
+        assert created.status_code == 201
+        pid = created.json()["id"]
+
+        app_b = TestClient(create_app(Settings(db_path=db_path, tiers=NO_FEATURES)))
+        headers_b = second_user_headers(app_b)
+
+        put_body = {
+            "name": "Notes updated",
+            "categories_off": [],
+            "rule_exceptions": [],
+            "packs_on": [],
+            "domain_ids": [],
+            "llm_provider": None,
+            "llm_model": None,
+            "llm_tier": None,
+            "llm_instructions": "",
+            "example_text": "",
+        }
+        updated = app_b.put(f"/api/profiles/{pid}", json=put_body, headers=headers_b)
+        assert updated.status_code == 200
+        assert app_b.delete(f"/api/profiles/{pid}", headers=headers_b).status_code == 204
+        blocked = app_b.post("/api/profiles", json=_PROFILE_BODY, headers=headers_b)
+        assert blocked.status_code == 403

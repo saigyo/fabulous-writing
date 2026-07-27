@@ -281,3 +281,51 @@ def test_patch_rejects_explicit_null_for_non_nullable_fields(client, field):
         headers=headers,
     )
     assert response.status_code == 422
+
+
+def test_default_names_accepted_without_tiers_block(client):
+    # No tiers: block configured, so the spec's two default names remain
+    # assignable (create validates the default "basic" too).
+    headers = admin_headers(client)
+    created = make_user(client, tier="premium")
+    assert created["tier"] == "premium"
+    patched = client.patch(
+        f"/api/admin/users/{created['id']}", json={"tier": "basic"}, headers=headers
+    )
+    assert patched.status_code == 200
+    assert patched.json()["tier"] == "basic"
+
+
+def test_configured_names_replace_defaults(tmp_path):
+    client = TestClient(
+        create_app(
+            Settings(
+                db_path=tmp_path / "test.db",
+                rules_dir=tmp_path / "rules",
+                tiers={"gold": {"llm": {}}},
+            )
+        )
+    )
+    headers = admin_headers(client)
+    ok = client.post(
+        "/api/admin/users",
+        json={"email": "ada@example.com", "password": "an initial password",
+              "tier": "gold"},
+        headers=headers,
+    )
+    assert ok.status_code == 201
+
+    rejected = client.post(
+        "/api/admin/users",
+        json={"email": "second@example.com", "password": "an initial password",
+              "tier": "basic"},
+        headers=headers,
+    )
+    assert rejected.status_code == 422
+    assert "gold" in rejected.json()["detail"]
+
+    patched = client.patch(
+        f"/api/admin/users/{ok.json()['id']}", json={"tier": "premium"}, headers=headers
+    )
+    assert patched.status_code == 422
+    assert "gold" in patched.json()["detail"]

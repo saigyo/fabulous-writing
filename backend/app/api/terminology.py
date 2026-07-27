@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from app.api.deps import CurrentUser, get_current_user
 from app.api.validation import validate_name
 from app.core.models import Language
+from app.core.permissions import features_for
 from app.services.ownership import GlobalReadOnlyError
 from app.services.terminology import Domain, Term, TerminologyStore
 
@@ -53,6 +54,10 @@ def create_domain(
     body: DomainCreate,
     user: CurrentUser = Depends(get_current_user),
 ) -> Domain:
+    if "custom_domains" not in features_for(
+        tier=user.tier, is_admin=user.is_admin, settings=request.app.state.settings
+    ):
+        raise HTTPException(403, "Your plan does not include custom terminology domains")
     try:
         return _store(request).create_domain(
             body.name, body.description, owner_id=user.id
@@ -123,6 +128,10 @@ def create_term(
     body: TermCreate,
     user: CurrentUser = Depends(get_current_user),
 ) -> Term:
+    if "custom_domains" not in features_for(
+        tier=user.tier, is_admin=user.is_admin, settings=request.app.state.settings
+    ):
+        raise HTTPException(403, "Your plan does not include custom terminology domains")
     store = _store(request)
     preferred = validate_name(body.preferred, message="Preferred term must not be empty")
     try:

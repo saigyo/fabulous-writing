@@ -170,3 +170,109 @@ def test_terminology_api_ownership(tmp_path):
     # Duplicate own domain name: now 409.
     client.post("/api/domains", json={"name": "Dup"}, headers=other)
     assert client.post("/api/domains", json={"name": "dup"}, headers=other).status_code == 409
+
+
+NO_FEATURES = {"basic": {"llm": {}, "features": []}}
+WITH_FEATURES = {"basic": {"llm": {}, "features": ["custom_profiles", "custom_domains"]}}
+
+
+def _app(tmp_path, db_path=None, tiers=None) -> TestClient:
+    settings = Settings(
+        db_path=db_path or tmp_path / "test.db",
+        rules_dir=tmp_path / "rules",
+        seed_terminology=False,
+        **({"tiers": tiers} if tiers is not None else {}),
+    )
+    return TestClient(create_app(settings))
+
+
+class TestCustomDomainsGate:
+    def test_create_without_feature_is_403(self, tmp_path):
+        client = _app(tmp_path, tiers=NO_FEATURES)
+        headers = second_user_headers(client)
+        response = client.post("/api/domains", json={"name": "Cloud"}, headers=headers)
+        assert response.status_code == 403
+        assert (
+            response.json()["detail"]
+            == "Your plan does not include custom terminology domains"
+        )
+        # Global read access remains: the domain listing endpoint still works.
+        assert client.get("/api/domains", headers=headers).status_code == 200
+
+    def test_create_with_feature_succeeds(self, tmp_path):
+        client = _app(tmp_path, tiers=WITH_FEATURES)
+        headers = second_user_headers(client)
+        response = client.post("/api/domains", json={"name": "Cloud"}, headers=headers)
+        assert response.status_code == 201
+
+    def test_admin_bypasses_gate(self, tmp_path):
+        client = _app(tmp_path, tiers=NO_FEATURES)
+        headers = auth_headers(client)
+        response = client.post("/api/domains", json={"name": "Cloud"}, headers=headers)
+        assert response.status_code == 201
+
+    def test_default_config_is_ungated(self, tmp_path):
+        client = _app(tmp_path)
+        headers = second_user_headers(client)
+        response = client.post("/api/domains", json={"name": "Cloud"}, headers=headers)
+        assert response.status_code == 201
+
+    def test_existing_domain_stays_editable_after_flag_removal(self, tmp_path):
+        db_path = tmp_path / "db.sqlite"
+        app_a = _app(tmp_path, db_path=db_path, tiers=WITH_FEATURES)
+        headers_a = second_user_headers(app_a)
+        created = app_a.post("/api/domains", json={"name": "Cloud"}, headers=headers_a)
+        assert created.status_code == 201
+        domain_id = created.json()["id"]
+
+        app_b = _app(tmp_path, db_path=db_path, tiers=NO_FEATURES)
+        headers_b = second_user_headers(app_b)
+        updated = app_b.put(
+            f"/api/domains/{domain_id}", json={"name": "Cloud Docs"}, headers=headers_b
+        )
+        assert updated.status_code == 200
+        assert app_b.delete(f"/api/domains/{domain_id}", headers=headers_b).status_code == 204
+        blocked = app_b.post("/api/domains", json={"name": "Other"}, headers=headers_b)
+        assert blocked.status_code == 403
+
+    def test_term_create_without_feature_is_403(self, tmp_path):
+        db_path = tmp_path / "db.sqlite"
+        app_a = _app(tmp_path, db_path=db_path, tiers=WITH_FEATURES)
+        headers_a = second_user_headers(app_a)
+        domain_id = app_a.post(
+            "/api/domains", json={"name": "Cloud"}, headers=headers_a
+        ).json()["id"]
+
+        app_b = _app(tmp_path, db_path=db_path, tiers=NO_FEATURES)
+        headers_b = second_user_headers(app_b)
+        response = app_b.post(
+            f"/api/domains/{domain_id}/terms",
+            json={"language": "en", "preferred": "sign in"},
+            headers=headers_b,
+        )
+        assert response.status_code == 403
+        assert (
+            response.json()["detail"]
+            == "Your plan does not include custom terminology domains"
+        )
+
+    def test_term_update_delete_stay_allowed(self, tmp_path):
+        db_path = tmp_path / "db.sqlite"
+        app_a = _app(tmp_path, db_path=db_path, tiers=WITH_FEATURES)
+        headers_a = second_user_headers(app_a)
+        domain_id = app_a.post(
+            "/api/domains", json={"name": "Cloud"}, headers=headers_a
+        ).json()["id"]
+        term = app_a.post(
+            f"/api/domains/{domain_id}/terms",
+            json={"language": "en", "preferred": "sign in"},
+            headers=headers_a,
+        ).json()
+
+        app_b = _app(tmp_path, db_path=db_path, tiers=NO_FEATURES)
+        headers_b = second_user_headers(app_b)
+        updated = app_b.put(
+            f"/api/terms/{term['id']}", json={"preferred": "sign in to"}, headers=headers_b
+        )
+        assert updated.status_code == 200
+        assert app_b.delete(f"/api/terms/{term['id']}", headers=headers_b).status_code == 204
