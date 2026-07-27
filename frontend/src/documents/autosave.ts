@@ -251,6 +251,14 @@ async function push(snapshot: DocSnapshot): Promise<void> {
       } catch {
         // Silent: buffer stays as the handler left it.
       }
+    } else if (error instanceof HttpError && error.status === 413) {
+      // Over limits.max_document_chars: permanent until the text shrinks
+      // back under the cap, so no backoff retry is scheduled here — one
+      // would just re-send the same doomed PUT every ~30s forever. The
+      // snapshot is left dirty (as written before this push started); the
+      // next noteChange() edit naturally triggers a fresh save attempt,
+      // which succeeds once the text is back under the cap. The Task 9
+      // char-count threshold mark already gives the user a visible signal.
     } else {
       scheduleRetry()
     }
