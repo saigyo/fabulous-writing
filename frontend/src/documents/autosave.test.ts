@@ -152,6 +152,40 @@ describe('autosave', () => {
     expect(generateDocumentName).toHaveBeenCalledTimes(1) // once per session
   })
 
+  it('retries titling after a transient 429, but not after other failures', async () => {
+    useStore.getState().patchDocMeta({ nameSource: 'fallback' })
+    docText = Array.from({ length: 21 }, (_, i) => `w${i}`).join(' ')
+
+    vi.mocked(generateDocumentName).mockRejectedValueOnce(new HttpError(429, 'busy'))
+    await flush()
+    expect(generateDocumentName).toHaveBeenCalledTimes(1)
+    expect(useStore.getState().docMeta?.name).toBe('Doc') // unchanged: it failed
+
+    // A later save retries: the 429 must not have permanently suppressed it.
+    docText += ' more'
+    vi.mocked(generateDocumentName).mockResolvedValueOnce({
+      ...serverDoc(4),
+      name: 'Generated Title',
+      name_source: 'llm',
+    } as never)
+    await flush()
+    expect(generateDocumentName).toHaveBeenCalledTimes(2)
+    expect(useStore.getState().docMeta?.name).toBe('Generated Title')
+  })
+
+  it('does not retry titling after a non-429 failure', async () => {
+    useStore.getState().patchDocMeta({ nameSource: 'fallback' })
+    docText = Array.from({ length: 21 }, (_, i) => `w${i}`).join(' ')
+
+    vi.mocked(generateDocumentName).mockRejectedValueOnce(new HttpError(500, 'boom'))
+    await flush()
+    expect(generateDocumentName).toHaveBeenCalledTimes(1)
+
+    docText += ' more'
+    await flush()
+    expect(generateDocumentName).toHaveBeenCalledTimes(1) // still suppressed
+  })
+
   it('does not title short or already-named documents', async () => {
     docText = 'only four words here'
     useStore.getState().patchDocMeta({ nameSource: 'fallback' })

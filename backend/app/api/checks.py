@@ -159,7 +159,11 @@ async def _run_llm(
     # The terminal ledger write is the mechanism that releases this run's
     # concurrency slot (spec §5.3), so it must be exception-safe by
     # construction: success, failure and cancellation all pass through the
-    # finally below, each with its own status.
+    # finally below, each with its own status. job.finish() — the write that
+    # unblocks the client's SSE stream — must run even if the ledger write
+    # itself raises (disk error, lock timeout past the busy timeout): the
+    # 900s sweep is the backstop for a reservation that never got settled,
+    # but a client must never hang waiting for `done`.
     status = "completed"
     try:
         checker = LLMChecker(provider, vet=vet, dictionaries_dir=dictionaries_dir)
@@ -178,9 +182,12 @@ async def _run_llm(
         logger.warning("llm check failed (provider %s): %s", provider.name, error)
         job.emit("checker_error", {"checker": "llm", "error": error})
     finally:
-        reservation.finish(
-            status, output_tokens=latest_tokens if latest_tokens > 0 else None
-        )
+        try:
+            reservation.finish(
+                status, output_tokens=latest_tokens if latest_tokens > 0 else None
+            )
+        except Exception:
+            logger.exception("ledger settle failed for run %s; 900s sweep will reclaim it", job.id)
         job.finish()
 
 
