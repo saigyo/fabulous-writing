@@ -1343,13 +1343,14 @@ extra, because access policy must not fail open on a typo:
   (the five built-ins plus configured `extra_providers`) by a
   `Settings`-level `model_validator`, since only `Settings` knows the
   configured extras.
-- **`limits`** (`TierLimitsSettings`, optional — reserved for M5's
-  quota/concurrency enforcement): `llm_checks_per_day`,
-  `max_llm_document_chars`, `concurrent_llm_runs`. **All-or-nothing**: if a
-  `limits:` block is present at all, every one of the three fields is
-  required and must be positive — a partially-specified block would fail
-  open the moment M5 starts enforcing it, so M4 refuses to load a config
-  that could produce that gap even though M4 itself never reads `limits`.
+- **`limits`** (`TierLimitsSettings`, **required** on every configured tier
+  as of M5): `llm_checks_per_day`, `max_llm_document_chars`,
+  `concurrent_llm_runs`, each a required positive field. `TierSettings.limits`
+  carries no default, so a `tiers:` entry with no `limits:` block at all (or
+  one missing any of the three keys) fails `Settings` validation and aborts
+  startup — a partially-specified or missing block can no longer be allowed
+  to fail open now that M5's `reserve_llm_run` (below) enforces these
+  numbers for real.
 - **`features`** (`list[str]`, default `[]`): must be a subset of
   `KNOWN_FEATURES` (`app/core/config.py`, currently `("custom_profiles",
   "custom_domains")`) — a closed set, so a typo cannot silently withhold or
@@ -1399,9 +1400,10 @@ phase is skipped with a visible degradation note, never a 500 and never
 silently unrestricted.
 
 `EffectiveSelection.degraded` is `True` whenever the caller got something
-other than exactly what they asked for; `skipped` (currently only
-`"llm_unavailable"`; M5 adds quota/size codes) means the LLM phase does not
-run at all. Degradation is always visible to the caller (spec §6.2) — see
+other than exactly what they asked for; `skipped` (`"llm_unavailable"` from
+M4; `"document_too_large"` and `"quota_exhausted"` added by M5 — see [LLM
+usage metering](#llm-usage-metering) below) means the LLM phase does not run
+at all. Degradation is always visible to the caller (spec §6.2) — see
 `effective_llm` below.
 
 ### The single gate: `app/api/llm_gate.py`
@@ -1418,9 +1420,13 @@ configured — that's "not configured," not a server error) downgrades the
 selection to `skipped="llm_unavailable"` rather than raising. **No route
 touches `app.state.provider_factory` directly** — checks, suggestions, and
 document auto-naming all resolve through this one gate, so tier policy
-cannot be bypassed by a new call site forgetting to check it. M5 extends
-this same gate with the size cap and the quota/concurrency reservation,
-layered around `resolve_llm_selection` in that order.
+cannot be bypassed by a new call site forgetting to check it. M5 extended
+this same gate with the size cap and the quota/concurrency reservation; the
+full order is **422 (unknown direct provider) → size cap
+(`"document_too_large"`) → `resolve_llm_selection` → provider construction →
+reservation** (see [LLM usage metering](#llm-usage-metering) below) — never
+reorder, since a run that cannot even be constructed must never consume
+quota.
 
 `effective_llm_report(requested, effective)` builds the wire shape
 (`EffectiveLlmReport`/`LlmSelectionInfo`, `app/core/models.py`): requested
@@ -1447,8 +1453,9 @@ carries `llm: LlmPolicyPayload` (`tiers`/`providers`/`models`, each `null`
 meaning unrestricted — the wire encoding of `LLMPolicy`'s `None`) and
 `features: list[str]` (a `KNOWN_FEATURES`-ordered subset, so the payload is
 deterministic). This is the M4 half of `/api/auth/me`'s cross-milestone
-promise (M1: identity; M4: this; M5: quota/size/concurrency limits) — see
-the roadmap's Cross-milestone interfaces. The frontend's single gating
+promise (M1: identity; M4: this; M5: `usage`/`limits`, see [LLM usage
+metering](#llm-usage-metering) below) — see the roadmap's Cross-milestone
+interfaces. The frontend's single gating
 source, `auth/policy.ts`, is built entirely on top of this payload (see
 `docs/frontend-architecture.md`).
 
@@ -1496,6 +1503,219 @@ falling back to the two names spec §5.1 reserves as defaults only when no
 for everyone regardless of the name assigned, so the fallback names are
 inert placeholders, not a hardcoded enum). An unrecognized name 422s with
 the actual known set in the message.
+
+## LLM usage metering
+
+Milestone 5 turns the M4 gate into an enforcement point: every LLM-invoking
+run is recorded, and a caller's daily quota and concurrency are checked
+before a provider ever runs. With the shipped defaults (below) this is
+inert for existing usage — M5's job is to make the ceiling real, not to
+lower it.
+
+### The `llm_usage` ledger (`app/services/usage.py`)
+
+One SQLite table, one row per LLM-invoking run (the same three call sites
+the M4 gate already served: `checks.py`'s `_run_llm`, suggestions, document
+naming):
+
+```sql
+CREATE TABLE llm_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL, day TEXT NOT NULL, created_at TEXT NOT NULL,
+    status TEXT NOT NULL,               -- started|completed|failed|cancelled|abandoned (CHECK)
+    llm_tier, provider, model,           -- effective selection
+    requested_tier, requested_provider, requested_model,
+    text_chars INTEGER NOT NULL, input_tokens, output_tokens,
+    source TEXT NOT NULL, run_id TEXT NOT NULL
+);
+```
+
+Two indexes: `idx_llm_usage_user_day (user_id, day)` backs the daily quota
+count and `/me`'s `used_today`; `idx_llm_usage_inflight` is a **partial**
+index on `(status, created_at) WHERE status = 'started'` — without it the
+server-wide in-flight count (no `user_id` predicate) would degrade to a
+full table scan inside the transaction that serializes every reservation.
+
+### The reservation transaction
+
+`UsageStore.reserve_llm_run(user, limits, server_limits, requested,
+effective, text_chars, source, run_id, *, now=None) -> QuotaDecision` runs
+on a raw `sqlite3` connection (`_raw_connect()`) with explicit
+commit/rollback on every branch — the only `UsageStore` method that does
+not go through `_sqlite.connect`'s auto-committing context manager, since
+two of its three exit paths need to roll back. `user` is typed as
+`MeteredUser`, a two-property `Protocol` (`id`, `is_admin`) satisfied
+structurally by `app.api.deps.CurrentUser` without this service importing
+from `app.api`; `now` is keyword-only and test-only (defaults to
+`datetime.now(UTC)`).
+
+One transaction, in order:
+
+1. **Staleness sweep**: `UPDATE llm_usage SET status = 'abandoned' WHERE
+   status = 'started' AND created_at < cutoff` (`cutoff` = `now` minus
+   `llm_run_max_age` seconds, measured on `created_at`, never `day`) — the
+   counts below are then already clean, so no separate scheduler is needed.
+2. **Insert first**: the new row is inserted as `status = 'started'` before
+   any count runs. This is what makes the check TOCTOU-safe on a plain
+   SQLite file — the INSERT takes the write lock before any `COUNT`, so
+   concurrent reservations serialize on it. Never reorder into
+   count-then-insert.
+3. **Three conditions, evaluated in order, each counting the just-inserted
+   row**: day count (all of the user's rows for `user_id`/`day`, any status)
+   `> limits.llm_checks_per_day` → roll back, `quota_exhausted` (an admin
+   hitting their own ceiling additionally logs a WARNING — routine for a
+   normal user, suspicious for an admin at a generous ceiling); per-user
+   in-flight (`status = 'started'`) `> limits.concurrent_llm_runs` → roll
+   back, `concurrency_rejected(server_wide=False)`; server-wide in-flight `>
+   server_limits.max_concurrent_llm_runs` → roll back,
+   `concurrency_rejected(server_wide=True)`. Quota is checked before
+   concurrency (spec §6.4) — an exhausted quota must never register as a
+   concurrency rejection. Only if all three pass does the transaction
+   commit, returning `QuotaDecision(kind="admitted",
+   reservation_id=cursor.lastrowid)`.
+
+`finish_run(reservation_id, status, *, input_tokens=None,
+output_tokens=None)` is the terminal write, conditional on the row's status
+still being `'started'` — a row either sweep already reclaimed logs a
+warning and is left alone, never resurrected. Every gate call site runs
+this in a `finally` block (`LlmReservation.finish`, `app/api/llm_gate.py`)
+so success, failure, and `asyncio.CancelledError` all reach it with their
+own terminal status.
+
+**Both sweeps** mark `'started'` rows `'abandoned'`: the per-reservation
+staleness sweep above (age-based, inside the transaction) and
+`sweep_all_started()` at startup (unconditional — in this single-process
+deployment, no `'started'` row can belong to a still-live run once the
+process that owned it is gone).
+
+### The gate's M5 order (`app/api/llm_gate.py`)
+
+`get_effective_provider(app, user, requested, language, *, text_chars,
+source, run_id) -> (EffectiveSelection, LLMProvider | None, LlmReservation |
+None)` — a 3-tuple, extended from M4's pair. The order, never to be
+reordered:
+
+1. **422** for an unknown *direct* provider name (tier-mode requests ignore
+   `provider`/`model` by contract, so those fields never 422).
+2. **Size cap** — `text_chars > limits.max_llm_document_chars` skips with
+   `"document_too_large"` before any resolution or spend; characters are
+   the pre-spend token proxy.
+3. **Resolve** — `resolve_llm_selection` (M4); a floor result skips with
+   `"llm_unavailable"`.
+4. **Construct** — `app.state.provider_factory(...)`; a `ValueError`
+   (routing table points at a provider this server hasn't configured) skips
+   with `"llm_unavailable"`. Construction happens **before** reservation on
+   purpose: a run that cannot even start must never consume quota.
+5. **Reserve** — `usage_store.reserve_llm_run(...)`. `quota_exhausted`
+   degrades to a skip (never a 429 — an exhausted daily allowance isn't
+   retryable until tomorrow); `concurrency_rejected` raises the 429 below.
+
+Three skip codes exist on `EffectiveSelection.skipped`/`effective_llm`:
+`llm_unavailable` (M4) and `document_too_large`/`quota_exhausted` (M5, both
+from the gate above).
+
+### 429 / backpressure (spec §6.6)
+
+A concurrency rejection raises `HTTPException(429, ..., headers={"Retry-
+After": str(decision.retry_after)})` (`retry_after` defaults to
+`RETRY_AFTER_SECONDS = 5`) — **never a skip**, since the caller should
+retry, not treat this run as done. Three rules:
+
+- **Non-blocking**: the pause before raising is `await
+  asyncio.sleep(settings.limits.concurrency_reject_delay)` (config-bounded
+  to `[0, 2]` seconds) — it yields the event loop rather than holding the
+  connection open synchronously.
+- **Post-rollback**: the pause runs after `reserve_llm_run`'s transaction
+  has already rolled back and returned — the slot was never actually held
+  during the pause.
+- **Per-user only**: the pause fires only when `decision.server_wide` is
+  `False`. A server-wide rejection answers immediately with no pause —
+  holding the connection longer would add to exactly the load pressure that
+  cap exists to relieve.
+
+### The byte-budget middleware (`app/api/request_size.py`)
+
+`byte_budget(max_document_chars) = max(5 MiB, 4 × max_document_chars + 1
+MiB)` — a UTF-8-worst-case-plus-JSON-overhead byte ceiling derived from the
+char cap, so raising `max_document_chars` can never strand a legal payload
+behind a stale fixed byte limit. `RequestSizeLimitMiddleware` is pure ASGI
+(not `BaseHTTPMiddleware`, whose response buffering would fight the SSE
+stream) and enforces the budget two ways:
+
+- **`Content-Length` pre-check**: a declared length over budget is answered
+  immediately with a hand-built ASGI 413 (`_send_413`) before any body is
+  read.
+- **Chunked bodies** (no usable `Content-Length`): the wrapped `receive`
+  counts bytes as they actually arrive and, once the running total exceeds
+  budget, raises `fastapi.HTTPException(413, "Request body too large")` —
+  deliberately an `HTTPException`, not a bespoke exception, because this
+  raise happens mid-body-read, deep inside FastAPI's own request-parsing
+  call: a bespoke exception there gets caught by FastAPI's generic
+  body-parsing `except` clause and turned into its own 400 ("There was an
+  error parsing the body"), whereas FastAPI special-cases `HTTPException`
+  and re-raises it untouched — the shape that actually reaches Starlette's
+  `ExceptionMiddleware` (and, one layer further out, CORS) as a real,
+  CORS-visible 413.
+
+**Ordering constraint relative to CORS**: `create_app()` registers
+`RequestSizeLimitMiddleware` **before** `CORSMiddleware`. Starlette makes
+the *last-added* middleware outermost, so CORS ends up wrapping the size
+limiter, not the other way around — deliberately, since CORS must stay
+outermost for a 413 raised inside the size limiter to still pass back out
+through CORS and carry the right headers, making it readable by the
+browser instead of opaque as a CORS-blocked response.
+
+The middleware's byte budget is the outer, transport-level net; three
+endpoints additionally enforce `settings.limits.max_document_chars` itself
+as a character count and 413 explicitly: `POST /api/checks`
+(`app/api/checks.py`), and document create/save via the shared
+`_enforce_document_cap` helper (`app/api/documents.py`). An **already
+saved** oversized document (from before the cap existed, or before it was
+lowered) stays loadable and editable — only a new save that would exceed
+the cap is refused.
+
+### `/me`'s usage, limits, and admin-ceiling mirror
+
+`GET /api/auth/me` (`MeResponse`, `app/api/auth.py`) carries, alongside the
+M4 policy payload:
+
+- `usage: UsagePayload` — `used_today` (defined identically to
+  `reserve_llm_run`'s day count: all of the caller's rows for the UTC day,
+  regardless of status — so the UI and the enforcement can never drift) and
+  `limit` (`limits.llm_checks_per_day`).
+- `limits: LimitsPayload` — `max_document_chars` (the server-wide byte-budget
+  source), `max_llm_document_chars`, and `concurrent_llm_runs` (the latter
+  two are the caller's own per-tier numbers from `limits_for`).
+- `allow_additional_admins: bool` — a read-only mirror of the config-only
+  switch (spec §7.1); no endpoint accepts it as input, so reporting it does
+  not weaken the config-only guarantee.
+
+This is the frontend's only source for quota/limit *numbers* — the
+`effective_llm` report on checks/suggestions carries the skip *code* only
+(a documented deviation from spec §6.4/§6.5, recorded in the roadmap's
+Cross-milestone interfaces).
+
+### `limits_for`'s fallback rule (`app/core/permissions.py`)
+
+`limits_for(*, tier, is_admin, settings) -> TierLimitsSettings` returns, in
+order: `settings.limits.admin` for an admin caller (the ceiling **replaces**
+the tier's own block, spec §6.4) or when no `tiers:` block is configured at
+all (inert mode, identical to M4); the tier's own required `limits` block
+when the tier is configured; `settings.limits.admin` again as the fallback
+for an unknown tier name — a case that can only ever reach `/me`'s display
+and the gate's size-cap pre-check, since an unknown tier's `policy_for`
+result is `NO_LLM_POLICY`, so `resolve_llm_selection` always floors out to
+`"llm_unavailable"` before a reservation is ever attempted.
+
+### Defaults (inert by design)
+
+Shipped defaults (`LimitsSettings`, `_default_admin_limits`):
+`llm_checks_per_day=500`, `max_llm_document_chars=200000`,
+`concurrent_llm_runs=5` (the admin ceiling, also what every caller gets in
+inert mode), `max_concurrent_llm_runs=20` (server-wide),
+`llm_run_max_age=900` (seconds), `concurrency_reject_delay=0.25` (seconds).
+Deliberately generous enough that an existing single-admin deployment never
+notices metering exists until `tiers:`/`limits:` are configured tighter.
 
 ## API surface
 

@@ -97,20 +97,47 @@ reading other milestones' plans:
   default-provider lookups need it, but every call site already has a
   `policy` and a `requested` positionally, so keeping `settings` keyword-only
   keeps those call sites self-documenting). M4 also adds
-  `app/api/llm_gate.py`'s `get_effective_provider(app, user, requested,
-  language) -> (EffectiveSelection, LLMProvider | None)` — the single gate
-  every LLM-invoking endpoint resolves through (no route touches
-  `app.state.provider_factory` directly); M5's quota/concurrency
-  reservation slots into this same gate, layered around
-  `resolve_llm_selection`.
-- M5 adds `app/services/usage.py`:
-  `reserve_llm_run(user, limits, server_limits, requested, effective,
-  text_chars, source, run_id) -> QuotaDecision`.
+  `app/api/llm_gate.py`'s `get_effective_provider` — the single gate every
+  LLM-invoking endpoint resolves through (no route touches
+  `app.state.provider_factory` directly). **As built (M5)**, its signature
+  is `get_effective_provider(app, user, requested, language, *, text_chars,
+  source, run_id) -> (EffectiveSelection, LLMProvider | None, LlmReservation
+  | None)` — a 3-tuple, not the M4 pair — and it runs the full order **422
+  → size cap → resolve_llm_selection → provider construction → reservation**
+  (`docs/backend-architecture.md#llm-usage-metering`).
+- **As built (M5)**, `app/services/usage.py`'s `UsageStore.reserve_llm_run`
+  signature is `reserve_llm_run(user: MeteredUser, limits, server_limits,
+  requested, effective, text_chars, source, run_id, *, now=None) ->
+  QuotaDecision` — `user` is typed against the `MeteredUser` protocol
+  (`id`, `is_admin`), not a concrete class, so the service needs no import
+  from `app.api`; `now` is keyword-only and exists only for deterministic
+  tests (defaults to the real current UTC time).
+- **As built (M5)**, `limits_for(*, tier, is_admin, settings) ->
+  TierLimitsSettings` (`app/core/permissions.py`, alongside `policy_for`/
+  `features_for`) resolves the caller's per-user quota/concurrency numbers:
+  the admin ceiling for an admin or an inert (no-`tiers:`) deployment, the
+  tier's own required block when configured, the admin ceiling again as the
+  fallback for an unknown tier name (a case that only ever reaches `/me`'s
+  display and the gate's size-cap pre-check, since an unknown tier's policy
+  floors the LLM phase out before any reservation is attempted).
+- **Documented deviation from spec §6.4/§6.5** (Design decision 7, M5): the
+  spec describes the inline limit/reset numbers traveling on the
+  `effective_llm` report itself. As built, `EffectiveLlmReport`/
+  `SuggestionResponse.skipped` carries the skip **code** only
+  (`"quota_exhausted"`/`"document_too_large"`/`"llm_unavailable"`) — the
+  numbers (`usage.limit`, `limits.max_llm_document_chars`, etc.) travel
+  separately, on `/me`. The frontend's `skipNoticeText`
+  (`frontend/src/checking/skipNotice.ts`) is what recombines a code from a
+  check/suggestion response with the numbers from the current `/me`-derived
+  user object into display text.
 - `/api/auth/me` grows across milestones: M1 returns user identity and
   `is_admin`; **M4 delivers the LLM policy and feature flags** (`policy:
-  PolicyPayload`, `app/api/auth.py`); M5 adds quota, size and concurrency
-  limits. Each milestone extends the same response model rather than
-  adding a second endpoint.
+  PolicyPayload`, `app/api/auth.py`); **M5 adds `usage: UsagePayload`
+  (`used_today`, `limit`) and `limits: LimitsPayload`
+  (`max_document_chars`, `max_llm_document_chars`,
+  `concurrent_llm_runs`)** — see the deviation above for why these numbers
+  live here rather than on the per-run report. Each milestone extends the
+  same response model rather than adding a second endpoint.
 
 ## Conventions for every milestone
 
@@ -120,8 +147,15 @@ reading other milestones' plans:
 - `main` is PR-only: LOGBOOK and architecture-doc updates travel inside the
   milestone's PR, not as direct pushes.
 - Gates before opening a PR: backend `uv run pytest -q` (zero warnings) from
-  `backend/`; frontend `npx vitest run && npx tsc --noEmit && npm run lint &&
-  npm run build` from `frontend/`.
+  `backend/`; frontend `npx vitest run && npm run lint && npm run build`
+  from `frontend/` — **corrected (M5)**: no separate `npx tsc --noEmit`
+  step. `frontend/tsconfig.json` is a root file with `"files": []` that only
+  wires up `references` (`tsconfig.app.json`/`tsconfig.node.json`); a bare
+  `tsc --noEmit` against it type-checks **zero files** in this workspace
+  layout and always exits clean regardless of real errors. `npm run build`
+  (`tsc -b && vite build`) is what actually runs the project-referenced
+  build-mode typecheck — it was always the real gate; the separate step was
+  a no-op that looked like coverage it didn't provide.
 - The live database `backend/data/fabulous.db` is never read or written by
   tests, and any migration is rehearsed on a **copy** of it before the PR.
 - API keys come from the environment only; nothing is ever written to the

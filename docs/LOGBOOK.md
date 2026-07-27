@@ -3202,6 +3202,80 @@ backend 995 passed (zero warnings), frontend 436 passed, lint and build
 clean. The SDD scratch workspace was removed after the clean final review;
 the PR discussion and this entry are the durable record.
 
-**Next**: M5 — metering (`llm_usage` ledger, `reserve_llm_run`, quotas,
-size caps, concurrency limits and 429 backpressure, skip reasons on the
-scorecard, frontend quota notices).
+## 2026-07-27 — M5: LLM usage metering
+
+PR: [#30](https://github.com/saigyo/fabulous-writing/pull/30), branch
+`multi-user-m5-implementation` (plan: [#29](https://github.com/saigyo/fabulous-writing/pull/29)).
+
+**Why.** M4 decided *what* a caller may run; nothing yet decided *how
+much*. Every account, tiered or not, could run the LLM checker without
+limit — fine for a single admin, untenable once real per-tier accounts
+share a server's provider budget and its wall-clock concurrency. M5 adds
+the missing dimension: a per-run ledger, a daily quota, two concurrency
+caps, and a size cap, all enforced through the same M4 gate rather than a
+parallel check.
+
+**What.** `app/services/usage.py` adds the `llm_usage` ledger (one row per
+LLM-invoking run) and `UsageStore.reserve_llm_run` — one SQLite
+transaction that sweeps stale `'started'` rows, inserts the new row
+*before* counting (TOCTOU-safe serialization on the write lock), then
+checks daily quota, per-user concurrency, and server-wide concurrency in
+that order, committing only if all three hold. `app/api/llm_gate.py`'s
+`get_effective_provider` grew from M4's pair into a 3-tuple, gated in a
+fixed order: 422 → size cap (`document_too_large`) → `resolve_llm_selection`
+→ provider construction → reservation — construction still precedes
+reservation, so a run that can't even start never spends quota. A
+concurrency rejection is the one path that still 429s (with `Retry-After`),
+non-blocking backpressure only on the per-user flavor, never on the
+server-wide one. A global `RequestSizeLimitMiddleware`
+(`app/api/request_size.py`) enforces a byte budget derived from
+`max_document_chars` ahead of parsing — registered before `CORSMiddleware`
+so a 413 it raises still carries CORS headers — alongside the existing
+per-endpoint character cap at `POST /api/checks` and document create/save
+(oversized documents already on disk stay loadable; only new saves are
+capped). `/api/auth/me` now reports `usage` (`used_today`/`limit`) and
+`limits` (`max_document_chars`/`max_llm_document_chars`/
+`concurrent_llm_runs`) alongside M4's policy payload — the frontend's only
+source for quota/limit *numbers*; the `effective_llm` report itself still
+carries only the skip *code*, a deliberate deviation from spec §6.4/§6.5
+recorded in the roadmap. The frontend surfaces all of it: a header
+quota-indicator (`used_today`/`limit`, hidden at the policy floor), a
+sidebar character count with independent over-document and over-LLM-cap
+notes, a shared `skipNoticeText` helper so the sidebar's skip note and a
+suggestion's error text render identical copy for `quota_exhausted`/
+`document_too_large`/`llm_unavailable`, a `refreshUser()` re-fetch after a
+check or suggestion actually ran the LLM phase (via the same
+registration-slot pattern `cancelSlot.ts` already used, to avoid closing
+the `controller -> session -> documents -> hydration -> controller`
+cycle), and a transient "server busy" notice on 429 that never touches
+auth state.
+
+**Release notes.**
+1. A configured `tiers:` block now **requires** a complete `limits:` block
+   per tier — startup aborts otherwise. (`TierSettings.limits` carries no
+   default as of this milestone; a tier missing the block, or missing any
+   of its three fields, fails config validation rather than silently
+   inheriting an unlimited policy.)
+2. LLM runs are metered: an `llm_usage` table records every run, with a
+   daily quota, per-user and server-wide concurrency caps (429), and a
+   character/byte size cap (413). Shipped defaults are inert for existing
+   single-admin usage: 500 checks/day, 200k characters, 5 concurrent runs
+   per user, 20 concurrent runs server-wide.
+
+**Process.** Ten tasks (schema/reservation, gate integration, size caps,
+`/me` payload, frontend display, this documentation task), each verified
+against the milestone's spec sections and the M4 house style before the
+next began. Invariant re-checks at this task's start confirmed the M4
+gate discipline held under the new code: no route reaches
+`app.state.provider_factory` outside `main.py`/`llm_gate.py`, every
+`get_effective_provider` call site finishes its reservation in a `finally`
+block (checks' `_run_llm`, suggestions, document naming), no route
+constructs its own `UsageStore` counting outside `main.py` (construction +
+sweep), `llm_gate.py` (reserve), and `auth.py` (`used_today`), and the
+frontend still gates nothing on the API-level `allowed` flags (M4's
+invariant, unchanged). **Gates**: backend `uv run pytest -q` → 1075
+passed, zero warnings. Frontend `npx vitest run && npm run lint && npm run
+build` → 457 passed (47 test files), oxlint clean, build succeeded.
+
+**Next**: M6 — admin UI (a fifth `activeView` gated on `is_admin`; user
+table with create/edit/deactivate/reset over the existing M1 admin API).
