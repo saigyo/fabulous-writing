@@ -42,8 +42,8 @@ Copied from the spec / house rules; every task's requirements implicitly include
 4. **Token columns:** providers report no usage today (`generate` returns only text), so `input_tokens` is always NULL in v1. The checks path records the last cumulative count from the existing progress callback as an approximate `output_tokens`; suggestions/naming write NULL. Spec allows NULL "when the provider reports nothing".
 5. **Rollback rolls back the sweep too.** A denied reservation rolls back the whole transaction, including the staleness `UPDATE` that opened it. Harmless and self-healing: the denial was computed on the swept counts, and the next reservation re-sweeps.
 6. **Naming propagates the 429.** `generate_name`'s broad silent-fallback `try` gains `except HTTPException: raise` above `except Exception` — quota/size/floor denials still fall back silently (provider is None, no exception), but the concurrency 429 applies to every LLM-invoking endpoint alike (spec §7.2).
-7. **No new fields on `EffectiveLlmReport`.** The quota note's limit comes from `/me` (`usage.limit`), the size note's from `/me` (`limits.max_llm_document_chars`), and the reset is always "midnight UTC" — the skip *code* alone travels with the check.
-8. **Frontend quota freshness:** the store's `user` (from `/me`) is the single source; `session.ts` exports `refreshUser()` (generation-guarded re-fetch of `/me`) and the check/suggestion flows call it fire-and-forget after an LLM run completes. Client-side increments are not attempted.
+7. **No new fields on `EffectiveLlmReport`.** The quota note's limit comes from `/me` (`usage.limit`), the size note's from `/me` (`limits.max_llm_document_chars`), and the reset is always "midnight UTC" — the skip *code* alone travels with the check. **Documented deviation from §6.4/§6.5**, which say the scorecard/SSE report carries the limit (and reset day) inline: behaviorally equivalent for this UI, but a non-browser consumer of `effective_llm` must call `/me` for the numbers. Task 10 records this in the roadmap's as-built section so the spec is not mistaken for the as-built contract.
+8. **Frontend quota freshness:** the store's `user` (from `/me`) is the single source; `session.ts` exports `refreshUser()` (generation-guarded re-fetch of `/me`) and the check/suggestion flows trigger it fire-and-forget after an LLM run completes — via a leaf registration slot (`auth/refreshSlot.ts`), because a direct `checking/* → auth/session.ts` import would close the module cycle `controller → session → documents → hydration → controller` that `checking/cancelSlot.ts` exists to break. Client-side increments are not attempted.
 9. **Per-tier `limits:` becomes required.** M4 shipped it optional-until-M5 by design (`TierSettings` docstring). **Release note for operators:** a `tiers:` block whose tiers lack `limits:` now aborts startup.
 10. **Middleware order:** the request-size middleware is added **before** the CORS `add_middleware` call in `create_app` — Starlette treats the *last-added* middleware as outermost, so CORS stays outermost and a 413 still carries CORS headers (spec §6.5).
 
@@ -63,11 +63,11 @@ Copied from the spec / house rules; every task's requirements implicitly include
 | `backend/app/api/request_size.py` | 6 | new: ASGI byte-budget middleware |
 | `backend/app/api/auth.py` | 7 | `UsagePayload`, `LimitsPayload`, `MeResponse` fields |
 | `frontend/src/types.ts`, `api/client.ts` | 8 | payload types, `MeResponse` fields (required) |
-| `frontend/src/auth/session.ts` | 8 | `refreshUser()` |
+| `frontend/src/auth/session.ts`, `auth/refreshSlot.ts` (new) | 8 | `refreshUser()` behind a cycle-breaking slot |
 | `frontend/src/checking/controller.ts`, `checking/suggest.ts` | 8 | 429 notice, skip-code branches, `refreshUser()` calls |
 | `frontend/src/i18n/*` (×8) | 8 | new keys |
-| `frontend/src/sidebar/Sidebar.tsx` | 9 | quota/size skip notes |
-| `frontend/src/App.tsx`, `state/store.ts`, `editor/Editor.tsx`, `App.css` | 9 | quota indicator, char count with thresholds |
+| `frontend/src/sidebar/Sidebar.tsx` | 9 | quota/size skip notes; char count with thresholds |
+| `frontend/src/App.tsx`, `state/store.ts`, `editor/Editor.tsx`, `App.css` | 9 | quota indicator; docChars plumbing |
 | `docs/backend-architecture.md`, `docs/frontend-architecture.md`, roadmap, `docs/LOGBOOK.md` | 10 | M5 sections, as-built interfaces, logbook |
 
 ---
@@ -135,10 +135,17 @@ class TestLimitsSettings:
 
     def test_tier_concurrency_above_server_cap_is_rejected(self):
         # The one configuration where a single user could starve the shared
-        # pool (spec §6.1).
-        with pytest.raises(ValidationError, match="concurrent_llm_runs"):
+        # pool (spec §6.1). The explicit admin block matters: the DEFAULT
+        # admin ceiling carries concurrent_llm_runs=5, which would trip the
+        # ADMIN comparison first and let this pass for the wrong reason.
+        with pytest.raises(ValidationError, match=r"tiers\.basic"):
             Settings.model_validate({
-                "limits": {"max_concurrent_llm_runs": 4},
+                "limits": {
+                    "max_concurrent_llm_runs": 4,
+                    "admin": {"llm_checks_per_day": 500,
+                              "max_llm_document_chars": 200000,
+                              "concurrent_llm_runs": 4},
+                },
                 "tiers": {"basic": {"limits": {
                     "llm_checks_per_day": 20,
                     "max_llm_document_chars": 20000,
@@ -269,6 +276,8 @@ Append to `_validate_tier_provider_names` (same validator, so all cross-field ch
 
 `uv run pytest tests/test_config.py -q` — all pass. Then the full suite: `uv run pytest -q` — **expect fallout**: any existing test that configures a `tiers:` block without `limits:` now fails validation. Fix each by adding a limits block to the fixture, e.g. `"limits": {"llm_checks_per_day": 100, "max_llm_document_chars": 100000, "concurrent_llm_runs": 5}` — generous values so those tests' behavior is otherwise unchanged. Sweep: `grep -rln '"tiers"\|tiers=' backend/tests` and check every hit that builds `Settings`.
 
+**Fixture rule for the whole milestone** (Tasks 4–7 depend on it): any test settings that lower `max_concurrent_llm_runs` below 5 must also supply a **complete** `limits.admin` block with `concurrent_llm_runs <= max_concurrent_llm_runs` — the default admin ceiling carries `concurrent_llm_runs=5`, so a lowered server cap alone fails the new cross-check at `Settings` construction, before the test body ever runs. (A partial admin block is itself invalid — all three members, always.)
+
 - [ ] **Step 5: Update `backend/config.example.yaml`**
 
 Add a commented `limits:` section next to the existing `tiers:` example, with the defaults spelled out and one line each on: global vs per-tier, the admin ceiling being config-only, and the [0, 2] delay bound. Add `limits:` blocks to the example tiers (20/20000/3 for basic, 200/100000/5 for premium — spec §6.1's numbers) and a note that `limits:` is required on every configured tier since M5.
@@ -299,7 +308,7 @@ git commit -m "feat(config): global limits block and required per-tier limits (M
     `sweep_all_started() -> int`.
   - `QuotaDecision` frozen dataclass: `kind: Literal["admitted", "quota_exhausted", "concurrency_rejected"]`, `reservation_id: int | None = None`, `server_wide: bool = False`, `retry_after: int = RETRY_AFTER_SECONDS`.
   - `RETRY_AFTER_SECONDS = 5` (module constant; spec §6.6 — small and fixed).
-  - `MeteredUser` Protocol: `id: int`, `is_admin: bool` (so this service never imports from `app.api`).
+  - `MeteredUser` Protocol: read-only `id: int` / `is_admin: bool` properties (so this service never imports from `app.api`, and the frozen `CurrentUser` dataclass satisfies it structurally).
 
 The `user` parameter follows the roadmap's fixed signature; it is typed as `MeteredUser`, satisfied by `app.api.deps.CurrentUser`.
 
@@ -317,6 +326,7 @@ import pytest
 
 from app.core.config import LimitsSettings, TierLimitsSettings
 from app.core.permissions import EffectiveSelection, RequestedLLM
+from app.services._sqlite import connect
 from app.services.usage import QuotaDecision, UsageStore
 
 
@@ -351,20 +361,21 @@ def reserve(store, user=None, *, limits=LIMITS, server=SERVER, run_id="run-1",
 
 
 def rows(store):
-    with sqlite3.connect(store.db_path) as conn:
-        conn.row_factory = sqlite3.Row
+    with connect(store.db_path) as conn:
         return conn.execute("SELECT * FROM llm_usage ORDER BY id").fetchall()
 
 
 class TestReservationRow:
     def test_admitted_row_is_complete(self, store):
-        decision = reserve(store, run_id="check-abc", text_chars=42)
+        moment = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)  # fixed: no midnight race
+        decision = reserve(store, run_id="check-abc", text_chars=42, now=moment)
         assert decision.kind == "admitted"
         assert decision.reservation_id is not None
         (row,) = rows(store)
         assert row["user_id"] == 1
         assert row["status"] == "started"
-        assert row["day"] == datetime.now(UTC).strftime("%Y-%m-%d")
+        assert row["day"] == "2026-07-27"
+
         assert row["created_at"].startswith(row["day"])
         assert row["llm_tier"] == "cheap"
         assert row["provider"] == "ollama"
@@ -381,7 +392,7 @@ class TestReservationRow:
     def test_check_constraint_rejects_unknown_status(self, store):
         # A typo'd terminal status would silently leak a concurrency slot
         # for llm_run_max_age (spec §5.3) — it must fail loudly instead.
-        with sqlite3.connect(store.db_path) as conn:
+        with connect(store.db_path) as conn:
             with pytest.raises(sqlite3.IntegrityError):
                 conn.execute(
                     """INSERT INTO llm_usage (user_id, day, created_at, status,
@@ -556,9 +567,19 @@ class TestSweeps:
         assert by_run["fresh"] == "started"
 
     def test_swept_rows_still_count_toward_the_day(self, store):
+        # concurrent_llm_runs=3, not the helper default of 2: all three
+        # stale reservations must be ADMITTED (an in-flight rejection on the
+        # third would roll its row back and leave only two to count).
+        wide = TierLimitsSettings(
+            llm_checks_per_day=3, max_llm_document_chars=20000,
+            concurrent_llm_runs=3,
+        )
         for i in range(3):
-            reserve(store, run_id=f"stale{i}", now=self.OLD)
-        assert reserve(store, run_id="fresh", now=self.BASE).kind == "quota_exhausted"
+            assert reserve(
+                store, limits=wide, run_id=f"stale{i}", now=self.OLD
+            ).kind == "admitted"
+        denied = reserve(store, limits=wide, run_id="fresh", now=self.BASE)
+        assert denied.kind == "quota_exhausted"  # day_count 4 > 3
 
     def test_terminal_write_does_not_resurrect_a_swept_row(self, store, caplog):
         d = reserve(store, run_id="stale", now=self.OLD)
@@ -619,6 +640,7 @@ from typing import Literal, Protocol
 
 from app.core.config import LimitsSettings, TierLimitsSettings
 from app.core.permissions import EffectiveSelection, RequestedLLM
+from app.services._sqlite import connect
 
 logger = logging.getLogger(__name__)
 
@@ -659,10 +681,15 @@ CREATE INDEX IF NOT EXISTS idx_llm_usage_inflight ON llm_usage(status, created_a
 
 class MeteredUser(Protocol):
     """What reservation needs to know about the caller. Satisfied by
-    app.api.deps.CurrentUser without this service importing from app.api."""
+    app.api.deps.CurrentUser without this service importing from app.api.
+    Declared as read-only properties: CurrentUser is a frozen dataclass,
+    and writable protocol members would reject it structurally."""
 
-    id: int
-    is_admin: bool
+    @property
+    def id(self) -> int: ...
+
+    @property
+    def is_admin(self) -> bool: ...
 
 
 @dataclass(frozen=True)
@@ -686,10 +713,17 @@ class UsageStore:
         self.db_path = db_path
         self.timeout = timeout
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
+        with connect(db_path, timeout=timeout) as conn:
             conn.executescript(_SCHEMA)
 
-    def _connect(self) -> sqlite3.Connection:
+    def _raw_connect(self) -> sqlite3.Connection:
+        """reserve_llm_run only: it needs explicit commit/rollback on every
+        branch, which _sqlite.connect's auto-committing context manager
+        would fight. The caller closes in a finally. Every other method
+        uses _sqlite.connect, which commits AND closes — sqlite3's own
+        context manager only ends the transaction, so `with
+        sqlite3.connect(...)` would leak a connection per call (used_today
+        runs on every /api/auth/me)."""
         conn = (
             sqlite3.connect(self.db_path)
             if self.timeout is None
@@ -723,7 +757,7 @@ class UsageStore:
         cutoff = (moment - timedelta(seconds=server_limits.llm_run_max_age)).isoformat(
             timespec="seconds"
         )
-        conn = self._connect()
+        conn = self._raw_connect()
         try:
             # The transaction begins with the staleness fallback (spec §6.6):
             # the counts below are then already clean, and no separate
@@ -804,7 +838,7 @@ class UsageStore:
         """Terminal write — conditional on the row still being 'started'
         (spec §6.6): a swept row's slot is already gone, so it is warned
         about, never resurrected. Callers run this in a finally block."""
-        with self._connect() as conn:
+        with connect(self.db_path, timeout=self.timeout) as conn:
             cursor = conn.execute(
                 """UPDATE llm_usage
                    SET status = ?, input_tokens = ?, output_tokens = ?
@@ -818,14 +852,13 @@ class UsageStore:
                     reservation_id,
                     status,
                 )
-            conn.commit()
 
     def used_today(self, user_id: int, *, now: datetime | None = None) -> int:
         """Spec §7.1: all of the user's rows for the UTC day regardless of
         status — defined identically to reserve_llm_run's count, so the UI
         and the enforcement can never drift."""
         day = (now or _utc_now()).strftime("%Y-%m-%d")
-        with self._connect() as conn:
+        with connect(self.db_path, timeout=self.timeout) as conn:
             (count,) = conn.execute(
                 "SELECT COUNT(*) FROM llm_usage WHERE user_id = ? AND day = ?",
                 (user_id, day),
@@ -835,16 +868,16 @@ class UsageStore:
     def sweep_all_started(self) -> int:
         """Startup sweep (spec §6.6): in a single-process deployment no
         'started' row can belong to a live run once the process is gone."""
-        with self._connect() as conn:
+        with connect(self.db_path, timeout=self.timeout) as conn:
             cursor = conn.execute(
                 "UPDATE llm_usage SET status = 'abandoned' WHERE status = 'started'"
             )
-            conn.commit()
             return cursor.rowcount
 ```
 
 Implementation notes for this step:
 - `sqlite3.connect` default isolation opens the implicit transaction at the first write (the sweep UPDATE) — sweep, insert and counts share one transaction, and `conn.rollback()` / `conn.commit()` end it explicitly on every path. Do not wrap `reserve_llm_run`'s body in `with conn:` (its auto-commit-on-exit would fight the explicit denial rollbacks).
+- Every other method goes through `app.services._sqlite.connect`, which commits and **closes** — no explicit `conn.commit()` inside those blocks, and no leaked connection per `/api/auth/me` call.
 - The denial paths roll back the sweep too — deliberate, see Design decision 5.
 
 - [ ] **Step 4: Run the tests**
@@ -1001,7 +1034,8 @@ git commit -m "feat(metering): limits_for resolution and startup usage sweep (M5
 **Files:**
 - Modify: `backend/app/api/llm_gate.py`
 - Modify: `backend/app/api/checks.py`
-- Test: `backend/tests/test_check_api.py` (and a small addition to `backend/tests/test_suggestions_api.py` only if its existing calls break on the new signature — Task 5 owns its behavior tests)
+- Modify (mechanical signature migration only — Task 5 owns their behavior): `backend/app/api/suggestions.py`, `backend/app/api/documents.py`
+- Test: `backend/tests/test_check_api.py`
 
 **Interfaces:**
 - Consumes: `UsageStore.reserve_llm_run` / `finish_run`, `QuotaDecision`, `RETRY_AFTER_SECONDS` (Task 2); `limits_for` (Task 3).
@@ -1069,6 +1103,15 @@ class TestCheckMetering:
         # ledger row at all (denied before reservation).
         ...
 
+    def test_size_cap_is_decided_before_resolution(self, ...):
+        # The §7.2 ORDER is the contract: a floor-policy user (llm.tiers: []
+        # AND llm.providers: [] — resolution alone would say
+        # 'llm_unavailable') posting text over max_llm_document_chars must
+        # get skipped == 'document_too_large', because the size cap runs
+        # first. Moving the size check below resolve_llm_selection flips
+        # this test's expected code.
+        ...
+
     def test_skip_reason_reaches_the_sse_stream(self, ...):
         # The effective_llm SSE event (M4) carries the new code: subscribe
         # to /events after the quota-exhausted POST and assert the
@@ -1088,8 +1131,20 @@ class TestCheckMetering:
 
     def test_server_wide_cap_returns_429(self, ...):
         # max_concurrent_llm_runs=1 (config validation requires per-user
-        # caps <= server cap, so use concurrent_llm_runs=1 too, two users):
-        # user A holds the slot, user B gets 429.
+        # caps <= server cap, so use concurrent_llm_runs=1 too, two users
+        # — and per Task 1's fixture rule, a complete limits.admin block
+        # with concurrent_llm_runs=1, or Settings construction fails on the
+        # DEFAULT admin ceiling of 5): user A holds the slot, user B gets
+        # 429.
+        ...
+
+    def test_pause_happens_outside_the_reservation_transaction(self, ...):
+        # Spec §10: "happens outside the transaction". concurrent_llm_runs=1
+        # and concurrency_reject_delay=1.0; while user A's rejected request
+        # is mid-pause, user B's reservation must complete well inside the
+        # delay (assert B's POST returns < 0.3s) — a pause inside the
+        # transaction would hold the write lock and stall B for the full
+        # second.
         ...
 
     def test_cancelled_llm_run_writes_cancelled_and_frees_the_slot(self, ...):
@@ -1114,13 +1169,16 @@ class TestCheckMetering:
         ...
 
     def test_admin_is_metered_with_the_admin_ceiling(self, ...):
-        # limits.admin.llm_checks_per_day=1; the admin's first check writes
-        # a ledger row; the second degrades with 'quota_exhausted' and logs
-        # a WARNING naming the user id (caplog).
+        # A COMPLETE limits.admin block (all three members — a partial one
+        # is a config error) with llm_checks_per_day=1: the admin's first
+        # check writes a ledger row; the second degrades with
+        # 'quota_exhausted' and logs a WARNING naming the user id (caplog).
         ...
 ```
 
 Write each as a real test against the file's fixtures — the comments above are the required assertions, not placeholders to keep. Also update every existing `get_effective_provider` call-site expectation in this file that the signature change breaks (the M4 tests assert on the 2-tuple only indirectly through the API, so most should be untouched).
+
+Two plumbing notes for these tests: (1) Task 1's fixture rule applies throughout — a lowered `max_concurrent_llm_runs` needs a complete matching `limits.admin` block. (2) The two async-client tests (`backpressure`, `pause outside transaction`) run over `httpx.AsyncClient(transport=ASGITransport(app=app))`, and `conftest`'s `auth_headers` helper takes a sync `TestClient` — obtain the bearer token with the sync client (or a direct login POST over the async client) before switching to the async transport.
 
 - [ ] **Step 2: Run to verify failure** — new tests fail (`get_effective_provider` lacks the keyword params; no ledger rows are written).
 
@@ -1336,7 +1394,7 @@ Add `from app.api.llm_gate import LlmReservation, effective_llm_report, get_effe
 
 - [ ] **Step 5: Run the tests**
 
-`uv run pytest tests/test_check_api.py tests/test_usage.py -q`, then the full suite. **Expected fallout:** `tests/test_suggestions_api.py` and `tests/test_documents_api.py` fail at the old 2-tuple call sites in `app/api/suggestions.py` / `documents.py` — those files do not compile against the new signature until Task 5. To keep this task's commit green, Task 4 includes the *minimal mechanical* signature migration of both call sites (add `await`, the three keyword args with `run_id=str(uuid.uuid4())`, `source="suggestion"`/`"name"`, unpack the 3-tuple, and finish the reservation around the single `provider.generate` call in each — exactly the code Task 5 shows in full). Task 5 then owns the behavior tests and any refinement.
+`uv run pytest tests/test_check_api.py tests/test_usage.py -q`, then the full suite. **Expected fallout:** `tests/test_suggestions_api.py` and `tests/test_documents_api.py` fail at the old 2-tuple call sites in `app/api/suggestions.py` / `documents.py` — un-awaited, the new coroutine raises `TypeError: cannot unpack non-sequence` and leaves a `RuntimeWarning: coroutine ... was never awaited`, which the zero-warnings gate turns into a hard failure. To keep this task's commit green, Task 4 includes the *minimal mechanical* signature migration of both call sites (add `await`, the three keyword args with `run_id=str(uuid.uuid4())`, `source="suggestion"`/`"name"`, unpack the 3-tuple, and finish the reservation around the single `provider.generate` call in each — exactly the code Task 5 shows in full). Task 5 then owns the behavior tests and any refinement.
 
 Zero warnings (watch for un-awaited-coroutine warnings from any missed call site — grep: `grep -rn "get_effective_provider" backend/app backend/tests`).
 
@@ -1344,7 +1402,7 @@ Zero warnings (watch for un-awaited-coroutine warnings from any missed call site
 
 1. Replace `await asyncio.sleep(...)` with `time.sleep(...)` in the gate → `test_backpressure_pause_does_not_block_the_event_loop` must fail (the blocking sleep stalls the unrelated health request). Restore.
 2. In `_run_llm`, remove the `finally:` reservation.finish (move it to the success path only) → `test_provider_failure_writes_a_failed_row` and `test_cancelled_llm_run_writes_cancelled_and_frees_the_slot` must fail. Restore.
-3. In the gate, swap the order so concurrency is checked before quota is impossible at this layer (the store owns it — already mutation-verified in Task 2's `test_quota_outranks_concurrency`); instead verify the size cap precedes resolution: move the `text_chars` check below `resolve_llm_selection` and make it unreachable for the floor case → `test_document_too_large_skips_llm_only` must still pass, so the observable mutation is: change `skipped="document_too_large"` to `"llm_unavailable"` → that test must fail. Restore.
+3. Move the `text_chars` size check below `resolve_llm_selection` (returning the resolution's floor result when it already skipped) → `test_size_cap_is_decided_before_resolution` must fail (the floor user's oversized text now reports `llm_unavailable` instead of `document_too_large`). Restore. (Quota-before-concurrency needs no gate-level mutation — the store owns that order and Task 2's `test_quota_outranks_concurrency` pins it.)
 
 - [ ] **Step 7: Commit**
 
@@ -1715,6 +1773,7 @@ class MeResponse(...):
 - `test_admin_sees_the_admin_ceiling`: admin's `usage.limit` and `limits.max_llm_document_chars`/`concurrent_llm_runs` come from `limits.admin`, not any tier block.
 - `test_tier_user_sees_their_tier_block`: with a configured `basic` tier, a basic user's `limits`/`usage.limit` mirror that block; `max_document_chars` stays the global value.
 - `test_login_response_carries_the_same_fields` (the `LoginResponse.user` path goes through the same `from_user`).
+- `test_no_admin_endpoint_can_raise_the_ceiling` (spec §10: "the value comes only from config"): `PATCH /api/admin/users/{id}` with a `limits` key in the body — the extra key must be rejected or ignored (whichever the admin request model does), and a subsequent `/me` for that admin still reports the config ceiling unchanged. Place it in `tests/test_admin_api.py` next to the existing admin-switch tests.
 
 - [ ] **Step 2: Run to verify failure**
 
@@ -1857,7 +1916,7 @@ export interface MeResponse {
 
 - [ ] **Step 2: Fixture repair sweep**
 
-`npm run build` (which runs `tsc -b`) now fails on every `MeResponse` fixture. Sweep: `grep -rln "policy: {" frontend/src` — every hit that builds a user object gains, verbatim:
+`npm run build` (which runs `tsc -b`) now fails on every `MeResponse` fixture. Sweep: `grep -rln "MeResponse" frontend/src` (broader than grepping for `policy: {` — `TerminologyView.features.test.tsx` builds its fixture via `MeResponse['policy']` and would slip through the narrower pattern) — every hit that builds a user object gains, verbatim:
 
 ```ts
   usage: { used_today: 0, limit: 500 },
@@ -1986,7 +2045,7 @@ Failing test first, `frontend/src/checking/skipNotice.test.ts`:
 
 ```ts
 import { describe, expect, it } from 'vitest'
-import { messages } from '../i18n/en'   // match the repo's actual export name
+import { en as messages } from '../i18n/en'
 import { skipNoticeText } from './skipNotice'
 
 const user = (over: object) => ({
@@ -2059,9 +2118,34 @@ export function skipNoticeText(
 }
 ```
 
-(Adjust the `Messages` type import and the en-catalog export name to what the repo actually uses — check `i18n/messages.ts`.)
+(The en catalog exports `en`; verify the `Messages` interface name against `i18n/messages.ts` before writing the helper.)
 
-- [ ] **Step 5: `refreshUser` in `auth/session.ts`**
+- [ ] **Step 5: `refreshUser` in `auth/session.ts`, reached through a leaf slot**
+
+**`checking/*.ts` must NOT import `auth/session.ts`.** The repo has already diagnosed that edge as a crash, not a style issue: `checking/cancelSlot.ts`'s header comment documents the cycle `controller → session → documents → hydration → controller` (session.ts imports from documents.ts, documents.ts → hydration.ts, hydration.ts imports `cancelCheck` from controller.ts) — whichever module the graph enters second finds the other's binding in its temporal dead zone. `refreshUser` therefore mirrors the existing `cancelSlot` pattern exactly, in the opposite direction.
+
+Create `frontend/src/auth/refreshSlot.ts` (leaf module — imports nothing from the app):
+
+```ts
+/**
+ * Registration slot so checking/controller.ts and checking/suggest.ts can
+ * trigger a /me re-fetch without importing auth/session.ts — the same
+ * cycle-breaking pattern (and the same cycle: controller -> session ->
+ * documents -> hydration -> controller) as checking/cancelSlot.ts, which
+ * see for the full explanation.
+ */
+let handler: (() => Promise<void>) | null = null
+
+export function setRefreshUserHandler(fn: () => Promise<void>): void {
+  handler = fn
+}
+
+export function refreshUserNow(): void {
+  void handler?.()
+}
+```
+
+In `auth/session.ts`, add `refreshUser` and register it at load (next to the existing `setCancelCheckHandler`-style registrations):
 
 ```ts
 /**
@@ -2084,12 +2168,16 @@ export async function refreshUser(): Promise<void> {
     // already went through handleUnauthorized inside request()).
   }
 }
+
+setRefreshUserHandler(refreshUser)
 ```
+
+(import `setRefreshUserHandler` from `./refreshSlot`).
 
 - [ ] **Step 6: controller and suggest branches**
 
 `checking/controller.ts`:
-- Import `HttpError` from `../api/client`, `refreshUser` from `../auth/session`.
+- Import `HttpError` from `../api/client` (safe — client.ts is below the cycle) and `refreshUserNow` from `../auth/refreshSlot`. Never import `../auth/session` here.
 - In `runCheck`'s `catch` around `postCheck`, before the generic `llmCheckFailed` state write:
 
 ```ts
@@ -2107,7 +2195,7 @@ export async function refreshUser(): Promise<void> {
 ```
 
 (after the existing staleness guard, so a stale 429 still returns silently).
-- After an LLM-bearing check concludes, refresh the quota display: in `onDone`, alongside the existing state write, add `void refreshUser()`; and in the early branch `if (!wantLlm || result.status === 'done')`, when `wantLlm` is true add `void refreshUser()` before returning (a skipped LLM phase may still have written no row — the refresh is cheap and self-correcting either way).
+- After an LLM-bearing check concludes, refresh the quota display: in `onDone`, alongside the existing state write, add `refreshUserNow()`; and in the early branch `if (!wantLlm || result.status === 'done')`, when `wantLlm` is true add `refreshUserNow()` before returning (a skipped LLM phase may still have written no row — the refresh is cheap and self-correcting either way).
 
 `checking/suggest.ts`:
 - Replace both `result.skipped` branches' inline ternary with the shared helper:
@@ -2125,7 +2213,7 @@ export async function refreshUser(): Promise<void> {
 
 (and the `setRewriteError` twin).
 - In both `catch` blocks, before the generic message: `error instanceof HttpError && error.status === 429` → set the respective error to `currentMessages().serverBusy`.
-- After a non-skipped result lands (both functions), `void refreshUser()`.
+- After a non-skipped result lands (both functions), `refreshUserNow()` (imported from `../auth/refreshSlot` — same cycle rule as controller.ts).
 
 - [ ] **Step 7: Tests for the new branches**
 
@@ -2148,7 +2236,7 @@ git commit -m "feat(frontend): usage payloads, skip-code notices and 429 handlin
 
 **Files:**
 - Modify: `frontend/src/sidebar/Sidebar.tsx`, `frontend/src/App.tsx`, `frontend/src/state/store.ts`, `frontend/src/editor/Editor.tsx`, `frontend/src/App.css`
-- Test: `frontend/src/sidebar/Sidebar.notes.test.tsx`, `frontend/src/App.test.tsx` (or a focused new `App.quota.test.tsx` if `App.test.tsx` is unwieldy — match the repo's granularity)
+- Test: `frontend/src/sidebar/Sidebar.notes.test.tsx` (skip notes AND the char count — its fixtures already set `user` and store state), `frontend/src/App.test.tsx` (or a focused new `App.quota.test.tsx` if `App.test.tsx` is unwieldy — match the repo's granularity) for the quota indicator
 
 - [ ] **Step 1: Sidebar skip notes (TDD)**
 
@@ -2181,19 +2269,19 @@ Mutation-verify: remove `role="status"` → the two new tests and the M4 ones fa
 
 - [ ] **Step 3: Character count display + quota indicator (TDD)**
 
-Failing tests first (`App.test.tsx` style — render the app shell with a signed-in fixture user):
+Failing tests first — quota-indicator cases in `App.test.tsx` (render the app shell with a signed-in fixture user), char-count cases in `Sidebar.notes.test.tsx` (it already renders the Sidebar with a fixture user and store state):
 
 - Quota indicator: visible for a signed-in user showing `0/20`-style text from the fixture's `usage`; carries `title === messages.quotaIndicatorTitle`; **absent** when `llmDisabled(user)` (floor policy) and absent when logged out.
 - Char count: with `docChars` between the LLM cap and the global cap, shows `messages.charCount(n)` plus `messages.charCountOverLlm`; above the global cap shows `messages.charCountOverDoc` (and not the LLM suffix — the two thresholds are marked *distinctly*, spec §8); below both, no suffix.
 
 Implementation:
 
-`App.tsx` — next to `<LlmSelector />` in `header-controls` (only when the LLM controls themselves render — follow the existing floor-hiding pattern around them):
+`App.tsx` — next to `<LlmSelector />` in `header-controls` (only when the LLM controls themselves render — follow the existing floor-hiding pattern around them, which reads the user as `store.user`; keep that accessor):
 
 ```tsx
-        {user && !llmDisabled(user) && (
+        {store.user && !llmDisabled(store.user) && (
           <span className="quota-indicator" title={m.quotaIndicatorTitle}>
-            {user.usage.used_today}/{user.usage.limit}
+            {store.user.usage.used_today}/{store.user.usage.limit}
           </span>
         )}
 ```
@@ -2248,7 +2336,7 @@ git commit -m "feat(frontend): quota indicator, char-count thresholds and skip n
 - One gate: `grep -rn "provider_factory" backend/app --include='*.py'` → only `app/main.py` and `app/api/llm_gate.py`.
 - Every gate caller finishes its reservation: `grep -rn "get_effective_provider" backend/app --include='*.py'` → each call site's surrounding code has a `finally`-reachable `reservation.finish(...)` (checks `_run_llm`, suggestions, naming).
 - No route imports `UsageStore` for its own counting: `grep -rn "usage_store" backend/app --include='*.py'` → `main.py` (construction + sweep), `llm_gate.py` (reserve), `auth.py` (`used_today`) only.
-- Frontend gating source: `grep -rn "allowed" frontend/src --include='*.tsx'` → no component reads API `allowed` flags (M4 invariant, unchanged).
+- Frontend gating source: `grep -rn "allowed" frontend/src --include='*.tsx' | grep -v '\.test\.'` → no component reads API `allowed` flags (M4 invariant, unchanged; test files legitimately mention the flags).
 
 Any violation is a defect to fix in the offending task's file before this task proceeds.
 
@@ -2262,7 +2350,7 @@ Document: `MeResponse.usage`/`limits` as the display source; `skipNoticeText` as
 
 - [ ] **Step 4: Roadmap as-built interfaces**
 
-In the Cross-milestone interfaces section, replace the M5 forward declaration with the as-built signatures: `UsageStore.reserve_llm_run(user, limits, server_limits, requested, effective, text_chars, source, run_id, *, now=None) -> QuotaDecision` (note `MeteredUser` and the test-only `now`), the gate's 3-tuple contract, and `limits_for`. Mark the M5 row's deliverables as landed if the table carries such marks for M1–M4 (match the existing style).
+In the Cross-milestone interfaces section, replace the M5 forward declaration with the as-built signatures: `UsageStore.reserve_llm_run(user, limits, server_limits, requested, effective, text_chars, source, run_id, *, now=None) -> QuotaDecision` (note `MeteredUser` and the test-only `now`), the gate's 3-tuple contract, and `limits_for`. Record the documented deviation from spec §6.4/§6.5: the `effective_llm` report carries the skip *code* only — limit and reset numbers live on `/me` (Design decision 7). Also carry over the corrected frontend gate line (`npm run build` runs `tsc -b`; bare `tsc --noEmit` checks zero files in this workspace layout). Mark the M5 row's deliverables as landed if the table carries such marks for M1–M4 (match the existing style).
 
 - [ ] **Step 5: LOGBOOK entry**
 
@@ -2286,4 +2374,5 @@ git commit -m "docs: M5 metering architecture notes, roadmap as-built, logbook"
 1. **Spec coverage.** §5.3 ledger → Task 2 (schema verbatim, CHECK, both indexes, NULL-token semantics). §6.1 limits config + validation → Task 1 (incl. delay range, partial-admin, cap cross-checks, required tier limits). §6.4 → Tasks 2/4 (insert-first, count-including-row, quota-before-concurrency, admin ceiling + WARNING, degrade-not-429). §6.5 → Tasks 4 (per-tier skip) and 6 (413, byte budget, chunked, CORS-outermost, oversized-stays-loadable). §6.6 → Tasks 2/4 (both caps, never-day-scoped in-flight, both sweeps, conditional terminal writes, backpressure's three binding constraints, server-wide-skips-pause). §7.1 `/me` → Task 7 (incl. `allow_additional_admins`, used_today definition parity). §7.2 → Tasks 4/5 (gate order, suggestions 200-degradation, naming silent fallback + 429 passthrough). §8 → Tasks 8/9 (429 transient + never clears auth — pinned by existing client behavior + new test, quota indicator, char-count dual thresholds, skip notices). §10's M5 bullets are distributed across the task test lists; the two-user isolation e2e stays out of scope as in M1–M4 (scratch-stack e2e is run manually per the repo's recipe, not in CI).
 2. **Placeholders.** Task 4's test list and parts of Task 6's are specified as required-behavior descriptions against existing fixtures rather than verbatim code — deliberate, because those fixtures' exact helper names live in files this plan does not reproduce; each entry names the exact assertions. No TBDs remain.
 3. **Type consistency.** `QuotaDecision.kind` strings match the gate's checks (Tasks 2/4); `LlmReservation.finish(status, *, output_tokens)` matches all three call sites (Tasks 4/5); `UsagePayload`/`LimitsPayload` field names match TS mirrors (Tasks 7/8); `skipNoticeText` signature matches Sidebar/suggest usage (Tasks 8/9); `limits_for` keyword-only shape matches `policy_for`/`features_for` (M4 house style).
-4. **Known intentional deviations**, for the reviewer's benefit: reservation handle keys on row id, not run_id (Design decision 3); provider construction precedes reservation (decision 2); naming propagates only HTTPException (decision 6); `parse-failure-after-generate` counts as `completed` (Task 5 note).
+4. **Known intentional deviations**, for the reviewer's benefit: reservation handle keys on row id, not run_id (Design decision 3); provider construction precedes reservation (decision 2); naming propagates only HTTPException (decision 6); `parse-failure-after-generate` counts as `completed` (Task 5 note); the `effective_llm` report carries the skip code without the inline limit/reset numbers §6.4/§6.5 describe (decision 7, recorded in the roadmap by Task 10).
+5. **Review round 1 (2026-07-27):** Copilot could not review the file (over its per-file size limit — four attempts), so an agent-based consistency review ran instead: 1 Critical (a `checking/* → auth/session.ts` import closing the documented `controller → session → documents → hydration → controller` cycle — fixed with the `auth/refreshSlot.ts` leaf), 3 Important (an unpassable sweep-test fixture; the default `limits.admin.concurrent_llm_runs=5` vs lowered server caps in fixtures; a missing ordering guard for size-cap-before-resolve) and 12 Minor findings — all applied.
