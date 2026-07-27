@@ -1259,6 +1259,71 @@ class TestCheckMetering:
             assert second.status_code == 429
             assert elapsed < 0.5  # well under the 1.0s pause it must skip
 
+    async def test_cancellation_during_backpressure_sleep_discards_the_job(
+        self, tmp_path: Path
+    ) -> None:
+        # Pins the CancelledError-safety fix in create_check: the job is
+        # created BEFORE the gate's backpressure `await asyncio.sleep(...)`
+        # (llm_gate.py), so a client disconnect/cancellation mid-sleep used
+        # to leak a permanently-'running' job -- CancelledError does not
+        # match the surrounding `except Exception` net, so nothing discarded
+        # it. Repeated cancellations would eventually exhaust
+        # MAX_JOBS_PER_OWNER since every retained job looked "running".
+        settings = Settings(
+            db_path=tmp_path / "test.db", rules_dir=RULES_DIR,
+            limits=LimitsSettings(
+                concurrency_reject_delay=1.0,
+                admin=TierLimitsSettings(
+                    llm_checks_per_day=500, max_llm_document_chars=200000,
+                    concurrent_llm_runs=1,
+                ),
+            ),
+        )
+        app = create_app(settings)
+        app.state.provider_factory = lambda name=None, model=None: HangingProvider()
+        sync_client = TestClient(app)
+        admin = auth_headers(sync_client)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            hold = await client.post(
+                "/api/checks",
+                json={"text": "hold", "language": "en", "checkers": ["llm"]},
+                headers=admin,
+            )
+            assert hold.status_code == 202
+
+            baseline_jobs = len(app.state.jobs._jobs)
+
+            task = asyncio.create_task(
+                client.post(
+                    "/api/checks",
+                    json={"text": "cancel me", "language": "en",
+                          "checkers": ["llm"]},
+                    headers=admin,
+                )
+            )
+            # Give create_check time to create the job, hit the gate, get
+            # concurrency_rejected and reach the 1.0s backpressure sleep.
+            await asyncio.sleep(0.1)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+            # The cancelled request's job must not remain registered.
+            assert len(app.state.jobs._jobs) == baseline_jobs
+
+            # A follow-up check for the same owner is not refused: nothing
+            # was left occupying the owner's job/concurrency capacity.
+            follow_up = await client.post(
+                "/api/checks",
+                json={"text": "after cancel", "language": "en",
+                      "checkers": ["rules"]},
+                headers=admin,
+            )
+            assert follow_up.status_code == 202
+
     def test_cancelled_llm_run_writes_cancelled_and_frees_the_slot(
         self, tmp_path: Path
     ) -> None:

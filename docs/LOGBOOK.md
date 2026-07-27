@@ -3273,9 +3273,9 @@ block (checks' `_run_llm`, suggestions, document naming), no route
 constructs its own `UsageStore` counting outside `main.py` (construction +
 sweep), `llm_gate.py` (reserve), and `auth.py` (`used_today`), and the
 frontend still gates nothing on the API-level `allowed` flags (M4's
-invariant, unchanged). **Gates**: backend `uv run pytest -q` → 1075
+invariant, unchanged). **Gates**: backend `uv run pytest -q` → 1077
 passed, zero warnings. Frontend `npx vitest run && npm run lint && npm run
-build` → 457 passed (47 test files), oxlint clean, build succeeded.
+build` → 460 passed (47 test files), oxlint clean, build succeeded.
 
 **Next**: M6 — admin UI (a fifth `activeView` gated on `is_admin`; user
 table with create/edit/deactivate/reset over the existing M1 admin API).

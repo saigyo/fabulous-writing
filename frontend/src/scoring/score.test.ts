@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  codePoints,
   craftScore,
   mechanicsScore,
   overallScore,
@@ -69,6 +70,12 @@ describe('wordCount', () => {
   it('is 0 for empty and whitespace-only text', () => {
     expect(wordCount('')).toBe(0)
     expect(wordCount('  \n\t ')).toBe(0)
+  })
+})
+
+describe('codePoints', () => {
+  it('counts astral characters (e.g. emoji) as one code point, not two UTF-16 units', () => {
+    expect(codePoints('😀😀')).toBe(2)
   })
 })
 
