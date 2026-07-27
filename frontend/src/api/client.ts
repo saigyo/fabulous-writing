@@ -411,6 +411,7 @@ export interface SuggestionRequest {
   language: Language
   scope?: 'span' | 'sentence'
   rule_id?: string | null
+  llm_tier?: Tier | null
   llm_provider?: string | null
   llm_model?: string | null
   llm_instructions?: string

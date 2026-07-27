@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { MeResponse } from '../api/client'
 import { useStore } from '../state/store'
 
 vi.mock('../api/client', async (importOriginal) => ({
@@ -24,12 +25,29 @@ vi.mock('../editor/editorRef', () => ({
 }))
 vi.mock('../editor/findings', () => ({ findingsField: {} }))
 vi.mock('./routing', () => ({
-  resolveModel: () => ({ ok: true, provider: 'fake', model: 'fake-model' }),
+  resolveModel: vi.fn(() => ({ ok: true, provider: 'fake', model: 'fake-model' })),
 }))
 
 import { postSuggestions } from '../api/client'
 import { bumpGeneration, resetAutosaveForTests } from '../documents/autosave'
 import { fetchRewrite, fetchSuggestions, llmActionPending } from './suggest'
+import { resolveModel } from './routing'
+
+function user(policy: MeResponse['policy']): MeResponse {
+  return {
+    id: 1,
+    email: 'u@example.com',
+    display_name: null,
+    tier: 'basic',
+    is_admin: false,
+    policy,
+  }
+}
+
+const RESTRICTED: MeResponse['policy'] = {
+  llm: { tiers: ['cheap', 'local'], providers: ['ollama'], models: null },
+  features: [],
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -40,6 +58,13 @@ beforeEach(() => {
   useStore.getState().setSuggestHeldBack('f1', null)
   useStore.getState().setSuggestAdvice('f1', null)
   useStore.getState().setExtraSuggestions('f1', [])
+  useStore.getState().setRewriteError('f1', null)
+  useStore.setState({ tier: null, user: null })
+  vi.mocked(resolveModel).mockReturnValue({
+    ok: true,
+    provider: 'fake',
+    model: 'fake-model',
+  })
 })
 
 describe('fetchSuggestions', () => {
@@ -188,6 +213,37 @@ describe('fetchSuggestions', () => {
     // The incoming session's own completion still clears it normally.
     expect(useStore.getState().suggestPendingId).toBeNull()
   })
+
+  it('an off-plan, offline tier does not throw and posts llm_tier', async () => {
+    // RESTRICTED disallows 'balanced'; its own route is also offline — the
+    // request must still go to the server, which owns the degradation.
+    useStore.setState({ user: user(RESTRICTED), tier: 'balanced' })
+    vi.mocked(resolveModel).mockReturnValueOnce({ ok: false, reason: 'not configured' })
+    vi.mocked(postSuggestions).mockResolvedValue({
+      suggestions: ['better'],
+      span: { start: 0, end: 4 },
+      original: 'orig',
+      rejected: 0,
+      held_back: [],
+      advice: [],
+    })
+
+    await fetchSuggestions('f1')
+
+    expect(postSuggestions).toHaveBeenCalled()
+    expect(vi.mocked(postSuggestions).mock.calls[0][0].llm_tier).toBe('balanced')
+    expect(useStore.getState().suggestErrors.f1).toBeUndefined()
+  })
+
+  it('an allowed-but-offline tier still throws llmSkipped', async () => {
+    useStore.setState({ user: user(RESTRICTED), tier: 'cheap' })
+    vi.mocked(resolveModel).mockReturnValueOnce({ ok: false, reason: 'unavailable' })
+
+    await fetchSuggestions('f1')
+
+    expect(postSuggestions).not.toHaveBeenCalled()
+    expect(useStore.getState().suggestErrors.f1).toBeTruthy()
+  })
 })
 
 describe('fetchRewrite', () => {
@@ -263,5 +319,34 @@ describe('fetchRewrite', () => {
     await incomingCall
 
     expect(useStore.getState().rewritePendingId).toBeNull()
+  })
+
+  it('an off-plan, offline tier does not throw and posts llm_tier', async () => {
+    useStore.setState({ user: user(RESTRICTED), tier: 'balanced' })
+    vi.mocked(resolveModel).mockReturnValueOnce({ ok: false, reason: 'not configured' })
+    vi.mocked(postSuggestions).mockResolvedValue({
+      suggestions: ['rewritten'],
+      span: { start: 0, end: 4 },
+      original: 'orig',
+      rejected: 0,
+      held_back: [],
+      advice: [],
+    })
+
+    await fetchRewrite('f1')
+
+    expect(postSuggestions).toHaveBeenCalled()
+    expect(vi.mocked(postSuggestions).mock.calls[0][0].llm_tier).toBe('balanced')
+    expect(useStore.getState().rewriteErrors.f1).toBeUndefined()
+  })
+
+  it('an allowed-but-offline tier still throws llmSkipped', async () => {
+    useStore.setState({ user: user(RESTRICTED), tier: 'cheap' })
+    vi.mocked(resolveModel).mockReturnValueOnce({ ok: false, reason: 'unavailable' })
+
+    await fetchRewrite('f1')
+
+    expect(postSuggestions).not.toHaveBeenCalled()
+    expect(useStore.getState().rewriteErrors.f1).toBeTruthy()
   })
 })

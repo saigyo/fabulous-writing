@@ -1,4 +1,5 @@
 import { postCheck, subscribeCheck } from '../api/client'
+import { llmDisabled, tierAllowed } from '../auth/policy'
 import { currentGeneration, flush } from '../documents/autosave'
 import { getEditorView } from '../editor/editorRef'
 import { mergeFindingsEffect } from '../editor/findings'
@@ -32,7 +33,12 @@ export function cancelCheck(): void {
   unsubscribe?.()
   unsubscribe = null
   currentCheckId = null
-  useStore.setState({ checkPhase: 'idle', llmStartedAt: null, llmTokens: null })
+  useStore.setState({
+    checkPhase: 'idle',
+    llmStartedAt: null,
+    llmTokens: null,
+    llmEffective: null,
+  })
 }
 
 // Registered at load so session.ts can abort a running check on logout or
@@ -65,25 +71,33 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
         findings: [],
       }),
     })
+    useStore.setState({ llmEffective: null })
     return
   }
 
   const resolution = resolveModel(state)
 
-  const wantLlm = includeLlm && resolution.ok
+  // An off-plan tier's local availability is irrelevant: the server will
+  // degrade to a different tier the client cannot pre-check, so the request
+  // must go out even when the requested tier's own route is offline —
+  // otherwise the client blocks the very degradation §6.2 exists for.
+  const offPlanTier = state.tier !== null && !tierAllowed(state.user, state.tier)
+  const wantLlm =
+    includeLlm && !llmDisabled(state.user) && (offPlanTier || resolution.ok)
   const checkers = wantLlm
     ? ['rules', 'terminology', 'llm']
     : ['rules', 'terminology']
   useStore.setState({
     checkPhase: wantLlm ? 'llm' : 'fast',
     llmError:
-      includeLlm && !resolution.ok
+      includeLlm && !resolution.ok && !offPlanTier
         ? currentMessages().llmSkipped(resolution.reason)
         : includeLlm
           ? null
           : state.llmError,
     llmStartedAt: wantLlm ? Date.now() : null,
     llmTokens: null,
+    llmEffective: null,
   })
 
   const profile = activeProfile(state)
@@ -107,8 +121,9 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
       domain_ids: state.domainIds,
       checkers,
       rule_config: effectiveRuleConfig(profile),
-      llm_provider: resolution.ok ? resolution.provider : null,
-      llm_model: resolution.ok ? resolution.model : null,
+      llm_tier: state.tier,
+      llm_provider: state.tier === null && resolution.ok ? resolution.provider : null,
+      llm_model: state.tier === null && resolution.ok ? resolution.model : null,
       llm_instructions: profile?.llm_instructions ?? '',
     })
   } catch (error) {
@@ -134,6 +149,7 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
   // otherwise write onto the wrong document.
   if (gen !== currentGeneration() || epoch !== checkEpoch) return
 
+  useStore.setState({ llmEffective: result.effective_llm ?? null })
   applyFindings(text, ['rule', 'terminology'], fastFindings(result.findings))
   void flush()
 

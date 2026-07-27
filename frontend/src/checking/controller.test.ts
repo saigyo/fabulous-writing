@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { MeResponse } from '../api/client'
 import { useStore } from '../state/store'
 
 vi.mock('../api/client', async (importOriginal) => ({
@@ -14,7 +15,7 @@ vi.mock('../editor/editorRef', () => ({
   }),
 }))
 vi.mock('./routing', () => ({
-  resolveModel: () => ({ ok: true, provider: 'fake', model: 'fake-model' }),
+  resolveModel: vi.fn(() => ({ ok: true, provider: 'fake', model: 'fake-model' })),
 }))
 vi.mock('../documents/autosave', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../documents/autosave')>()),
@@ -25,6 +26,28 @@ import { postCheck, subscribeCheck } from '../api/client'
 import { bumpGeneration, resetAutosaveForTests } from '../documents/autosave'
 import { cancelInFlightCheck } from './cancelSlot'
 import { cancelCheck, runCheck } from './controller'
+import { resolveModel } from './routing'
+
+function user(policy: MeResponse['policy']): MeResponse {
+  return {
+    id: 1,
+    email: 'u@example.com',
+    display_name: null,
+    tier: 'basic',
+    is_admin: false,
+    policy,
+  }
+}
+
+const FLOOR: MeResponse['policy'] = {
+  llm: { tiers: [], providers: [], models: null },
+  features: [],
+}
+
+const RESTRICTED: MeResponse['policy'] = {
+  llm: { tiers: ['cheap', 'local'], providers: ['ollama'], models: null },
+  features: [],
+}
 
 let docText = 'Some text with issues.'
 let dispatched: unknown[] = []
@@ -51,7 +74,19 @@ beforeEach(() => {
   resetAutosaveForTests()
   docText = 'Some text with issues.'
   dispatched = []
-  useStore.setState({ scorecard: null, scorecardStale: false, llmError: null })
+  useStore.setState({
+    scorecard: null,
+    scorecardStale: false,
+    llmError: null,
+    llmEffective: null,
+    tier: 'balanced',
+    user: null,
+  })
+  vi.mocked(resolveModel).mockReturnValue({
+    ok: true,
+    provider: 'fake',
+    model: 'fake-model',
+  })
   vi.mocked(postCheck).mockResolvedValue({
     check_id: 'c1',
     status: 'running',
@@ -181,5 +216,100 @@ describe('check controller', () => {
     expect(subscribeCheck).not.toHaveBeenCalled()
     expect(dispatched).toHaveLength(0)
     expect(useStore.getState().scorecard).toBeNull()
+  })
+
+  it('sends llm_tier in tier mode, with llm_provider/llm_model null', async () => {
+    useStore.setState({ tier: 'balanced' })
+    await runCheck(true)
+
+    const body = vi.mocked(postCheck).mock.calls[0][0]
+    expect(body.llm_tier).toBe('balanced')
+    expect(body.llm_provider).toBeNull()
+    expect(body.llm_model).toBeNull()
+    expect(body.checkers).toContain('llm')
+  })
+
+  it('sends llm_tier: null plus the resolved pair in pinned mode (unchanged behavior)', async () => {
+    useStore.setState({ tier: null })
+    await runCheck(true)
+
+    const body = vi.mocked(postCheck).mock.calls[0][0]
+    expect(body.llm_tier).toBeNull()
+    expect(body.llm_provider).toBe('fake')
+    expect(body.llm_model).toBe('fake-model')
+  })
+
+  it('lands a degraded effective_llm report in the store', async () => {
+    const effective_llm = {
+      requested: { tier: 'quality' as const, provider: null, model: null },
+      effective: { tier: 'balanced' as const, provider: null, model: null },
+      degraded: true,
+      skipped: null,
+    }
+    vi.mocked(postCheck).mockResolvedValue({
+      check_id: 'c1',
+      status: 'done',
+      findings: [],
+      effective_llm,
+    } as never)
+
+    await runCheck(true)
+
+    expect(useStore.getState().llmEffective).toEqual(effective_llm)
+  })
+
+  it('never includes llm in checkers for a floor-policy user, even when includeLlm is true', async () => {
+    useStore.setState({ user: user(FLOOR), tier: 'balanced' })
+    await runCheck(true)
+
+    const body = vi.mocked(postCheck).mock.calls[0][0]
+    expect(body.checkers).not.toContain('llm')
+  })
+
+  it('still sends the request for an off-plan tier whose route is offline (server owns degradation)', async () => {
+    // RESTRICTED disallows 'balanced'; its own route is also offline —
+    // the client must not pre-empt the server's degradation.
+    useStore.setState({ user: user(RESTRICTED), tier: 'balanced' })
+    vi.mocked(resolveModel).mockReturnValueOnce({ ok: false, reason: 'not configured' })
+
+    await runCheck(true)
+
+    const body = vi.mocked(postCheck).mock.calls[0][0]
+    expect(body.checkers).toContain('llm')
+    expect(body.llm_tier).toBe('balanced')
+    expect(useStore.getState().llmError).toBeNull()
+  })
+
+  it('still skips client-side for an allowed-but-offline tier, as today', async () => {
+    useStore.setState({ user: user(RESTRICTED), tier: 'cheap' })
+    vi.mocked(resolveModel).mockReturnValueOnce({ ok: false, reason: 'unavailable' })
+
+    await runCheck(true)
+
+    const body = vi.mocked(postCheck).mock.calls[0][0]
+    expect(body.checkers).not.toContain('llm')
+    expect(useStore.getState().llmError).toBeTruthy()
+  })
+
+  it("resets llmEffective on a new runCheck(), including via the empty-text early return", async () => {
+    const effective_llm = {
+      requested: { tier: 'balanced' as const, provider: null, model: null },
+      effective: { tier: 'balanced' as const, provider: null, model: null },
+      degraded: false,
+      skipped: 'llm_unavailable',
+    }
+    vi.mocked(postCheck).mockResolvedValue({
+      check_id: 'c1',
+      status: 'done',
+      findings: [],
+      effective_llm,
+    } as never)
+    await runCheck(true)
+    expect(useStore.getState().llmEffective).toEqual(effective_llm)
+
+    docText = '   ' // whitespace-only: the early-return branch
+    await runCheck(true)
+
+    expect(useStore.getState().llmEffective).toBeNull()
   })
 })

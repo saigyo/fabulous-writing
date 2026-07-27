@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { HeldBackSuggestion } from '../api/client'
+import { llmDisabled } from '../auth/policy'
+import { effectiveLabel } from '../checking/effectiveLabel'
 import { llmStatusLabel } from '../checking/status'
 import { fetchRewrite, fetchSuggestions } from '../checking/suggest'
 import { heldBackReason } from '../checking/vetMessage'
@@ -27,6 +29,8 @@ export function Sidebar() {
   const selectedId = useStore((s) => s.selectedId)
   const checkPhase = useStore((s) => s.checkPhase)
   const llmError = useStore((s) => s.llmError)
+  const llmEffective = useStore((s) => s.llmEffective)
+  const user = useStore((s) => s.user)
   const severityFilter = useStore((s) => s.severityFilter)
   const setSeverityFilter = useStore((s) => s.setSeverityFilter)
   const sourceFilter = useStore((s) => s.sourceFilter)
@@ -137,6 +141,19 @@ export function Sidebar() {
         )}
       </div>
       {llmError && <div className="llm-error">{llmError}</div>}
+      {llmEffective?.degraded && !llmEffective.skipped && (
+        <div className="llm-note">
+          {m.llmDegraded(
+            effectiveLabel(llmEffective.effective, m),
+            effectiveLabel(llmEffective.requested, m),
+          )}
+        </div>
+      )}
+      {llmEffective?.skipped === 'llm_unavailable' && (
+        <div className="llm-note">
+          {llmDisabled(user) ? m.llmNotIncluded : m.llmSkippedServer}
+        </div>
+      )}
       {total === 0 && checkPhase === 'idle' && (
         <p className="all-clear">{m.allClear}</p>
       )}
