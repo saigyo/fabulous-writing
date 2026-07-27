@@ -492,6 +492,41 @@ class TestSuggestionsMetering:
         assert len(rows) == 1
         assert rows[0]["status"] == "failed"  # a burned run still spends quota
 
+    def test_vetting_crash_writes_failed_and_returns_5xx(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A crash anywhere in the post-provider pipeline (parse, split_advice,
+        # vetting, response construction) still burned the tokens the
+        # provider already spent, so the ledger row must settle 'failed' --
+        # not stay 'completed' -- even though the exception has nothing to do
+        # with the provider call itself.
+        import app.api.suggestions as suggestions_module
+
+        def broken_vet_suggestions(*args, **kwargs):
+            raise RuntimeError("vetting exploded")
+
+        monkeypatch.setattr(
+            suggestions_module, "vet_suggestions", broken_vet_suggestions
+        )
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            rules_dir=tmp_path / "rules",
+            vet_suggestions=True,
+        )
+        app = create_app(settings)
+        app.state.provider_factory = lambda name=None, model=None: FakeProvider(
+            json.dumps(["excellent"])
+        )
+        client = TestClient(app)
+        client.headers.update(auth_headers(client))
+
+        response = client.post("/api/suggestions", json=suggestion_request())
+        assert response.status_code >= 500
+
+        rows = _read_usage_rows(settings.db_path)
+        assert len(rows) == 1
+        assert rows[0]["status"] == "failed"
+
     def test_concurrency_cap_gives_429(self, tmp_path: Path) -> None:
         settings = Settings(
             db_path=tmp_path / "test.db",
