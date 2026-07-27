@@ -10,7 +10,7 @@ from app.core.config import LimitsSettings, Settings, TierLimitsSettings
 from app.core.permissions import EffectiveSelection, RequestedLLM
 from app.main import create_app
 from app.services._sqlite import connect
-from app.services.usage import QuotaDecision, UsageStore
+from app.services.usage import UsageStore
 
 
 class FakeUser:

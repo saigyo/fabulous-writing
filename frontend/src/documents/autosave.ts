@@ -320,7 +320,13 @@ async function maybeGenerateTitle(snapshot: DocSnapshot): Promise<void> {
       store.patchDocMeta({ name: doc.name, nameSource: doc.name_source })
     }
     useStore.getState().patchDocumentSummary(doc.id, { name: doc.name })
-  } catch {
-    // Silent per spec; a later session may retry.
+  } catch (error) {
+    // Silent per spec; a later session may retry. A 429 is transient (the
+    // gate's own concurrency/quota backpressure, newly reachable in M5), so
+    // undo the attempted-mark and let a later save try again; any other
+    // failure keeps the suppression for the rest of this session.
+    if (error instanceof HttpError && error.status === 429) {
+      titleAttempted.delete(meta.id)
+    }
   }
 }
