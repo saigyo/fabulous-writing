@@ -1,9 +1,11 @@
+import asyncio
 import time
 
 from fastapi.testclient import TestClient
 
-from app.core.config import Settings
+from app.core.config import LimitsSettings, Settings, TierLimitsSettings
 from app.main import create_app
+from app.services._sqlite import connect as sqlite_connect
 from tests.conftest import auth_headers, second_user_headers
 
 
@@ -282,6 +284,143 @@ def test_generate_name_empty_text_never_reaches_gate(tmp_path):
     assert body["name_source"] == "fallback"
     assert body["name"] == "Untitled"
     assert factory.calls == []
+
+
+def _read_usage_rows(db_path) -> list:
+    with sqlite_connect(db_path) as conn:
+        return conn.execute("SELECT * FROM llm_usage ORDER BY id").fetchall()
+
+
+class HangingProvider:
+    """Never resolves, so its reservation stays 'started' and keeps holding
+    its concurrency slot for the rest of the test."""
+
+    name = "hanging"
+
+    async def generate(self, system: str, user: str, on_progress=None) -> str:
+        await asyncio.Event().wait()
+
+
+def test_generate_name_writes_a_ledger_row(authed_client):
+    doc = make_doc(authed_client, text="A long enough body about widget assembly.")
+    with_provider(authed_client, '"Widget Assembly Guide."')
+    response = authed_client.post(f"/api/documents/{doc['id']}/generate-name")
+    assert response.status_code == 200
+
+    settings = authed_client.app.state.settings
+    rows = _read_usage_rows(settings.db_path)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["source"] == "name"
+    assert row["status"] == "completed"
+    assert row["requested_tier"] == "cheap"
+
+
+def test_generate_name_quota_exhausted_falls_back_silently(tmp_path):
+    settings = Settings(
+        db_path=tmp_path / "t.db",
+        rules_dir=tmp_path / "rules",
+        limits=LimitsSettings(
+            admin=TierLimitsSettings(
+                llm_checks_per_day=1,
+                max_llm_document_chars=200000,
+                concurrent_llm_runs=5,
+            ),
+        ),
+    )
+    app = create_app(settings)
+    app.state.provider_factory = lambda name=None, model=None: FakeProvider(
+        response='"A Title."'
+    )
+    with TestClient(app) as client:
+        headers = auth_headers(client)
+        # Burn the day's one allowance on a first, admitted naming run.
+        first = client.post(
+            "/api/documents",
+            json={
+                "name": "Untitled",
+                "language": "en",
+                "text": "alpha beta gamma delta",
+            },
+            headers=headers,
+        ).json()
+        burn = client.post(
+            f"/api/documents/{first['id']}/generate-name", headers=headers
+        )
+        assert burn.json()["name_source"] == "llm"
+
+        doc = client.post(
+            "/api/documents",
+            json={
+                "name": "Untitled",
+                "language": "en",
+                "text": "alpha beta gamma delta epsilon zeta eta",
+            },
+            headers=headers,
+        ).json()
+        response = client.post(
+            f"/api/documents/{doc['id']}/generate-name", headers=headers
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["name_source"] == "fallback"
+        assert body["name"] == "alpha beta gamma delta epsilon zeta"
+        assert "error" not in body
+
+    # Only the first (admitted) naming run persisted a ledger row; the
+    # exhausted second attempt did not.
+    assert len(_read_usage_rows(settings.db_path)) == 1
+
+
+def test_generate_name_concurrency_429_propagates(tmp_path):
+    settings = Settings(
+        db_path=tmp_path / "t.db",
+        rules_dir=tmp_path / "rules",
+        limits=LimitsSettings(
+            concurrency_reject_delay=0,
+            admin=TierLimitsSettings(
+                llm_checks_per_day=500,
+                max_llm_document_chars=200000,
+                concurrent_llm_runs=1,
+            ),
+        ),
+    )
+    app = create_app(settings)
+    app.state.provider_factory = lambda name=None, model=None: HangingProvider()
+    with TestClient(app) as client:
+        headers = auth_headers(client)
+        doc = client.post(
+            "/api/documents",
+            json={
+                "name": "Untitled",
+                "language": "en",
+                "text": "alpha beta gamma delta epsilon zeta eta",
+            },
+            headers=headers,
+        ).json()
+        # A hanging /api/checks run holds the caller's single concurrency
+        # slot open (its reservation stays 'started').
+        held = client.post(
+            "/api/checks",
+            json={"text": "hold the slot", "language": "en", "checkers": ["llm"]},
+            headers=headers,
+        )
+        assert held.json()["status"] == "running"
+
+        response = client.post(
+            f"/api/documents/{doc['id']}/generate-name", headers=headers
+        )
+        assert response.status_code == 429
+        assert "Retry-After" in response.headers
+
+
+def test_generate_name_empty_text_consumes_no_quota(authed_client):
+    doc = make_doc(authed_client, text="   ")
+    with_provider(authed_client, "Ignored")
+    response = authed_client.post(f"/api/documents/{doc['id']}/generate-name")
+    assert response.status_code == 200
+    settings = authed_client.app.state.settings
+    assert _read_usage_rows(settings.db_path) == []
 
 
 def test_create_document_with_unknown_folder_is_422(authed_client):

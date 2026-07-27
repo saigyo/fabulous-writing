@@ -249,6 +249,11 @@ async def generate_name(
                     raise
                 finally:
                     reservation.finish(name_status)
+        except HTTPException:
+            # The gate's own 429 (concurrency cap) applies to every LLM-
+            # invoking endpoint alike (spec §7.2) and must propagate, not be
+            # swallowed by naming's silent-fallback behavior below.
+            raise
         except Exception:
             logger.warning(
                 "auto-title generation failed for document %s",
