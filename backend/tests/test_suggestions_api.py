@@ -452,6 +452,26 @@ class TestSuggestionsMetering:
         assert isinstance(row["run_id"], str) and row["run_id"]
         assert row["text_chars"] == len(TEXT)
 
+    def test_unparseable_response_writes_failed_and_returns_502(self, tmp_path: Path) -> None:
+        # A response the provider actually returned still burns tokens even
+        # if it can't be parsed as JSON -- that's a burned-token failure, not
+        # a clean run, so the ledger row must settle 'failed' just like an
+        # outright provider exception (see the test right below).
+        settings = Settings(db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules")
+        app = create_app(settings)
+        app.state.provider_factory = lambda name=None, model=None: FakeProvider(
+            "I have no suggestions for you."
+        )
+        client = TestClient(app)
+        client.headers.update(auth_headers(client))
+
+        response = client.post("/api/suggestions", json=suggestion_request())
+        assert response.status_code == 502
+
+        rows = _read_usage_rows(settings.db_path)
+        assert len(rows) == 1
+        assert rows[0]["status"] == "failed"
+
     def test_provider_failure_writes_failed_and_returns_502(self, tmp_path: Path) -> None:
         class BrokenProvider:
             name = "broken"

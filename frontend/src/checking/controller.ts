@@ -167,7 +167,16 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
 
   if (!wantLlm || result.status === 'done') {
     useStore.setState({ checkPhase: 'idle', llmStartedAt: null, llmTokens: null })
-    if (wantLlm) refreshUserNow()
+    // This branch is reached with wantLlm only when the LLM phase was
+    // skipped server-side (provider None — quota exhausted, oversized,
+    // floor): an admitted run instead returns status 'running' and refreshes
+    // via onDone below. So today the `skipped` guard usually suppresses this
+    // entirely — matching the never-refresh-on-skip rule elsewhere (see
+    // checking/suggest.ts's 429 branches, which skip the refresh for the
+    // same reason: no ledger row was written, so a refresh here would just
+    // be avoidable /me load) — but it stays correct if a synchronous
+    // admitted path (a real ledger row, status 'done') ever appears.
+    if (wantLlm && result.effective_llm?.skipped == null) refreshUserNow()
     return
   }
 

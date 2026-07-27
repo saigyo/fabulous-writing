@@ -152,6 +152,59 @@ describe('autosave', () => {
     expect(updateDocument).toHaveBeenCalledTimes(2) // the edit triggers a fresh save
   })
 
+  it('an edit that lands while a 413 is still in flight gets saved without requiring a further edit', async () => {
+    let rejectFirst!: (reason?: unknown) => void
+    vi.mocked(updateDocument).mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectFirst = reject
+        }) as never,
+    )
+
+    noteChange() // arms the debounce for the (over-cap) snapshot
+    await vi.advanceTimersByTimeAsync(1500) // debounce fires: push #1 starts, in flight
+    expect(updateDocument).toHaveBeenCalledTimes(1)
+
+    // A newer, under-cap edit lands before the rejection resolves.
+    docText = 'hello world, edited'
+    noteChange() // buffers the newer snapshot and arms its own debounce timer
+    await vi.advanceTimersByTimeAsync(1500) // that timer fires while push #1 is still in flight
+    // flush() finds `saving` still true and just sets `pending`, queued behind push #1.
+    expect(updateDocument).toHaveBeenCalledTimes(1)
+
+    rejectFirst(new HttpError(413, 'too long'))
+    await vi.advanceTimersByTimeAsync(0)
+
+    // The rejected snapshot itself must never be retried immediately.
+    expect(updateDocument).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(1500) // the newer snapshot's own (freshly scheduled) flush
+    expect(updateDocument).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(updateDocument).mock.calls[1][1].content?.text).toBe(
+      'hello world, edited',
+    )
+    expect(readSnapshot()?.dirty).toBe(false)
+  })
+
+  it('a 413 with no newer edit meanwhile stays fully passive (no scheduled follow-up)', async () => {
+    let rejectFirst!: (reason?: unknown) => void
+    vi.mocked(updateDocument).mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectFirst = reject
+        }) as never,
+    )
+
+    void flush() // push #1 starts and is now in flight
+    void flush() // a second flush() call while saving: sets `pending`, nothing changed
+
+    rejectFirst(new HttpError(413, 'too long'))
+    await vi.advanceTimersByTimeAsync(60000) // well past any debounce/backoff interval
+
+    expect(updateDocument).toHaveBeenCalledTimes(1) // still never retried
+    expect(readSnapshot()?.dirty).toBe(true)
+  })
+
   it('generates a title once when a fallback-named doc passes 20 words', async () => {
     useStore.getState().patchDocMeta({ nameSource: 'fallback' })
     docText = Array.from({ length: 21 }, (_, i) => `w${i}`).join(' ')
