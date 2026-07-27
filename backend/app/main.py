@@ -34,6 +34,7 @@ from app.services.seed import seed_terminology
 from app.services.seed_admin import seed_admin
 from app.services.seed_profiles import seed_profiles
 from app.services.terminology import TerminologyStore
+from app.services.usage import UsageStore
 from app.services.users import UserStore
 
 APP_NAME = "Fabulous Writing"
@@ -115,6 +116,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.document_store = DocumentStore(settings.db_path)
     app.state.folder_store = FolderStore(settings.db_path)
     app.state.profile_store = ProfileStore(settings.db_path)
+    app.state.usage_store = UsageStore(settings.db_path)
     if settings.auth.mode != "local":
         raise AuthConfigError(
             "auth.mode 'supabase' is not implemented yet (sub-project 2)"
@@ -126,6 +128,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.token_verifier = LocalTokenVerifier(app.state.auth_secret)
     app.state.login_throttle = LoginThrottle()
     seed_admin(app.state.user_store)
+    # Startup sweep (spec §6.6): single-process deployment — no 'started'
+    # row can belong to a live run of a process that no longer exists.
+    app.state.usage_store.sweep_all_started()
     # Global seeders last (spec §9): migrations (store constructors) -> admin
     # bootstrap -> seeders, so a failing bootstrap aborts before any global
     # row is written.
