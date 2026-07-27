@@ -36,6 +36,7 @@ export function Editor() {
             scheduler.onInput()
             const store = useStore.getState()
             store.setDocWords(wordCount(update.state.doc.toString()))
+            store.setDocChars(update.state.doc.length)
             store.markScorecardStale()
           }
           const field = update.state.field(findingsField)
@@ -57,6 +58,7 @@ export function Editor() {
     })
     setEditorView(view)
     useStore.getState().setDocWords(wordCount(view.state.doc.toString()))
+    useStore.getState().setDocChars(view.state.doc.length)
 
     const onBeforeUnload = () => void flush()
     window.addEventListener('beforeunload', onBeforeUnload)

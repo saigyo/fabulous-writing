@@ -208,6 +208,11 @@ export function Header() {
           <DomainMultiSelect />
         </label>
         <LlmSelector />
+        {store.user && !llmDisabled(store.user) && (
+          <span className="quota-indicator" title={m.quotaIndicatorTitle}>
+            {store.user.usage.used_today}/{store.user.usage.limit}
+          </span>
+        )}
         {!llmDisabled(store.user) && (
           <button
             type="button"

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { HeldBackSuggestion } from '../api/client'
-import { llmDisabled } from '../auth/policy'
 import { effectiveLabel } from '../checking/effectiveLabel'
+import { skipNoticeText } from '../checking/skipNotice'
 import { llmStatusLabel } from '../checking/status'
 import { fetchRewrite, fetchSuggestions } from '../checking/suggest'
 import { heldBackReason } from '../checking/vetMessage'
@@ -31,6 +31,7 @@ export function Sidebar() {
   const llmError = useStore((s) => s.llmError)
   const llmEffective = useStore((s) => s.llmEffective)
   const user = useStore((s) => s.user)
+  const docChars = useStore((s) => s.docChars)
   const severityFilter = useStore((s) => s.severityFilter)
   const setSeverityFilter = useStore((s) => s.setSeverityFilter)
   const sourceFilter = useStore((s) => s.sourceFilter)
@@ -50,6 +51,9 @@ export function Sidebar() {
     [findings, severityFilter, sourceFilter],
   )
   const total = tracked.length
+  const overLlm = user != null && docChars > user.limits.max_llm_document_chars
+  const overDoc = user != null && docChars > user.limits.max_document_chars
+  const skipNotice = skipNoticeText(llmEffective?.skipped, user, m)
 
   // A newly selected finding (e.g. clicked in the editor) must be visible:
   // clear a severity filter that hides it and un-collapse its category; the
@@ -140,6 +144,15 @@ export function Sidebar() {
           </div>
         )}
       </div>
+      <div
+        className={
+          'char-count' +
+          (overDoc ? ' char-count--over-doc' : overLlm ? ' char-count--over-llm' : '')
+        }
+      >
+        {m.charCount(docChars)}
+        {overDoc ? ` — ${m.charCountOverDoc}` : overLlm ? ` — ${m.charCountOverLlm}` : ''}
+      </div>
       {llmError && <div className="llm-error">{llmError}</div>}
       {llmEffective?.degraded && !llmEffective.skipped && (
         <div className="llm-note" role="status">
@@ -149,9 +162,9 @@ export function Sidebar() {
           )}
         </div>
       )}
-      {llmEffective?.skipped === 'llm_unavailable' && (
+      {skipNotice && (
         <div className="llm-note" role="status">
-          {llmDisabled(user) ? m.llmNotIncluded : m.llmSkippedServer}
+          {skipNotice}
         </div>
       )}
       {total === 0 && checkPhase === 'idle' && (

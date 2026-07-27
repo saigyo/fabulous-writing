@@ -82,6 +82,10 @@ interface AppStateData {
   scorecardStale: boolean
   // Live word count of the editor document (feeds the quality score).
   docWords: number
+  // Live character count of the editor document (feeds the char-count
+  // display and its two threshold notes); transient like docWords — never
+  // persisted, reset on every document load.
+  docChars: number
   extraSuggestions: Record<string, string[]>
   suggestPendingId: string | null
   suggestErrors: Record<string, string>
@@ -156,6 +160,7 @@ interface AppStateActions {
   clearScorecard: () => void
   markScorecardStale: () => void
   setDocWords: (docWords: number) => void
+  setDocChars: (docChars: number) => void
   setSuggestPending: (findingId: string | null) => void
   setExtraSuggestions: (findingId: string, suggestions: string[]) => void
   setSuggestError: (findingId: string, error: string | null) => void
@@ -297,6 +302,7 @@ export const INITIAL_DATA: Omit<
   scorecard: null,
   scorecardStale: false,
   docWords: 0,
+  docChars: 0,
   extraSuggestions: {},
   suggestPendingId: null,
   suggestErrors: {},
@@ -408,6 +414,7 @@ export const useStore = create<AppState>()(
       markScorecardStale: () =>
         set((state) => (state.scorecard ? { scorecardStale: true } : {})),
       setDocWords: (docWords) => set({ docWords }),
+      setDocChars: (docChars) => set({ docChars }),
       setSuggestPending: (suggestPendingId) => set({ suggestPendingId }),
       setExtraSuggestions: (findingId, suggestions) =>
         set((state) => ({
