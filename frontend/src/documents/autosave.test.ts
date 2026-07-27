@@ -22,8 +22,10 @@ vi.mock('../api/client', async (importOriginal) => ({
 vi.mock('../editor/editorRef', () => ({
   getEditorView: () => ({ state: { doc: { toString: () => docText } } }),
 }))
+vi.mock('../auth/refreshSlot', () => ({ refreshUserNow: vi.fn() }))
 
 import { generateDocumentName, updateDocument } from '../api/client'
+import { refreshUserNow } from '../auth/refreshSlot'
 
 let docText = 'hello world'
 
@@ -184,6 +186,20 @@ describe('autosave', () => {
     docText += ' more'
     await flush()
     expect(generateDocumentName).toHaveBeenCalledTimes(1) // still suppressed
+  })
+
+  it('refreshes the quota indicator once naming resolves (naming spends quota, including a silent fallback)', async () => {
+    useStore.getState().patchDocMeta({ nameSource: 'fallback' })
+    docText = Array.from({ length: 21 }, (_, i) => `w${i}`).join(' ')
+    vi.mocked(generateDocumentName).mockResolvedValue({
+      ...serverDoc(3),
+      name: 'Generated Title',
+      name_source: 'llm',
+    } as never)
+
+    await flush()
+
+    expect(refreshUserNow).toHaveBeenCalled()
   })
 
   it('does not title short or already-named documents', async () => {

@@ -27,8 +27,10 @@ vi.mock('../editor/findings', () => ({ findingsField: {} }))
 vi.mock('./routing', () => ({
   resolveModel: vi.fn(() => ({ ok: true, provider: 'fake', model: 'fake-model' })),
 }))
+vi.mock('../auth/refreshSlot', () => ({ refreshUserNow: vi.fn() }))
 
 import { HttpError, postSuggestions } from '../api/client'
+import { refreshUserNow } from '../auth/refreshSlot'
 import { bumpGeneration, resetAutosaveForTests } from '../documents/autosave'
 import { en as messages } from '../i18n/en'
 import { fetchRewrite, fetchSuggestions, llmActionPending } from './suggest'
@@ -279,6 +281,14 @@ describe('fetchSuggestions', () => {
 
     expect(useStore.getState().suggestErrors.f1).toBe(messages.serverBusy)
   })
+
+  it('refreshes the quota indicator after a provider failure (a 502 whose ledger row still spent quota)', async () => {
+    vi.mocked(postSuggestions).mockRejectedValue(new HttpError(502, 'Bad Gateway'))
+
+    await fetchSuggestions('f1')
+
+    expect(refreshUserNow).toHaveBeenCalled()
+  })
 })
 
 describe('fetchRewrite', () => {
@@ -391,5 +401,13 @@ describe('fetchRewrite', () => {
     await fetchRewrite('f1')
 
     expect(useStore.getState().rewriteErrors.f1).toBe(messages.serverBusy)
+  })
+
+  it('refreshes the quota indicator after a provider failure (a 502 whose ledger row still spent quota)', async () => {
+    vi.mocked(postSuggestions).mockRejectedValue(new HttpError(502, 'Bad Gateway'))
+
+    await fetchRewrite('f1')
+
+    expect(refreshUserNow).toHaveBeenCalled()
   })
 })
