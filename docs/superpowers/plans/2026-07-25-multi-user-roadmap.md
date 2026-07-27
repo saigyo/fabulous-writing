@@ -92,14 +92,25 @@ reading other milestones' plans:
 - `app/services/users.py`: `UserStore(db_path)`, `User` model (**never
   carries `password_hash`**).
 - M4 adds `app/core/permissions.py`:
-  `resolve_llm_selection(policy, requested, language) -> EffectiveSelection`.
+  `resolve_llm_selection(policy, requested, language, *, settings) ->
+  EffectiveSelection` — `settings` is keyword-only (routing-table and
+  default-provider lookups need it, but every call site already has a
+  `policy` and a `requested` positionally, so keeping `settings` keyword-only
+  keeps those call sites self-documenting). M4 also adds
+  `app/api/llm_gate.py`'s `get_effective_provider(app, user, requested,
+  language) -> (EffectiveSelection, LLMProvider | None)` — the single gate
+  every LLM-invoking endpoint resolves through (no route touches
+  `app.state.provider_factory` directly); M5's quota/concurrency
+  reservation slots into this same gate, layered around
+  `resolve_llm_selection`.
 - M5 adds `app/services/usage.py`:
   `reserve_llm_run(user, limits, server_limits, requested, effective,
   text_chars, source, run_id) -> QuotaDecision`.
 - `/api/auth/me` grows across milestones: M1 returns user identity and
-  `is_admin`; M4 adds the LLM policy and feature flags; M5 adds quota,
-  size and concurrency limits. Each milestone extends the same response
-  model rather than adding a second endpoint.
+  `is_admin`; **M4 delivers the LLM policy and feature flags** (`policy:
+  PolicyPayload`, `app/api/auth.py`); M5 adds quota, size and concurrency
+  limits. Each milestone extends the same response model rather than
+  adding a second endpoint.
 
 ## Conventions for every milestone
 
