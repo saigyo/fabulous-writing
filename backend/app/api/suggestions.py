@@ -97,11 +97,13 @@ async def create_suggestions(
             skipped=effective.skipped,
         )
     assert reservation is not None
-    # Both the request AND the parse of its output must complete before this
-    # run is recorded 'completed' -- an unparseable response still burned
-    # tokens, so (mirroring the checks path, where a post-provider failure
-    # in checker.check() likewise lands in the `except Exception` below) it
-    # must settle 'failed', not 'completed', before its 502 propagates.
+    # Everything from the provider call through building the response must
+    # complete before this run is recorded 'completed' -- generate, parse,
+    # split_advice, vetting, and response construction all still spend the
+    # tokens the provider already burned, so (mirroring the checks path,
+    # where a post-provider failure in checker.check() likewise lands in the
+    # `except Exception` below) any failure among them must settle 'failed',
+    # not 'completed', before its error response propagates.
     status = "completed"
     try:
         response = await provider.generate(system, prompt)
@@ -109,6 +111,48 @@ async def create_suggestions(
         if items is None:
             status = "failed"
             raise HTTPException(502, "LLM response contained no JSON array")
+
+        suggestions = [
+            item.strip()
+            for item in items
+            if isinstance(item, str) and item.strip() and item.strip() != original
+        ]
+        # Advice must never render as an appliable replacement; split it off
+        # before vetting (also when vetting is disabled).
+        suggestions, advice = split_advice(suggestions)
+        rejected = 0
+        held_back: list[HeldBackSuggestion] = []
+        if request.app.state.settings.vet_suggestions:
+            result = vet_suggestions(
+                suggestions,
+                original=original,
+                text=body.text,
+                start=start,
+                end=end,
+                language=body.language,
+                rule_id=body.rule_id,
+                engine=request.app.state.rule_engine,
+                nlp=request.app.state.nlp,
+                dictionaries_dir=request.app.state.settings.dictionaries_dir,
+            )
+            suggestions, rejected = result.accepted, result.rejected
+            held_back = [
+                HeldBackSuggestion(
+                    text=candidate.text,
+                    reason_kind=candidate.reason_kind,
+                    rule_ids=candidate.rule_ids,
+                    words=candidate.words,
+                )
+                for candidate in result.held_back
+            ]
+        return SuggestionResponse(
+            suggestions=suggestions,
+            span=SpanRef(start=start, end=end),
+            original=original,
+            rejected=rejected,
+            held_back=held_back,
+            advice=advice,
+        )
     except asyncio.CancelledError:
         status = "cancelled"
         raise
@@ -120,45 +164,3 @@ async def create_suggestions(
         raise HTTPException(502, f"LLM request failed: {detail}") from exc
     finally:
         reservation.finish(status)
-
-    suggestions = [
-        item.strip()
-        for item in items
-        if isinstance(item, str) and item.strip() and item.strip() != original
-    ]
-    # Advice must never render as an appliable replacement; split it off
-    # before vetting (also when vetting is disabled).
-    suggestions, advice = split_advice(suggestions)
-    rejected = 0
-    held_back: list[HeldBackSuggestion] = []
-    if request.app.state.settings.vet_suggestions:
-        result = vet_suggestions(
-            suggestions,
-            original=original,
-            text=body.text,
-            start=start,
-            end=end,
-            language=body.language,
-            rule_id=body.rule_id,
-            engine=request.app.state.rule_engine,
-            nlp=request.app.state.nlp,
-            dictionaries_dir=request.app.state.settings.dictionaries_dir,
-        )
-        suggestions, rejected = result.accepted, result.rejected
-        held_back = [
-            HeldBackSuggestion(
-                text=candidate.text,
-                reason_kind=candidate.reason_kind,
-                rule_ids=candidate.rule_ids,
-                words=candidate.words,
-            )
-            for candidate in result.held_back
-        ]
-    return SuggestionResponse(
-        suggestions=suggestions,
-        span=SpanRef(start=start, end=end),
-        original=original,
-        rejected=rejected,
-        held_back=held_back,
-        advice=advice,
-    )

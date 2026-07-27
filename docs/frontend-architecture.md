@@ -1174,15 +1174,26 @@ documented above under [Authentication](#authentication) for
 `checking/cancelSlot.ts`) — `auth/refreshSlot.ts` is the matching
 registration-slot leaf module (`setRefreshUserHandler`/`refreshUserNow()`)
 that breaks it the same way. Call sites: `checking/controller.ts#runCheck`
-(once a check that requested the LLM phase finishes — either synchronously,
-when the POST response's `status` is already `'done'`, or asynchronously,
-in the SSE subscription's `onDone` handler) and `checking/suggest.ts`
-(`fetchSuggestions`/`fetchRewrite`, after a successful, non-skipped
-response, and again in the `catch` block for any non-429 failure — a
-provider error such as a 502 still settles its ledger row as `'failed'`
-server-side, so `used_today` goes stale unless the refresh fires there too.
-Never on a skip, since a skip never reserved a ledger row, and never on a
-429, since a rejected reservation rolled back and consumed nothing).
+(immediately once the POST resolves, for any check that requested the LLM
+phase and was actually admitted — i.e. `result.effective_llm` is present
+with `skipped == null` — skip-guarded so a skip, which never reserved a
+ledger row, never triggers a refresh. `used_today` is status-blind:
+`reserve_llm_run()` inserts the ledger row at admission time, inside this
+same request/response cycle, so the count has already changed the moment
+the POST resolved and never changes again at completion — refreshing at
+`onDone` would just re-fetch the same number. `runCheck` deliberately never
+refreshes from the SSE subscription's `onDone` handler for exactly that
+reason, which also means a detached or superseded subscription — one whose
+`onDone` never fires because `cancelCheck()` or a newer `runCheck()` already
+unsubscribed it — still stays accounted for, since the admission-time
+refresh already ran regardless of what happens to the subscription
+afterwards) and `checking/suggest.ts` (`fetchSuggestions`/`fetchRewrite`,
+after a successful, non-skipped response, and again in the `catch` block
+for any non-429 failure — a provider error such as a 502 still settles its
+ledger row as `'failed'` server-side, so `used_today` goes stale unless the
+refresh fires there too. Never on a skip, since a skip never reserved a
+ledger row, and never on a 429, since a rejected reservation rolled back
+and consumed nothing).
 
 **The 429 transient notice.** All three LLM-invoking call sites
 (`controller.ts#runCheck`, `suggest.ts#fetchSuggestions`/`fetchRewrite`)
