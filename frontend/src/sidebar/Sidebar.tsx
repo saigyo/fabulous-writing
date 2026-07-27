@@ -142,7 +142,7 @@ export function Sidebar() {
       </div>
       {llmError && <div className="llm-error">{llmError}</div>}
       {llmEffective?.degraded && !llmEffective.skipped && (
-        <div className="llm-note">
+        <div className="llm-note" role="status">
           {m.llmDegraded(
             effectiveLabel(llmEffective.effective, m),
             effectiveLabel(llmEffective.requested, m),
@@ -150,7 +150,7 @@ export function Sidebar() {
         </div>
       )}
       {llmEffective?.skipped === 'llm_unavailable' && (
-        <div className="llm-note">
+        <div className="llm-note" role="status">
           {llmDisabled(user) ? m.llmNotIncluded : m.llmSkippedServer}
         </div>
       )}

@@ -57,9 +57,9 @@ describe('Sidebar degradation/skip notes', () => {
     useStore.setState({ llmEffective })
     render(<Sidebar />)
 
-    expect(
-      screen.getByText(en.llmDegraded(en.tierName('balanced'), en.tierName('quality'))),
-    ).toBeTruthy()
+    const note = screen.getByText(en.llmDegraded(en.tierName('balanced'), en.tierName('quality')))
+    expect(note).toBeTruthy()
+    expect(note.getAttribute('role')).toBe('status')
   })
 
   it('shows only the skip note when degraded AND skipped — nothing "ran"', () => {
@@ -75,7 +75,9 @@ describe('Sidebar degradation/skip notes', () => {
     expect(
       screen.queryByText(en.llmDegraded(en.tierName('balanced'), en.tierName('quality'))),
     ).toBeNull()
-    expect(screen.getByText(en.llmSkippedServer)).toBeTruthy()
+    const note = screen.getByText(en.llmSkippedServer)
+    expect(note).toBeTruthy()
+    expect(note.getAttribute('role')).toBe('status')
   })
 
   it('shows llmNotIncluded when skipped for a floor-policy user', () => {
@@ -88,7 +90,9 @@ describe('Sidebar degradation/skip notes', () => {
     useStore.setState({ llmEffective, user: user(FLOOR) })
     render(<Sidebar />)
 
-    expect(screen.getByText(en.llmNotIncluded)).toBeTruthy()
+    const note = screen.getByText(en.llmNotIncluded)
+    expect(note).toBeTruthy()
+    expect(note.getAttribute('role')).toBe('status')
   })
 
   it('shows llmSkippedServer when skipped for an unrestricted user', () => {
@@ -101,6 +105,8 @@ describe('Sidebar degradation/skip notes', () => {
     useStore.setState({ llmEffective, user: user(FULL) })
     render(<Sidebar />)
 
-    expect(screen.getByText(en.llmSkippedServer)).toBeTruthy()
+    const note = screen.getByText(en.llmSkippedServer)
+    expect(note).toBeTruthy()
+    expect(note.getAttribute('role')).toBe('status')
   })
 })
