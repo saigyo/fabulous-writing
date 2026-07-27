@@ -229,7 +229,7 @@ async def generate_name(
             # constructor raising something get_effective_provider does not
             # translate (a tier-only request cannot produce its 422).
             requested = RequestedLLM(tier="cheap")  # naming hard-selects the cheap route
-            effective, provider = get_effective_provider(
+            _effective, provider = get_effective_provider(
                 request.app, user, requested, document.language.value
             )
             if provider is not None:
