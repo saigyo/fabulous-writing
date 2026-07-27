@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from app.api.deps import CurrentUser, get_current_user
 from app.api.validation import validate_name
 from app.core.models import Language
+from app.core.permissions import features_for
 from app.services.ownership import GlobalReadOnlyError
 from app.services.profiles import Profile, ProfileStore
 from app.services.seed_profiles import standard_defaults
@@ -77,6 +78,10 @@ def create_profile(
     body: ProfileCreate,
     user: CurrentUser = Depends(get_current_user),
 ) -> Profile:
+    if "custom_profiles" not in features_for(
+        tier=user.tier, is_admin=user.is_admin, settings=request.app.state.settings
+    ):
+        raise HTTPException(403, "Your plan does not include custom profiles")
     name = validate_name(body.name, message="Profile name must not be empty")
     exceptions, domains = _pruned(
         request, body.language, body.rule_exceptions, body.domain_ids,

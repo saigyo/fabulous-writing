@@ -21,11 +21,13 @@ CREATE TABLE IF NOT EXISTS users (
     email TEXT NOT NULL UNIQUE COLLATE NOCASE,
     display_name TEXT,
     password_hash TEXT,
-    -- No CHECK on tier on purpose: tier names are policy data that M4 moves
-    -- into config.yaml, and SQLite cannot alter a CHECK without rebuilding
-    -- the table, so a constraint here would turn "add a tier" into a
-    -- migration. The API validates against the known names instead
-    -- (app/api/admin.py), which is where invalid input actually arrives.
+    -- No CHECK on tier on purpose: tier names are policy data, defined by
+    -- config.yaml's tiers: block (falling back to "basic"/"premium" when
+    -- that block is absent), and SQLite cannot alter a CHECK without
+    -- rebuilding the table, so a constraint here would turn "add a tier"
+    -- into a migration. The API validates against the configured names
+    -- instead (app/api/admin.py's _validate_tier_name), which is where
+    -- invalid input actually arrives.
     tier TEXT NOT NULL DEFAULT 'basic',
     is_admin INTEGER NOT NULL DEFAULT 0,
     is_active INTEGER NOT NULL DEFAULT 1,

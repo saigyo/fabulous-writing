@@ -6,7 +6,6 @@ be shipped without it.
 """
 
 import logging
-from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
@@ -20,21 +19,13 @@ router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(re
 logger = logging.getLogger(__name__)
 
 
-# Validated here rather than with a DB CHECK constraint: tiers are policy
-# data (M4 moves their definition into config.yaml), and SQLite cannot alter
-# a CHECK without a full table rebuild — so a constraint would make adding a
-# tier a migration. M4 replaces this Literal with validation against the
-# configured tier names.
-TierName = Literal["basic", "premium"]
-
-
 class UserCreate(BaseModel):
     # 320 is RFC 5321's ceiling for an address; matches LoginRequest.email
     # in app/api/auth.py.
     email: str = Field(max_length=320)
     password: str
     display_name: str | None = None
-    tier: TierName = "basic"
+    tier: str = "basic"
     is_admin: bool = False
 
     @field_validator("email")
@@ -58,7 +49,7 @@ class UserPatch(BaseModel):
     # tells "explicitly cleared" apart from "omitted" via
     # `model_fields_set`, not by whether the value is None.
     display_name: str | None = None
-    tier: TierName | None = None
+    tier: str | None = None
     is_admin: bool | None = None
     is_active: bool | None = None
     # None means "don't change the password" whether the field was omitted
@@ -84,6 +75,15 @@ class UserPatch(BaseModel):
 
 def _store(request: Request):
     return request.app.state.user_store
+
+
+def _validate_tier_name(request: Request, tier: str) -> None:
+    """Tier names are config-defined (spec §6.1). With no tiers block the
+    spec's two default names (§5.1) remain assignable — policy is
+    unrestricted for everyone in that state anyway."""
+    known = tuple(request.app.state.settings.tiers) or ("basic", "premium")
+    if tier not in known:
+        raise HTTPException(422, f"unknown tier '{tier}': must be one of {list(known)}")
 
 
 def _check_password_strength(password: str) -> None:
@@ -121,6 +121,7 @@ def create_user(
     request: Request, body: UserCreate, actor: CurrentUser = Depends(require_admin)
 ) -> User:
     _check_password_strength(body.password)
+    _validate_tier_name(request, body.tier)
     if body.is_admin:
         _guard_admin_creation(request, actor, body.email)
     store = _store(request)
@@ -157,6 +158,8 @@ def patch_user(
         raise HTTPException(409, "An admin cannot remove their own access")
     if body.is_admin and not existing.is_admin:
         _guard_admin_creation(request, actor, existing.email)
+    if body.tier is not None:
+        _validate_tier_name(request, body.tier)
 
     # `model_fields_set` (not "value is not None") decides what was
     # actually submitted: display_name can be explicitly cleared to null,
