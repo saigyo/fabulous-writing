@@ -1118,6 +1118,81 @@ the control disabled for the right reason.
 `planSuffix`); the dialog itself carries no creation gate, since editing a
 folder's defaults is not a create action.
 
+## LLM usage metering
+
+M5 gives the backend a per-run ledger, a daily quota, concurrency caps, and
+a size cap (`docs/backend-architecture.md#llm-usage-metering`). The
+frontend's job, as with M4's policy gating, is display and UI-level
+gating only — every limit is enforced server-side regardless of what the
+client shows.
+
+**`MeResponse.usage`/`limits` are the one display source.** `GET
+/api/auth/me` (`types.ts`) carries `usage: {used_today, limit}` and
+`limits: {max_document_chars, max_llm_document_chars,
+concurrent_llm_runs}` alongside the M4 `policy` payload. Nothing computes
+quota or size numbers locally — every number shown to the user reads
+straight off the current `store.user`.
+
+- **The quota indicator** (`App.tsx`): `{store.user.usage.used_today}/{store.user.usage.limit}`,
+  rendered next to the header's `LlmSelector` and hidden entirely (like the
+  selector itself) when `llmDisabled(store.user)` — showing a quota count
+  for an account with no LLM access at all would be noise, not information.
+- **The char-count dual thresholds** (`sidebar/Sidebar.tsx`): `docChars`
+  (live character count of the editor buffer) is compared against **two**
+  independent caps — `overLlm = docChars > user.limits.max_llm_document_chars`
+  and `overDoc = docChars > user.limits.max_document_chars` — and the
+  character-count line appends `charCountOverDoc` or `charCountOverLlm`
+  (checked in that order, so hitting the smaller, request-level document
+  cap always takes priority over the wider LLM cap note) when either fires.
+  These are advisory only: the byte-budget middleware and the gate's size
+  cap are what actually refuse a request.
+
+**`skipNoticeText` (`checking/skipNotice.ts`) is the one home for skip
+copy.** It maps an `EffectiveLlmReport.skipped`/`SuggestionResponse.skipped`
+code to display text — `quota_exhausted` → `m.llmQuotaExhausted(user?.usage.limit
+?? 0)`, `document_too_large` → `m.llmDocumentTooLarge(user?.limits.max_llm_document_chars
+?? 0)`, `llm_unavailable` → `llmDisabled(user) ? m.llmNotIncluded :
+m.llmSkippedServer` (the M4 split), anything else/`null` → `null`. Both
+`sidebar/Sidebar.tsx` (the check-time skip note, driven by
+`state.llmEffective`) and `checking/suggest.ts` (the on-demand
+suggestion/rewrite error, falling back to `m.llmSkippedServer` if
+`skipNoticeText` returns `null`) call this one function, so the sidebar
+note and a suggestion's error text can never drift apart on wording — the
+numbers themselves come from `/me` (`user.usage`/`user.limits`), never from
+the report, which carries only the code (a documented deviation from spec
+§6.4/§6.5 — see `docs/backend-architecture.md`'s LLM usage metering
+section and the roadmap's Cross-milestone interfaces).
+
+**`refreshUser()` and its call sites.** `auth/session.ts#refreshUser()` is
+a best-effort `/me` re-fetch so the quota indicator tracks reality after an
+LLM run, guarded exactly like `runRestore()` (a session change mid-flight
+drops the response; any failure is swallowed — freshness here is cosmetic,
+the backend enforces the real limit). It cannot be called directly from
+`checking/` without closing the same import cycle
+(`controller -> session -> documents -> hydration -> controller`,
+documented above under [Authentication](#authentication) for
+`checking/cancelSlot.ts`) — `auth/refreshSlot.ts` is the matching
+registration-slot leaf module (`setRefreshUserHandler`/`refreshUserNow()`)
+that breaks it the same way. Call sites: `checking/controller.ts#runCheck`
+(once a check that requested the LLM phase finishes — either synchronously,
+when the POST response's `status` is already `'done'`, or asynchronously,
+in the SSE subscription's `onDone` handler) and `checking/suggest.ts`
+(`fetchSuggestions`/`fetchRewrite`, after a successful, non-skipped
+response — never on a skip, since a skip never reserved a ledger row, and
+never on a 429, since a rejected reservation rolled back and consumed
+nothing).
+
+**The 429 transient notice.** All three LLM-invoking call sites
+(`controller.ts#runCheck`, `suggest.ts#fetchSuggestions`/`fetchRewrite`)
+catch `HttpError` with `status === 429` before any other error handling and
+show `m.serverBusy` ("Server busy — please retry shortly.") instead of a
+generic failure message — resetting `checkPhase`/pending state back to idle
+without touching auth in any way. This is spec §8's transient contract: a
+429 means the server is busy right now, not that anything is wrong with the
+request or the session, so it must never be treated as (or look like) an
+auth event, and never sets `llmError`/`suggestError` to anything that reads
+as a hard failure.
+
 ## Internationalization
 
 The UI ships seven locales (`i18n/{en,de,fr,es,it,ja,zh}.ts`) — independent of the
