@@ -1178,9 +1178,11 @@ that breaks it the same way. Call sites: `checking/controller.ts#runCheck`
 when the POST response's `status` is already `'done'`, or asynchronously,
 in the SSE subscription's `onDone` handler) and `checking/suggest.ts`
 (`fetchSuggestions`/`fetchRewrite`, after a successful, non-skipped
-response — never on a skip, since a skip never reserved a ledger row, and
-never on a 429, since a rejected reservation rolled back and consumed
-nothing).
+response, and again in the `catch` block for any non-429 failure — a
+provider error such as a 502 still settles its ledger row as `'failed'`
+server-side, so `used_today` goes stale unless the refresh fires there too.
+Never on a skip, since a skip never reserved a ledger row, and never on a
+429, since a rejected reservation rolled back and consumed nothing).
 
 **The 429 transient notice.** All three LLM-invoking call sites
 (`controller.ts#runCheck`, `suggest.ts#fetchSuggestions`/`fetchRewrite`)
