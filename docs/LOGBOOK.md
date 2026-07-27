@@ -3151,5 +3151,57 @@ before the Standard-only 409, matching update/delete. Final state: backend
 git-ignored SDD scratch workspace was removed after the clean round; the
 PR discussion and this entry are the durable record.
 
-**Next**: M4 — tiered LLM access (`tiers:` config, `resolve_llm_selection`,
-feature gates, frontend gating and degradation notes).
+## 2026-07-27 — M4: tiered LLM access
+
+PR: [#28](https://github.com/saigyo/fabulous-writing/pull/28), branch
+`multi-user-m4-implementation` (plan: [#27](https://github.com/saigyo/fabulous-writing/pull/27)).
+
+**Why.** M3 isolated *data* per user; M4 isolates *capability*. Until now
+every authenticated account could run any provider and model and create
+profiles and domains freely — untenable the moment accounts have different
+plans. M4 makes what a user may run a config decision (`tiers:` in
+`config.yaml`), enforced server-side, with the rule that a disallowed
+selection never errors: it degrades, visibly.
+
+**What.** `app/core/permissions.py` resolves every LLM request against the
+caller's tier policy per spec §6.2 — walk down the quality ladder, walk up
+if nothing below, fall back to a direct-only policy's first provider, or
+skip at the no-LLM floor — as a pure function under exhaustive table tests.
+One gate (`app/api/llm_gate.py::get_effective_provider`) fronts checks,
+suggestions, and document naming; nothing else touches the provider
+factory. Check responses and the SSE stream carry an `effective_llm` block
+(requested vs. effective, `degraded`, `skipped`); suggestions degrade to
+200-with-`skipped`; naming falls back silently. `/api/auth/me` gained the
+policy payload (null = unrestricted) and feature list; `/api/routing` and
+`/api/providers` per-entry `allowed` flags. Feature gates (`custom_profiles`,
+`custom_domains`) bind creation only — existing private items stay editable
+after a downgrade. Admin tier names now validate against the configured
+tier keys instead of a code Literal. Config validation fails closed
+throughout: `extra="forbid"` on every tier model *and* `Settings` itself
+(release note: unknown top-level `config.yaml` keys now abort startup),
+all-or-nothing per-tier `limits:` blocks, and unknown user tiers resolve
+to the floor with a warn-once diagnostic. The frontend gates every
+selection surface (header selector, profile editor, folder defaults) and
+every create affordance through `auth/policy.ts` over the `/me` payload,
+sends `llm_tier` so the server owns degradation — off-plan tiers
+deliberately bypass the client-side availability skip — and shows
+plan-aware notes (floor copy vs. server-unavailable copy split on
+`llmDisabled`). With no `tiers:` configured, behavior is unchanged.
+
+**Process.** Ten tasks, fresh implementer subagent each, review-gated; one
+task fix round (a missing regression test for the unconstructible-provider
+skip). The plan itself had been hardened through five Copilot rounds on
+PR #27 (24 findings), which showed downstream: eight of ten task reviews
+came back clean on the first pass. Final whole-branch review (Opus):
+MERGE-READY, all findings Minor — one fixed (an unused unpack), four
+parked with rulings recorded in the PR discussion (notably: the default
+header tier renders as off-plan for restricted users until a clamp-to-best-
+allowed lands, deferred to backlog). Guard tests mutation-verified;
+reviewers independently re-ran mutations at every stage. Final state:
+backend 995 passed (zero warnings), frontend 436 passed, lint and build
+clean. The SDD scratch workspace was removed after the clean final review;
+the PR discussion and this entry are the durable record.
+
+**Next**: M5 — metering (`llm_usage` ledger, `reserve_llm_run`, quotas,
+size caps, concurrency limits and 429 backpressure, skip reasons on the
+scorecard, frontend quota notices).
