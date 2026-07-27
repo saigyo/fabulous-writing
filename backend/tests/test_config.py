@@ -278,7 +278,8 @@ class TestTiersConfig:
     def test_incomplete_or_nonpositive_tier_limits_rejected(self):
         # Spec §6.1: a supplied limits block is all-or-nothing — missing,
         # null, or non-positive members are load-time errors (they would
-        # fail open once M5 enforces them). Absent block stays fine.
+        # fail open once M5 enforces them). Since M5, the block itself is
+        # also required (see test_tier_without_limits_block_is_rejected).
         complete = {
             "llm_checks_per_day": 20,
             "max_llm_document_chars": 20000,
@@ -297,14 +298,20 @@ class TestTiersConfig:
 
     def test_misspelled_tier_keys_fail_closed(self):
         # extra='forbid' on all three tier models: a typo must be a config
-        # error, never a silently-unrestricted policy.
+        # error, never a silently-unrestricted policy. Each sub-case supplies
+        # a complete `limits:` block so it fails for its own typo — not for
+        # the (now required) limits block being absent.
         with pytest.raises(ValidationError):  # 'provider' for 'providers'
             Settings.model_validate(
-                {"tiers": {"basic": {"llm": {"provider": ["ollama"]}}}}
+                {"tiers": {"basic": {
+                    "llm": {"provider": ["ollama"]}, "limits": self._LIMITS,
+                }}}
             )
         with pytest.raises(ValidationError):  # 'lmm' for 'llm'
             Settings.model_validate(
-                {"tiers": {"basic": {"lmm": {"tiers": ["local"]}}}}
+                {"tiers": {"basic": {
+                    "lmm": {"tiers": ["local"]}, "limits": self._LIMITS,
+                }}}
             )
         with pytest.raises(ValidationError):  # typo inside limits
             Settings.model_validate(
