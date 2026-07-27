@@ -138,6 +138,20 @@ describe('autosave', () => {
     expect(updateDocument).toHaveBeenCalledTimes(1) // no retry loop
   })
 
+  it('413 (over the char cap) does not schedule a retry, but a later edit tries again', async () => {
+    vi.mocked(updateDocument).mockRejectedValueOnce(new HttpError(413, 'too long'))
+    await flush()
+    expect(readSnapshot()?.dirty).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(60000) // well past any backoff interval
+    expect(updateDocument).toHaveBeenCalledTimes(1) // no retry fired
+
+    docText = 'hello world, edited'
+    noteChange()
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(updateDocument).toHaveBeenCalledTimes(2) // the edit triggers a fresh save
+  })
+
   it('generates a title once when a fallback-named doc passes 20 words', async () => {
     useStore.getState().patchDocMeta({ nameSource: 'fallback' })
     docText = Array.from({ length: 21 }, (_, i) => `w${i}`).join(' ')
