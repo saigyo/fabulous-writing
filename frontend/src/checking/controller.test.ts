@@ -21,8 +21,10 @@ vi.mock('../documents/autosave', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../documents/autosave')>()),
   flush: vi.fn().mockResolvedValue(undefined),
 }))
+vi.mock('../auth/refreshSlot', () => ({ refreshUserNow: vi.fn() }))
 
 import { HttpError, postCheck, subscribeCheck } from '../api/client'
+import { refreshUserNow } from '../auth/refreshSlot'
 import { bumpGeneration, resetAutosaveForTests } from '../documents/autosave'
 import { en as messages } from '../i18n/en'
 import { cancelInFlightCheck } from './cancelSlot'
@@ -264,6 +266,42 @@ describe('check controller', () => {
     await runCheck(true)
 
     expect(useStore.getState().llmEffective).toEqual(effective_llm)
+  })
+
+  it('does not refresh the quota indicator on a synchronous done result that was skipped (no ledger row was written)', async () => {
+    vi.mocked(postCheck).mockResolvedValue({
+      check_id: 'c1',
+      status: 'done',
+      findings: [],
+      effective_llm: {
+        requested: { tier: 'balanced', provider: null, model: null },
+        effective: { tier: 'balanced', provider: null, model: null },
+        degraded: false,
+        skipped: 'quota_exhausted',
+      },
+    } as never)
+
+    await runCheck(true)
+
+    expect(refreshUserNow).not.toHaveBeenCalled()
+  })
+
+  it('still refreshes a synchronous done result that was NOT skipped (guard stays correct if that path is ever reached)', async () => {
+    vi.mocked(postCheck).mockResolvedValue({
+      check_id: 'c1',
+      status: 'done',
+      findings: [],
+      effective_llm: {
+        requested: { tier: 'balanced', provider: null, model: null },
+        effective: { tier: 'balanced', provider: null, model: null },
+        degraded: false,
+        skipped: null,
+      },
+    } as never)
+
+    await runCheck(true)
+
+    expect(refreshUserNow).toHaveBeenCalled()
   })
 
   it('never includes llm in checkers for a floor-policy user, even when includeLlm is true', async () => {

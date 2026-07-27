@@ -213,6 +213,7 @@ async function push(snapshot: DocSnapshot): Promise<void> {
   const gen = currentGeneration()
   saving = true
   let succeeded = false
+  let overLimit = false
   try {
     const updated = await updateDocument(snapshot.docId, {
       revision: snapshot.revision,
@@ -259,6 +260,10 @@ async function push(snapshot: DocSnapshot): Promise<void> {
       // next noteChange() edit naturally triggers a fresh save attempt,
       // which succeeds once the text is back under the cap. The Task 9
       // char-count threshold mark already gives the user a visible signal.
+      // (`overLimit` lets the `finally` below tell this apart from the other
+      // failure branches, which each already have their own way of picking
+      // a pending edit back up — see the comment there.)
+      overLimit = true
     } else {
       scheduleRetry()
     }
@@ -282,6 +287,22 @@ async function push(snapshot: DocSnapshot): Promise<void> {
           // flush() callers waiting on it — pending until this follow-up
           // push has also settled.
           await flush()
+        } else if (overLimit) {
+          // The 413 branch above deliberately schedules no retry — but
+          // `pending` firing here means some *other* flush() call (e.g. the
+          // debounce timer from a further edit) arrived while this doomed
+          // PUT was in flight, and its own debounce timer has already fired
+          // getting it here, so nothing else will pick it up. Only act if
+          // that edit actually changed the content: an unrelated flush()
+          // (say, beforeunload) that saw nothing new must stay passive
+          // rather than re-send this same rejected snapshot. Scheduled
+          // through the normal debounce, not an immediate flush, so it goes
+          // through the same path (and cap check) as any other edit.
+          const buffered = readSnapshot()
+          if (buffered && !sameContent(buffered, snapshot)) {
+            if (timer) clearTimeout(timer)
+            timer = setTimeout(() => void flush(), DEBOUNCE_MS)
+          }
         }
       }
     }

@@ -97,11 +97,22 @@ async def create_suggestions(
             skipped=effective.skipped,
         )
     assert reservation is not None
+    # Both the request AND the parse of its output must complete before this
+    # run is recorded 'completed' -- an unparseable response still burned
+    # tokens, so (mirroring the checks path, where a post-provider failure
+    # in checker.check() likewise lands in the `except Exception` below) it
+    # must settle 'failed', not 'completed', before its 502 propagates.
     status = "completed"
     try:
         response = await provider.generate(system, prompt)
+        items = extract_json_array(response)
+        if items is None:
+            status = "failed"
+            raise HTTPException(502, "LLM response contained no JSON array")
     except asyncio.CancelledError:
         status = "cancelled"
+        raise
+    except HTTPException:
         raise
     except Exception as exc:
         status = "failed"
@@ -109,10 +120,6 @@ async def create_suggestions(
         raise HTTPException(502, f"LLM request failed: {detail}") from exc
     finally:
         reservation.finish(status)
-
-    items = extract_json_array(response)
-    if items is None:
-        raise HTTPException(502, "LLM response contained no JSON array")
 
     suggestions = [
         item.strip()
