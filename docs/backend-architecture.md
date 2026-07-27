@@ -19,10 +19,12 @@ backend/
 │   ├── core/
 │   │   ├── config.py            # Settings (YAML file + defaults); no secrets
 │   │   ├── auth.py              # secrets, password hashing, HS256 tokens, TokenVerifier
+│   │   ├── permissions.py       # LLMPolicy, policy_for/features_for, resolve_llm_selection (M4)
 │   │   └── models.py            # the Finding contract shared with the frontend
 │   ├── api/                     # one FastAPI router per resource
 │   │   ├── checks.py            # POST /api/checks + SSE event stream
 │   │   ├── suggestions.py       # on-demand LLM fixes and sentence rewrites
+│   │   ├── llm_gate.py          # get_effective_provider: the one path from a request to a provider
 │   │   ├── rules.py             # rule catalog + reload
 │   │   ├── terminology.py       # domain/term CRUD
 │   │   ├── profiles.py          # checking-profile CRUD + reset
@@ -74,7 +76,8 @@ backend/
 ```
 
 See [Authentication and user accounts](#authentication-and-user-accounts)
-below for the auth/admin/manage modules just added to this map.
+below for the auth/admin/manage modules just added to this map, and [Tiers
+and LLM policy](#tiers-and-llm-policy) for `permissions.py`/`llm_gate.py`.
 
 ## The Finding contract
 
@@ -990,14 +993,19 @@ anonymously (not just registered unauthenticated by omission).
 `app/services/users.py` adds two SQLite tables via the same idempotent
 `CREATE TABLE IF NOT EXISTS` pattern every other store uses: `users` (`id`,
 `external_id` — reserved for the future Supabase subject UUID, `email
-UNIQUE COLLATE NOCASE`, `display_name`, `password_hash`, `tier`
-(`basic`/`premium`, validated at the API layer rather than a DB `CHECK` —
-SQLite cannot alter a `CHECK` without rebuilding the table, so a constraint
-would turn "add a tier" into a migration), `is_admin`, `is_active`,
-`created_at`) and `admin_audit` (`id`, `actor_id` nullable, `target_id`,
-`field`, `old_value`, `new_value`, `created_at`) — one row per changed
-field, with `actor_id NULL` marking an action taken by the operator CLI
-rather than through a web session.
+UNIQUE COLLATE NOCASE`, `display_name`, `password_hash`, `tier` (a free-form
+string, validated at the API layer rather than a DB `CHECK` — SQLite cannot
+alter a `CHECK` without rebuilding the table, so a constraint would turn
+"add a tier" into a migration), `is_admin`, `is_active`, `created_at`) and
+`admin_audit` (`id`, `actor_id` nullable, `target_id`, `field`, `old_value`,
+`new_value`, `created_at`) — one row per changed field, with `actor_id NULL`
+marking an action taken by the operator CLI rather than through a web
+session. `tier` is **not** a code-level `Literal`: as of M4, valid tier
+names are whatever the deployment's `tiers:` config defines (see [Tiers and
+LLM policy](#tiers-and-llm-policy) below) — `basic`/`premium` are only the
+fallback names `app/api/admin.py#_validate_tier_name` accepts when no
+`tiers:` block is configured at all, not a fixed enum baked into the schema
+or the model.
 
 `User` (the pydantic model every caller sees) never carries
 `password_hash`, so no code path can leak it into an API response by
@@ -1309,6 +1317,186 @@ session outstanding at the moment of an upgrade is signed out exactly once. User
 log in again; the 24-hour token TTL means this is a one-time event per session, not a
 recurring one.
 
+## Tiers and LLM policy
+
+Milestone 4 adds a **user-tier** access model on top of the four **quality
+tiers** (`quality|balanced|cheap|local`, `TIERS` in `app/core/config.py`)
+that already governed check routing. The two are different vocabularies:
+a quality tier is *what a check can run with*; a user tier (config key
+under `tiers:`, e.g. `basic`/`premium`) is *what an account is allowed to
+select* — a per-deployment policy name, not a fixed enum. With no `tiers:`
+block configured, M4 is inert by design: every caller gets the unrestricted
+policy and behavior is byte-identical to pre-M4.
+
+### `tiers:` config
+
+`Settings.tiers: dict[str, TierSettings]` (`app/core/config.py`) maps a user
+tier name to its policy. Every model on this path sets `extra="forbid"`
+(`TierSettings`, `TierLLMSettings`, `TierLimitsSettings`, and `Settings`
+itself) — a misspelled key is a config-load error, not a silently-ignored
+extra, because access policy must not fail open on a typo:
+
+- **`llm`** (`TierLLMSettings`): `tiers`, `providers`, and `models` each
+  default to the literal string `"all"` (unrestricted for that dimension);
+  when overridden, `tiers` is checked against the fixed quality-tier ladder
+  and `providers`/`models` are checked against `known_provider_names()`
+  (the five built-ins plus configured `extra_providers`) by a
+  `Settings`-level `model_validator`, since only `Settings` knows the
+  configured extras.
+- **`limits`** (`TierLimitsSettings`, optional — reserved for M5's
+  quota/concurrency enforcement): `llm_checks_per_day`,
+  `max_llm_document_chars`, `concurrent_llm_runs`. **All-or-nothing**: if a
+  `limits:` block is present at all, every one of the three fields is
+  required and must be positive — a partially-specified block would fail
+  open the moment M5 starts enforcing it, so M4 refuses to load a config
+  that could produce that gap even though M4 itself never reads `limits`.
+- **`features`** (`list[str]`, default `[]`): must be a subset of
+  `KNOWN_FEATURES` (`app/core/config.py`, currently `("custom_profiles",
+  "custom_domains")`) — a closed set, so a typo cannot silently withhold or
+  silently grant a capability.
+
+### `app/core/permissions.py` — policy vocabulary and resolution
+
+Pure module, no I/O: `LLMPolicy` (`tiers`, `providers`, `models`, each
+`None` meaning unrestricted) is what `policy_for(tier, is_admin, settings)`
+builds from a `TierSettings.llm` block; `features_for(tier, is_admin,
+settings)` does the same for the feature set. Both share `_tier_config`,
+which looks the caller's tier name up in `settings.tiers` and, on a miss,
+**warns once per unknown tier name** (not once per request — policy
+resolution runs on every check) before falling back to the fail-closed
+`NO_LLM_POLICY` (`tiers=(), providers=(), models=None` — the §6.2 floor).
+Two bypass cases return `FULL_POLICY` (every dimension `None`): an admin
+caller, and a deployment with `settings.tiers` empty (no config at all).
+
+`resolve_llm_selection(policy, requested, language, *, settings) ->
+EffectiveSelection` (`RequestedLLM` in, `EffectiveSelection` out — both
+frozen dataclasses) is the graceful-degradation ladder (spec §6.2):
+
+1. A tier-mode request (`requested.tier` set) whose tier is in
+   `policy.tiers` (or `policy.tiers is None`) resolves as-is.
+2. Otherwise it walks the fixed `TIERS` ladder **down** first (cheaper
+   quality tiers), then, if none of those are allowed, **up** from the
+   original tier — always the *nearest* allowed tier in that search order,
+   never an arbitrary allowed one.
+3. A direct-mode request (`requested.provider` set, tier `None`) whose
+   provider is off-policy falls back to tier routing at the best (highest
+   quality) allowed quality tier, if the policy's tier list isn't empty.
+4. An empty `policy.tiers` (direct-only policy) resolves through
+   `_direct_fallback`: the policy's first allowed provider (config order —
+   `providers` keeps the list order specifically so the first entry can
+   serve as the degradation substitute) with its first allowlisted or
+   default model; both `providers` and `tiers` empty is the floor —
+   `EffectiveSelection(provider=None, skipped="llm_unavailable")`.
+5. A granted tier with no routing-table entry for the caller's language
+   still resolves to `skipped="llm_unavailable"` rather than being silently
+   rerouted — a granted-but-unconfigured tier behaves exactly like today's
+   pre-M4 missing-routing-entry case.
+
+**Fail-closed unknown-tier rule**: a user row whose `tier` doesn't match
+any configured `tiers:` key (a typo, a renamed tier, or simply no `tiers:`
+block with a non-empty `tier` column value) gets `NO_LLM_POLICY` — the LLM
+phase is skipped with a visible degradation note, never a 500 and never
+silently unrestricted.
+
+`EffectiveSelection.degraded` is `True` whenever the caller got something
+other than exactly what they asked for; `skipped` (currently only
+`"llm_unavailable"`; M5 adds quota/size codes) means the LLM phase does not
+run at all. Degradation is always visible to the caller (spec §6.2) — see
+`effective_llm` below.
+
+### The single gate: `app/api/llm_gate.py`
+
+`get_effective_provider(app, user, requested, language)` is the **only**
+place any endpoint may turn a caller's LLM request into a constructed
+`LLMProvider`. It 422s only for an unknown *direct* provider name (a
+tier-mode request's `provider`/`model` fields are ignored by contract, so
+they must never 422); otherwise it resolves the policy via `policy_for` +
+`resolve_llm_selection` and constructs the provider through
+`app.state.provider_factory`. A `ValueError` from the factory (the routing
+table can reference an optional extra provider this server hasn't
+configured — that's "not configured," not a server error) downgrades the
+selection to `skipped="llm_unavailable"` rather than raising. **No route
+touches `app.state.provider_factory` directly** — checks, suggestions, and
+document auto-naming all resolve through this one gate, so tier policy
+cannot be bypassed by a new call site forgetting to check it. M5 extends
+this same gate with the size cap and the quota/concurrency reservation,
+layered around `resolve_llm_selection` in that order.
+
+`effective_llm_report(requested, effective)` builds the wire shape
+(`EffectiveLlmReport`/`LlmSelectionInfo`, `app/core/models.py`): requested
+vs. effective tier/provider/model, `degraded`, `skipped`.
+
+### `effective_llm` on checks
+
+`POST /api/checks`'s response, `GET /api/checks/{id}`, and the SSE stream
+all carry `effective_llm: EffectiveLlmReport | None` (`CheckJob.effective_llm`
+in `app/services/jobs.py`) — set once the LLM phase's selection is resolved,
+and emitted as its own SSE event (`effective_llm`) so a streaming client
+learns about degradation without waiting for `done`. `POST
+/api/suggestions` reports the same shape inline (`skipped` on the response)
+rather than as an event, since it has no stream. Document auto-naming
+(`generate_name`, see [Documents](#documents)) hard-selects the `cheap`
+quality tier and runs through the same gate, but — matching its existing
+silent-fallback contract — never surfaces `effective_llm` to the caller; a
+skip there just falls through to the fallback name.
+
+### The `/me` policy payload
+
+`GET /api/auth/me` (`MeResponse.policy: PolicyPayload`, `app/api/auth.py`)
+carries `llm: LlmPolicyPayload` (`tiers`/`providers`/`models`, each `null`
+meaning unrestricted — the wire encoding of `LLMPolicy`'s `None`) and
+`features: list[str]` (a `KNOWN_FEATURES`-ordered subset, so the payload is
+deterministic). This is the M4 half of `/api/auth/me`'s cross-milestone
+promise (M1: identity; M4: this; M5: quota/size/concurrency limits) — see
+the roadmap's Cross-milestone interfaces. The frontend's single gating
+source, `auth/policy.ts`, is built entirely on top of this payload (see
+`docs/frontend-architecture.md`).
+
+### `allowed` flag semantics (spec §7.2)
+
+Both `GET /api/routing` and `GET /api/providers` annotate their entries
+with a per-entry `allowed: boolean`, and the two mean **different things**:
+
+- **`/api/routing`**'s `allowed` (`app/api/routing.py`) is per
+  *quality tier*: `policy.tiers is None or tier in policy.tiers` — can this
+  caller select this quality tier at all, whether directly or as a check's
+  routed choice.
+- **`/api/providers`**'s `allowed` (`app/api/providers.py`) is per
+  *provider*, and means allowed for **direct selection** specifically:
+  `policy.providers is None or entry.name in policy.providers`. A provider
+  outside `policy.providers` can still serve a routed quality-tier run
+  (§6.2 rule 3) — direct pinning and tier routing are independent axes of
+  the same policy, so a provider being off-limits to pin directly does not
+  make it unreachable through tier routing, and vice versa.
+
+Both flags are advisory for the UI only — `resolve_llm_selection` is what
+actually enforces the policy server-side regardless of what a client sends.
+
+### Feature gates are creation-only
+
+`custom_profiles`/`custom_domains` (checked via `features_for`) gate
+**creating** a private profile or domain/term — `POST /api/profiles`
+(`app/api/profiles.py`), `POST /api/domains` and `POST
+/api/domains/{id}/terms` (`app/api/terminology.py`). They do **not** gate
+reading, editing, or deleting anything a caller already owns or any global
+row: a tier that loses `custom_profiles` after a user has already created
+private profiles does not retroactively lock them out of those profiles —
+only new creation is refused (403, the same shape as every other
+feature/ownership refusal). This mirrors the frontend's create-affordance
+gating (`docs/frontend-architecture.md`): hiding the "+" button, never
+disabling existing rows.
+
+### Admin tier-name validation source
+
+`app/api/admin.py#_validate_tier_name` validates a tier name assigned via
+`POST`/`PATCH /api/admin/users` against `tuple(request.app.state.settings.tiers)
+or ("basic", "premium")` — the configured `tiers:` keys when any exist,
+falling back to the two names spec §5.1 reserves as defaults only when no
+`tiers:` block is configured at all (a state where policy is unrestricted
+for everyone regardless of the name assigned, so the fallback names are
+inert placeholders, not a hardcoded enum). An unrecognized name 422s with
+the actual known set in the message.
+
 ## API surface
 
 Every endpoint below requires a valid `Authorization: Bearer <token>` caller **except**
@@ -1324,12 +1512,12 @@ Every endpoint below requires a valid `Authorization: Bearer <token>` caller **e
 | `GET/POST/PUT/DELETE /api/profiles`, `POST /api/profiles/{id}/reset` | profile CRUD |
 | `GET/POST/PUT/DELETE /api/documents`, `POST /api/documents/{id}/generate-name` | revision-guarded document CRUD + auto-titling (see [Documents](#documents)) |
 | `GET/POST/PUT/DELETE /api/folders` | folder CRUD, lossless delete, read-time defaults pruning (see [Folders](#folders)) |
-| `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/password` | local login/session/password-change; `/login` is public, `/me` and `/password` require a caller (see [Authentication](#authentication-and-user-accounts)) |
+| `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/password` | local login/session/password-change; `/login` is public, `/me` and `/password` require a caller, `/me` carries the M4 policy/feature payload (see [Authentication](#authentication-and-user-accounts), [Tiers and LLM policy](#tiers-and-llm-policy)) |
 | `GET/POST/PATCH /api/admin/users` | admin user management, `require_admin` at router level (see [Authentication](#authentication-and-user-accounts)) |
 | `PUT /api/folders/{id}/defaults` | full-replace a folder's per-folder defaults; 422 matrix + 404 (see [Per-folder defaults](#per-folder-defaults)) |
 | `POST /api/documents/{id}/move` | revision-free move of a document into/out of a folder |
-| `GET /api/providers` | provider availability + model discovery |
-| `GET /api/routing` | tier routing table with per-tier availability + reason |
+| `GET /api/providers` | provider availability + model discovery; per-provider `allowed` (direct-selection policy, see [Tiers and LLM policy](#tiers-and-llm-policy)) |
+| `GET /api/routing` | tier routing table with per-tier availability + reason + `allowed` (quality-tier policy) |
 | `GET /api/languages` | languages + NLP model status |
 | `GET /api/health` | liveness |
 

@@ -30,6 +30,7 @@ frontend/src/
 ├── state/store.ts            # the zustand store (single source of app state)
 ├── auth/
 │   ├── session.ts             # login/logout/expireSession/restoreSession, generation counter
+│   ├── policy.ts               # tierAllowed/providerAllowed/modelAllowed/hasFeature/llmDisabled
 │   ├── LoginGate.tsx          # renders LoginForm while anonymous, children once authStatus is ok
 │   ├── LoginForm.tsx          # email/password form, posts to login()
 │   └── AccountMenu.tsx        # signed-in email, password-change dialog, log out
@@ -1012,6 +1013,110 @@ work survives. `logout()` additionally cancels any in-flight check
 invalidates pending document writes before clearing state, so a check or a save that
 was mid-flight when the user logged out cannot land after the session that started it
 is gone.
+
+## Tiers and policy gating
+
+M4 gives the backend a per-user-tier LLM policy and creation feature flags
+(`docs/backend-architecture.md#tiers-and-llm-policy`), delivered to the
+client on `GET /api/auth/me`'s `policy` field. The frontend's job is UI
+gating only — disabling or hiding what the caller cannot use — never
+enforcement; the server degrades or refuses regardless of what the client
+sends.
+
+**`auth/policy.ts` is the single gating source.** Every component that
+needs to know "is this tier/provider/model/feature available to the
+current user" calls one of its five pure functions
+(`tierAllowed`/`providerAllowed`/`modelAllowed`/`hasFeature`/`llmDisabled`),
+all built on `store.user.policy` (the `/me` response, `MeResponse` in
+`api/client.ts`) — never on the `allowed` flags `GET /api/routing` and
+`GET /api/providers` also carry. Those two API-level flags exist for other
+consumers of those endpoints (a future non-browser client, or a script);
+the frontend has its own client-side mirror of the same policy so gating
+logic lives in one typed module instead of being scattered across whatever
+component happens to render a tier/provider/model list. A `null` user
+(session not yet restored) or a `null` policy dimension means unrestricted
+— this is cosmetic parity with the backend's own `None`-means-unrestricted
+`LLMPolicy`, not a separate decision.
+
+**The `llm_tier` request field: who resolves what.** `POST /api/checks`
+carries `llm_tier` (plus `llm_provider`/`llm_model` in pinned mode) built
+by `checking/controller.ts#runCheck`. Two independent resolutions happen
+before that request goes out, and they check different things:
+
+- **Client: availability.** `checking/routing.ts#resolveModel` resolves
+  the header's choice to a concrete provider/model — tier mode looks the
+  tier up in the fetched routing table and fails explicitly
+  (`{ok: false, reason}`) if the entry is missing or unavailable; pinned
+  mode resolves the explicit pair. This has **nothing to do with policy**
+  — it is the same routing-availability check that predates M4.
+- **Server: policy.** `resolve_llm_selection` (backend) is what actually
+  decides whether the requested tier/provider is allowed for this caller,
+  degrading gracefully per spec §6.2 if not.
+
+**Off-plan tiers deliberately bypass the client availability check** —
+`runCheck` computes `offPlanTier = state.tier !== null &&
+!tierAllowed(state.user, state.tier)` and, when true, still sends the
+request (`wantLlm` short-circuits past `resolution.ok`) even if that
+tier's own route happens to be locally reported unavailable: the server
+will degrade an off-plan tier to a different one the client cannot
+pre-compute, so blocking the request client-side would block the very
+degradation §6.2 exists to perform. The client's own availability check
+still applies normally to an *on-plan* tier — a client-visible outage is
+still reported as `llmSkipped`, not silently retried against the server.
+
+**`llmEffective` and the Sidebar notes.** `state.llmEffective:
+EffectiveLlm | null` (`state/store.ts`) is set from each check response's
+`effective_llm` (`result.effective_llm ?? null`) and cleared on every new
+check/cancel. `sidebar/Sidebar.tsx` renders two independent notes off it:
+
+- `llmEffective?.degraded && !llmEffective.skipped` — a `.llm-note` naming
+  both the effective and originally-requested tier/provider/model
+  (`m.llmDegraded(effectiveLabel(effective), effectiveLabel(requested))`):
+  the check ran, just not with what was asked for.
+- `llmEffective?.skipped === 'llm_unavailable'` — a `.llm-note` that
+  branches on **why** the LLM phase didn't run at all, using `llmDisabled`
+  to distinguish a policy floor from a server-side configuration gap:
+  `llmDisabled(user) ? m.llmNotIncluded : m.llmSkippedServer` — the first
+  reads as "your plan doesn't include this," the second as "the LLM check
+  couldn't run" (a missing routing entry, an unconfigured provider), so
+  the same skip code never shows a policy message to a caller whose policy
+  had nothing to do with the skip.
+
+**The floor hides `LlmSelector` entirely.** `llmDisabled(user)` (both
+`policy.llm.tiers` and `policy.llm.providers` empty — the §6.2 floor, a
+tier with no LLM access at all) makes `header/LlmSelector.tsx` return
+`null` outright — after its hooks, so React's rules of hooks hold
+regardless of which branch is taken — rather than rendering a
+selector full of disabled options. `App.tsx`'s auto-check toggle button is
+gated the same way (`{!llmDisabled(store.user) && <button ...>}`), since
+toggling auto-LLM-checking is meaningless when the phase can never run.
+Short of the floor, individual tier/provider/model options stay visible
+but `disabled` (via `tierAllowed`/`providerAllowed`/`modelAllowed`, with an
+`m.planSuffix` label) so a restricted caller can still see what exists,
+just not select it.
+
+**Feature-gated create affordances.** `hasFeature(user, 'custom_profiles')`
+and `hasFeature(user, 'custom_domains')` gate the **creation** entry points
+only, mirroring the backend's creation-only feature-gate scope
+(`docs/backend-architecture.md#feature-gates-are-creation-only`):
+`profiles/ProfilesView.tsx`'s `canCreate` hides the "+ New profile"
+affordance; `terminology/TerminologyView.tsx`'s `canCreate` hides "+ Add
+domain" and each domain's "+ Add term" row. Neither gate touches editing,
+deleting, or viewing anything the caller already owns or any global row —
+those stay governed entirely by the pre-existing `is_global`/`isAdmin`
+ownership affordances (see [`is_global` affordances and the
+domains-fetch guard](#is_global-affordances-and-the-domains-fetch-guard)
+above), which are orthogonal to feature gating. `ProfilesView.tsx`'s
+per-profile LLM controls (tier buttons, provider/model selects, the pin
+button) are gated by **both** axes at once — `disabled={readOnly ||
+!tierAllowed(...)}` and so on — `readOnly` (the M3 ownership check) and
+the M4 policy check are combined, never one replacing the other, so a
+non-admin viewing their own private but off-plan-tier profile still sees
+the control disabled for the right reason.
+`documents/FolderDefaultsDialog.tsx`'s quality-tier options apply
+`tierAllowed` the same way (`disabled={!tierAllowed(user, tier)}` +
+`planSuffix`); the dialog itself carries no creation gate, since editing a
+folder's defaults is not a create action.
 
 ## Internationalization
 
