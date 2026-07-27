@@ -302,7 +302,10 @@ def test_configured_names_replace_defaults(tmp_path):
             Settings(
                 db_path=tmp_path / "test.db",
                 rules_dir=tmp_path / "rules",
-                tiers={"gold": {"llm": {}}},
+                tiers={"gold": {"llm": {}, "limits": {
+                    "llm_checks_per_day": 100, "max_llm_document_chars": 100000,
+                    "concurrent_llm_runs": 5,
+                }}},
             )
         )
     )

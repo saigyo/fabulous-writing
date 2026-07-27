@@ -326,7 +326,9 @@ def _read_sse_events(stream) -> list[tuple[str, dict]]:
 
 
 TIERS_CONFIG = {
-    "basic": {"llm": {"tiers": ["local"], "providers": ["ollama"]}},
+    "basic": {"llm": {"tiers": ["local"], "providers": ["ollama"]}, "limits": {
+        "llm_checks_per_day": 100, "max_llm_document_chars": 100000, "concurrent_llm_runs": 5,
+    }},
 }
 
 
@@ -498,7 +500,9 @@ class TestEffectiveLlm:
         assert factory.calls == [("ollama", "mistral-nemo:12b-instruct-2407-q6_K")]
 
     def test_floor_user_gets_skipped_not_error(self, tmp_path: Path) -> None:
-        tiers = {"basic": {"llm": {"tiers": [], "providers": []}}}
+        tiers = {"basic": {"llm": {"tiers": [], "providers": []}, "limits": {
+            "llm_checks_per_day": 100, "max_llm_document_chars": 100000, "concurrent_llm_runs": 5,
+        }}}
         app, factory = _app_with_tiers(tmp_path, tiers)
         with TestClient(app) as client:
             headers = second_user_headers(client)  # non-admin, tier 'basic'
