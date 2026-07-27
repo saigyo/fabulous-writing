@@ -375,7 +375,6 @@ class TestReservationRow:
         assert row["user_id"] == 1
         assert row["status"] == "started"
         assert row["day"] == "2026-07-27"
-
         assert row["created_at"].startswith(row["day"])
         assert row["llm_tier"] == "cheap"
         assert row["provider"] == "ollama"
@@ -1394,7 +1393,7 @@ Add `from app.api.llm_gate import LlmReservation, effective_llm_report, get_effe
 
 - [ ] **Step 5: Run the tests**
 
-`uv run pytest tests/test_check_api.py tests/test_usage.py -q`, then the full suite. **Expected fallout:** `tests/test_suggestions_api.py` and `tests/test_documents_api.py` fail at the old 2-tuple call sites in `app/api/suggestions.py` / `documents.py` — un-awaited, the new coroutine raises `TypeError: cannot unpack non-sequence` and leaves a `RuntimeWarning: coroutine ... was never awaited`, which the zero-warnings gate turns into a hard failure. To keep this task's commit green, Task 4 includes the *minimal mechanical* signature migration of both call sites (add `await`, the three keyword args with `run_id=str(uuid.uuid4())`, `source="suggestion"`/`"name"`, unpack the 3-tuple, and finish the reservation around the single `provider.generate` call in each — exactly the code Task 5 shows in full). Task 5 then owns the behavior tests and any refinement.
+`uv run pytest tests/test_check_api.py tests/test_usage.py -q`, then the full suite. **Expected fallout:** `tests/test_suggestions_api.py` and `tests/test_documents_api.py` fail at the old 2-tuple call sites in `app/api/suggestions.py` / `documents.py` — un-awaited, the new coroutine raises `TypeError: cannot unpack non-iterable coroutine object` and leaves a `RuntimeWarning: coroutine ... was never awaited`, which the zero-warnings gate turns into a hard failure. To keep this task's commit green, Task 4 includes the *minimal mechanical* signature migration of both call sites (add `await`, the three keyword args with `run_id=str(uuid.uuid4())`, `source="suggestion"`/`"name"`, unpack the 3-tuple, and finish the reservation around the single `provider.generate` call in each — exactly the code Task 5 shows in full). Task 5 then owns the behavior tests and any refinement.
 
 Zero warnings (watch for un-awaited-coroutine warnings from any missed call site — grep: `grep -rn "get_effective_provider" backend/app backend/tests`).
 
@@ -1868,14 +1867,14 @@ git commit -m "feat(auth): /me reports usage, limits and the admin switch (M5)"
 **Files:**
 - Modify: `frontend/src/types.ts`, `frontend/src/api/client.ts`
 - Modify: `frontend/src/auth/session.ts`
-- Create: `frontend/src/checking/skipNotice.ts`
+- Create: `frontend/src/auth/refreshSlot.ts`, `frontend/src/checking/skipNotice.ts`
 - Modify: `frontend/src/checking/controller.ts`, `frontend/src/checking/suggest.ts`
 - Modify: `frontend/src/i18n/messages.ts` + all seven catalogs
 - Test: `frontend/src/checking/skipNotice.test.ts`, additions to `controller.test.ts`, `suggest.test.ts`; the fixture repair sweep across existing tests
 
 **Interfaces:**
 - Consumes: Task 7's payload shapes.
-- Produces: `UsagePayload`/`LimitsPayload` types; `MeResponse` with **required** `usage`, `limits`, `allow_additional_admins`; `refreshUser(): Promise<void>` (`auth/session.ts`); `skipNoticeText(code: string | null | undefined, user: MeResponse | null, m: Messages): string | null` (`checking/skipNotice.ts`) — Task 9's Sidebar uses it.
+- Produces: `UsagePayload`/`LimitsPayload` types; `MeResponse` with **required** `usage`, `limits`, `allow_additional_admins`; `refreshUser(): Promise<void>` (`auth/session.ts`) reached via `setRefreshUserHandler`/`refreshUserNow` (`auth/refreshSlot.ts`); `skipNoticeText(code: string | null | undefined, user: MeResponse | null, m: Messages): string | null` (`checking/skipNotice.ts`) — Task 9's Sidebar uses it.
 
 - [ ] **Step 1: Types and client**
 
@@ -2272,7 +2271,7 @@ Mutation-verify: remove `role="status"` → the two new tests and the M4 ones fa
 Failing tests first — quota-indicator cases in `App.test.tsx` (render the app shell with a signed-in fixture user), char-count cases in `Sidebar.notes.test.tsx` (it already renders the Sidebar with a fixture user and store state):
 
 - Quota indicator: visible for a signed-in user showing `0/20`-style text from the fixture's `usage`; carries `title === messages.quotaIndicatorTitle`; **absent** when `llmDisabled(user)` (floor policy) and absent when logged out.
-- Char count: with `docChars` between the LLM cap and the global cap, shows `messages.charCount(n)` plus `messages.charCountOverLlm`; above the global cap shows `messages.charCountOverDoc` (and not the LLM suffix — the two thresholds are marked *distinctly*, spec §8); below both, no suffix.
+- Char count: with `docChars` between the LLM cap and the global cap, shows `messages.charCount(n)` plus `messages.charCountOverLlm`; above the global cap shows `messages.charCountOverDoc` (and not the LLM suffix — the two thresholds are marked *distinctly*, spec §8); below both, no suffix. Note the fixture: Task 8's sweep block sets BOTH caps to 200000, leaving no between-the-caps range — these tests override `limits.max_llm_document_chars` to e.g. 20000, which means widening `Sidebar.notes.test.tsx`'s user-fixture helper to accept overrides (`Partial<MeResponse>`-style) if it does not already.
 
 Implementation:
 
@@ -2375,4 +2374,4 @@ git commit -m "docs: M5 metering architecture notes, roadmap as-built, logbook"
 2. **Placeholders.** Task 4's test list and parts of Task 6's are specified as required-behavior descriptions against existing fixtures rather than verbatim code — deliberate, because those fixtures' exact helper names live in files this plan does not reproduce; each entry names the exact assertions. No TBDs remain.
 3. **Type consistency.** `QuotaDecision.kind` strings match the gate's checks (Tasks 2/4); `LlmReservation.finish(status, *, output_tokens)` matches all three call sites (Tasks 4/5); `UsagePayload`/`LimitsPayload` field names match TS mirrors (Tasks 7/8); `skipNoticeText` signature matches Sidebar/suggest usage (Tasks 8/9); `limits_for` keyword-only shape matches `policy_for`/`features_for` (M4 house style).
 4. **Known intentional deviations**, for the reviewer's benefit: reservation handle keys on row id, not run_id (Design decision 3); provider construction precedes reservation (decision 2); naming propagates only HTTPException (decision 6); `parse-failure-after-generate` counts as `completed` (Task 5 note); the `effective_llm` report carries the skip code without the inline limit/reset numbers §6.4/§6.5 describe (decision 7, recorded in the roadmap by Task 10).
-5. **Review round 1 (2026-07-27):** Copilot could not review the file (over its per-file size limit — four attempts), so an agent-based consistency review ran instead: 1 Critical (a `checking/* → auth/session.ts` import closing the documented `controller → session → documents → hydration → controller` cycle — fixed with the `auth/refreshSlot.ts` leaf), 3 Important (an unpassable sweep-test fixture; the default `limits.admin.concurrent_llm_runs=5` vs lowered server caps in fixtures; a missing ordering guard for size-cap-before-resolve) and 12 Minor findings — all applied.
+5. **Review round 1 (2026-07-27):** Copilot could not review the file (over its per-file size limit — four attempts), so an agent-based consistency review ran instead: 1 Critical (a `checking/* → auth/session.ts` import closing the documented `controller → session → documents → hydration → controller` cycle — fixed with the `auth/refreshSlot.ts` leaf), 3 Important (an unpassable sweep-test fixture; the default `limits.admin.concurrent_llm_runs=5` vs lowered server caps in fixtures; a missing ordering guard for size-cap-before-resolve) and 12 Minor findings — all applied. A scoped re-verification confirmed every fix (arithmetic re-derived) and surfaced three documentation-level minors (refreshSlot in Task 8's Files/Interfaces; the char-count between-the-caps fixture needing a lowered LLM cap; two cosmetic wordings), also applied. Verdict: ready to execute.
