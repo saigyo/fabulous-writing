@@ -1,4 +1,5 @@
 import { postSuggestions } from '../api/client'
+import { llmDisabled, tierAllowed } from '../auth/policy'
 import { currentGeneration } from '../documents/autosave'
 import { getEditorView } from '../editor/editorRef'
 import { findingsField } from '../editor/findings'
@@ -29,6 +30,17 @@ export async function fetchSuggestions(findingId: string): Promise<void> {
     const result = await requestForFinding(findingId, 'span')
     if (gen !== currentGeneration()) return // session ended: drop the response
     if (result) {
+      if (result.skipped) {
+        useStore
+          .getState()
+          .setSuggestError(
+            findingId,
+            llmDisabled(useStore.getState().user)
+              ? currentMessages().llmNotIncluded
+              : currentMessages().llmSkippedServer,
+          )
+        return
+      }
       const vetoed = noReliableSuggestionMessage(
         result.suggestions,
         result.rejected,
@@ -83,6 +95,17 @@ export async function fetchRewrite(findingId: string): Promise<void> {
     const result = await requestForFinding(findingId, 'sentence')
     if (gen !== currentGeneration()) return // session ended: drop the response
     if (result) {
+      if (result.skipped) {
+        useStore
+          .getState()
+          .setRewriteError(
+            findingId,
+            llmDisabled(useStore.getState().user)
+              ? currentMessages().llmNotIncluded
+              : currentMessages().llmSkippedServer,
+          )
+        return
+      }
       const vetoed = noReliableSuggestionMessage(
         result.suggestions,
         result.rejected,
@@ -132,7 +155,12 @@ async function requestForFinding(findingId: string, scope: 'span' | 'sentence') 
   if (!item) return null
   const state = useStore.getState()
   const resolution = resolveModel(state)
-  if (!resolution.ok) {
+  // Same off-plan bypass as controller.ts's runCheck(): an off-plan tier's
+  // local availability is irrelevant, since the server degrades to a tier
+  // the client cannot pre-check. Only a null (pinned) or policy-allowed
+  // tier's own unavailability blocks the request client-side.
+  const offPlanTier = state.tier !== null && !tierAllowed(state.user, state.tier)
+  if (!resolution.ok && !offPlanTier) {
     throw new Error(currentMessages().llmSkipped(resolution.reason))
   }
   return postSuggestions({
@@ -142,8 +170,9 @@ async function requestForFinding(findingId: string, scope: 'span' | 'sentence') 
     language: state.language,
     scope,
     rule_id: item.finding.rule_id,
-    llm_provider: resolution.provider,
-    llm_model: resolution.model,
+    llm_tier: state.tier,
+    llm_provider: state.tier === null && resolution.ok ? resolution.provider : null,
+    llm_model: state.tier === null && resolution.ok ? resolution.model : null,
     llm_instructions: activeProfile(state)?.llm_instructions ?? '',
   })
 }

@@ -16,6 +16,7 @@ import { applyProfileToHeader } from '../profiles/profile'
 import type { Scorecard } from '../scoring/score'
 import type {
   Domain,
+  EffectiveLlm,
   Language,
   LanguageInfo,
   Profile,
@@ -62,6 +63,10 @@ interface AppStateData {
   // Live progress of the running LLM check (null outside the llm phase).
   llmStartedAt: number | null
   llmTokens: number | null
+  // The most recent check's effective_llm report (degradation/skip info);
+  // transient like the rest of the check-phase fields above — never
+  // persisted, reset on every new runCheck() and on session turnover.
+  llmEffective: EffectiveLlm | null
   providers: ProviderInfo[]
   routing: RoutingTable | null
   domains: Domain[]
@@ -280,6 +285,7 @@ export const INITIAL_DATA: Omit<
   llmError: null,
   llmStartedAt: null,
   llmTokens: null,
+  llmEffective: null,
   providers: [],
   routing: null,
   domains: [],

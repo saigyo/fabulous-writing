@@ -507,6 +507,16 @@
   margin-bottom: 0.75rem;
 }
 
+/* Informational, not an error: a degradation or plan/server skip note. */
+.llm-note {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
 .all-clear {
   color: var(--text-dim);
 }
