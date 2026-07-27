@@ -51,6 +51,11 @@ export const de: Messages = {
   llmSkipped: (reason) => `LLM-Prüfung übersprungen: ${reason}`,
   pinThisModel: 'Dieses Modell festlegen',
   advancedTitle: 'Erweiterte Modellauswahl',
+  planSuffix: ' (nicht im Tarif enthalten)',
+  llmDegraded: (effective, requested) =>
+    `LLM-Prüfung lief mit ${effective} — ${requested} ist im aktuellen Tarif nicht verfügbar.`,
+  llmNotIncluded: 'Die LLM-Prüfung ist im aktuellen Tarif nicht enthalten.',
+  llmSkippedServer: 'LLM-Prüfung übersprungen: auf dem Server nicht verfügbar.',
 
   findings: 'Ergebnisse',
   fastChecking: 'prüft…',

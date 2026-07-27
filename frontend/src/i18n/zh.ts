@@ -49,6 +49,11 @@ export const zh: Messages = {
   llmSkipped: (reason) => `已跳过 LLM 检查:${reason}`,
   pinThisModel: '固定此模型',
   advancedTitle: '高级模型选择',
+  planSuffix: '（不在当前套餐内）',
+  llmDegraded: (effective, requested) =>
+    `LLM 检查已使用${effective}运行，${requested}不在当前套餐内。`,
+  llmNotIncluded: 'LLM 检查不包含在当前套餐内。',
+  llmSkippedServer: 'LLM 检查已跳过：服务器上不可用。',
 
   findings: '检查结果',
   fastChecking: '检查中…',

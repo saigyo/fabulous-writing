@@ -55,6 +55,11 @@ export const fr: Messages = {
   llmSkipped: (reason) => `Vérification LLM ignorée : ${reason}`,
   pinThisModel: 'Épingler ce modèle',
   advancedTitle: 'Sélection avancée du modèle',
+  planSuffix: ' (non inclus dans l’offre)',
+  llmDegraded: (effective, requested) =>
+    `Vérification LLM effectuée avec ${effective} — ${requested} n’est pas disponible dans l’offre actuelle.`,
+  llmNotIncluded: 'La vérification LLM n’est pas incluse dans l’offre actuelle.',
+  llmSkippedServer: 'Vérification LLM ignorée : non disponible sur le serveur.',
 
   findings: 'Résultats',
   fastChecking: 'vérification…',

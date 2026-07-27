@@ -31,6 +31,7 @@ const USER: MeResponse = {
   display_name: null,
   tier: 'basic',
   is_admin: false,
+  policy: { llm: { tiers: null, providers: null, models: null }, features: [] },
 }
 
 beforeEach(() => {

@@ -49,6 +49,11 @@ export const ja: Messages = {
   llmSkipped: (reason) => `LLM チェックをスキップ: ${reason}`,
   pinThisModel: 'このモデルを固定',
   advancedTitle: '詳細なモデル選択',
+  planSuffix: '（プラン対象外）',
+  llmDegraded: (effective, requested) =>
+    `LLMチェックは${effective}で実行されました。${requested}は現在のプランでは利用できません。`,
+  llmNotIncluded: 'LLMチェックは現在のプランに含まれていません。',
+  llmSkippedServer: 'LLMチェックをスキップしました：サーバーで利用できません。',
 
   findings: '検出結果',
   fastChecking: 'チェック中…',

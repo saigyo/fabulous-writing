@@ -51,6 +51,11 @@ export const it: Messages = {
   llmSkipped: (reason) => `Controllo LLM saltato: ${reason}`,
   pinThisModel: 'Fissa questo modello',
   advancedTitle: 'Selezione avanzata del modello',
+  planSuffix: ' (non incluso nel piano)',
+  llmDegraded: (effective, requested) =>
+    `Verifica LLM eseguita con ${effective} — ${requested} non è disponibile nel piano attuale.`,
+  llmNotIncluded: 'La verifica LLM non è inclusa nel piano attuale.',
+  llmSkippedServer: 'Verifica LLM saltata: non disponibile sul server.',
 
   findings: 'Risultati',
   fastChecking: 'controllo…',

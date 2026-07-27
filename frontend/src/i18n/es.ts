@@ -55,6 +55,11 @@ export const es: Messages = {
   llmSkipped: (reason) => `Comprobación LLM omitida: ${reason}`,
   pinThisModel: 'Fijar este modelo',
   advancedTitle: 'Selección avanzada de modelo',
+  planSuffix: ' (no incluido en el plan)',
+  llmDegraded: (effective, requested) =>
+    `La verificación LLM se ejecutó con ${effective} — ${requested} no está disponible en el plan actual.`,
+  llmNotIncluded: 'La verificación LLM no está incluida en el plan actual.',
+  llmSkippedServer: 'Verificación LLM omitida: no disponible en el servidor.',
 
   findings: 'Resultados',
   fastChecking: 'comprobando…',
