@@ -64,14 +64,17 @@ export async function fetchSuggestions(findingId: string): Promise<void> {
     }
   } catch (error) {
     if (gen !== currentGeneration()) return // session ended: stale error, nothing to report
-    // A provider failure (e.g. a 502) still spends quota — its ledger row
-    // settles as 'failed' server-side — so used_today goes stale unless this
-    // fires too. A 429 spent nothing, but the extra guarded GET is harmless.
-    refreshUserNow()
     if (error instanceof HttpError && error.status === 429) {
+      // A concurrency 429 reserved no ledger row (the server rejected before
+      // spending quota), so refreshing here would just add avoidable /me
+      // load exactly while the server is applying backpressure.
       useStore.getState().setSuggestError(findingId, currentMessages().serverBusy)
       return
     }
+    // A provider failure (e.g. a 502) still spends quota — its ledger row
+    // settles as 'failed' server-side — so used_today goes stale unless this
+    // fires too.
+    refreshUserNow()
     useStore.getState().setSuggestError(findingId, error instanceof Error ? error.message : String(error))
   } finally {
     // Scoped to the captured generation: an outgoing session's completion
@@ -140,12 +143,14 @@ export async function fetchRewrite(findingId: string): Promise<void> {
     }
   } catch (error) {
     if (gen !== currentGeneration()) return // session ended: stale error, nothing to report
-    // Same reasoning as fetchSuggestions()'s catch block above.
-    refreshUserNow()
     if (error instanceof HttpError && error.status === 429) {
+      // Same reasoning as fetchSuggestions()'s catch block above: nothing
+      // was reserved, so skip the refresh.
       useStore.getState().setRewriteError(findingId, currentMessages().serverBusy)
       return
     }
+    // Same reasoning as fetchSuggestions()'s catch block above.
+    refreshUserNow()
     useStore.getState().setRewriteError(findingId, error instanceof Error ? error.message : String(error))
   } finally {
     // Same reasoning as fetchSuggestions()'s finally block above.

@@ -289,6 +289,14 @@ describe('fetchSuggestions', () => {
 
     expect(refreshUserNow).toHaveBeenCalled()
   })
+
+  it('does not refresh the quota indicator after a 429 (nothing was reserved)', async () => {
+    vi.mocked(postSuggestions).mockRejectedValue(new HttpError(429, 'busy'))
+
+    await fetchSuggestions('f1')
+
+    expect(refreshUserNow).not.toHaveBeenCalled()
+  })
 })
 
 describe('fetchRewrite', () => {
@@ -409,5 +417,13 @@ describe('fetchRewrite', () => {
     await fetchRewrite('f1')
 
     expect(refreshUserNow).toHaveBeenCalled()
+  })
+
+  it('does not refresh the quota indicator after a 429 (nothing was reserved)', async () => {
+    vi.mocked(postSuggestions).mockRejectedValue(new HttpError(429, 'busy'))
+
+    await fetchRewrite('f1')
+
+    expect(refreshUserNow).not.toHaveBeenCalled()
   })
 })
