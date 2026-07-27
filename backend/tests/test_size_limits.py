@@ -51,7 +51,9 @@ class TestCharCaps:
             json={"text": "a" * (SMALL_CAP + 1), "language": "en"},
         )
         assert response.status_code == 413
-        assert str(SMALL_CAP) in response.json()["detail"]
+        detail = response.json()["detail"]
+        assert detail["code"] == "document_too_large"
+        assert str(SMALL_CAP) in detail["message"]
         # Rejected before job creation: nothing leaked into the job store.
         assert len(small_cap_client.app.state.jobs._jobs) == 0
 
@@ -65,7 +67,9 @@ class TestCharCaps:
             },
         )
         assert response.status_code == 413
-        assert str(SMALL_CAP) in response.json()["detail"]
+        detail = response.json()["detail"]
+        assert detail["code"] == "document_too_large"
+        assert str(SMALL_CAP) in detail["message"]
 
     def test_document_save_over_cap_is_413(self, small_cap_client):
         # PUT with content.text over the cap -> 413. A save under the cap
@@ -83,7 +87,9 @@ class TestCharCaps:
             },
         )
         assert oversized.status_code == 413
-        assert str(SMALL_CAP) in oversized.json()["detail"]
+        oversized_detail = oversized.json()["detail"]
+        assert oversized_detail["code"] == "document_too_large"
+        assert str(SMALL_CAP) in oversized_detail["message"]
 
         ok = small_cap_client.put(
             f"/api/documents/{doc['id']}",

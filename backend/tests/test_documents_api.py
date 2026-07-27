@@ -316,6 +316,27 @@ def test_generate_name_writes_a_ledger_row(authed_client):
     assert row["requested_tier"] == "cheap"
 
 
+def test_generate_name_unusable_title_falls_back_and_marks_run_failed(authed_client):
+    # The provider call succeeds, but clean_title rejects the response (here:
+    # quote marks with nothing usable inside) -- a burned-token run that
+    # produced no value must settle 'failed', not 'completed', even though
+    # the document still gets its silent local fallback name (spec parity
+    # with suggestions.py's unparseable-response case).
+    doc = make_doc(authed_client, text="alpha beta gamma delta epsilon zeta eta")
+    with_provider(authed_client, '""')
+    response = authed_client.post(f"/api/documents/{doc['id']}/generate-name")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["name"] == "alpha beta gamma delta epsilon zeta"
+    assert body["name_source"] == "fallback"
+
+    settings = authed_client.app.state.settings
+    rows = _read_usage_rows(settings.db_path)
+    assert len(rows) == 1
+    assert rows[0]["source"] == "name"
+    assert rows[0]["status"] == "failed"
+
+
 def test_generate_name_quota_exhausted_falls_back_silently(tmp_path):
     settings = Settings(
         db_path=tmp_path / "t.db",

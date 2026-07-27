@@ -139,7 +139,9 @@ describe('autosave', () => {
   })
 
   it('413 (over the char cap) does not schedule a retry, but a later edit tries again', async () => {
-    vi.mocked(updateDocument).mockRejectedValueOnce(new HttpError(413, 'too long'))
+    vi.mocked(updateDocument).mockRejectedValueOnce(
+      new HttpError(413, 'too long', 'document_too_large'),
+    )
     await flush()
     expect(readSnapshot()?.dirty).toBe(true)
 
@@ -172,7 +174,7 @@ describe('autosave', () => {
     // flush() finds `saving` still true and just sets `pending`, queued behind push #1.
     expect(updateDocument).toHaveBeenCalledTimes(1)
 
-    rejectFirst(new HttpError(413, 'too long'))
+    rejectFirst(new HttpError(413, 'too long', 'document_too_large'))
     await vi.advanceTimersByTimeAsync(0)
 
     // The rejected snapshot itself must never be retried immediately.
@@ -198,11 +200,22 @@ describe('autosave', () => {
     void flush() // push #1 starts and is now in flight
     void flush() // a second flush() call while saving: sets `pending`, nothing changed
 
-    rejectFirst(new HttpError(413, 'too long'))
+    rejectFirst(new HttpError(413, 'too long', 'document_too_large'))
     await vi.advanceTimersByTimeAsync(60000) // well past any debounce/backoff interval
 
     expect(updateDocument).toHaveBeenCalledTimes(1) // still never retried
     expect(readSnapshot()?.dirty).toBe(true)
+  })
+
+  it('a 413 without the document_too_large code (the byte-budget middleware, ' +
+    'not the char cap) is treated as transient and retried', async () => {
+    vi.mocked(updateDocument).mockRejectedValueOnce(new HttpError(413, 'body too large'))
+    await flush()
+    expect(readSnapshot()?.dirty).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(2000) // first backoff retry
+    expect(updateDocument).toHaveBeenCalledTimes(2)
+    expect(readSnapshot()?.dirty).toBe(false)
   })
 
   it('generates a title once when a fallback-named doc passes 20 words', async () => {

@@ -61,8 +61,13 @@ async def create_check(
     if len(body.text) > app.state.settings.limits.max_document_chars:
         raise HTTPException(
             413,
-            f"Text exceeds the {app.state.settings.limits.max_document_chars}"
-            " character limit",
+            {
+                "code": "document_too_large",
+                "message": (
+                    f"Text exceeds the {app.state.settings.limits.max_document_chars}"
+                    " character limit"
+                ),
+            },
         )
 
     try:
