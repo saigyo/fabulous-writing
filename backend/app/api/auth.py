@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.api.deps import CurrentUser, get_current_user
 from app.core.auth import SELF_MIN_PASSWORD_LENGTH, issue_token, validate_password
 from app.core.config import KNOWN_FEATURES, Settings
-from app.core.permissions import features_for, policy_for
+from app.core.permissions import features_for, limits_for, policy_for
 from app.services.users import User
 
 router = APIRouter(prefix="/api", tags=["auth"])
@@ -271,10 +271,24 @@ def _policy_payload(user: User, settings: Settings) -> PolicyPayload:
     )
 
 
+class UsagePayload(BaseModel):
+    """Spec §7.1: used_today is defined identically to reserve_llm_run's
+    count — all of the caller's UTC-day rows regardless of status."""
+
+    used_today: int
+    limit: int
+
+
+class LimitsPayload(BaseModel):
+    max_document_chars: int
+    max_llm_document_chars: int
+    concurrent_llm_runs: int
+
+
 class MeResponse(BaseModel):
-    """The caller's own account. The M4 half of this model's promise — the
-    LLM policy — is now delivered via `policy`; M5 adds quota/size/
-    concurrency limits."""
+    """The caller's own account: identity (M1), LLM policy and features
+    (M4), quota/size/concurrency limits (M5). The frontend's single source
+    of truth for gating."""
 
     id: int
     email: str
@@ -282,9 +296,20 @@ class MeResponse(BaseModel):
     tier: str
     is_admin: bool
     policy: PolicyPayload
+    usage: UsagePayload
+    limits: LimitsPayload
+    # Read-only mirror of the config-only switch (spec §7.1): lets the M6
+    # admin view disable a checkbox that would only 403. No endpoint accepts
+    # it as input, so reporting it does not weaken the config-only guarantee.
+    allow_additional_admins: bool
 
     @classmethod
-    def from_user(cls, user: User, settings: Settings) -> "MeResponse":
+    def from_user(
+        cls, user: User, settings: Settings, *, used_today: int
+    ) -> "MeResponse":
+        limits = limits_for(
+            tier=user.tier, is_admin=user.is_admin, settings=settings
+        )
         return cls(
             id=user.id,
             email=user.email,
@@ -292,6 +317,15 @@ class MeResponse(BaseModel):
             tier=user.tier,
             is_admin=user.is_admin,
             policy=_policy_payload(user, settings),
+            usage=UsagePayload(
+                used_today=used_today, limit=limits.llm_checks_per_day
+            ),
+            limits=LimitsPayload(
+                max_document_chars=settings.limits.max_document_chars,
+                max_llm_document_chars=limits.max_llm_document_chars,
+                concurrent_llm_runs=limits.concurrent_llm_runs,
+            ),
+            allow_additional_admins=settings.auth.allow_additional_admins,
         )
 
 
@@ -352,7 +386,10 @@ def login(request: Request, body: LoginRequest) -> LoginResponse:
     app.state.login_throttle.record_success(key)
     return LoginResponse(
         token=issue_token(user.id, app.state.auth_secret, epoch=user.token_epoch),
-        user=MeResponse.from_user(user, app.state.settings),
+        user=MeResponse.from_user(
+            user, app.state.settings,
+            used_today=app.state.usage_store.used_today(user.id),
+        ),
     )
 
 
@@ -361,7 +398,10 @@ def me(request: Request, current: CurrentUser = Depends(get_current_user)) -> Me
     user = request.app.state.user_store.get_user(current.id)
     if user is None:  # pragma: no cover - get_current_user already rejected this
         raise HTTPException(401, "Not authenticated")
-    return MeResponse.from_user(user, request.app.state.settings)
+    return MeResponse.from_user(
+        user, request.app.state.settings,
+        used_today=request.app.state.usage_store.used_today(user.id),
+    )
 
 
 @router.post("/auth/password", status_code=204)
