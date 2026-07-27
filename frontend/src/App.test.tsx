@@ -193,3 +193,33 @@ describe('Header LLM-phase gating', () => {
     expect(screen.queryByTitle(en.autoTitle)).toBeNull()
   })
 })
+
+describe('Header quota indicator', () => {
+  it('shows the usage/limit text for a signed-in user, with the quota indicator title', async () => {
+    vi.mocked(getProfiles).mockResolvedValue([])
+    useStore.setState({ user: user({ usage: { used_today: 0, limit: 20 } }) })
+    render(<Header />)
+    await waitFor(() => expect(getProfiles).toHaveBeenCalled())
+
+    const indicator = screen.getByText('0/20')
+    expect(indicator.getAttribute('title')).toBe(en.quotaIndicatorTitle)
+  })
+
+  it('is absent for a floor-policy user (llmDisabled)', async () => {
+    vi.mocked(getProfiles).mockResolvedValue([])
+    useStore.setState({ user: user({ policy: FLOOR_POLICY }) })
+    render(<Header />)
+    await waitFor(() => expect(getProfiles).toHaveBeenCalled())
+
+    expect(screen.queryByTitle(en.quotaIndicatorTitle)).toBeNull()
+  })
+
+  it('is absent when logged out', async () => {
+    vi.mocked(getProfiles).mockResolvedValue([])
+    useStore.setState({ user: null })
+    render(<Header />)
+    await waitFor(() => expect(getProfiles).toHaveBeenCalled())
+
+    expect(screen.queryByTitle(en.quotaIndicatorTitle)).toBeNull()
+  })
+})

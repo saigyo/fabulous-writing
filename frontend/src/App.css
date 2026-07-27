@@ -140,6 +140,14 @@
   background: var(--accent-soft);
 }
 
+/* Today's LLM usage vs. the daily cap — muted and out of the way, not a
+   warning; it only tells the story once a note or a skip does that job. */
+.quota-indicator {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Compact mode for narrow windows: same height, tighter type and gaps. */
 @media (max-width: 1200px) {
   .header {
@@ -496,6 +504,23 @@
   color: var(--accent);
   text-align: right;
   pointer-events: none;
+}
+
+/* Live character count of the document; the two thresholds reuse the same
+   warning/error colors as the severity chips (severity-warning/-error)
+   rather than introducing new ones. */
+.char-count {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  margin-bottom: 0.5rem;
+}
+
+.char-count--over-llm {
+  color: #f76b15;
+}
+
+.char-count--over-doc {
+  color: #e5484d;
 }
 
 .llm-error {
