@@ -4,8 +4,27 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { MeResponse } from '../api/client'
 import { en } from '../i18n/en'
 import { useStore } from '../state/store'
-import type { EffectiveLlm } from '../types'
+import type { TrackedFinding } from '../editor/findings'
+import type { EffectiveLlm, Finding } from '../types'
 import { Sidebar } from './Sidebar'
+
+function finding(id: string): Finding {
+  return {
+    id,
+    category: 'grammar',
+    severity: 'warning',
+    source: 'rule',
+    rule_id: null,
+    message: 'A finding message.',
+    span: { start: 0, end: 5, text: 'Hello' },
+    suggestions: [],
+    advice: [],
+  }
+}
+
+function tracked(f: Finding): TrackedFinding {
+  return { finding: f, from: f.span.start, to: f.span.end }
+}
 
 function user(
   policy: MeResponse['policy'],
@@ -55,6 +74,24 @@ beforeEach(() => {
     sourceFilter: null,
     user: null,
     docChars: 0,
+  })
+})
+
+describe('Sidebar async-notice live regions', () => {
+  it('gives the check-error slot role="status", including for the 429/serverBusy notice', () => {
+    useStore.setState({ llmError: en.serverBusy })
+    render(<Sidebar />)
+
+    const note = screen.getByText(en.serverBusy)
+    expect(note.getAttribute('role')).toBe('status')
+  })
+
+  it('still reports a plain llmCheckFailed error through the same live region', () => {
+    useStore.setState({ llmError: en.llmCheckFailed('boom') })
+    render(<Sidebar />)
+
+    const note = screen.getByText(en.llmCheckFailed('boom'))
+    expect(note.getAttribute('role')).toBe('status')
   })
 })
 
@@ -197,5 +234,51 @@ describe('Sidebar character count', () => {
       screen.getByText(`${en.charCount(200001)} — ${en.charCountOverDoc}`),
     ).toBeTruthy()
     expect(screen.queryByText(en.charCountOverLlm, { exact: false })).toBeNull()
+  })
+})
+
+describe('Sidebar suggestion/rewrite error live regions', () => {
+  it('gives the suggestion-error paragraph role="status"', () => {
+    const f = finding('f1')
+    useStore.setState({
+      tracked: [tracked(f)],
+      selectedId: f.id,
+      suggestPendingId: null,
+      rewritePendingId: null,
+      suggestErrors: { [f.id]: 'Could not fetch a suggestion.' },
+      rewriteErrors: {},
+      extraSuggestions: {},
+      suggestHeldBack: {},
+      suggestAdvice: {},
+      rewrites: {},
+      rewriteHeldBack: {},
+      rewriteAdvice: {},
+    })
+    render(<Sidebar />)
+
+    const note = screen.getByText('Could not fetch a suggestion.')
+    expect(note.getAttribute('role')).toBe('status')
+  })
+
+  it('gives the rewrite-error paragraph role="status"', () => {
+    const f = finding('f2')
+    useStore.setState({
+      tracked: [tracked(f)],
+      selectedId: f.id,
+      suggestPendingId: null,
+      rewritePendingId: null,
+      suggestErrors: {},
+      rewriteErrors: { [f.id]: 'Could not fetch a rewrite.' },
+      extraSuggestions: {},
+      suggestHeldBack: {},
+      suggestAdvice: {},
+      rewrites: {},
+      rewriteHeldBack: {},
+      rewriteAdvice: {},
+    })
+    render(<Sidebar />)
+
+    const note = screen.getByText('Could not fetch a rewrite.')
+    expect(note.getAttribute('role')).toBe('status')
   })
 })

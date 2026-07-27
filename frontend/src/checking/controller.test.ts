@@ -190,7 +190,7 @@ describe('check controller', () => {
     expect(useStore.getState().scorecard).toBeNull()
   })
 
-  it('drops a check whose postCheck resolves after a same-session document switch', async () => {
+  it('drops a check whose postCheck resolves after a same-session document switch, but still refreshes the quota indicator if it was admitted', async () => {
     // The same-session twin of the test above: no logout, no generation
     // bump. hydrateFromDocument() calls cancelCheck() on every document
     // switch — reproduced literally here — while postCheck() for document
@@ -217,7 +217,17 @@ describe('check controller', () => {
     cancelCheck()
     docText = 'document B text' // the editor now shows the newly opened doc
 
-    resolvePostCheck({ check_id: 'c-a', status: 'running', findings: [] } as never)
+    resolvePostCheck({
+      check_id: 'c-a',
+      status: 'running',
+      findings: [],
+      effective_llm: {
+        requested: { tier: 'balanced', provider: null, model: null },
+        effective: { tier: 'balanced', provider: null, model: null },
+        degraded: false,
+        skipped: null,
+      },
+    } as never)
     await runPromise
 
     // No subscription opens for the stale check, and its findings/scorecard
@@ -226,6 +236,81 @@ describe('check controller', () => {
     expect(subscribeCheck).not.toHaveBeenCalled()
     expect(dispatched).toHaveLength(0)
     expect(useStore.getState().scorecard).toBeNull()
+
+    // But the ledger row for this admitted run was already inserted at
+    // ADMISSION, before the document switch happened — the quota indicator
+    // must reflect it regardless of the epoch bump that dropped everything
+    // else above.
+    expect(refreshUserNow).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not refresh a same-session document-switch check that was skipped (no ledger row was written)', async () => {
+    let resolvePostCheck!: (value: Awaited<ReturnType<typeof postCheck>>) => void
+    vi.mocked(postCheck).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePostCheck = resolve
+        }),
+    )
+    vi.mocked(subscribeCheck).mockReturnValue(() => {})
+
+    const runPromise = runCheck(true)
+    cancelCheck()
+    docText = 'document B text'
+
+    resolvePostCheck({
+      check_id: 'c-a',
+      status: 'done',
+      findings: [],
+      effective_llm: {
+        requested: { tier: 'balanced', provider: null, model: null },
+        effective: { tier: 'balanced', provider: null, model: null },
+        degraded: false,
+        skipped: 'quota_exhausted',
+      },
+    } as never)
+    await runPromise
+
+    expect(refreshUserNow).not.toHaveBeenCalled()
+  })
+
+  it('does not refresh an admitted run if the session itself ended mid-flight (gen mismatch)', async () => {
+    // The literal sequence from 'drops a check whose postCheck resolves
+    // after the session already ended' above, but with an admitted
+    // effective_llm this time: a gen mismatch means the session ended
+    // (logout/expireSession) while postCheck was in flight, so refreshing
+    // here would race the *next* session's own /me fetch rather than
+    // reflecting this one's ledger row. refreshUserNow() is itself
+    // generation-guarded, but this asserts the explicit gen check at the
+    // call site also holds on its own.
+    let resolvePostCheck!: (value: Awaited<ReturnType<typeof postCheck>>) => void
+    vi.mocked(postCheck).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePostCheck = resolve
+        }),
+    )
+    vi.mocked(subscribeCheck).mockReturnValue(() => {})
+
+    const runPromise = runCheck(true)
+
+    cancelInFlightCheck()
+    bumpGeneration()
+
+    resolvePostCheck({
+      check_id: 'c-a',
+      status: 'running',
+      findings: [],
+      effective_llm: {
+        requested: { tier: 'balanced', provider: null, model: null },
+        effective: { tier: 'balanced', provider: null, model: null },
+        degraded: false,
+        skipped: null,
+      },
+    } as never)
+    await runPromise
+
+    expect(refreshUserNow).not.toHaveBeenCalled()
   })
 
   it('sends llm_tier in tier mode, with llm_provider/llm_model null', async () => {

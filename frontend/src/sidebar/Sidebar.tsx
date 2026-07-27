@@ -153,7 +153,11 @@ export function Sidebar() {
         {m.charCount(docChars)}
         {overDoc ? ` — ${m.charCountOverDoc}` : overLlm ? ` — ${m.charCountOverLlm}` : ''}
       </div>
-      {llmError && <div className="llm-error">{llmError}</div>}
+      {llmError && (
+        <div className="llm-error" role="status">
+          {llmError}
+        </div>
+      )}
       {llmEffective?.degraded && !llmEffective.skipped && (
         <div className="llm-note" role="status">
           {m.llmDegraded(
@@ -307,7 +311,11 @@ function SuggestionArea({ finding }: { finding: Finding }) {
       >
         ✨ {error ? m.retrySuggestion : m.suggestFix}
       </button>
-      {error && <p className="suggest-error">{error}</p>}
+      {error && (
+        <p className="suggest-error" role="status">
+          {error}
+        </p>
+      )}
       {error && heldBack.length > 0 && (
         <HeldBackList
           candidates={heldBack}
@@ -446,7 +454,11 @@ function RewriteArea({ finding }: { finding: Finding }) {
       >
         ↻ {error ? m.retryRewrite : m.rewriteSentence}
       </button>
-      {error && <p className="suggest-error">{error}</p>}
+      {error && (
+        <p className="suggest-error" role="status">
+          {error}
+        </p>
+      )}
       {error && heldBack && heldBack.candidates.length > 0 && (
         <HeldBackList candidates={heldBack.candidates} onApply={applyHeldBack} />
       )}
