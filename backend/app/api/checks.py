@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, get_current_user
-from app.api.llm_gate import effective_llm_report, get_effective_provider
+from app.api.llm_gate import LlmReservation, effective_llm_report, get_effective_provider
 from app.checkers.llm.checker import LLMChecker
 from app.checkers.llm.provider import LLMProvider
 from app.checkers.pipeline import drop_duplicates
@@ -87,8 +87,9 @@ async def create_check(
             requested = RequestedLLM(
                 tier=body.llm_tier, provider=body.llm_provider, model=body.llm_model
             )
-            effective, provider = get_effective_provider(
-                app, user, requested, body.language.value
+            effective, provider, reservation = await get_effective_provider(
+                app, user, requested, body.language.value,
+                text_chars=len(body.text), source="check", run_id=job.id,
             )
             job.effective_llm = effective_llm_report(requested, effective)
             # On the stream too (spec §6.2): SSE consumers see the same block
@@ -97,6 +98,7 @@ async def create_check(
             if provider is None:
                 job.finish()
             else:
+                assert reservation is not None
                 job.attach_task(
                     asyncio.create_task(
                         _run_llm(
@@ -104,6 +106,7 @@ async def create_check(
                             provider,
                             body.text,
                             body.language,
+                            reservation,
                             vet=app.state.settings.vet_suggestions,
                             dictionaries_dir=app.state.settings.dictionaries_dir,
                             instructions=body.llm_instructions,
@@ -131,18 +134,26 @@ async def _run_llm(
     provider: LLMProvider,
     text: str,
     language: Language,
+    reservation: LlmReservation,
     vet: bool = True,
     dictionaries_dir: Any = None,
     instructions: str = "",
 ) -> None:
     emitted = -PROGRESS_TOKEN_STEP  # the first report always goes out
+    latest_tokens = 0
 
     def on_progress(tokens: int) -> None:
-        nonlocal emitted
+        nonlocal emitted, latest_tokens
+        latest_tokens = tokens
         if tokens - emitted >= PROGRESS_TOKEN_STEP:
             emitted = tokens
             job.emit("llm_progress", {"tokens": tokens})
 
+    # The terminal ledger write is the mechanism that releases this run's
+    # concurrency slot (spec §5.3), so it must be exception-safe by
+    # construction: success, failure and cancellation all pass through the
+    # finally below, each with its own status.
+    status = "completed"
     try:
         checker = LLMChecker(provider, vet=vet, dictionaries_dir=dictionaries_dir)
         result = await checker.check(
@@ -151,11 +162,18 @@ async def _run_llm(
         job.add_findings("llm", drop_duplicates(result.findings, job.findings))
         if result.scorecard is not None:
             job.set_scorecard(result.scorecard)
+    except asyncio.CancelledError:
+        status = "cancelled"
+        raise
     except Exception as exc:
+        status = "failed"
         error = str(exc) or type(exc).__name__
         logger.warning("llm check failed (provider %s): %s", provider.name, error)
         job.emit("checker_error", {"checker": "llm", "error": error})
     finally:
+        reservation.finish(
+            status, output_tokens=latest_tokens if latest_tokens > 0 else None
+        )
         job.finish()
 
 

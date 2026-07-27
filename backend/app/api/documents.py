@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import uuid
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -229,12 +231,24 @@ async def generate_name(
             # constructor raising something get_effective_provider does not
             # translate (a tier-only request cannot produce its 422).
             requested = RequestedLLM(tier="cheap")  # naming hard-selects the cheap route
-            _effective, provider = get_effective_provider(
-                request.app, user, requested, document.language.value
+            _effective, provider, reservation = await get_effective_provider(
+                request.app, user, requested, document.language.value,
+                text_chars=len(document.text), source="name", run_id=str(uuid.uuid4()),
             )
             if provider is not None:
-                system, prompt = build_title_prompt(document.text, document.language)
-                title = clean_title(await provider.generate(system, prompt))
+                assert reservation is not None
+                name_status = "completed"
+                try:
+                    system, prompt = build_title_prompt(document.text, document.language)
+                    title = clean_title(await provider.generate(system, prompt))
+                except asyncio.CancelledError:
+                    name_status = "cancelled"
+                    raise
+                except Exception:
+                    name_status = "failed"
+                    raise
+                finally:
+                    reservation.finish(name_status)
         except Exception:
             logger.warning(
                 "auto-title generation failed for document %s",

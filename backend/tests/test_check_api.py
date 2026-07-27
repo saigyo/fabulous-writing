@@ -1,13 +1,17 @@
 import asyncio
 import json
+import logging
+import sqlite3
+import time
 import uuid
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from app.checkers.llm.provider import FakeProvider, LLMProvider
-from app.core.config import NlpSettings, Settings
+from app.core.config import LimitsSettings, NlpSettings, Settings, TierLimitsSettings
 from app.main import create_app
 from tests.conftest import auth_headers, second_user_headers
 
@@ -831,3 +835,482 @@ def test_failed_setup_discards_job_and_does_not_leak_running_entry(
         )
         assert valid.status_code == 202
         assert valid.json()["status"] == "running"
+
+
+def _read_usage_rows(db_path: Path) -> list[sqlite3.Row]:
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        return conn.execute("SELECT * FROM llm_usage ORDER BY id").fetchall()
+
+
+class HangingProvider:
+    """Never resolves, so its reservation stays 'started' forever unless the
+    test cancels the task or the process ends. Each call awaits a fresh
+    Event that is never set, matching the existing hanging-provider idiom in
+    this file (test_at_capacity_with_all_jobs_running_refuses_new_check)."""
+
+    name = "hanging"
+
+    async def generate(self, system: str, user: str, on_progress=None) -> str:
+        await asyncio.Event().wait()
+
+
+class TestCheckMetering:
+    def test_llm_run_writes_a_completed_ledger_row(self, tmp_path: Path) -> None:
+        settings = Settings(db_path=tmp_path / "test.db", rules_dir=RULES_DIR)
+        app = create_app(settings)
+        provider = FakeProvider(LLM_RESPONSE, progress_steps=[5, 40, 41])
+        app.state.provider_factory = lambda name=None, model=None: provider
+        text = "This is very nice."
+        with TestClient(app) as client:
+            client.headers.update(auth_headers(client))
+            post = client.post(
+                "/api/checks",
+                json={"text": text, "language": "en", "checkers": ["llm"]},
+            )
+            check_id = post.json()["check_id"]
+            with client.stream("GET", f"/api/checks/{check_id}/events") as stream:
+                events = _read_sse_events(stream)
+            assert events[-1][0] == "done"
+            final = client.get(f"/api/checks/{check_id}").json()
+            assert final["status"] == "done"
+
+        rows = _read_usage_rows(settings.db_path)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["status"] == "completed"
+        assert row["source"] == "check"
+        assert row["run_id"] == check_id
+        assert row["text_chars"] == len(text)
+        assert row["output_tokens"] == 41  # the fake's last progress value
+
+    def test_provider_failure_writes_a_failed_row(self, tmp_path: Path) -> None:
+        class BrokenProvider:
+            name = "broken"
+
+            async def generate(self, system: str, user: str, on_progress=None) -> str:
+                raise RuntimeError("model exploded")
+
+        settings = Settings(db_path=tmp_path / "test.db", rules_dir=RULES_DIR)
+        app = create_app(settings)
+        app.state.provider_factory = lambda name=None, model=None: BrokenProvider()
+        with TestClient(app) as client:
+            client.headers.update(auth_headers(client))
+            post = client.post(
+                "/api/checks",
+                json={"text": "This is very nice.", "language": "en",
+                      "checkers": ["rules", "llm"]},
+            )
+            check_id = post.json()["check_id"]
+            with client.stream("GET", f"/api/checks/{check_id}/events") as stream:
+                events = _read_sse_events(stream)
+            assert any(name == "checker_error" for name, _ in events)
+            final = client.get(f"/api/checks/{check_id}").json()
+            assert final["status"] == "done"
+
+        rows = _read_usage_rows(settings.db_path)
+        assert len(rows) == 1
+        assert rows[0]["status"] == "failed"
+
+    def test_quota_exhausted_degrades_with_skip_code(self, tmp_path: Path) -> None:
+        settings = Settings(
+            db_path=tmp_path / "test.db", rules_dir=RULES_DIR,
+            limits=LimitsSettings(admin=TierLimitsSettings(
+                llm_checks_per_day=1, max_llm_document_chars=200000,
+                concurrent_llm_runs=5,
+            )),
+        )
+        app = create_app(settings)
+        app.state.provider_factory = lambda name=None, model=None: FakeProvider(LLM_RESPONSE)
+        with TestClient(app) as client:
+            client.headers.update(auth_headers(client))
+            first = client.post(
+                "/api/checks",
+                json={"text": "a nice text", "language": "en", "checkers": ["llm"]},
+            )
+            with client.stream(
+                "GET", f"/api/checks/{first.json()['check_id']}/events"
+            ) as stream:
+                _read_sse_events(stream)
+
+            second = client.post(
+                "/api/checks",
+                json={"text": "This is very nice.", "language": "en",
+                      "checkers": ["rules", "llm"]},
+            )
+            assert second.status_code == 202
+            body = second.json()
+            assert body["findings"], "rules must still run"
+            assert body["effective_llm"]["skipped"] == "quota_exhausted"
+            assert body["status"] == "done"
+
+        rows = _read_usage_rows(settings.db_path)
+        assert len(rows) == 1  # the denied second insert did not survive
+
+    def test_document_too_large_skips_llm_only(self, tmp_path: Path) -> None:
+        settings = Settings(
+            db_path=tmp_path / "test.db", rules_dir=RULES_DIR,
+            limits=LimitsSettings(admin=TierLimitsSettings(
+                llm_checks_per_day=500, max_llm_document_chars=10,
+                concurrent_llm_runs=5,
+            )),
+        )
+        app = create_app(settings)
+        app.state.provider_factory = lambda name=None, model=None: FakeProvider(LLM_RESPONSE)
+        with TestClient(app) as client:
+            client.headers.update(auth_headers(client))
+            text = "This is very nice." * 3  # well over the 10-char cap
+            post = client.post(
+                "/api/checks",
+                json={"text": text, "language": "en", "checkers": ["rules", "llm"]},
+            )
+            body = post.json()
+            assert body["findings"], "rules must still run"
+            assert body["effective_llm"]["skipped"] == "document_too_large"
+
+        assert _read_usage_rows(settings.db_path) == []
+
+    def test_size_cap_is_decided_before_resolution(self, tmp_path: Path) -> None:
+        tiers = {"basic": {"llm": {"tiers": [], "providers": []}, "limits": {
+            "llm_checks_per_day": 100, "max_llm_document_chars": 10,
+            "concurrent_llm_runs": 5,
+        }}}
+        settings = Settings(db_path=tmp_path / "test.db", rules_dir=RULES_DIR, tiers=tiers)
+        app = create_app(settings)
+        app.state.provider_factory = lambda name=None, model=None: FakeProvider(LLM_RESPONSE)
+        with TestClient(app) as client:
+            headers = second_user_headers(client)  # non-admin, tier 'basic', floor policy
+            text = "This is very nice." * 3
+            post = client.post(
+                "/api/checks",
+                json={"text": text, "language": "en", "checkers": ["llm"]},
+                headers=headers,
+            )
+            body = post.json()
+            # Moving the size check below resolve_llm_selection would report
+            # 'llm_unavailable' (the floor policy's own skip code) instead.
+            assert body["effective_llm"]["skipped"] == "document_too_large"
+
+    def test_skip_reason_reaches_the_sse_stream(self, tmp_path: Path) -> None:
+        settings = Settings(
+            db_path=tmp_path / "test.db", rules_dir=RULES_DIR,
+            limits=LimitsSettings(admin=TierLimitsSettings(
+                llm_checks_per_day=1, max_llm_document_chars=200000,
+                concurrent_llm_runs=5,
+            )),
+        )
+        app = create_app(settings)
+        app.state.provider_factory = lambda name=None, model=None: FakeProvider(LLM_RESPONSE)
+        with TestClient(app) as client:
+            client.headers.update(auth_headers(client))
+            first = client.post(
+                "/api/checks",
+                json={"text": "a nice text", "language": "en", "checkers": ["llm"]},
+            )
+            with client.stream(
+                "GET", f"/api/checks/{first.json()['check_id']}/events"
+            ) as stream:
+                _read_sse_events(stream)
+
+            second = client.post(
+                "/api/checks",
+                json={"text": "another nice text", "language": "en", "checkers": ["llm"]},
+            )
+            check_id = second.json()["check_id"]
+            with client.stream("GET", f"/api/checks/{check_id}/events") as stream:
+                events = _read_sse_events(stream)
+            effective_events = [data for name, data in events if name == "effective_llm"]
+            assert len(effective_events) == 1
+            assert effective_events[0]["skipped"] == "quota_exhausted"
+
+    def test_per_user_concurrency_cap_returns_429_with_retry_after(
+        self, tmp_path: Path
+    ) -> None:
+        settings = Settings(
+            db_path=tmp_path / "test.db", rules_dir=RULES_DIR,
+            limits=LimitsSettings(
+                concurrency_reject_delay=0,
+                admin=TierLimitsSettings(
+                    llm_checks_per_day=500, max_llm_document_chars=200000,
+                    concurrent_llm_runs=1,
+                ),
+            ),
+        )
+        app = create_app(settings)
+        app.state.provider_factory = lambda name=None, model=None: HangingProvider()
+        with TestClient(app) as client:
+            admin = auth_headers(client)
+            other = second_user_headers(client)
+
+            first = client.post(
+                "/api/checks",
+                json={"text": "a's job", "language": "en", "checkers": ["llm"]},
+                headers=admin,
+            )
+            assert first.status_code == 202
+
+            second = client.post(
+                "/api/checks",
+                json={"text": "a's second job", "language": "en", "checkers": ["llm"]},
+                headers=admin,
+            )
+            assert second.status_code == 429
+            assert second.headers["Retry-After"] == "5"
+
+            # A different user is unaffected by A's full concurrency slot.
+            third = client.post(
+                "/api/checks",
+                json={"text": "b's job", "language": "en", "checkers": ["llm"]},
+                headers=other,
+            )
+            assert third.status_code == 202
+
+    def test_server_wide_cap_returns_429(self, tmp_path: Path) -> None:
+        settings = Settings(
+            db_path=tmp_path / "test.db", rules_dir=RULES_DIR,
+            limits=LimitsSettings(
+                max_concurrent_llm_runs=1,
+                concurrency_reject_delay=0,
+                admin=TierLimitsSettings(
+                    llm_checks_per_day=500, max_llm_document_chars=200000,
+                    concurrent_llm_runs=1,
+                ),
+            ),
+        )
+        app = create_app(settings)
+        app.state.provider_factory = lambda name=None, model=None: HangingProvider()
+        with TestClient(app) as client:
+            admin = auth_headers(client)
+            other = second_user_headers(client)
+
+            first = client.post(
+                "/api/checks",
+                json={"text": "a's job", "language": "en", "checkers": ["llm"]},
+                headers=admin,
+            )
+            assert first.status_code == 202
+
+            second = client.post(
+                "/api/checks",
+                json={"text": "b's job", "language": "en", "checkers": ["llm"]},
+                headers=other,
+            )
+            assert second.status_code == 429
+            assert second.headers["Retry-After"] == "5"
+
+    async def test_pause_happens_outside_the_reservation_transaction(
+        self, tmp_path: Path
+    ) -> None:
+        settings = Settings(
+            db_path=tmp_path / "test.db", rules_dir=RULES_DIR,
+            limits=LimitsSettings(
+                concurrency_reject_delay=1.0,
+                admin=TierLimitsSettings(
+                    llm_checks_per_day=500, max_llm_document_chars=200000,
+                    concurrent_llm_runs=1,
+                ),
+            ),
+        )
+        app = create_app(settings)
+        app.state.provider_factory = lambda name=None, model=None: HangingProvider()
+        sync_client = TestClient(app)
+        admin = auth_headers(sync_client)
+        other = second_user_headers(sync_client)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            hold = await client.post(
+                "/api/checks",
+                json={"text": "hold", "language": "en", "checkers": ["llm"]},
+                headers=admin,
+            )
+            assert hold.status_code == 202
+
+            async def rejected():
+                return await client.post(
+                    "/api/checks",
+                    json={"text": "a's second job", "language": "en",
+                          "checkers": ["llm"]},
+                    headers=admin,
+                )
+
+            async def admitted():
+                start = time.monotonic()
+                resp = await client.post(
+                    "/api/checks",
+                    json={"text": "b's job", "language": "en", "checkers": ["llm"]},
+                    headers=other,
+                )
+                return resp, time.monotonic() - start
+
+            rejected_resp, (admitted_resp, admitted_elapsed) = await asyncio.gather(
+                rejected(), admitted()
+            )
+
+        assert rejected_resp.status_code == 429
+        assert admitted_resp.status_code == 202
+        assert admitted_elapsed < 0.3  # well inside the 1.0s per-user pause
+
+    async def test_backpressure_pause_does_not_block_the_event_loop(
+        self, tmp_path: Path
+    ) -> None:
+        settings = Settings(
+            db_path=tmp_path / "test.db", rules_dir=RULES_DIR,
+            limits=LimitsSettings(
+                concurrency_reject_delay=0.5,
+                admin=TierLimitsSettings(
+                    llm_checks_per_day=500, max_llm_document_chars=200000,
+                    concurrent_llm_runs=1,
+                ),
+            ),
+        )
+        app = create_app(settings)
+        app.state.provider_factory = lambda name=None, model=None: HangingProvider()
+        sync_client = TestClient(app)
+        admin = auth_headers(sync_client)
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            hold = await client.post(
+                "/api/checks",
+                json={"text": "hold", "language": "en", "checkers": ["llm"]},
+                headers=admin,
+            )
+            assert hold.status_code == 202
+
+            async def rejected():
+                return await client.post(
+                    "/api/checks",
+                    json={"text": "reject me", "language": "en", "checkers": ["llm"]},
+                    headers=admin,
+                )
+
+            async def health():
+                start = time.monotonic()
+                resp = await client.get("/api/health")
+                return resp, time.monotonic() - start
+
+            *rejected_results, (health_resp, health_elapsed) = await asyncio.gather(
+                *(rejected() for _ in range(5)), health()
+            )
+
+        assert all(r.status_code == 429 for r in rejected_results)
+        assert health_resp.status_code == 200
+        assert health_elapsed < 0.3  # not stalled behind the 0.5s pauses
+
+    def test_server_wide_rejection_skips_the_pause(self, tmp_path: Path) -> None:
+        settings = Settings(
+            db_path=tmp_path / "test.db", rules_dir=RULES_DIR,
+            limits=LimitsSettings(
+                max_concurrent_llm_runs=1,
+                concurrency_reject_delay=1.0,
+                admin=TierLimitsSettings(
+                    llm_checks_per_day=500, max_llm_document_chars=200000,
+                    concurrent_llm_runs=1,
+                ),
+            ),
+        )
+        app = create_app(settings)
+        app.state.provider_factory = lambda name=None, model=None: HangingProvider()
+        with TestClient(app) as client:
+            admin = auth_headers(client)
+            other = second_user_headers(client)
+
+            first = client.post(
+                "/api/checks",
+                json={"text": "a's job", "language": "en", "checkers": ["llm"]},
+                headers=admin,
+            )
+            assert first.status_code == 202
+
+            start = time.monotonic()
+            second = client.post(
+                "/api/checks",
+                json={"text": "b's job", "language": "en", "checkers": ["llm"]},
+                headers=other,
+            )
+            elapsed = time.monotonic() - start
+            assert second.status_code == 429
+            assert elapsed < 0.5  # well under the 1.0s pause it must skip
+
+    def test_cancelled_llm_run_writes_cancelled_and_frees_the_slot(
+        self, tmp_path: Path
+    ) -> None:
+        settings = Settings(
+            db_path=tmp_path / "test.db", rules_dir=RULES_DIR,
+            limits=LimitsSettings(admin=TierLimitsSettings(
+                llm_checks_per_day=500, max_llm_document_chars=200000,
+                concurrent_llm_runs=1,
+            )),
+        )
+        app = create_app(settings)
+        app.state.provider_factory = lambda name=None, model=None: HangingProvider()
+        with TestClient(app) as client:
+            client.headers.update(auth_headers(client))
+            me = client.get("/api/auth/me").json()
+            first = client.post(
+                "/api/checks",
+                json={"text": "hold", "language": "en", "checkers": ["llm"]},
+            )
+            check_id = first.json()["check_id"]
+            job = app.state.jobs.get(check_id, owner_id=me["id"])
+            assert job is not None and job._task is not None
+            job._task.get_loop().call_soon_threadsafe(job._task.cancel)
+
+            deadline = time.monotonic() + 5
+            rows = _read_usage_rows(settings.db_path)
+            while (
+                rows and rows[0]["status"] == "started" and time.monotonic() < deadline
+            ):
+                time.sleep(0.02)
+                rows = _read_usage_rows(settings.db_path)
+            assert rows and rows[0]["status"] == "cancelled"
+
+            second = client.post(
+                "/api/checks",
+                json={"text": "next", "language": "en", "checkers": ["llm"]},
+            )
+            assert second.status_code == 202
+            assert second.json()["status"] == "running"
+
+    def test_admin_is_metered_with_the_admin_ceiling(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        settings = Settings(
+            db_path=tmp_path / "test.db", rules_dir=RULES_DIR,
+            limits=LimitsSettings(admin=TierLimitsSettings(
+                llm_checks_per_day=1, max_llm_document_chars=200000,
+                concurrent_llm_runs=5,
+            )),
+        )
+        app = create_app(settings)
+        app.state.provider_factory = lambda name=None, model=None: FakeProvider(LLM_RESPONSE)
+        with TestClient(app) as client:
+            client.headers.update(auth_headers(client))
+            me = client.get("/api/auth/me").json()
+            first = client.post(
+                "/api/checks",
+                json={"text": "a's job", "language": "en", "checkers": ["llm"]},
+            )
+            with client.stream(
+                "GET", f"/api/checks/{first.json()['check_id']}/events"
+            ) as stream:
+                _read_sse_events(stream)
+
+            with caplog.at_level(logging.WARNING, logger="app.services.usage"):
+                second = client.post(
+                    "/api/checks",
+                    json={"text": "a's second job", "language": "en",
+                          "checkers": ["llm"]},
+                )
+            assert second.status_code == 202
+            assert second.json()["effective_llm"]["skipped"] == "quota_exhausted"
+
+        rows = _read_usage_rows(settings.db_path)
+        assert len(rows) == 1
+        assert any(
+            "admin" in r.message and str(me["id"]) in r.message
+            for r in caplog.records
+        )

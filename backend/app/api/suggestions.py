@@ -1,3 +1,5 @@
+import asyncio
+import uuid
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -81,8 +83,9 @@ async def create_suggestions(
     requested = RequestedLLM(
         tier=body.llm_tier, provider=body.llm_provider, model=body.llm_model
     )
-    effective, provider = get_effective_provider(
-        request.app, user, requested, body.language.value
+    effective, provider, reservation = await get_effective_provider(
+        request.app, user, requested, body.language.value,
+        text_chars=len(body.text), source="suggestion", run_id=str(uuid.uuid4()),
     )
     if provider is None:
         # Spec §7.2: where the LLM output IS the product, a denial degrades
@@ -93,11 +96,19 @@ async def create_suggestions(
             original=original,
             skipped=effective.skipped,
         )
+    assert reservation is not None
+    status = "completed"
     try:
         response = await provider.generate(system, prompt)
+    except asyncio.CancelledError:
+        status = "cancelled"
+        raise
     except Exception as exc:
+        status = "failed"
         detail = str(exc) or type(exc).__name__
         raise HTTPException(502, f"LLM request failed: {detail}") from exc
+    finally:
+        reservation.finish(status)
 
     items = extract_json_array(response)
     if items is None:
