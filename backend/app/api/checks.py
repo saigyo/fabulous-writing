@@ -58,6 +58,13 @@ async def create_check(
     user: CurrentUser = Depends(get_current_user),
 ) -> CheckStatus:
     app = request.app
+    if len(body.text) > app.state.settings.limits.max_document_chars:
+        raise HTTPException(
+            413,
+            f"Text exceeds the {app.state.settings.limits.max_document_chars}"
+            " character limit",
+        )
+
     try:
         job: CheckJob = app.state.jobs.create(user.id)
     except JobsAtCapacity as exc:

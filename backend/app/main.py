@@ -12,6 +12,7 @@ from app.api.folders import router as folders_router
 from app.api.languages import router as languages_router
 from app.api.profiles import router as profiles_router
 from app.api.providers import router as providers_router
+from app.api.request_size import RequestSizeLimitMiddleware, byte_budget
 from app.api.routing import router as routing_router
 from app.api.rules import router as rules_router
 from app.api.suggestions import router as suggestions_router
@@ -98,6 +99,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else {"docs_url": None, "redoc_url": None, "openapi_url": None}
     )
     app = FastAPI(title=APP_NAME, **docs_kwargs)
+    # Added BEFORE CORSMiddleware: Starlette makes the *last-added*
+    # middleware outermost, and CORS must stay outermost so a 413 from this
+    # middleware still carries CORS headers and is readable by the browser
+    # (spec §6.5).
+    app.add_middleware(
+        RequestSizeLimitMiddleware,
+        max_bytes=byte_budget(settings.limits.max_document_chars),
+    )
     # allow_credentials is deliberately left unset (defaults to False): Bearer-
     # header auth does not need CORS credentials mode, and enabling it
     # alongside a permissive origin list is a common mistake.
