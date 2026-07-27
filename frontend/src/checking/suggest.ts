@@ -64,6 +64,10 @@ export async function fetchSuggestions(findingId: string): Promise<void> {
     }
   } catch (error) {
     if (gen !== currentGeneration()) return // session ended: stale error, nothing to report
+    // A provider failure (e.g. a 502) still spends quota — its ledger row
+    // settles as 'failed' server-side — so used_today goes stale unless this
+    // fires too. A 429 spent nothing, but the extra guarded GET is harmless.
+    refreshUserNow()
     if (error instanceof HttpError && error.status === 429) {
       useStore.getState().setSuggestError(findingId, currentMessages().serverBusy)
       return
@@ -136,6 +140,8 @@ export async function fetchRewrite(findingId: string): Promise<void> {
     }
   } catch (error) {
     if (gen !== currentGeneration()) return // session ended: stale error, nothing to report
+    // Same reasoning as fetchSuggestions()'s catch block above.
+    refreshUserNow()
     if (error instanceof HttpError && error.status === 429) {
       useStore.getState().setRewriteError(findingId, currentMessages().serverBusy)
       return

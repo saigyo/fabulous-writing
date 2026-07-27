@@ -131,6 +131,14 @@ async function runRestore(): Promise<void> {
 // setUnauthorizedHandler comment.
 setUnauthorizedHandler(expireSession)
 
+// Bumped by every refreshUser() call. Two LLM completions can each trigger
+// their own refresh; the generation/token guards below only catch a session
+// change, not two in-flight refreshes racing each other — an older response
+// landing last would otherwise regress used_today back down. This counter's
+// last-issued value is the only one allowed to commit, so whichever refresh
+// started most recently wins regardless of completion order.
+let refreshSeq = 0
+
 /**
  * Best-effort /me re-fetch so quota display tracks reality after an LLM
  * run. Generation- and token-guarded exactly like runRestore(): a session
@@ -141,10 +149,12 @@ export async function refreshUser(): Promise<void> {
   const startedAt = generation
   const token = useStore.getState().token
   if (!token) return
+  const seq = ++refreshSeq
   try {
     const user = await getMe()
     if (startedAt !== generation) return
     if (useStore.getState().token !== token) return
+    if (seq !== refreshSeq) return
     useStore.getState().setAuth(token, user)
   } catch {
     // Cosmetic refresh only — never surface, never clear state (a real 401

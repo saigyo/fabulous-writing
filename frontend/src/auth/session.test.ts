@@ -413,4 +413,40 @@ describe('refreshUser', () => {
     expect(state.user).toEqual(user(1))
     expect(state.authStatus).toBe('authenticated')
   })
+
+  it('keeps the newer of two overlapping refreshes even when the older one resolves last', async () => {
+    // Two LLM completions can each trigger their own refreshUser() call; both
+    // pass the generation/token guards untouched, so without the seq counter
+    // the older response landing last would regress used_today back down.
+    useStore.setState({ token: 'tok', user: user(1), authStatus: 'authenticated' })
+    let resolveFirst!: (u: MeResponse) => void
+    let resolveSecond!: (u: MeResponse) => void
+    vi.mocked(getMe)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecond = resolve
+          }),
+      )
+
+    const first = refreshUser()
+    const second = refreshUser()
+
+    // The second (newer) refresh resolves first, with the higher used_today.
+    resolveSecond(user(1, { usage: { used_today: 20, limit: 500 } }))
+    await second
+    // The first (older) refresh resolves last, with stale, lower data.
+    resolveFirst(user(1, { usage: { used_today: 5, limit: 500 } }))
+    await first
+
+    expect(useStore.getState().user).toEqual(
+      user(1, { usage: { used_today: 20, limit: 500 } }),
+    )
+  })
 })

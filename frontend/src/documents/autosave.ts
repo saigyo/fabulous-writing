@@ -3,6 +3,7 @@ import {
   HttpError,
   updateDocument,
 } from '../api/client'
+import { refreshUserNow } from '../auth/refreshSlot'
 import { getEditorView } from '../editor/editorRef'
 import { wordCount } from '../scoring/score'
 import { useStore } from '../state/store'
@@ -314,6 +315,10 @@ async function maybeGenerateTitle(snapshot: DocSnapshot): Promise<void> {
   const gen = currentGeneration()
   try {
     const doc = await generateDocumentName(meta.id)
+    // Naming spends quota — including a backend-silent provider-failure
+    // fallback, which still returns 200 — so the indicator must refresh on
+    // every resolution, success or fallback alike, not just a written one.
+    refreshUserNow()
     if (gen !== currentGeneration()) return // session ended: do not write
     const store = useStore.getState()
     if (store.docMeta?.id === doc.id) {
