@@ -304,6 +304,59 @@ describe('check controller', () => {
     expect(refreshUserNow).toHaveBeenCalled()
   })
 
+  it('refreshes the quota indicator right after an admitted POST resolves, even if the ' +
+    'subscription is torn down (cancelCheck) before done ever fires', async () => {
+    // The ledger row for an admitted run is inserted at ADMISSION, inside
+    // postCheck's own request/response cycle — status 'running' here is
+    // exactly that: a real reservation, already reflected in used_today.
+    vi.mocked(postCheck).mockResolvedValue({
+      check_id: 'c1',
+      status: 'running',
+      findings: [],
+      effective_llm: {
+        requested: { tier: 'balanced', provider: null, model: null },
+        effective: { tier: 'balanced', provider: null, model: null },
+        degraded: false,
+        skipped: null,
+      },
+    } as never)
+    const unsub = vi.fn()
+    vi.mocked(subscribeCheck).mockReturnValue(unsub)
+
+    await runCheck(true)
+
+    expect(refreshUserNow).toHaveBeenCalledTimes(1)
+
+    // Detach: a document switch tears down the subscription before onDone
+    // ever fires. The admitted backend run keeps its quota row regardless —
+    // the refresh above already accounted for it, so tearing the
+    // subscription down must not trigger (or need) another one.
+    cancelCheck()
+    expect(refreshUserNow).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not refresh again from onDone -- the admission-time refresh already covers it', async () => {
+    vi.mocked(postCheck).mockResolvedValue({
+      check_id: 'c1',
+      status: 'running',
+      findings: [],
+      effective_llm: {
+        requested: { tier: 'balanced', provider: null, model: null },
+        effective: { tier: 'balanced', provider: null, model: null },
+        degraded: false,
+        skipped: null,
+      },
+    } as never)
+    vi.mocked(subscribeCheck).mockReturnValue(() => {})
+
+    await runCheck(true)
+    expect(refreshUserNow).toHaveBeenCalledTimes(1)
+
+    lastCallbacks().onDone!()
+
+    expect(refreshUserNow).toHaveBeenCalledTimes(1)
+  })
+
   it('never includes llm in checkers for a floor-policy user, even when includeLlm is true', async () => {
     useStore.setState({ user: user(FLOOR), tier: 'balanced' })
     await runCheck(true)
