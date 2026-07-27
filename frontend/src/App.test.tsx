@@ -203,6 +203,11 @@ describe('Header quota indicator', () => {
 
     const indicator = screen.getByText('0/20')
     expect(indicator.getAttribute('title')).toBe(en.quotaIndicatorTitle)
+    // A `title` attribute alone is not exposed as an accessible name on a
+    // non-focusable span -- assistive tech needs aria-label too.
+    expect(
+      screen.getByLabelText(`${en.quotaIndicatorTitle}: 0/20`),
+    ).toBe(indicator)
   })
 
   it('is absent for a floor-policy user (llmDisabled)', async () => {

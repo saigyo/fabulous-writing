@@ -80,7 +80,13 @@ def _store(request: Request) -> DocumentStore:
 def _enforce_document_cap(request: Request, text: str) -> None:
     cap = request.app.state.settings.limits.max_document_chars
     if len(text) > cap:
-        raise HTTPException(413, f"Text exceeds the {cap} character limit")
+        raise HTTPException(
+            413,
+            {
+                "code": "document_too_large",
+                "message": f"Text exceeds the {cap} character limit",
+            },
+        )
 
 
 @router.get("/documents")
@@ -249,6 +255,13 @@ async def generate_name(
                 try:
                     system, prompt = build_title_prompt(document.text, document.language)
                     title = clean_title(await provider.generate(system, prompt))
+                    if title is None:
+                        # The provider call succeeded but produced nothing
+                        # usable -- a burned-token run with no value, just
+                        # like suggestions.py's unparseable-response case.
+                        # The silent local fallback below is unaffected;
+                        # only the ledger's own status changes.
+                        name_status = "failed"
                 except asyncio.CancelledError:
                     name_status = "cancelled"
                     raise

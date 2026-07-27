@@ -252,7 +252,11 @@ async function push(snapshot: DocSnapshot): Promise<void> {
       } catch {
         // Silent: buffer stays as the handler left it.
       }
-    } else if (error instanceof HttpError && error.status === 413) {
+    } else if (
+      error instanceof HttpError &&
+      error.status === 413 &&
+      error.code === 'document_too_large'
+    ) {
       // Over limits.max_document_chars: permanent until the text shrinks
       // back under the cap, so no backoff retry is scheduled here — one
       // would just re-send the same doomed PUT every ~30s forever. The
@@ -263,6 +267,13 @@ async function push(snapshot: DocSnapshot): Promise<void> {
       // (`overLimit` lets the `finally` below tell this apart from the other
       // failure branches, which each already have their own way of picking
       // a pending edit back up — see the comment there.)
+      //
+      // Not every 413 is this: the byte-budget middleware also 413s when
+      // the whole JSON body (text + findings + scorecard) crosses its own
+      // budget, even with text under the char cap — and that one has no
+      // `document_too_large` code. That case is transient (the body shrinks
+      // once findings/scorecard change) and must fall through to the retry
+      // branch below rather than being left silently dirty forever.
       overLimit = true
     } else {
       scheduleRetry()
