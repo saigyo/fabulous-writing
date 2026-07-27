@@ -947,6 +947,30 @@ class TestCheckMetering:
         rows = _read_usage_rows(settings.db_path)
         assert len(rows) == 1  # the denied second insert did not survive
 
+    def test_unconfigured_provider_does_not_reserve_a_ledger_row(
+        self, tmp_path: Path
+    ) -> None:
+        # Mirrors TestEffectiveLlm.test_routing_to_unconfigured_provider_is_
+        # skipped_not_500: a granted quality tier ('cheap') routes to a
+        # provider (gemini, the default routing table's entry) this server
+        # has not configured. The gate must construct the provider BEFORE
+        # reserving (spec §7.2) -- a run that cannot even start must never
+        # consume quota or leak a concurrency slot until the 900s sweep.
+        settings = Settings(db_path=tmp_path / "test.db", rules_dir=RULES_DIR)
+        app = create_app(settings)
+        app.state.provider_factory = SelectiveFactory(known={"ollama", "claude"})
+        with TestClient(app) as client:
+            client.headers.update(auth_headers(client))  # admin: unrestricted policy
+            post = client.post(
+                "/api/checks",
+                json={"text": "A nice text.", "language": "en", "checkers": ["llm"],
+                      "llm_tier": "cheap"},
+            )
+            body = post.json()
+            assert body["effective_llm"]["skipped"] == "llm_unavailable"
+
+        assert _read_usage_rows(settings.db_path) == []
+
     def test_document_too_large_skips_llm_only(self, tmp_path: Path) -> None:
         settings = Settings(
             db_path=tmp_path / "test.db", rules_dir=RULES_DIR,
