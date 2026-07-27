@@ -16,6 +16,7 @@ from app.core.permissions import (
     RequestedLLM,
     default_model_for,
     features_for,
+    limits_for,
     policy_for,
     resolve_llm_selection,
 )
@@ -189,3 +190,43 @@ def test_default_model_for_covers_every_builtin_and_extras():
     assert default_model_for(providers, "bedrock") == providers.bedrock_model
     assert default_model_for(providers, "deepseek") == "deepseek-v4-pro"
     assert default_model_for(providers, "nope") is None
+
+
+class TestLimitsFor:
+    def test_admin_gets_the_admin_ceiling(self):
+        settings = Settings.model_validate({
+            "limits": {"admin": {"llm_checks_per_day": 100,
+                                 "max_llm_document_chars": 50000,
+                                 "concurrent_llm_runs": 2}},
+            "tiers": {"premium": {"limits": {
+                "llm_checks_per_day": 200, "max_llm_document_chars": 100000,
+                "concurrent_llm_runs": 5}}},
+        })
+        # The ceiling REPLACES the tier's block (spec §6.4), never raises it.
+        limits = limits_for(tier="premium", is_admin=True, settings=settings)
+        assert limits.llm_checks_per_day == 100
+
+    def test_configured_tier_gets_its_own_block(self):
+        settings = Settings.model_validate({
+            "tiers": {"basic": {"limits": {
+                "llm_checks_per_day": 20, "max_llm_document_chars": 20000,
+                "concurrent_llm_runs": 3}}},
+        })
+        limits = limits_for(tier="basic", is_admin=False, settings=settings)
+        assert limits.llm_checks_per_day == 20
+
+    def test_no_tiers_configured_falls_back_to_admin_defaults(self):
+        # Inert-by-default (roadmap M5 row): the generous admin numbers.
+        limits = limits_for(tier="basic", is_admin=False, settings=Settings())
+        assert limits.llm_checks_per_day == 500
+
+    def test_unknown_tier_falls_back_to_admin_defaults(self):
+        # Reachable only for display (/me): an unknown tier's policy is
+        # NO_LLM_POLICY, so resolution floors out before any reservation.
+        settings = Settings.model_validate({
+            "tiers": {"basic": {"limits": {
+                "llm_checks_per_day": 20, "max_llm_document_chars": 20000,
+                "concurrent_llm_runs": 3}}},
+        })
+        limits = limits_for(tier="ghost", is_admin=False, settings=settings)
+        assert limits.llm_checks_per_day == 500

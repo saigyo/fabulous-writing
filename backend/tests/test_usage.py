@@ -2,11 +2,13 @@ import logging
 import sqlite3
 import threading
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
-from app.core.config import LimitsSettings, TierLimitsSettings
+from app.core.config import LimitsSettings, Settings, TierLimitsSettings
 from app.core.permissions import EffectiveSelection, RequestedLLM
+from app.main import create_app
 from app.services._sqlite import connect
 from app.services.usage import QuotaDecision, UsageStore
 
@@ -294,3 +296,25 @@ class TestUsedToday:
         store.finish_run(d_old.reservation_id, "completed")
         assert store.used_today(1, now=now) == 4
         assert store.used_today(2, now=now) == 0
+
+
+def test_startup_sweeps_started_ledger_rows(tmp_path: Path):
+    # Build tmp_path-based Settings exactly the way the neighboring
+    # create_app tests do (conftest already provides the FW_* env the app
+    # factory needs) — the arrange/assert below is the requirement.
+    settings = Settings(db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules")
+    store = UsageStore(settings.db_path)
+    store.reserve_llm_run(  # leaves a 'started' row
+        FakeUser(1), TierLimitsSettings(llm_checks_per_day=5,
+        max_llm_document_chars=1000, concurrent_llm_runs=5),
+        LimitsSettings(), RequestedLLM(tier="cheap"),
+        EffectiveSelection(tier="cheap", provider="ollama", model="m",
+                           degraded=False),
+        1, "check", "orphan",
+    )
+    create_app(settings)
+    with sqlite3.connect(settings.db_path) as conn:
+        (status,) = conn.execute(
+            "SELECT status FROM llm_usage WHERE run_id = 'orphan'"
+        ).fetchone()
+    assert status == "abandoned"

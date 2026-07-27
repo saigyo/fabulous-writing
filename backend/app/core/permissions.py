@@ -15,6 +15,7 @@ from app.core.config import (
     TIERS,
     ProviderSettings,
     Settings,
+    TierLimitsSettings,
     TierSettings,
 )
 
@@ -106,6 +107,21 @@ def features_for(*, tier: str, is_admin: bool, settings: Settings) -> frozenset[
     if cfg is None:
         return frozenset()
     return frozenset(cfg.features)
+
+
+def limits_for(*, tier: str, is_admin: bool, settings: Settings) -> TierLimitsSettings:
+    """The caller's per-user limits block (spec §6.4): the admin ceiling for
+    admins (it REPLACES the tier's block, spec §6.4), the tier's required
+    block when configured, and the generous admin defaults otherwise — which
+    covers the no-tiers-configured inert mode, and the unknown-tier case
+    that can only ever feed the /me display (an unknown tier's policy is
+    NO_LLM_POLICY, so resolution floors out before any reservation)."""
+    if is_admin or not settings.tiers:
+        return settings.limits.admin
+    cfg = _tier_config(tier, settings)
+    if cfg is None:
+        return settings.limits.admin
+    return cfg.limits
 
 
 def default_model_for(providers: ProviderSettings, name: str) -> str | None:
