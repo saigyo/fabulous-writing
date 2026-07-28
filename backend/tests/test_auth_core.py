@@ -19,6 +19,7 @@ from app.core.auth import (
     resolve_auth_secret,
     validate_password,
 )
+from app.core import auth as auth_module
 from app.core.config import Settings
 
 
@@ -301,3 +302,16 @@ def test_deeply_nested_header_segment_is_rejected_not_a_raw_recursion_error():
     token = f"{header}.e30.c2ln"  # payload "{}", arbitrary signature bytes
     with pytest.raises(InvalidToken):
         LocalTokenVerifier(SECRET).verify(token)
+
+
+def test_hash_password_honors_module_work_factor(monkeypatch):
+    monkeypatch.setattr(auth_module, "_BCRYPT_ROUNDS", 5)
+    assert auth_module.hash_password("some password").startswith("$2b$05$")
+
+
+def test_suite_runs_at_reduced_work_factor():
+    # Mutation guard for the session-wide _fast_bcrypt fixture in
+    # conftest.py: delete that fixture and this fails, because hashes
+    # would carry the production cost (12) again — and the suite would
+    # silently be ~250x slower per hash.
+    assert auth_module.hash_password("some password").startswith("$2b$04$")
