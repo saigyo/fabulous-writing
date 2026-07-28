@@ -3365,3 +3365,18 @@ non-admin 403.
 **Next**: backlog pickup per the owner — B5+B7 (failure classification +
 provider usage protocol) is the natural pair; B6 credit budgeting expects
 its own spec section.
+
+## 2026-07-28 — Backlog migrated to GitHub issues
+
+With M6 rebase-merged (PR #33) closing the multi-user milestone series, the
+roadmap's backlog table (B1–B9) moved to GitHub issues
+[#34](https://github.com/saigyo/fabulous-writing/issues/34)–[#42](https://github.com/saigyo/fabulous-writing/issues/42),
+label `backlog` — row text verbatim (dated owner decisions and binding
+constraints included), B-numbers kept in the titles, B6 marked as depending
+on B7 (#39). The roadmap rows are condensed to pointers. Standing mode from
+here: new ideas get filed as issues informally; picking one up re-enters the
+usual workflow (spec under version control → plan → review → PR), where its
+constraints are restated. No parallel backlog doc.
+
+**Next**: owner picks from the issue backlog — B5+B7 (#38 + #39) remain the
+natural first pair; B6 (#40) follows and expects a full spec section.
