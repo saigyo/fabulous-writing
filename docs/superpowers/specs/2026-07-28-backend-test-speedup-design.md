@@ -74,8 +74,9 @@ here.
 
 ### 2. Deterministic clock instead of sleeps
 
-The eight sleeping tests get a monkeypatched clock: a small fixture (in
-the test modules that need it) replaces `app.services.documents._utcnow`
+The eight sleeping tests get a monkeypatched clock: a small fixture
+(`document_clock` in `tests/conftest.py`) replaces
+`app.services.documents._utcnow`
 with a callable returning strictly increasing second-precision
 timestamps, advanced explicitly by the test where "later" matters. The
 `time.sleep(1.1)` calls are removed. Assertions stay behavioral

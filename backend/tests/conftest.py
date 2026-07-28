@@ -13,12 +13,18 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core import auth
 from app.core.config import Settings
 from app.main import create_app
 
 TEST_SECRET = "test-secret-value-that-is-long-enough-32"
 TEST_ADMIN_EMAIL = "root@example.com"
 TEST_ADMIN_PASSWORD = "bootstrap password"
+
+# Captured at module import time, before any fixture (including
+# _fast_bcrypt below) has a chance to run — this is the real production
+# value, not whatever the test session happens to override it to.
+PRODUCTION_BCRYPT_ROUNDS = auth._BCRYPT_ROUNDS
 
 
 @pytest.fixture(autouse=True, scope="session")
