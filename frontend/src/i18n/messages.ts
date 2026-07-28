@@ -45,6 +45,8 @@ export interface Messages {
   resetToProfile: string
   domainsSelected: (n: number) => string
   viewProfiles: string
+  viewAdmin: string
+  adminUsersTitle: string
   tierName: (tier: Tier) => string
   tierPinnedOption: (model: string) => string
   resolvedModel: (model: string, provider: string) => string

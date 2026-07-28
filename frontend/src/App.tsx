@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import './App.css'
 import { getDomains, getLanguages, getProfiles, getProviders, getRouting } from './api/client'
+import { AdminView } from './admin/AdminView'
 import { AccountMenu } from './auth/AccountMenu'
 import { llmDisabled } from './auth/policy'
 import { sessionGeneration } from './auth/session'
@@ -29,6 +30,7 @@ import { Wordmark } from './Wordmark'
 
 export default function App() {
   const activeView = useStore((s) => s.activeView)
+  const isAdmin = useStore((s) => s.user?.is_admin ?? false)
 
   useEffect(() => {
     // Startup: replay dirty buffer, load the document list, open the last
@@ -78,6 +80,7 @@ export default function App() {
       {activeView === 'rules' && <RulesView />}
       {activeView === 'terminology' && <TerminologyView />}
       {activeView === 'profiles' && <ProfilesView />}
+      {activeView === 'admin' && isAdmin && <AdminView />}
     </div>
   )
 }
@@ -187,6 +190,14 @@ export function Header() {
         >
           {m.viewProfiles}
         </button>
+        {(store.user?.is_admin ?? false) && (
+          <button
+            className={store.activeView === 'admin' ? 'active' : ''}
+            onClick={() => store.setActiveView('admin')}
+          >
+            {m.viewAdmin}
+          </button>
+        )}
       </nav>
       <div className="header-controls">
         <ProfileSelector />

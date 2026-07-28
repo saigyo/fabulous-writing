@@ -221,6 +221,15 @@ describe('document state', () => {
   })
 })
 
+describe('ActiveView', () => {
+  it('activeView accepts admin and resets to editor on session reset', () => {
+    useStore.getState().setActiveView('admin')
+    expect(useStore.getState().activeView).toBe('admin')
+    resetSessionState()
+    expect(useStore.getState().activeView).toBe('editor')
+  })
+})
+
 describe('resetSessionState', () => {
   it('resets the whole data half of the store, not just the persisted blob', () => {
     useStore.setState({

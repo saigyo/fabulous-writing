@@ -34,6 +34,8 @@ export const en: Messages = {
   resetToProfile: "Reset to the profile's values",
   domainsSelected: (n) => `${n} domains`,
   viewProfiles: 'Profiles',
+  viewAdmin: 'Admin',
+  adminUsersTitle: 'User management',
   tierName: (t) =>
     ({ quality: 'Best quality', balanced: 'Balanced', cheap: 'Fast & economical', local: 'Private (local)' })[t],
   tierPinnedOption: (model) => `Pinned: ${model}`,
