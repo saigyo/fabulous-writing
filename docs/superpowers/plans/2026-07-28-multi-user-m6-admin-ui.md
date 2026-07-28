@@ -29,6 +29,7 @@
 3. **Render guard is `is_admin && activeView === 'admin'`.** Belt-and-braces: if an admin is demoted mid-session (a `refreshUser()` landing new `/me` data), the view unmounts instead of continuing to render with dead queries. `activeView` itself resets to `'editor'` on session turnover via `INITIAL_DATA` (store.ts) — no cross-user leak, no new code needed.
 4. **UI mirrors the server guards it cannot replace.** Self-row `is_admin`/`is_active` controls disabled (server 409), admin-grant controls disabled while `allow_additional_admins` is false (server 403) with a hint, `ADMIN_MIN_PASSWORD_LENGTH = 12` pre-validated client-side (server 422) — mirroring the existing `MIN_PASSWORD_LENGTH = 8` pattern in `client.ts`. Demotion (`true → false`) stays enabled for non-self rows per spec §7.1.
 5. **Errors follow the `useCrudError` house pattern** (generic formatted message from the thrown `HttpError`), exactly like `ProfilesView`.
+6. **Generation guard is `sessionGeneration()`** (`auth/session.ts`), not `ProfilesView`'s `currentGeneration()` from `documents/autosave` — the admin view has no autosave coupling, and `App.tsx`'s domains fetch (App.tsx:113-117) is the precedent for pure session-turnover guarding. Deliberate, not drift.
 
 ---
 
@@ -46,30 +47,25 @@
 
 Append to `backend/tests/test_admin_api.py`, following the module's existing app-construction and auth-header helpers (read the module first and reuse its fixtures/helpers verbatim — it already builds tmp_path apps and admin/non-admin headers for the other admin endpoints):
 
+The module has its own `build()`/`client` fixture and `admin_headers` helper (top of `test_admin_api.py`) — use those for the admin side, exactly as the module's other tests do. For the non-admin side add one import: `from tests.conftest import second_user_headers`. For a tiers-configured app, mirror the construction in the existing `test_configured_names_replace_defaults` (same module, ~line 320) — it builds settings with a custom `tiers` block and is the model to copy. The three tests (adapt the fixture/helper spelling to the module's own once read):
+
 ```python
 class TestListTiers:
     def test_returns_config_tier_names(self, tmp_path):
-        settings = _settings_with_tiers(tmp_path)  # reuse/adapt the module's existing tiers-config helper
-        client = TestClient(create_app(settings))
-        admin = auth_headers(client)
+        # settings/client construction copied from test_configured_names_replace_defaults
         response = client.get("/api/admin/tiers", headers=admin)
         assert response.status_code == 200
         assert response.json() == list(settings.tiers)
 
-    def test_defaults_when_no_tiers_configured(self, tmp_path):
-        settings = Settings(db_path=tmp_path / "t.db", rules_dir=tmp_path / "rules")
-        client = TestClient(create_app(settings))
-        admin = auth_headers(client)
-        assert client.get("/api/admin/tiers", headers=admin).json() == ["basic", "premium"]
+    def test_defaults_when_no_tiers_configured(self, client, admin_headers):
+        assert client.get("/api/admin/tiers", headers=admin_headers).json() == ["basic", "premium"]
 
-    def test_non_admin_is_403(self, tmp_path):
-        settings = Settings(db_path=tmp_path / "t.db", rules_dir=tmp_path / "rules")
-        client = TestClient(create_app(settings))
+    def test_non_admin_is_403(self, client):
         second = second_user_headers(client)
         assert client.get("/api/admin/tiers", headers=second).status_code == 403
 ```
 
-If the module has no tiers-config helper, build the settings inline the way the module's tier-validation tests do (there are existing tests exercising `_validate_tier_name` against configured tiers — mirror their construction exactly). The imports (`TestClient`, `create_app`, `Settings`, `auth_headers`, `second_user_headers`) follow the module's existing import block.
+(The bodies are the contract; the fixture spellings must match what the module actually defines — read it first.)
 
 - [ ] **Step 2: Run them to verify they fail**
 
@@ -138,36 +134,34 @@ git commit -m "feat(admin): expose assignable tier names at GET /api/admin/tiers
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `frontend/src/api/client.test.ts`, following the module's existing fetch-mocking helpers (read its existing tests for `postLogin`/`getMe` and reuse the same mock/setup pattern):
+Append to `frontend/src/api/client.test.ts`. The file's reusable idioms are its `jsonResponse()` helper and `vi.spyOn(globalThis, 'fetch').mockResolvedValue(...)` with assertions on `fetchMock.mock.calls[0]` — see the `request()` headers describe block. It imports `{ beforeEach, describe, expect, it, vi }` (no `test` in scope). Four tests:
 
 ```typescript
 describe('admin endpoints', () => {
-  test('getAdminUsers GETs /api/admin/users with the bearer header', async () => {
-    // arrange the module's standard fetch mock returning [] and a store token,
-    // then:
+  it('getAdminUsers GETs /api/admin/users with the bearer header', async () => {
+    // fetch mock via jsonResponse([]), token in the store, then:
     await getAdminUsers()
-    // assert fetch was called with '/api/admin/users', no method (GET),
-    // and Authorization: Bearer <token> — same assertion style as the
-    // existing getMe test.
+    // assert fetchMock.mock.calls[0]: path ends '/api/admin/users', no
+    // method override (GET), headers carry Authorization: Bearer <token>.
   })
 
-  test('postAdminUser POSTs the create payload', async () => {
+  it('postAdminUser POSTs the create payload', async () => {
     await postAdminUser({ email: 'a@b.c', password: 'p'.repeat(12), tier: 'basic', is_admin: false })
-    // assert method POST, body JSON equals the payload
+    // assert method 'POST' and JSON.parse(body) deep-equals the payload
   })
 
-  test('patchAdminUser PATCHes the given fields only', async () => {
+  it('patchAdminUser PATCHes the given fields only', async () => {
     await patchAdminUser(7, { tier: 'premium' })
-    // assert path '/api/admin/users/7', method PATCH, body '{"tier":"premium"}'
+    // assert path ends '/api/admin/users/7', method 'PATCH', body '{"tier":"premium"}'
   })
 
-  test('admin password floor mirrors the backend', () => {
+  it('admin password floor mirrors the backend', () => {
     expect(ADMIN_MIN_PASSWORD_LENGTH).toBe(12)
   })
 })
 ```
 
-Flesh the comments into real assertions using the file's existing mock idioms — the four tests must assert concrete paths/methods/bodies/headers, not merely "was called".
+Flesh the comments into real assertions with those idioms — concrete paths/methods/bodies/headers, not merely "was called".
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -255,7 +249,7 @@ git commit -m "feat(admin-ui): typed admin API client (M6)"
 - Modify: `frontend/src/App.tsx`
 - Create: `frontend/src/admin/AdminView.tsx` (placeholder shell this task; Task 4 fills it)
 - Modify: `frontend/src/i18n/messages.ts` + all seven catalogs (`en de es fr it ja zh`): key `viewAdmin`
-- Test: `frontend/src/App.test.tsx` (extend), `frontend/src/state/store.test.ts` (extend)
+- Test: create `frontend/src/App.admin-gate.test.tsx`; extend `frontend/src/state/store.test.ts`
 
 **Interfaces:**
 - Consumes: `useStore` (`activeView`, `setActiveView`, `user`), `useMessages`.
@@ -263,25 +257,25 @@ git commit -m "feat(admin-ui): typed admin API client (M6)"
 
 - [ ] **Step 1: Write the failing tests**
 
-In `frontend/src/App.test.tsx`, following the file's existing render/mock setup (it already renders `App` with a mocked client and a store user — reuse that arrangement):
+Create `frontend/src/App.admin-gate.test.tsx` — its own file, precedent `App.domains-guard.test.tsx`. Note that NO existing test renders the default `<App />` export (existing files render `Header` only): rendering `App` fires `initDocuments()`, CodeMirror, and the sidebars, so this file must mock `./documents/documents`, `./editor/Editor`, `./documents/DocumentSidebar`, and `./sidebar/Sidebar` (trivial stubs), and mock `./api/client` with the `importOriginal`-spread form (see `App.test.tsx` top) extended with `getAdminUsers`/`getAdminTiers` mocks. Two tests:
 
 ```typescript
-test('admin nav button renders only for admins', () => {
-  // render with a non-admin user in the store: no button labeled 'Admin'
+it('admin nav button renders only for admins', () => {
+  // render <App /> with a non-admin user via setAuth: no button labeled 'Admin';
   // re-render with is_admin: true: the button appears
 })
 
-test('non-admin session issues no /api/admin request even if activeView is forced to admin', () => {
-  // set store user to non-admin, setActiveView('admin'), render App;
-  // assert the mocked getAdminUsers/getAdminTiers were never called and
-  // no admin view content is in the document (the is_admin render guard).
+it('non-admin session issues no /api/admin request even if activeView is forced to admin', () => {
+  // seed a non-admin user, setActiveView('admin'), render <App />;
+  // assert mocked getAdminUsers/getAdminTiers were never called and no
+  // admin view content is in the document (the is_admin render guard).
 })
 ```
 
-In `frontend/src/state/store.test.ts`:
+In `frontend/src/state/store.test.ts` — this is a **regression pin**, not new runtime behavior (`resetSessionState` already resets every `INITIAL_DATA` field; vitest strips types without checking, so it can go green against today's store):
 
 ```typescript
-test('activeView accepts admin and resets to editor on session reset', () => {
+it('activeView accepts admin and resets to editor on session reset', () => {
   useStore.getState().setActiveView('admin')
   expect(useStore.getState().activeView).toBe('admin')
   resetSessionState()
@@ -289,12 +283,9 @@ test('activeView accepts admin and resets to editor on session reset', () => {
 })
 ```
 
-Write them as real tests with the modules' existing helpers; the assertions above are the contract.
+- [ ] **Step 2: Run to verify the RED phase honestly**
 
-- [ ] **Step 2: Run to verify they fail**
-
-Run: `npx vitest run src/App.test.tsx src/state/store.test.ts`
-Expected: FAIL — `'admin'` is not a valid `ActiveView` (type error at test-compile time counts), no admin button exists.
+Run: `npx vitest run src/App.admin-gate.test.tsx` — the two App tests FAIL (no admin button, no AdminView). The store test is type-gated instead: before implementing, run `npm run build` and confirm it FAILS on `setActiveView('admin')` (not assignable to `ActiveView`) — that build failure is this test's RED. After Step 3, mutation-verify the pin once: temporarily remove `'admin'` from the `ActiveView` union again and confirm `npm run build` fails while the vitest run of the store file still passes — which is exactly why the union change is guarded by the build, and the reset behavior by the test.
 
 - [ ] **Step 3: Implement**
 
@@ -373,7 +364,7 @@ Expected: green, 484 + 3 = 487 tests.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add frontend/src/state/store.ts frontend/src/App.tsx frontend/src/admin/AdminView.tsx frontend/src/i18n/ frontend/src/App.test.tsx frontend/src/state/store.test.ts
+git add frontend/src/state/store.ts frontend/src/App.tsx frontend/src/admin/AdminView.tsx frontend/src/i18n/ frontend/src/App.admin-gate.test.tsx frontend/src/state/store.test.ts
 git commit -m "feat(admin-ui): admin as fifth activeView, gated on is_admin (M6)"
 ```
 
@@ -393,7 +384,7 @@ git commit -m "feat(admin-ui): admin as fifth activeView, gated on is_admin (M6)
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `frontend/src/admin/AdminView.test.tsx`. Mock `../api/client` (vi.mock) exporting mocked `getAdminUsers`, `getAdminTiers`, `postAdminUser`, `patchAdminUser`, and the real-valued `ADMIN_MIN_PASSWORD_LENGTH = 12`; seed the store with an admin user (`is_admin: true`, `allow_additional_admins` true/false per test) the way `App.test.tsx` seeds `setAuth`. Tests:
+Create `frontend/src/admin/AdminView.test.tsx`. Mock `../api/client` with the `importOriginal`-spread form (`App.test.tsx` top shows it: `async (importOriginal) => ({ ...(await importOriginal<…>()), getAdminUsers: vi.fn(), … })`) so `HttpError` and `ADMIN_MIN_PASSWORD_LENGTH` stay real while the four admin functions are mocks; seed the store with an admin user (`is_admin: true`, `allow_additional_admins` true/false per test) the way `App.test.tsx` seeds `setAuth`. Tests:
 
 ```typescript
 test('mount fetches users and tiers, renders one row per user', async () => {})
@@ -447,9 +438,11 @@ export function AdminView() {
     getAdminTiers()
       .then((list) => { if (sessionGeneration() === gen) setTiers(list) })
       .catch(() => { if (sessionGeneration() === gen) setTiers([]) })
-    // fail/m are stable enough for a mount-once effect; the view remounts
-    // per activation, which is exactly the refetch cadence the spec wants.
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    // Mount-once by design: the view remounts per activation, which is
+    // exactly the refetch cadence the spec wants. (The repo lints with
+    // oxlint, which has no exhaustive-deps rule — no directive needed;
+    // App.tsx's own mount effects carry none either.)
+  }, [])
 
   const allowMoreAdmins = me?.allow_additional_admins ?? false
 
@@ -516,13 +509,14 @@ function CreateForm({ tiers, allowMoreAdmins, onCreated, run, fail }: CreateForm
   // names are whatever the config says).
   useEffect(() => {
     if (tiers.length > 0 && !tiers.includes(tier)) setTier(tiers[0])
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tiers])
+  }, [tiers, tier])
 
   async function create() {
     if (!email.trim() || !password) return
     if (password.length < ADMIN_MIN_PASSWORD_LENGTH) {
-      fail(m.adminPasswordTooShort)
+      // Reuses the existing parameterized key (AccountMenu precedent) —
+      // no second hardcoded-floor message to drift.
+      fail(m.passwordTooShort(ADMIN_MIN_PASSWORD_LENGTH))
       return
     }
     const gen = sessionGeneration()
@@ -602,10 +596,11 @@ adminIsActive: string
 adminResetPassword: string
 adminSelf: string
 adminLoadFailed: string
-adminPasswordTooShort: string
 adminGrantDisabledHint: string
 adminChangeFailed: (error: string) => string
 ```
+
+(No `adminPasswordTooShort`: the existing `passwordTooShort(min)` is called with `ADMIN_MIN_PASSWORD_LENGTH` instead.)
 
 Catalog values:
 
@@ -621,7 +616,6 @@ Catalog values:
 | adminResetPassword | `'Reset password'` | `'Passwort zurücksetzen'` |
 | adminSelf | `'(this account)'` | `'(dieses Konto)'` |
 | adminLoadFailed | `'Loading users failed.'` | `'Benutzer konnten nicht geladen werden.'` |
-| adminPasswordTooShort | `'Password needs at least 12 characters.'` | `'Das Passwort braucht mindestens 12 Zeichen.'` |
 | adminGrantDisabledHint | `'Creating additional admins is disabled.'` | `'Das Anlegen weiterer Admins ist deaktiviert.'` |
 | adminChangeFailed | ``(error) => `Change failed: ${error}` `` | ``(error) => `Änderung fehlgeschlagen: ${error}` `` |
 
@@ -637,7 +631,6 @@ Catalog values:
 | adminResetPassword | `'Restablecer contraseña'` | `'Réinitialiser le mot de passe'` |
 | adminSelf | `'(esta cuenta)'` | `'(ce compte)'` |
 | adminLoadFailed | `'No se pudieron cargar los usuarios.'` | `'Échec du chargement des utilisateurs.'` |
-| adminPasswordTooShort | `'La contraseña necesita al menos 12 caracteres.'` | `'Le mot de passe doit contenir au moins 12 caractères.'` |
 | adminGrantDisabledHint | `'La creación de administradores adicionales está desactivada.'` | `"La création d'administrateurs supplémentaires est désactivée."` |
 | adminChangeFailed | ``(error) => `Error al cambiar: ${error}` `` | ``(error) => `Échec de la modification : ${error}` `` |
 
@@ -653,7 +646,6 @@ Catalog values:
 | adminResetPassword | `'Reimposta password'` | `'パスワードをリセット'` | `'重置密码'` |
 | adminSelf | `'(questo account)'` | `'（このアカウント）'` | `'（此账户）'` |
 | adminLoadFailed | `'Caricamento utenti non riuscito.'` | `'ユーザーを読み込めませんでした。'` | `'无法加载用户。'` |
-| adminPasswordTooShort | `'La password richiede almeno 12 caratteri.'` | `'パスワードは12文字以上必要です。'` | `'密码至少需要12个字符。'` |
 | adminGrantDisabledHint | `'La creazione di ulteriori admin è disattivata.'` | `'追加の管理者の作成は無効になっています。'` | `'已禁用创建其他管理员。'` |
 | adminChangeFailed | ``(error) => `Modifica non riuscita: ${error}` `` | ``(error) => `変更に失敗しました: ${error}` `` | ``(error) => `更改失败：${error}` `` |
 
@@ -663,12 +655,12 @@ Catalog values:
 .admin-view { padding: 1rem 1.5rem; overflow-y: auto; }
 .admin-create { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
 .admin-users { border-collapse: collapse; }
-.admin-users th, .admin-users td { padding: 0.3rem 0.75rem; text-align: left; border-bottom: 1px solid var(--border, #ddd); }
-.admin-error { color: var(--error, #b00020); }
+.admin-users th, .admin-users td { padding: 0.3rem 0.75rem; text-align: left; border-bottom: 1px solid #ddd; }
+.admin-error { color: #e5484d; }
 .admin-self { opacity: 0.6; }
 ```
 
-(If `App.css` uses different variable names for border/error colors, use the file's actual variables — read the sibling `.profiles-*` rules and match.)
+(`App.css` defines no color variables — literals are the house style; `#e5484d` matches `.profiles-error`. Read the sibling `.profiles-*` rules and keep the same conventions.)
 
 - [ ] **Step 5: Run the gates**
 
@@ -720,13 +712,19 @@ Expected: the six new tests FAIL (rows are read-only so far).
 In `AdminView.tsx`, replace the read-only `<tr>` body with a `UserRow` component in the same file, and add a `save` helper next to the load effect in `AdminView`:
 
 ```tsx
-  async function save(user: AdminUser, patch: AdminUserPatch) {
+  // Returns whether the change actually committed: run() swallows the
+  // rejection into the error banner, so callers that must react to the
+  // outcome (password reset clearing its field) need this signal.
+  async function save(user: AdminUser, patch: AdminUserPatch): Promise<boolean> {
     const gen = sessionGeneration()
+    let committed = false
     await run(async () => {
       const updated = await patchAdminUser(user.id, patch)
       if (sessionGeneration() !== gen) return // session ended: do not write
       setUsers((current) => current.map((u) => (u.id === updated.id ? updated : u)))
+      committed = true
     })
+    return committed
   }
 ```
 
@@ -735,7 +733,10 @@ In `AdminView.tsx`, replace the read-only `<tr>` body with a `UserRow` component
 ```tsx
           {users.map((user) => (
             <UserRow
-              key={user.id}
+              // display_name folded into the key (ProfilesView precedent):
+              // the row's name input is local state seeded from the prop, so
+              // a server-side change must remount the row to resync it.
+              key={`${user.id}:${user.display_name ?? ''}`}
               user={user}
               isSelf={user.id === me?.id}
               tiers={tiers}
@@ -754,7 +755,7 @@ interface UserRowProps {
   isSelf: boolean
   tiers: string[]
   allowMoreAdmins: boolean
-  onSave: (user: AdminUser, patch: AdminUserPatch) => Promise<void>
+  onSave: (user: AdminUser, patch: AdminUserPatch) => Promise<boolean>
   fail: (message: string) => void
 }
 
@@ -775,12 +776,15 @@ function UserRow({ user, isSelf, tiers, allowMoreAdmins, onSave, fail }: UserRow
     void onSave(user, { display_name: trimmed === '' ? null : trimmed })
   }
 
-  function resetPassword() {
+  async function resetPassword() {
     if (newPassword.length < ADMIN_MIN_PASSWORD_LENGTH) {
-      fail(m.adminPasswordTooShort)
+      fail(m.passwordTooShort(ADMIN_MIN_PASSWORD_LENGTH))
       return
     }
-    void onSave(user, { password: newPassword }).then(() => setNewPassword(''))
+    // Clear only on a committed reset: run() swallows failures into the
+    // error banner, so a failed PATCH must leave the typed password in
+    // place rather than wiping it under the error message.
+    if (await onSave(user, { password: newPassword })) setNewPassword('')
   }
 
   return (
@@ -803,7 +807,9 @@ function UserRow({ user, isSelf, tiers, allowMoreAdmins, onSave, fail }: UserRow
           aria-label={`${m.adminTier}: ${user.email}`}
           onChange={(e) => void onSave(user, { tier: e.target.value })}
         >
-          {(tiers.length ? tiers : [user.tier]).map((tierName) => (
+          {/* A user can sit on a tier no longer in config — keep it as an
+              option or the controlled select silently shows the wrong one. */}
+          {(tiers.includes(user.tier) ? tiers : [user.tier, ...tiers]).map((tierName) => (
             <option key={tierName} value={tierName}>{tierName}</option>
           ))}
         </select>
@@ -835,7 +841,7 @@ function UserRow({ user, isSelf, tiers, allowMoreAdmins, onSave, fail }: UserRow
           aria-label={`${m.adminResetPassword}: ${user.email}`}
           onChange={(e) => setNewPassword(e.target.value)}
         />
-        <button disabled={!newPassword} onClick={resetPassword}>
+        <button disabled={!newPassword} onClick={() => void resetPassword()}>
           {m.adminResetPassword}
         </button>
       </td>
