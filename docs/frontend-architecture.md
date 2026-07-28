@@ -1230,8 +1230,9 @@ offering a hardcoded guess. Either fetch's failure surfaces
 [described above](#profiles-in-the-frontend)); a load failure leaves the
 table empty rather than partially populated.
 
-**Create** (`CreateForm`, M6 task 3): a small uncontrolled-until-typed form
-that pre-validates the 12-char password floor client-side
+**Create** (`CreateForm`, M6 task 4): a small form with every input
+controlled by React state (unlike `UserRow`'s draft-or-prop name input,
+described below) that pre-validates the 12-char password floor client-side
 (`ADMIN_MIN_PASSWORD_LENGTH`, `api/client.ts` — the backend's own floor is
 not exposed by any endpoint, so this is a hardcoded mirror like
 `MIN_PASSWORD_LENGTH` elsewhere) before ever calling `postAdminUser`, and

@@ -36,7 +36,7 @@ backend/
 │   │   ├── languages.py         # supported languages + NLP model status
 │   │   ├── deps.py              # get_current_user / require_admin
 │   │   ├── auth.py              # POST /api/auth/login|password, GET /api/auth/me
-│   │   └── admin.py             # /api/admin/users list/create/patch (require_admin)
+│   │   └── admin.py             # /api/admin/users list/create/patch, /api/admin/tiers list (require_admin)
 │   ├── checkers/
 │   │   ├── pipeline.py          # duplicate-diagnosis dedup between checkers
 │   │   ├── terminology.py       # terminology checker (regex / CJK PhraseMatcher)
@@ -1003,7 +1003,7 @@ marking an action taken by the operator CLI rather than through a web
 session. `tier` is **not** a code-level `Literal`: as of M4, valid tier
 names are whatever the deployment's `tiers:` config defines (see [Tiers and
 LLM policy](#tiers-and-llm-policy) below) — `basic`/`premium` are only the
-fallback names `app/api/admin.py#_validate_tier_name` accepts when no
+fallback names `app/api/admin.py#_known_tiers` accepts when no
 `tiers:` block is configured at all, not a fixed enum baked into the schema
 or the model.
 
@@ -1153,9 +1153,9 @@ docstring for the complete argument.
 
 ### `app/api/admin.py` — admin user management
 
-`/api/admin/users` (list/create/patch) attaches `require_admin` at **router
-level** (`APIRouter(..., dependencies=[Depends(require_admin)])`), not on
-individual endpoints, so an admin endpoint added later inherits the check by
+`/api/admin/users` (list/create/patch) and `/api/admin/tiers` (list) attach
+`require_admin` at **router level** (`APIRouter(..., dependencies=[Depends(require_admin)])`),
+not on individual endpoints, so an admin endpoint added later inherits the check by
 construction — it cannot ship unauthenticated by omission. Every changed
 field on a patch writes one `admin_audit` row (never the password's value or
 even its length, only that it changed). `auth.allow_additional_admins` gates
@@ -1496,13 +1496,15 @@ disabling existing rows.
 ### Admin tier-name validation source
 
 `app/api/admin.py#_validate_tier_name` validates a tier name assigned via
-`POST`/`PATCH /api/admin/users` against `tuple(request.app.state.settings.tiers)
-or ("basic", "premium")` — the configured `tiers:` keys when any exist,
-falling back to the two names spec §5.1 reserves as defaults only when no
-`tiers:` block is configured at all (a state where policy is unrestricted
-for everyone regardless of the name assigned, so the fallback names are
-inert placeholders, not a hardcoded enum). An unrecognized name 422s with
-the actual known set in the message.
+`POST`/`PATCH /api/admin/users` against the set `_known_tiers` returns:
+`tuple(request.app.state.settings.tiers) or ("basic", "premium")` — the
+configured `tiers:` keys when any exist, falling back to the two names spec
+§5.1 reserves as defaults only when no `tiers:` block is configured at all
+(a state where policy is unrestricted for everyone regardless of the name
+assigned, so the fallback names are inert placeholders, not a hardcoded
+enum). `GET /api/admin/tiers` exposes the same set to the admin UI as its
+select options. An unrecognized name 422s with the actual known set in the
+message.
 
 ## LLM usage metering
 
@@ -1734,6 +1736,7 @@ Every endpoint below requires a valid `Authorization: Bearer <token>` caller **e
 | `GET/POST/PUT/DELETE /api/folders` | folder CRUD, lossless delete, read-time defaults pruning (see [Folders](#folders)) |
 | `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/password` | local login/session/password-change; `/login` is public, `/me` and `/password` require a caller, `/me` carries the M4 policy/feature payload (see [Authentication](#authentication-and-user-accounts), [Tiers and LLM policy](#tiers-and-llm-policy)) |
 | `GET/POST/PATCH /api/admin/users` | admin user management, `require_admin` at router level (see [Authentication](#authentication-and-user-accounts)) |
+| `GET /api/admin/tiers` | admin-only; returns the configured tier names (`_known_tiers`) for the admin UI's select options (added in M6) |
 | `PUT /api/folders/{id}/defaults` | full-replace a folder's per-folder defaults; 422 matrix + 404 (see [Per-folder defaults](#per-folder-defaults)) |
 | `POST /api/documents/{id}/move` | revision-free move of a document into/out of a folder |
 | `GET /api/providers` | provider availability + model discovery; per-provider `allowed` (direct-selection policy, see [Tiers and LLM policy](#tiers-and-llm-policy)) |

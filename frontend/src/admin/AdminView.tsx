@@ -27,6 +27,8 @@ export function AdminView() {
   // Mounted only while the view is active and the user is an admin
   // (App.tsx render guard), so these are the only /api/admin requests the
   // session ever issues — spec §8's no-403-noise rule is structural.
+  // Mount-once by design: the view remounts per activation, which is
+  // exactly the refetch cadence the spec wants.
   useEffect(() => {
     const gen = sessionGeneration()
     getAdminUsers()
@@ -35,11 +37,7 @@ export function AdminView() {
     getAdminTiers()
       .then((list) => { if (sessionGeneration() === gen) setTiers(list) })
       .catch(() => { if (sessionGeneration() === gen) fail(m.adminLoadFailed) })
-    // Mount-once by design: the view remounts per activation, which is
-    // exactly the refetch cadence the spec wants. `fail` and
-    // `m.adminLoadFailed` are deliberately excluded from the deps below so
-    // this never re-fires on a locale change.
-    // oxlint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- mount-once: `fail`/`m.adminLoadFailed` must not re-fire this on a locale change
   }, [])
 
   const allowMoreAdmins = me?.allow_additional_admins ?? false

@@ -17,8 +17,20 @@ vi.mock('../api/client', async (importOriginal) => ({
   postAdminUser: vi.fn(),
   patchAdminUser: vi.fn(),
 }))
+// sessionGeneration is mocked so the turnover tests below can move the
+// generation mid-flight without going through a real login()/logout() (which
+// pull in document-buffer and in-flight-check modules AdminView never
+// touches). Every other test in this file leaves it at its default (a
+// constant, like the real module before any login/logout), so the six
+// `sessionGeneration()` guards in AdminView.tsx stay transparent everywhere
+// except the two turnover tests that deliberately move it.
+vi.mock('../auth/session', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../auth/session')>()),
+  sessionGeneration: vi.fn(() => 0),
+}))
 
 import { getAdminTiers, getAdminUsers, patchAdminUser, postAdminUser } from '../api/client'
+import { sessionGeneration } from '../auth/session'
 import { AdminView } from './AdminView'
 
 function user(overrides: Partial<MeResponse> = {}): MeResponse {
@@ -61,6 +73,10 @@ afterEach(() => {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // clearAllMocks() only resets call history, not queued mockReturnValueOnce
+  // sequences from a prior test's turnover setup — reset() clears those too,
+  // then the plain default is reinstated.
+  vi.mocked(sessionGeneration).mockReset().mockReturnValue(0)
   useStore.setState({
     token: 'tok',
     user: user(),
@@ -188,7 +204,19 @@ describe('AdminView', () => {
     const button = screen.getByRole('button', { name: en.adminCreate }) as HTMLButtonElement
     expect(button.disabled).toBe(true) // tiers not loaded yet
 
-    fireEvent.click(button) // even a bypassed click must not call the API
+    // `button.removeAttribute('disabled')` does not make a click reach
+    // `onClick` here: React suppresses its own synthetic dispatch for
+    // interactive elements (button/input/select/textarea) whenever the
+    // *props* it last rendered say `disabled: true`, regardless of what the
+    // live DOM attribute says (react-dom's getListener special-cases
+    // exactly this). Pulling the handler straight off the fiber and calling
+    // it directly is what actually bypasses the button, the way a stray
+    // Enter-key repeat or a programmatic dispatch could — and is the only
+    // way to exercise create()'s own `!tiers` guard for real.
+    const reactProps = Object.entries(button).find(([key]) =>
+      key.startsWith('__reactProps$'),
+    )?.[1] as { onClick?: () => void } | undefined
+    reactProps?.onClick?.()
     expect(postAdminUser).not.toHaveBeenCalled()
 
     rejectTiers(new Error('tiers unavailable'))
@@ -363,8 +391,18 @@ describe('AdminView', () => {
     expect(resetButton.disabled).toBe(true)
     expect(patchAdminUser).toHaveBeenCalledTimes(1)
 
-    // A second click while pending must not fire another PATCH.
-    fireEvent.click(resetButton)
+    // A second click while pending must not fire another PATCH. A plain
+    // `fireEvent.click` here would prove nothing: React suppresses its own
+    // synthetic dispatch for a disabled interactive element based on the
+    // props it last rendered, so the disabled button already blocks the
+    // click before resetPassword()'s own `if (resetPending) return` guard
+    // ever runs. Pulling `onClick` off the fiber directly is what actually
+    // bypasses the button and exercises that guard (see the analogous
+    // `!tiers`-guard test above for the same technique and rationale).
+    const reactProps = Object.entries(resetButton).find(([key]) =>
+      key.startsWith('__reactProps$'),
+    )?.[1] as { onClick?: () => void } | undefined
+    reactProps?.onClick?.()
     expect(patchAdminUser).toHaveBeenCalledTimes(1)
 
     resolvePatch(adminUser({ id: 2, email: 'bea@example.com' }))
@@ -405,5 +443,64 @@ describe('AdminView', () => {
 
     expect(patchAdminUser).toHaveBeenLastCalledWith(2, { display_name: null })
     await waitFor(() => expect(nameInput.value).toBe(''))
+  })
+
+  it('a session turnover between the mount fetch and its resolution drops the response (no rows render)', async () => {
+    // First call is the mount effect's capture (`gen`); every call after
+    // that is one of the six `sessionGeneration() === gen` checks — moving
+    // the generation there simulates a session change landing while both
+    // requests are still in flight.
+    vi.mocked(sessionGeneration).mockReturnValueOnce(1).mockReturnValue(2)
+    vi.mocked(getAdminUsers).mockResolvedValue([adminUser({ email: 'ada@example.com' })])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+
+    render(<AdminView />)
+
+    await waitFor(() => expect(getAdminUsers).toHaveBeenCalledTimes(1))
+    // Drain the .then chain before asserting (same shape as
+    // App.domains-guard.test.tsx's mount-fetch turnover test): an immediate
+    // check could pass merely because the fetch hasn't resolved yet, which
+    // would stay green even with the guard deleted.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(screen.getAllByRole('row')).toHaveLength(1) // header only; setUsers was skipped
+    expect(screen.queryByText('ada@example.com')).toBeNull()
+  })
+
+  it('a session turnover between a row save and its resolution drops the write (row unchanged, typed password kept)', async () => {
+    vi.mocked(getAdminUsers).mockResolvedValue([
+      adminUser({ id: 2, email: 'bea@example.com' }),
+    ])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+    vi.mocked(sessionGeneration).mockReturnValue(1) // stable through mount and the save's capture
+    let resolvePatch!: (u: AdminUser) => void
+    vi.mocked(patchAdminUser).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePatch = resolve
+        }),
+    )
+    const u = userEvent.setup()
+
+    render(<AdminView />)
+    await screen.findByText('bea@example.com')
+
+    const passwordInput = screen.getByLabelText(
+      `${en.adminResetPassword}: bea@example.com`,
+    ) as HTMLInputElement
+    const resetButton = screen.getByRole('button', { name: en.adminResetPassword })
+
+    await u.type(passwordInput, 'a-long-enough-password')
+    await u.click(resetButton)
+    expect(patchAdminUser).toHaveBeenCalledTimes(1)
+
+    // Session turns over while the PATCH is in flight, then it resolves.
+    vi.mocked(sessionGeneration).mockReturnValue(2)
+    resolvePatch(adminUser({ id: 2, email: 'bea@example.com', password_changed_at: '2026-01-01T00:00:00Z' }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    // save()'s own guard dropped the write: onSave resolved to `false`, so
+    // resetPassword() never reached its `setNewPassword('')`.
+    expect(passwordInput.value).toBe('a-long-enough-password')
+    expect(screen.getByText('bea@example.com')).toBeTruthy() // row still present, untouched
   })
 })
