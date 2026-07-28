@@ -39,6 +39,8 @@ export const zh: Messages = {
   resetToProfile: '恢复为配置的值',
   domainsSelected: (n) => `${n} 个领域`,
   viewProfiles: '配置',
+  viewAdmin: '管理',
+  adminUsersTitle: '用户管理',
   tierName: (t) =>
     ({ quality: '最佳质量', balanced: '均衡', cheap: '快速经济', local: '私密(本地)' })[t],
   tierPinnedOption: (model) => `固定:${model}`,

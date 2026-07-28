@@ -27,7 +27,7 @@ import type {
 } from '../types'
 
 export type CheckPhase = 'idle' | 'fast' | 'llm'
-export type ActiveView = 'editor' | 'rules' | 'terminology' | 'profiles'
+export type ActiveView = 'editor' | 'rules' | 'terminology' | 'profiles' | 'admin'
 
 export interface DocMeta {
   id: number

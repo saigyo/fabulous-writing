@@ -39,6 +39,8 @@ export const ja: Messages = {
   resetToProfile: 'プロファイルの値に戻す',
   domainsSelected: (n) => `${n} 個のドメイン`,
   viewProfiles: 'プロファイル',
+  viewAdmin: '管理',
+  adminUsersTitle: 'ユーザー管理',
   tierName: (t) =>
     ({ quality: '最高品質', balanced: 'バランス', cheap: '高速・低コスト', local: 'プライベート(ローカル)' })[t],
   tierPinnedOption: (model) => `固定: ${model}`,

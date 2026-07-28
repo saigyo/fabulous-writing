@@ -41,6 +41,8 @@ export const de: Messages = {
   resetToProfile: 'Auf Profilwerte zurücksetzen',
   domainsSelected: (n) => `${n} Domänen`,
   viewProfiles: 'Profile',
+  viewAdmin: 'Admin',
+  adminUsersTitle: 'Benutzerverwaltung',
   tierName: (t) =>
     ({ quality: 'Beste Qualität', balanced: 'Ausgewogen', cheap: 'Schnell & günstig', local: 'Privat (lokal)' })[t],
   tierPinnedOption: (model) => `Festgelegt: ${model}`,

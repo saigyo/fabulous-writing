@@ -45,6 +45,8 @@ export const es: Messages = {
   resetToProfile: 'Restablecer los valores del perfil',
   domainsSelected: (n) => `${n} dominios`,
   viewProfiles: 'Perfiles',
+  viewAdmin: 'Admin',
+  adminUsersTitle: 'Gestión de usuarios',
   tierName: (t) =>
     ({ quality: 'Máxima calidad', balanced: 'Equilibrado', cheap: 'Rápido y económico', local: 'Privado (local)' })[t],
   tierPinnedOption: (model) => `Fijado: ${model}`,
