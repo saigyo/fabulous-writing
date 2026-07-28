@@ -2029,3 +2029,12 @@ input {
   padding: 0.35rem 0.9rem;
   cursor: pointer;
 }
+
+/* ---- admin view ---- */
+
+.admin-view { padding: 1rem 1.5rem; overflow-y: auto; }
+.admin-create { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
+.admin-users { border-collapse: collapse; }
+.admin-users th, .admin-users td { padding: 0.3rem 0.75rem; text-align: left; border-bottom: 1px solid #ddd; }
+.admin-error { color: #e5484d; }
+.admin-self { opacity: 0.6; }
