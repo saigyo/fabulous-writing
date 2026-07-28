@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AdminUser, MeResponse } from '../api/client'
@@ -18,7 +18,7 @@ vi.mock('../api/client', async (importOriginal) => ({
   patchAdminUser: vi.fn(),
 }))
 
-import { getAdminTiers, getAdminUsers, postAdminUser } from '../api/client'
+import { getAdminTiers, getAdminUsers, patchAdminUser, postAdminUser } from '../api/client'
 import { AdminView } from './AdminView'
 
 function user(overrides: Partial<MeResponse> = {}): MeResponse {
@@ -194,5 +194,216 @@ describe('AdminView', () => {
     rejectTiers(new Error('tiers unavailable'))
     await screen.findByText(en.adminLoadFailed)
     expect(button.disabled).toBe(true)
+  })
+
+  it('changing a row tier PATCHes {tier} and updates the row', async () => {
+    vi.mocked(getAdminUsers).mockResolvedValue([
+      adminUser({ id: 1, email: 'ada@example.com' }),
+      adminUser({ id: 2, email: 'bea@example.com', tier: 'basic', is_admin: false }),
+    ])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic', 'pro'])
+    vi.mocked(patchAdminUser).mockResolvedValue(
+      adminUser({ id: 2, email: 'bea@example.com', tier: 'pro', is_admin: false }),
+    )
+    const u = userEvent.setup()
+
+    render(<AdminView />)
+    await screen.findByText('bea@example.com')
+
+    const select = screen.getByLabelText(`${en.adminTier}: bea@example.com`) as HTMLSelectElement
+    await u.selectOptions(select, 'pro')
+
+    expect(patchAdminUser).toHaveBeenCalledWith(2, { tier: 'pro' })
+    await screen.findByDisplayValue('pro')
+    expect(select.value).toBe('pro')
+  })
+
+  it('deactivating another user PATCHes {is_active:false}', async () => {
+    vi.mocked(getAdminUsers).mockResolvedValue([
+      adminUser({ id: 1, email: 'ada@example.com' }),
+      adminUser({ id: 2, email: 'bea@example.com', is_admin: false, is_active: true }),
+    ])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+    vi.mocked(patchAdminUser).mockResolvedValue(
+      adminUser({ id: 2, email: 'bea@example.com', is_admin: false, is_active: false }),
+    )
+    const u = userEvent.setup()
+
+    render(<AdminView />)
+    await screen.findByText('bea@example.com')
+
+    const checkbox = screen.getByLabelText(
+      `${en.adminIsActive}: bea@example.com`,
+    ) as HTMLInputElement
+    await u.click(checkbox)
+
+    expect(patchAdminUser).toHaveBeenCalledWith(2, { is_active: false })
+    await screen.findByText('bea@example.com') // re-render after update
+    expect(checkbox.checked).toBe(false)
+    expect(checkbox.closest('tr')?.className).toBe('admin-inactive')
+  })
+
+  it('own row admin and active controls are disabled', async () => {
+    vi.mocked(getAdminUsers).mockResolvedValue([
+      adminUser({ id: 1, email: 'ada@example.com', is_admin: true }),
+      adminUser({ id: 2, email: 'bea@example.com', is_admin: true }),
+    ])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+
+    render(<AdminView />)
+    await screen.findByText('bea@example.com')
+
+    const selfAdmin = screen.getByLabelText(
+      `${en.adminIsAdmin}: ada@example.com`,
+    ) as HTMLInputElement
+    const selfActive = screen.getByLabelText(
+      `${en.adminIsActive}: ada@example.com`,
+    ) as HTMLInputElement
+    const otherAdmin = screen.getByLabelText(
+      `${en.adminIsAdmin}: bea@example.com`,
+    ) as HTMLInputElement
+    const otherActive = screen.getByLabelText(
+      `${en.adminIsActive}: bea@example.com`,
+    ) as HTMLInputElement
+
+    expect(selfAdmin.disabled).toBe(true)
+    expect(selfActive.disabled).toBe(true)
+    expect(otherAdmin.disabled).toBe(false)
+    expect(otherActive.disabled).toBe(false)
+  })
+
+  it('promote control is disabled while allow_additional_admins is false, demotion stays enabled', async () => {
+    useStore.setState({ user: user({ id: 1, allow_additional_admins: false }) })
+    vi.mocked(getAdminUsers).mockResolvedValue([
+      adminUser({ id: 1, email: 'ada@example.com', is_admin: true }),
+      adminUser({ id: 2, email: 'bea@example.com', is_admin: false }), // promote target
+      adminUser({ id: 3, email: 'cid@example.com', is_admin: true }), // demote target
+    ])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+
+    render(<AdminView />)
+    await screen.findByText('cid@example.com')
+
+    const promote = screen.getByLabelText(
+      `${en.adminIsAdmin}: bea@example.com`,
+    ) as HTMLInputElement
+    const demote = screen.getByLabelText(
+      `${en.adminIsAdmin}: cid@example.com`,
+    ) as HTMLInputElement
+
+    expect(promote.disabled).toBe(true)
+    expect(demote.disabled).toBe(false)
+  })
+
+  it('password reset sends {password} after the 12-char pre-check, keeps the typed value on failure, clears it on success', async () => {
+    vi.mocked(getAdminUsers).mockResolvedValue([
+      adminUser({ id: 2, email: 'bea@example.com' }),
+    ])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+    const u = userEvent.setup()
+
+    render(<AdminView />)
+    await screen.findByText('bea@example.com')
+
+    const passwordInput = screen.getByLabelText(
+      `${en.adminResetPassword}: bea@example.com`,
+    ) as HTMLInputElement
+    const resetButton = screen.getByRole('button', { name: en.adminResetPassword })
+
+    // Too short: pre-check blocks the call, field keeps the typed value.
+    await u.type(passwordInput, 'short11')
+    await u.click(resetButton)
+    await screen.findByText(en.passwordTooShort(12))
+    expect(patchAdminUser).not.toHaveBeenCalled()
+    expect(passwordInput.value).toBe('short11')
+
+    // Long enough, but the PATCH fails: value must survive under the error.
+    await u.clear(passwordInput)
+    await u.type(passwordInput, 'a-long-enough-password')
+    vi.mocked(patchAdminUser).mockRejectedValueOnce(
+      new HttpError(500, 'PATCH /api/admin/users/2 failed: 500'),
+    )
+    await u.click(resetButton)
+    await screen.findByText(en.adminChangeFailed('PATCH /api/admin/users/2 failed: 500'))
+    expect(passwordInput.value).toBe('a-long-enough-password')
+
+    // Retry succeeds: field clears.
+    vi.mocked(patchAdminUser).mockResolvedValueOnce(adminUser({ id: 2, email: 'bea@example.com' }))
+    await u.click(resetButton)
+    expect(patchAdminUser).toHaveBeenLastCalledWith(2, { password: 'a-long-enough-password' })
+    await waitFor(() => expect(passwordInput.value).toBe(''))
+  })
+
+  it('reset button is disabled while the PATCH is in flight (no duplicate submission)', async () => {
+    vi.mocked(getAdminUsers).mockResolvedValue([
+      adminUser({ id: 2, email: 'bea@example.com' }),
+    ])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+    let resolvePatch!: (u: AdminUser) => void
+    vi.mocked(patchAdminUser).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePatch = resolve
+        }),
+    )
+    const u = userEvent.setup()
+
+    render(<AdminView />)
+    await screen.findByText('bea@example.com')
+
+    const passwordInput = screen.getByLabelText(
+      `${en.adminResetPassword}: bea@example.com`,
+    ) as HTMLInputElement
+    const resetButton = screen.getByRole('button', {
+      name: en.adminResetPassword,
+    }) as HTMLButtonElement
+
+    await u.type(passwordInput, 'a-long-enough-password')
+    await u.click(resetButton)
+    expect(resetButton.disabled).toBe(true)
+    expect(patchAdminUser).toHaveBeenCalledTimes(1)
+
+    // A second click while pending must not fire another PATCH.
+    fireEvent.click(resetButton)
+    expect(patchAdminUser).toHaveBeenCalledTimes(1)
+
+    resolvePatch(adminUser({ id: 2, email: 'bea@example.com' }))
+    await waitFor(() => expect(passwordInput.value).toBe(''))
+    expect(resetButton.disabled).toBe(true) // empty field disables it again
+  })
+
+  it('display name edit PATCHes {display_name}, clearing it sends null', async () => {
+    vi.mocked(getAdminUsers).mockResolvedValue([
+      adminUser({ id: 2, email: 'bea@example.com', display_name: 'Bea' }),
+    ])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+    vi.mocked(patchAdminUser).mockResolvedValue(
+      adminUser({ id: 2, email: 'bea@example.com', display_name: 'Beatrice' }),
+    )
+    const u = userEvent.setup()
+
+    render(<AdminView />)
+    await screen.findByText('bea@example.com')
+
+    const nameInput = screen.getByLabelText(
+      `${en.adminDisplayName}: bea@example.com`,
+    ) as HTMLInputElement
+    expect(nameInput.value).toBe('Bea')
+
+    await u.clear(nameInput)
+    await u.type(nameInput, 'Beatrice')
+    fireEvent.blur(nameInput)
+
+    expect(patchAdminUser).toHaveBeenCalledWith(2, { display_name: 'Beatrice' })
+    await screen.findByDisplayValue('Beatrice')
+
+    vi.mocked(patchAdminUser).mockResolvedValueOnce(
+      adminUser({ id: 2, email: 'bea@example.com', display_name: null }),
+    )
+    await u.clear(nameInput)
+    fireEvent.blur(nameInput)
+
+    expect(patchAdminUser).toHaveBeenLastCalledWith(2, { display_name: null })
+    await waitFor(() => expect(nameInput.value).toBe(''))
   })
 })
