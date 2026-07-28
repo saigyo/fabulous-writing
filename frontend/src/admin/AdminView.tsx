@@ -3,8 +3,10 @@ import {
   ADMIN_MIN_PASSWORD_LENGTH,
   getAdminTiers,
   getAdminUsers,
+  patchAdminUser,
   postAdminUser,
   type AdminUser,
+  type AdminUserPatch,
 } from '../api/client'
 import { sessionGeneration } from '../auth/session'
 import { useCrudError } from '../hooks/useCrudError'
@@ -42,6 +44,21 @@ export function AdminView() {
 
   const allowMoreAdmins = me?.allow_additional_admins ?? false
 
+  // Returns whether the change actually committed: run() swallows the
+  // rejection into the error banner, so callers that must react to the
+  // outcome (password reset clearing its field) need this signal.
+  async function save(user: AdminUser, patch: AdminUserPatch): Promise<boolean> {
+    const gen = sessionGeneration()
+    let committed = false
+    await run(async () => {
+      const updated = await patchAdminUser(user.id, patch)
+      if (sessionGeneration() !== gen) return // session ended: do not write
+      setUsers((current) => current.map((u) => (u.id === updated.id ? updated : u)))
+      committed = true
+    })
+    return committed
+  }
+
   return (
     <div className="admin-view">
       <h2>{m.adminUsersTitle}</h2>
@@ -66,17 +83,20 @@ export function AdminView() {
         </thead>
         <tbody>
           {users.map((user) => (
-            <tr key={user.id}>
-              <td>
-                {user.email}
-                {user.id === me?.id && <span className="admin-self"> {m.adminSelf}</span>}
-              </td>
-              <td>{user.display_name ?? ''}</td>
-              <td>{user.tier}</td>
-              <td>{user.is_admin ? '✓' : ''}</td>
-              <td>{user.is_active ? '✓' : ''}</td>
-              <td />
-            </tr>
+            <UserRow
+              // Key stays user.id: folding display_name in would remount the
+              // row after a name save and silently erase a password already
+              // typed in its reset field. The name input instead uses a
+              // draft-or-prop pattern (see UserRow) so it needs no remount
+              // to resync.
+              key={user.id}
+              user={user}
+              isSelf={user.id === me?.id}
+              tiers={tiers ?? []}
+              allowMoreAdmins={allowMoreAdmins}
+              onSave={save}
+              fail={fail}
+            />
           ))}
         </tbody>
       </table>
@@ -189,5 +209,121 @@ function CreateForm({ tiers, allowMoreAdmins, onCreated, run, fail }: CreateForm
         {m.adminCreate}
       </button>
     </div>
+  )
+}
+
+interface UserRowProps {
+  user: AdminUser
+  isSelf: boolean
+  tiers: string[]
+  allowMoreAdmins: boolean
+  onSave: (user: AdminUser, patch: AdminUserPatch) => Promise<boolean>
+  fail: (message: string) => void
+}
+
+function UserRow({ user, isSelf, tiers, allowMoreAdmins, onSave, fail }: UserRowProps) {
+  const m = useMessages()
+  // null = not editing: the input shows the server value until the admin
+  // types, so an external display_name change resyncs without remounting
+  // the row (which would wipe the reset-password field below).
+  const [draftName, setDraftName] = useState<string | null>(null)
+  const [newPassword, setNewPassword] = useState('')
+  // Double-click guard for the reset button: a second in-flight PATCH would
+  // revoke tokens and write audit rows twice.
+  const [resetPending, setResetPending] = useState(false)
+
+  // The disabled states mirror server guards the UI cannot replace:
+  // self-demotion/self-deactivation 409 (admin.py lockout rule) and
+  // promotion 403 while auth.allow_additional_admins is off. Demotion of
+  // OTHER admins stays enabled — it only ever reduces privilege.
+  const adminToggleDisabled = isSelf || (!user.is_admin && !allowMoreAdmins)
+
+  function saveName() {
+    if (draftName === null) return
+    const trimmed = draftName.trim()
+    setDraftName(null) // back to showing the server value (updated on success)
+    if (trimmed === (user.display_name ?? '')) return
+    void onSave(user, { display_name: trimmed === '' ? null : trimmed })
+  }
+
+  async function resetPassword() {
+    if (resetPending) return
+    if (newPassword.length < ADMIN_MIN_PASSWORD_LENGTH) {
+      fail(m.passwordTooShort(ADMIN_MIN_PASSWORD_LENGTH))
+      return
+    }
+    setResetPending(true)
+    try {
+      // Clear only on a committed reset: run() swallows failures into the
+      // error banner, so a failed PATCH must leave the typed password in
+      // place rather than wiping it under the error message.
+      if (await onSave(user, { password: newPassword })) setNewPassword('')
+    } finally {
+      setResetPending(false)
+    }
+  }
+
+  return (
+    <tr className={user.is_active ? '' : 'admin-inactive'}>
+      <td>
+        {user.email}
+        {isSelf && <span className="admin-self"> {m.adminSelf}</span>}
+      </td>
+      <td>
+        <input
+          value={draftName ?? user.display_name ?? ''}
+          aria-label={`${m.adminDisplayName}: ${user.email}`}
+          onChange={(e) => setDraftName(e.target.value)}
+          onBlur={saveName}
+        />
+      </td>
+      <td>
+        <select
+          value={user.tier}
+          aria-label={`${m.adminTier}: ${user.email}`}
+          onChange={(e) => void onSave(user, { tier: e.target.value })}
+        >
+          {/* A user can sit on a tier no longer in config — keep it as an
+              option or the controlled select silently shows the wrong one. */}
+          {(tiers.includes(user.tier) ? tiers : [user.tier, ...tiers]).map((tierName) => (
+            <option key={tierName} value={tierName}>{tierName}</option>
+          ))}
+        </select>
+      </td>
+      <td>
+        <input
+          type="checkbox"
+          checked={user.is_admin}
+          disabled={adminToggleDisabled}
+          aria-label={`${m.adminIsAdmin}: ${user.email}`}
+          title={!isSelf && !user.is_admin && !allowMoreAdmins ? m.adminGrantDisabledHint : undefined}
+          onChange={(e) => void onSave(user, { is_admin: e.target.checked })}
+        />
+      </td>
+      <td>
+        <input
+          type="checkbox"
+          checked={user.is_active}
+          disabled={isSelf}
+          aria-label={`${m.adminIsActive}: ${user.email}`}
+          onChange={(e) => void onSave(user, { is_active: e.target.checked })}
+        />
+      </td>
+      <td className="admin-reset">
+        <input
+          type="password"
+          value={newPassword}
+          placeholder={m.adminPassword}
+          aria-label={`${m.adminResetPassword}: ${user.email}`}
+          onChange={(e) => setNewPassword(e.target.value)}
+        />
+        <button
+          disabled={!newPassword || resetPending}
+          onClick={() => void resetPassword()}
+        >
+          {m.adminResetPassword}
+        </button>
+      </td>
+    </tr>
   )
 }

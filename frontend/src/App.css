@@ -2038,3 +2038,5 @@ input {
 .admin-users th, .admin-users td { padding: 0.3rem 0.75rem; text-align: left; border-bottom: 1px solid #ddd; }
 .admin-error { color: #e5484d; }
 .admin-self { opacity: 0.6; }
+.admin-inactive td { opacity: 0.55; }
+.admin-reset { white-space: nowrap; }

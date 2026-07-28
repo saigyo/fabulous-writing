@@ -10,10 +10,11 @@ main ingredients:
 - a thin typed **API client** over `fetch`, including its own hand-rolled SSE reader
   for the check stream (`VITE_API_URL`, default `http://localhost:8000`).
 
-There is no router; four views (editor, rules, terminology, profiles) are switched by a
-store field, and all four sit behind a **login gate** (see
+There is no router; five views (editor, rules, terminology, profiles, admin) are
+switched by a store field, and all five sit behind a **login gate** (see
 [Authentication](#authentication)) — the app requires a signed-in caller as of M2. The
-editor workspace is special-cased: it is hidden (`hidden` attribute)
+fifth, [admin](#admin-view-m6), carries a second gate on top (`is_admin`) and is a
+late M6 addition. The editor workspace is special-cased: it is hidden (`hidden` attribute)
 rather than unmounted while another view is shown, because the findings — including
 paid-for LLM results — live in the CodeMirror instance and would be discarded by a
 remount; hiding also lets an in-flight LLM check deliver while the user reads another
@@ -86,6 +87,7 @@ frontend/src/
 │                              # (row edit mode shares TermFieldCells with the add
 │                              # row; drafts/parsing in termTable.ts), domains
 │                              # rename inline via ✎ or double-click
+├── admin/                     # AdminView.tsx: user list/create/row-edit, is_admin-gated (M6)
 └── i18n/                      # 7 UI locales, hooks, interpolation
 ```
 
@@ -1205,6 +1207,87 @@ without touching auth in any way. This is spec §8's transient contract: a
 request or the session, so it must never be treated as (or look like) an
 auth event, and never sets `llmError`/`suggestError` to anything that reads
 as a hard failure.
+
+## Admin view (M6)
+
+`admin/AdminView.tsx` is a fifth `activeView`, mounted in `App.tsx` behind
+`activeView === 'admin' && isAdmin` — the `&&` is structural, not cosmetic:
+a non-admin session's `App.tsx` never renders the component at all, so it
+never issues an `/api/admin/*` request in the first place (spec §8's
+no-403-noise rule holds by construction, not by a client-side check inside
+the view). The nav button rendering it is gated the same way
+(`(store.user?.is_admin ?? false) && …`).
+
+**Load.** On mount, `getAdminUsers()` and `getAdminTiers()` fire once each,
+both guarded by `sessionGeneration()` exactly like every other view's load
+effect (a session change mid-flight drops the response). `tiers` starts
+`null` — not an empty array — so the create form's tier select and submit
+button stay disabled until the config-defined catalog actually lands
+(`docs/backend-architecture.md`'s tier config), rather than briefly
+offering a hardcoded guess. Either fetch's failure surfaces
+`m.adminLoadFailed` via `useCrudError`'s `fail` (the same
+`hooks/useCrudError.ts` used by `RulesView`/`ProfilesView`/`TerminologyView`,
+[described above](#profiles-in-the-frontend)); a load failure leaves the
+table empty rather than partially populated.
+
+**Create** (`CreateForm`, M6 task 3): a small uncontrolled-until-typed form
+that pre-validates the 12-char password floor client-side
+(`ADMIN_MIN_PASSWORD_LENGTH`, `api/client.ts` — the backend's own floor is
+not exposed by any endpoint, so this is a hardcoded mirror like
+`MIN_PASSWORD_LENGTH` elsewhere) before ever calling `postAdminUser`, and
+disables its own admin checkbox with `m.adminGrantDisabledHint` while
+`allow_additional_admins` is off, mirroring the server's 403.
+
+**Row editing** (`UserRow`, M6 task 5): each row is keyed on `user.id`, not
+on any field that changes under editing — folding `display_name` into the
+key would remount the row after a name save and silently erase a password
+already typed into that row's reset field. The display-name input instead
+uses a draft-or-prop pattern: `useState<string | null>(null)` where `null`
+means "not editing," so the input shows `draftName ?? user.display_name ??
+''` and resyncs to a server-driven update without a remount. Blur commits
+the trimmed draft — an unchanged value sends nothing, an emptied field
+sends `{ display_name: null }` (explicit clear, not omission) — and returns
+to showing the server value regardless of outcome.
+
+Tier, admin, and active are single-field `PATCH`es fired directly from
+each control's `onChange`, through one `save(user, patch)` helper next to
+the load effect: it runs the `PATCH` through `useCrudError`'s `run` (so a
+rejected mutation surfaces `m.adminChangeFailed` the same way create
+failures do) and, on a same-session success, replaces that row's user in
+`users` with the server's response — the write-back, not an optimistic
+local patch, is what the row renders next. `save` returns whether the
+change actually committed, since `run` swallows a rejection into the error
+banner; password reset is the one caller that needs that signal to decide
+whether to clear its field.
+
+The tier `<select>` mirrors `tiers.includes(user.tier) ? tiers : [user.tier,
+...tiers]` — a user can sit on a tier no longer in the config, and a
+controlled select given a value outside its option list silently shows the
+wrong thing, so the row keeps that value selectable even once retired.
+
+Admin and active checkboxes mirror the two server lockout/permission guards
+the UI cannot replace, exactly as the create form's checkbox mirrors the
+promotion one:
+
+- **Self-demotion/self-deactivation** (`isSelf`, `user.id === me?.id`)
+  disables both checkboxes on the caller's own row outright — the backend
+  409s a change that would leave zero active admins, and there is nothing
+  a retry does differently, so the control simply isn't offered.
+- **Promotion while `allow_additional_admins` is off**
+  (`!user.is_admin && !allowMoreAdmins`) disables *promoting* a non-admin,
+  with the same `m.adminGrantDisabledHint` title as the create form's
+  checkbox. Demoting an existing admin stays enabled regardless of this
+  flag — it only ever reduces privilege, which the flag never restricts.
+
+**Password reset.** A per-row password input plus button, gated by the
+same 12-char pre-check as creation (`fail(m.passwordTooShort(...))`
+without calling the API for a too-short value) and a `resetPending` guard
+disabling the button for the duration of an in-flight `PATCH` — without it,
+a second click before the first response lands would revoke sessions and
+write an audit row twice. The typed password clears only when `save`
+reports the change committed; a failed `PATCH` leaves it in the field
+under the error banner rather than silently discarding what the admin
+typed.
 
 ## Internationalization
 
