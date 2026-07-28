@@ -28,9 +28,10 @@ model is correct and stays.
    embedded in the stored hash, so cheap hashes make verification cheap
    automatically. With hundreds of app constructions and ~95
    login-helper call sites, this is the dominant fixed cost.
-2. **Real sleeps for second-precision timestamps.** Eight tests sleep
-   1.1 s each (~9 s total: seven in `tests/test_documents.py`, one in
-   `tests/test_documents_api.py`) only because
+2. **Real sleeps for second-precision timestamps.** Eight `sleep(1.1)`
+   calls across seven tests (~9 s total: seven calls in six tests in
+   `tests/test_documents.py`, one in `tests/test_documents_api.py`)
+   exist only because
    `app/services/documents._utcnow()` truncates to whole seconds and the
    tests must observe `updated_at`/`edited_at` change.
 3. **Strictly serial execution.** The suite runs on one core although
@@ -65,8 +66,11 @@ be reached by any deployment configuration. The production diff is the
 constant plus one changed call — behavior at runtime is identical
 (gensalt's default cost is 12).
 
-No test asserts on hash format or cost factor (verified by grep), so no
-test changes follow from this lever alone.
+No existing test asserts on hash format or cost factor (verified by
+grep). The plan adds two permanent guard tests — one asserting the
+constant is honored, one asserting the test session runs at cost 4 —
+replacing the one-off manual slowdown spot-check originally envisioned
+here.
 
 ### 2. Deterministic clock instead of sleeps
 
@@ -85,8 +89,12 @@ test, not overhead.
 
 - `pytest-xdist` is added to the dev dependency group.
 - `[tool.pytest.ini_options]` gains `addopts = "-n auto --dist loadfile"`,
-  so the canonical `uv run pytest -q` — what every agent and the CI
-  workflow already run — is parallel with no invocation change.
+  so the canonical `uv run pytest -q` — what every agent runs — is
+  parallel with no invocation change. CI runs a coverage variant
+  (`--cov… --junitxml=…`) that inherits the same `addopts`; that exact
+  command must be verified locally under xdist, including its artifacts
+  (`coverage.json`, `htmlcov/`, `test-results.xml`), which the badge job
+  and `scripts/ci-summary.py` consume.
 - `--dist loadfile` keeps all tests of a file on one worker as a
   conservative guard against intra-file coupling.
 - Escape hatch: `uv run pytest -n0 …` restores serial execution (for
@@ -97,8 +105,9 @@ test, not overhead.
 
 ## Verification
 
-- Test count stays exactly at the baseline (1,080 passing; any drop is a
-  silently lost test, any rise is scope creep).
+- Test count stays exactly at the baseline plus the two permanent bcrypt
+  work-factor guard tests (1,080 + 2 = 1,082 passing; any other delta is
+  a silently lost test or scope creep).
 - Zero warnings, unchanged gate command: `uv run pytest -q`.
 - Wall time measured before and after on the same machine, recorded in
   the LOGBOOK entry; the B8 roadmap row is updated with the achieved

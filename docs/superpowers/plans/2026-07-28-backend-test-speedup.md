@@ -14,7 +14,7 @@
 - The live database `backend/data/fabulous.db` is never read or written by tests; every test app is built from `tmp_path`-based `Settings`. Nothing in this plan may change that.
 - The bcrypt work factor must NOT become a `Settings`/config/env knob — production hashing strength gets no configuration surface. The override lives only in `tests/conftest.py` (spec §Design 1).
 - Production behavior must be bit-for-bit unchanged: `bcrypt.gensalt(12)` is the library default cost, so hashes on a real instance are identical before and after.
-- Test count must stay exactly **1,080 passed**; the zero-warnings gate (`uv run pytest -q` output clean) holds after every task.
+- Test count: 1,080 at baseline plus exactly the two tests Task 1 adds = **1,082 passed** from Task 1 on; any other delta is a silently lost test or scope creep. The zero-warnings gate (`uv run pytest -q` output clean) holds after every task.
 - No test assertion may be loosened to survive parallelism. A test that fails under `-n auto` but passes under `-n0` is a STOP-and-report, not a fix-in-place.
 - Never kill or start anything on ports 5173/8000. Never force-push or amend published history.
 - rtk note: plain `pytest` output is filtered by the rtk hook (only the pass/fail line survives). When a task needs timings or the durations table, prefix the command with `rtk proxy `.
@@ -37,7 +37,9 @@
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `backend/tests/test_auth_core.py` (match the module's existing import style; if it imports functions directly, also add `from app.core import auth as auth_module`):
+Append to `backend/tests/test_auth_core.py`. The module imports functions directly (`from app.core.auth import (…)`), so add this import as well: `from app.core import auth as auth_module`.
+
+Deviation note (intentional): the spec says "no test changes follow from this lever alone" and asks for a one-off manual slowdown check. These two tests are deliberately stronger — a permanent assertion pair replacing the manual spot-check.
 
 ```python
 def test_hash_password_honors_module_work_factor(monkeypatch):
@@ -101,11 +103,15 @@ def _fast_bcrypt():
 Run: `uv run pytest tests/test_auth_core.py tests/test_auth_api.py -q`
 Expected: PASS, zero warnings.
 
-- [ ] **Step 6: Spot-check the speedup**
+- [ ] **Step 6: Mutation-verify the fixture (delete the guard, watch it fail)**
+
+Temporarily comment out the whole `_fast_bcrypt` fixture in `tests/conftest.py`, run `uv run pytest tests/test_auth_core.py -q -k reduced_work_factor`, and confirm it FAILS (hash starts with `$2b$12$`). Restore the fixture, re-run, confirm PASS. This is the repo's standing delete-the-guard rule applied to the fixture itself.
+
+- [ ] **Step 7: Spot-check the speedup**
 
 Run: `rtk proxy uv run pytest tests/test_auth_api.py -q` and note the elapsed time in the report (baseline for this module was part of a 245 s suite; it should now run in a small fraction of its previous time).
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add backend/app/core/auth.py backend/tests/conftest.py backend/tests/test_auth_core.py
@@ -148,10 +154,11 @@ def document_clock(monkeypatch: pytest.MonkeyPatch) -> DocumentClock:
     """Second-precision document timestamps under test control.
 
     Replaces the real clock so ordering tests advance time explicitly
-    instead of sleeping 1.1 s. Request this BEFORE any store/client
-    fixture in the test's parameter list: pytest instantiates
-    same-scope fixtures in parameter order, and the patch must be
-    active before the app writes its first rows.
+    instead of sleeping 1.1 s. No fixture writes document rows (`store`
+    only constructs the DocumentStore; `authed_client` only builds the
+    app and logs in), so the patch merely has to be active before the
+    test body runs — every row then carries clock time, never a mix of
+    real and patched timestamps.
     """
     clock = DocumentClock()
     monkeypatch.setattr("app.services.documents._utcnow", clock.now_iso)
@@ -160,7 +167,7 @@ def document_clock(monkeypatch: pytest.MonkeyPatch) -> DocumentClock:
 
 - [ ] **Step 2: Rewrite the six store-level tests**
 
-In `backend/tests/test_documents.py`, for each test below: add `document_clock` as the FIRST parameter (before `store`), and replace each `time.sleep(1.1)` line with `document_clock.advance()`. The comments explaining second precision can go — the fixture's docstring now carries that. Affected tests:
+In `backend/tests/test_documents.py`, for each test below: add `document_clock` as the FIRST parameter (before `store` — a style convention; correctness doesn't depend on fixture order, see the fixture docstring), and replace each `time.sleep(1.1)` line with `document_clock.advance()`. The comments explaining second precision can go — the fixture's docstring now carries that. Affected tests:
 
 - `test_list_orders_by_recency` (sleep at ~line 90)
 - `test_check_only_update_does_not_bump_edited_at` (~line 215)
@@ -188,7 +195,7 @@ If `import time` in `test_documents.py` has no remaining users afterwards, remov
 
 - [ ] **Step 3: Rewrite the API-level test**
 
-In `backend/tests/test_documents_api.py`, `test_summaries_expose_timestamps_and_order_by_edited` (~line 517): change the signature to `(document_clock, authed_client)` and replace the `time.sleep(1.1)` line with `document_clock.advance()`. Remove `import time` if now unused.
+In `backend/tests/test_documents_api.py`, `test_summaries_expose_timestamps_and_order_by_edited` (line 521): change the signature to `(document_clock, authed_client)` and replace the `time.sleep(1.1)` line with `document_clock.advance()`. Remove `import time` if now unused.
 
 - [ ] **Step 4: Run the two modules to verify green and fast**
 
@@ -236,17 +243,39 @@ addopts = "-n auto --dist loadfile"
 
 `--dist loadfile` keeps every test of a file on one worker — a conservative guard against intra-file coupling.
 
-- [ ] **Step 3: Measure the serial baseline after Tasks 1–2 (once)**
+- [ ] **Step 3: Measure the serial baseline after Tasks 1–2, and the loadfile floor**
 
 Run: `rtk proxy uv run pytest -q -n0` and record the elapsed time (expected: roughly 90 s or less; this is the "bcrypt+sleeps only" number for the record).
 
+Then time the slowest single file — with `--dist loadfile` it is the hard floor no amount of parallelism can beat: `rtk proxy uv run pytest tests/test_check_api.py -q -n0` (this file contains a deliberate 1.0 s pause, a 0.5 s pause, and a 5 s-deadline poll). Record its time. If the floor alone exceeds ~30 s, report it — switching to a finer distribution mode would be a spec deviation and is the controller's call, not yours.
+
 - [ ] **Step 4: Run the full suite in parallel, three times**
 
-Run `rtk proxy uv run pytest -q` three times. Expected every time: **1080 passed**, zero warnings, no flaky failures, elapsed well under 60 s (target < 30 s). Record all three times.
+Run `rtk proxy uv run pytest -q` three times. Expected every time: **1082 passed**, zero warnings, no flaky failures, elapsed well under 60 s (target < 30 s). Record all three times. Also run `rtk proxy uv run pytest -q -n 8` once and record it — xdist's `auto` counts efficiency cores on Apple silicon, and 8 workers (performance cores) can beat `auto`; report both so the controller can decide whether `auto` stays.
 
 If any test fails under parallelism but passes with `-n0`: STOP and report the test name and both outcomes to the controller — assertions are not to be loosened to make parallelism stick (Global Constraints).
 
-- [ ] **Step 5: Document the new testing reality**
+- [ ] **Step 5: Probe the known timing-sensitive tests under worst-case contention**
+
+Six wall-clock assertions exist in the suite: `tests/test_check_api.py:1177` (`< 0.3`), `:1225` (`< 0.3`), `:1260` (`< 0.5`), `:1351-1357` (5 s deadline poll), `tests/test_auth_api.py:598-603` (`< 1.0`), `tests/test_terminology.py:315-317` (`< 5.0`). The three parallel full-suite runs above already exercise them under load; additionally run them while a full suite saturates the cores:
+
+```bash
+rtk proxy uv run pytest -q & rtk proxy uv run pytest tests/test_check_api.py tests/test_auth_api.py tests/test_terminology.py -q -n0; wait
+```
+
+Expected: all pass in both processes. If a timing assertion fails here, report it with the measured margin — do not widen the bound; CI's 2–4 core runners are the environment this step is a proxy for.
+
+- [ ] **Step 6: Verify the CI command still works under xdist**
+
+CI does not run plain `pytest -q`; `.github/workflows/backend.yml` runs a coverage variant that now inherits `-n auto` from `addopts`. Run it locally once from `backend/`:
+
+```bash
+rtk proxy uv run pytest --cov=app --cov-report=json --cov-report=html --cov-report=term --junitxml=test-results.xml
+```
+
+Expected: 1082 passed, and `coverage.json`, `htmlcov/`, and `test-results.xml` all produced with sane contents (coverage percentage in the plausible range of the pre-change runs, junit file lists 1082 tests) — the badge job and `scripts/ci-summary.py` depend on these artifacts. Delete the generated artifacts afterwards; do not commit them.
+
+- [ ] **Step 7: Document the new testing reality**
 
 In `docs/backend-architecture.md`, extend the testing section with this paragraph (adapt heading level to the surrounding document):
 
@@ -263,7 +292,7 @@ safe. Two test-only accelerators keep the fixed cost per test low:
 timestamp ordering.
 ```
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add backend/pyproject.toml backend/uv.lock docs/backend-architecture.md
