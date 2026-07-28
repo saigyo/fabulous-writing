@@ -156,6 +156,13 @@ describe('admin endpoints', () => {
     // assert path ends '/api/admin/users/7', method 'PATCH', body '{"tier":"premium"}'
   })
 
+  it('getAdminTiers GETs /api/admin/tiers with the bearer header', async () => {
+    await getAdminTiers()
+    // assert path ends '/api/admin/tiers', no method override (GET),
+    // Authorization header present — the view tests mock this function
+    // and the backend tests cannot catch a wrong frontend path.
+  })
+
   it('admin password floor mirrors the backend', () => {
     expect(ADMIN_MIN_PASSWORD_LENGTH).toBe(12)
   })
@@ -232,7 +239,7 @@ export const patchAdminUser = (id: number, patch: AdminUserPatch) =>
 - [ ] **Step 4: Run the frontend gates**
 
 Run: `npx vitest run && npm run build` (and `npx oxlint` directly)
-Expected: all green, 480 + 4 = 484 tests.
+Expected: all green, 480 + 5 = 485 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -362,7 +369,7 @@ Catalog values (place next to `viewProfiles` / the other `view*` entries in each
 - [ ] **Step 4: Run the gates**
 
 Run: `npx vitest run && npm run build` (plus `npx oxlint`)
-Expected: green, 484 + 3 = 487 tests.
+Expected: green, 485 + 3 = 488 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -390,13 +397,16 @@ git commit -m "feat(admin-ui): admin as fifth activeView, gated on is_admin (M6)
 Create `frontend/src/admin/AdminView.test.tsx`. Mock `../api/client` with the `importOriginal`-spread form (`App.test.tsx` top shows it: `async (importOriginal) => ({ ...(await importOriginal<…>()), getAdminUsers: vi.fn(), … })`) so `HttpError` and `ADMIN_MIN_PASSWORD_LENGTH` stay real while the four admin functions are mocks; seed the store user the way `App.test.tsx` actually does it — `useStore.setState({ user: user({...}) })` with a local `user()` MeResponse factory (App.test.tsx:54; there is no `setAuth` call there) — with `is_admin: true` and `allow_additional_admins` true/false per test, plus a token in the store. Tests:
 
 ```typescript
-test('mount fetches users and tiers, renders one row per user', async () => {})
-test('load failure shows adminLoadFailed and no rows', async () => {})
-test('create submits the form payload and appends the returned user', async () => {})
-test('create pre-validates the 12-char password floor without calling the API', async () => {})
-test('create failure (422 duplicate email) surfaces the formatted error', async () => {})
-test('admin checkbox in the create form is disabled with a hint while allow_additional_admins is false', () => {})
+it('mount fetches users and tiers, renders one row per user', async () => {})
+it('load failure shows adminLoadFailed and no rows', async () => {})
+it('create submits the form payload and appends the returned user', async () => {})
+it('create pre-validates the 12-char password floor without calling the API', async () => {})
+it('create failure (422 duplicate email) surfaces the formatted error', async () => {})
+it('admin checkbox in the create form is disabled with a hint while allow_additional_admins is false', () => {})
+it('create stays disabled until tiers load, and a tiers failure keeps it disabled with the error shown', async () => {})
 ```
+
+The last test pins the required-load rule: the tier options are never guessed client-side (a hardcoded fallback would offer names a custom-tier config rejects with 422), so creation is unavailable until `getAdminTiers` succeeds.
 
 Each body drives the real component via `@testing-library/react` (`render`, `screen`, `fireEvent`/`userEvent`, `findBy*` for the async loads) and asserts on the DOM plus the mock call arguments. The 422 test rejects `postAdminUser` with `new HttpError(422, 'POST /api/admin/users failed: 422')` and expects the `adminChangeFailed`-formatted text visible.
 
@@ -427,7 +437,11 @@ export function AdminView() {
   const me = useStore((s) => s.user)
   const m = useMessages()
   const [users, setUsers] = useState<AdminUser[]>([])
-  const [tiers, setTiers] = useState<string[]>([])
+  // null = not loaded (or failed). Tier names are config-defined and never
+  // guessed client-side: a hardcoded fallback would offer options a
+  // custom-tier deployment rejects with 422, so creation stays disabled
+  // until this loads.
+  const [tiers, setTiers] = useState<string[] | null>(null)
   const { error, run, fail } = useCrudError(m.adminChangeFailed)
 
   // Mounted only while the view is active and the user is an admin
@@ -440,7 +454,7 @@ export function AdminView() {
       .catch(() => { if (sessionGeneration() === gen) fail(m.adminLoadFailed) })
     getAdminTiers()
       .then((list) => { if (sessionGeneration() === gen) setTiers(list) })
-      .catch(() => { if (sessionGeneration() === gen) setTiers([]) })
+      .catch(() => { if (sessionGeneration() === gen) fail(m.adminLoadFailed) })
     // Mount-once by design: the view remounts per activation, which is
     // exactly the refetch cadence the spec wants. (The repo lints with
     // oxlint, which has no exhaustive-deps rule — no directive needed;
@@ -492,7 +506,7 @@ export function AdminView() {
 }
 
 interface CreateFormProps {
-  tiers: string[]
+  tiers: string[] | null
   allowMoreAdmins: boolean
   onCreated: (user: AdminUser) => void
   run: (action: () => Promise<void>) => Promise<void>
@@ -506,16 +520,19 @@ function CreateForm({ tiers, allowMoreAdmins, onCreated, run, fail }: CreateForm
   const [password, setPassword] = useState('')
   const [tier, setTier] = useState('basic')
   const [isAdmin, setIsAdmin] = useState(false)
+  // Double-click guard: the second submit of the same form would create the
+  // user twice or turn a success into a misleading duplicate-email banner.
+  const [pending, setPending] = useState(false)
 
   // Config-defined tiers arrive async and need not contain 'basic' — snap
   // the selection to a real option once the catalog lands (spec §6.1: tier
   // names are whatever the config says).
   useEffect(() => {
-    if (tiers.length > 0 && !tiers.includes(tier)) setTier(tiers[0])
+    if (tiers && tiers.length > 0 && !tiers.includes(tier)) setTier(tiers[0])
   }, [tiers, tier])
 
   async function create() {
-    if (!email.trim() || !password) return
+    if (!tiers || pending || !email.trim() || !password) return
     if (password.length < ADMIN_MIN_PASSWORD_LENGTH) {
       // Reuses the existing parameterized key (AccountMenu precedent) —
       // no second hardcoded-floor message to drift.
@@ -523,21 +540,26 @@ function CreateForm({ tiers, allowMoreAdmins, onCreated, run, fail }: CreateForm
       return
     }
     const gen = sessionGeneration()
-    await run(async () => {
-      const created = await postAdminUser({
-        email: email.trim(),
-        password,
-        ...(displayName.trim() ? { display_name: displayName.trim() } : {}),
-        tier,
-        is_admin: isAdmin,
+    setPending(true)
+    try {
+      await run(async () => {
+        const created = await postAdminUser({
+          email: email.trim(),
+          password,
+          ...(displayName.trim() ? { display_name: displayName.trim() } : {}),
+          tier,
+          is_admin: isAdmin,
+        })
+        if (sessionGeneration() !== gen) return // session ended: do not write
+        setEmail('')
+        setDisplayName('')
+        setPassword('')
+        setIsAdmin(false)
+        onCreated(created)
       })
-      if (sessionGeneration() !== gen) return // session ended: do not write
-      setEmail('')
-      setDisplayName('')
-      setPassword('')
-      setIsAdmin(false)
-      onCreated(created)
-    })
+    } finally {
+      setPending(false)
+    }
   }
 
   return (
@@ -562,8 +584,13 @@ function CreateForm({ tiers, allowMoreAdmins, onCreated, run, fail }: CreateForm
         aria-label={m.adminPassword}
         onChange={(e) => setPassword(e.target.value)}
       />
-      <select value={tier} aria-label={m.adminTier} onChange={(e) => setTier(e.target.value)}>
-        {(tiers.length ? tiers : ['basic', 'premium']).map((name) => (
+      <select
+        value={tier}
+        disabled={!tiers}
+        aria-label={m.adminTier}
+        onChange={(e) => setTier(e.target.value)}
+      >
+        {(tiers ?? []).map((name) => (
           <option key={name} value={name}>{name}</option>
         ))}
       </select>
@@ -576,7 +603,10 @@ function CreateForm({ tiers, allowMoreAdmins, onCreated, run, fail }: CreateForm
         />
         {m.adminIsAdmin}
       </label>
-      <button onClick={() => void create()} disabled={!email.trim() || !password}>
+      <button
+        onClick={() => void create()}
+        disabled={!tiers || pending || !email.trim() || !password}
+      >
         {m.adminCreate}
       </button>
     </div>
@@ -668,7 +698,7 @@ Catalog values:
 - [ ] **Step 5: Run the gates**
 
 Run: `npx vitest run && npm run build` (plus `npx oxlint`)
-Expected: green, 487 + 6 = 493 tests.
+Expected: green, 488 + 7 = 495 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -695,12 +725,13 @@ git commit -m "feat(admin-ui): user table and create form (M6)"
 Append to `AdminView.test.tsx`:
 
 ```typescript
-test('changing a row tier PATCHes {tier} and updates the row', async () => {})
-test('deactivating another user PATCHes {is_active:false}', async () => {})
-test('own row admin and active controls are disabled', async () => {})
-test('promote control is disabled while allow_additional_admins is false, demotion stays enabled', async () => {})
-test('password reset sends {password} after the 12-char pre-check', async () => {})
-test('display name edit PATCHes {display_name}, clearing it sends null', async () => {})
+it('changing a row tier PATCHes {tier} and updates the row', async () => {})
+it('deactivating another user PATCHes {is_active:false}', async () => {})
+it('own row admin and active controls are disabled', async () => {})
+it('promote control is disabled while allow_additional_admins is false, demotion stays enabled', async () => {})
+it('password reset sends {password} after the 12-char pre-check, keeps the typed value on failure, clears it on success', async () => {})
+it('reset button is disabled while the PATCH is in flight (no duplicate submission)', async () => {})
+it('display name edit PATCHes {display_name}, clearing it sends null', async () => {})
 ```
 
 Real bodies with the Task 4 arrangement; assert exact `patchAdminUser` call arguments (id + minimal patch object) and DOM updates from the mocked response.
@@ -736,13 +767,15 @@ In `AdminView.tsx`, replace the read-only `<tr>` body with a `UserRow` component
 ```tsx
           {users.map((user) => (
             <UserRow
-              // display_name folded into the key (ProfilesView precedent):
-              // the row's name input is local state seeded from the prop, so
-              // a server-side change must remount the row to resync it.
-              key={`${user.id}:${user.display_name ?? ''}`}
+              // Key stays user.id: folding display_name in would remount the
+              // row after a name save and silently erase a password already
+              // typed in its reset field. The name input instead uses a
+              // draft-or-prop pattern (see UserRow) so it needs no remount
+              // to resync.
+              key={user.id}
               user={user}
               isSelf={user.id === me?.id}
-              tiers={tiers}
+              tiers={tiers ?? []}
               allowMoreAdmins={allowMoreAdmins}
               onSave={save}
               fail={fail}
@@ -764,8 +797,14 @@ interface UserRowProps {
 
 function UserRow({ user, isSelf, tiers, allowMoreAdmins, onSave, fail }: UserRowProps) {
   const m = useMessages()
-  const [name, setName] = useState(user.display_name ?? '')
+  // null = not editing: the input shows the server value until the admin
+  // types, so an external display_name change resyncs without remounting
+  // the row (which would wipe the reset-password field below).
+  const [draftName, setDraftName] = useState<string | null>(null)
   const [newPassword, setNewPassword] = useState('')
+  // Double-click guard for the reset button: a second in-flight PATCH would
+  // revoke tokens and write audit rows twice.
+  const [resetPending, setResetPending] = useState(false)
 
   // The disabled states mirror server guards the UI cannot replace:
   // self-demotion/self-deactivation 409 (admin.py lockout rule) and
@@ -774,20 +813,28 @@ function UserRow({ user, isSelf, tiers, allowMoreAdmins, onSave, fail }: UserRow
   const adminToggleDisabled = isSelf || (!user.is_admin && !allowMoreAdmins)
 
   function saveName() {
-    const trimmed = name.trim()
+    if (draftName === null) return
+    const trimmed = draftName.trim()
+    setDraftName(null) // back to showing the server value (updated on success)
     if (trimmed === (user.display_name ?? '')) return
     void onSave(user, { display_name: trimmed === '' ? null : trimmed })
   }
 
   async function resetPassword() {
+    if (resetPending) return
     if (newPassword.length < ADMIN_MIN_PASSWORD_LENGTH) {
       fail(m.passwordTooShort(ADMIN_MIN_PASSWORD_LENGTH))
       return
     }
-    // Clear only on a committed reset: run() swallows failures into the
-    // error banner, so a failed PATCH must leave the typed password in
-    // place rather than wiping it under the error message.
-    if (await onSave(user, { password: newPassword })) setNewPassword('')
+    setResetPending(true)
+    try {
+      // Clear only on a committed reset: run() swallows failures into the
+      // error banner, so a failed PATCH must leave the typed password in
+      // place rather than wiping it under the error message.
+      if (await onSave(user, { password: newPassword })) setNewPassword('')
+    } finally {
+      setResetPending(false)
+    }
   }
 
   return (
@@ -798,9 +845,9 @@ function UserRow({ user, isSelf, tiers, allowMoreAdmins, onSave, fail }: UserRow
       </td>
       <td>
         <input
-          value={name}
+          value={draftName ?? user.display_name ?? ''}
           aria-label={`${m.adminDisplayName}: ${user.email}`}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => setDraftName(e.target.value)}
           onBlur={saveName}
         />
       </td>
@@ -844,7 +891,10 @@ function UserRow({ user, isSelf, tiers, allowMoreAdmins, onSave, fail }: UserRow
           aria-label={`${m.adminResetPassword}: ${user.email}`}
           onChange={(e) => setNewPassword(e.target.value)}
         />
-        <button disabled={!newPassword} onClick={() => void resetPassword()}>
+        <button
+          disabled={!newPassword || resetPending}
+          onClick={() => void resetPassword()}
+        >
           {m.adminResetPassword}
         </button>
       </td>
@@ -867,7 +917,7 @@ In `docs/frontend-architecture.md`, add an "Admin view (M6)" subsection where th
 - [ ] **Step 5: Run the gates**
 
 Run: `npx vitest run && npm run build` (plus `npx oxlint`)
-Expected: green, 493 + 6 = 499 tests.
+Expected: green, 495 + 7 = 502 tests.
 
 - [ ] **Step 6: Commit**
 
