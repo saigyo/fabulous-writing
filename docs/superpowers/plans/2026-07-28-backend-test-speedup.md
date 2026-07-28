@@ -260,7 +260,7 @@ If any test fails under parallelism but passes with `-n0`: STOP and report the t
 Six wall-clock assertions exist in the suite: `tests/test_check_api.py:1177` (`< 0.3`), `:1225` (`< 0.3`), `:1260` (`< 0.5`), `:1351-1357` (5 s deadline poll), `tests/test_auth_api.py:598-603` (`< 1.0`), `tests/test_terminology.py:315-317` (`< 5.0`). The three parallel full-suite runs above already exercise them under load; additionally run them while a full suite saturates the cores:
 
 ```bash
-rtk proxy uv run pytest -q & rtk proxy uv run pytest tests/test_check_api.py tests/test_auth_api.py tests/test_terminology.py -q -n0; wait
+rtk proxy uv run pytest -q & rtk proxy uv run pytest tests/test_check_api.py tests/test_auth_api.py tests/test_terminology.py -q -n0 -p no:cacheprovider; wait
 ```
 
 Expected: all pass in both processes. If a timing assertion fails here, report it with the measured margin — do not widen the bound; CI's 2–4 core runners are the environment this step is a proxy for.
