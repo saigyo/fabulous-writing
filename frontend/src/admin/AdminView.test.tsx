@@ -224,6 +224,38 @@ describe('AdminView', () => {
     expect(button.disabled).toBe(true)
   })
 
+  it('create stays disabled while the user list is still loading even though tiers have loaded', async () => {
+    let resolveUsers!: (list: AdminUser[]) => void
+    vi.mocked(getAdminUsers).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveUsers = resolve
+        }),
+    )
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+    const u = userEvent.setup()
+
+    render(<AdminView />)
+    await screen.findByText('basic') // tiers loaded, select populated
+
+    await u.type(screen.getByLabelText(en.adminEmail), 'new@example.com')
+    await u.type(screen.getByLabelText(en.adminPassword), 'a-long-enough-password')
+    const button = screen.getByRole('button', { name: en.adminCreate }) as HTMLButtonElement
+    expect(button.disabled).toBe(true) // user list not loaded yet
+
+    // Same fiber-props bypass as the !tiers guard test above: React won't
+    // dispatch a synthetic click to a button it rendered as disabled, so
+    // this is the only way to exercise create()'s own !usersLoaded guard.
+    const reactProps = Object.entries(button).find(([key]) =>
+      key.startsWith('__reactProps$'),
+    )?.[1] as { onClick?: () => void } | undefined
+    reactProps?.onClick?.()
+    expect(postAdminUser).not.toHaveBeenCalled()
+
+    resolveUsers([])
+    await waitFor(() => expect(button.disabled).toBe(false))
+  })
+
   it('changing a row tier PATCHes {tier} and updates the row', async () => {
     vi.mocked(getAdminUsers).mockResolvedValue([
       adminUser({ id: 1, email: 'ada@example.com' }),
