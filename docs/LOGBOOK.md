@@ -3280,3 +3280,40 @@ build succeeded.
 
 **Next**: M6 — admin UI (a fifth `activeView` gated on `is_admin`; user
 table with create/edit/deactivate/reset over the existing M1 admin API).
+
+## 2026-07-28 — Backend test-suite speedup (B8 emergency intervention)
+
+**PR #31** (spec `docs/superpowers/specs/2026-07-28-backend-test-speedup-design.md`,
+plan `docs/superpowers/plans/2026-07-28-backend-test-speedup.md`). Owner-ordered
+"emergency intervention" between M5 and M6: the suite had reached 1,080 tests /
+245.28 s locally (~10 min CI), and agent-driven workflows run it many times per
+task.
+
+**Three levers, no fixture-architecture changes.**
+1. *bcrypt cost 4 in the test process* (245 s → 109 s). Measured 173 ms per hash
+   at production cost 12 vs 0.7 ms at cost 4; every test app pays one hash in
+   `seed_admin`, every login one verify (checkpw derives cost from the stored
+   hash). New `_BCRYPT_ROUNDS = 12` constant in `app/core/auth.py` — bit-for-bit
+   the previous `gensalt()` default — lowered to 4 by a session-autouse conftest
+   fixture. Deliberately no Settings/env knob: production hashing strength has
+   no config surface. Guard tests pin all three invariants (constant honored,
+   test session at cost 4, production at 12), each mutation-verified.
+2. *Deterministic `document_clock` fixture* (→ 99.3 s serial). The eight real
+   `time.sleep(1.1)` calls (second-precision `_utcnow`) removed; assertions
+   byte-identical; mutation-verified (`advance(0)` fails).
+3. *pytest-xdist by default* (→ 28.2–29.0 s over three runs). `addopts =
+   "-n auto --dist load"`; `-n0` is the serial escape hatch. `--dist loadfile`
+   was measured first and rejected (47 s with a hard 40 s single-file floor in
+   `test_check_api.py`); per-test `tmp_path` isolation makes the finer mode
+   structurally safe (final review AST-scanned for cross-worker hazards: none).
+   The exact CI coverage command was verified locally under xdist including its
+   artifacts (badge job, `scripts/ci-summary.py`).
+
+**Gates:** backend `uv run pytest -q` → 1,082 passed (1,080 + 2 guard tests),
+zero warnings, 28.16 s. Frontend untouched. Watch item: the six wall-clock
+assertions (`test_check_api.py` `< 0.3 s` etc.) under 4-core CI contention —
+if one flakes, de-clock or pin serial, never widen the bound. Remaining B8
+levers (schema/app scoping, CI caching, ResourceWarning cleanups) stay in the
+roadmap Backlog, re-measured against CI after this lands.
+
+**Next**: M6 — admin UI (unchanged from the M5 pointer).
