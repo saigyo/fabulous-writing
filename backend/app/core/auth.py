@@ -61,6 +61,9 @@ SELF_MIN_PASSWORD_LENGTH = 8
 ADMIN_SET_MIN_PASSWORD_LENGTH = 12
 MAX_PASSWORD_BYTES = 72  # bcrypt's hard input limit, not a policy choice
 
+_BCRYPT_ROUNDS = 12  # bcrypt's library default, kept explicit so the test
+# suite can lower it (tests/conftest.py); deliberately not a Settings knob.
+
 
 @lru_cache(maxsize=1)
 def _dummy_hash() -> str:
@@ -90,7 +93,7 @@ def hash_password(password: str) -> str:
             f"Password is too long ({len(encoded)} bytes, max {MAX_PASSWORD_BYTES}). "
             f"Call validate_password() before hashing."
         )
-    return bcrypt.hashpw(encoded, bcrypt.gensalt()).decode()
+    return bcrypt.hashpw(encoded, bcrypt.gensalt(_BCRYPT_ROUNDS)).decode()
 
 
 def check_password(password: str, password_hash: str | None) -> bool:

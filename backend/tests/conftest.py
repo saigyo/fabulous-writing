@@ -37,6 +37,23 @@ def _auth_env():
             os.environ[key] = value
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _fast_bcrypt():
+    """Cost-4 bcrypt for the whole test session (~0.7 ms vs ~173 ms/hash).
+
+    Every test app pays one hash in seed_admin and one verify per login;
+    at production cost that alone dominates suite runtime. Production
+    keeps cost 12 — this override exists only inside the test process,
+    which is exactly why it is not a Settings knob.
+    """
+    from app.core import auth
+
+    previous = auth._BCRYPT_ROUNDS
+    auth._BCRYPT_ROUNDS = 4
+    yield
+    auth._BCRYPT_ROUNDS = previous
+
+
 def auth_headers(client: TestClient) -> dict[str, str]:
     """Bearer header for the bootstrap admin, via a real login.
 
