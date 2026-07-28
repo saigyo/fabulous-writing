@@ -47,6 +47,18 @@ export interface Messages {
   viewProfiles: string
   viewAdmin: string
   adminUsersTitle: string
+  adminCreate: string
+  adminEmail: string
+  adminDisplayName: string
+  adminPassword: string
+  adminTier: string
+  adminIsAdmin: string
+  adminIsActive: string
+  adminResetPassword: string
+  adminSelf: string
+  adminLoadFailed: string
+  adminGrantDisabledHint: string
+  adminChangeFailed: (error: string) => string
   tierName: (tier: Tier) => string
   tierPinnedOption: (model: string) => string
   resolvedModel: (model: string, provider: string) => string
