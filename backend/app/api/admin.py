@@ -77,11 +77,15 @@ def _store(request: Request):
     return request.app.state.user_store
 
 
-def _validate_tier_name(request: Request, tier: str) -> None:
+def _known_tiers(request: Request) -> tuple[str, ...]:
     """Tier names are config-defined (spec §6.1). With no tiers block the
     spec's two default names (§5.1) remain assignable — policy is
     unrestricted for everyone in that state anyway."""
-    known = tuple(request.app.state.settings.tiers) or ("basic", "premium")
+    return tuple(request.app.state.settings.tiers) or ("basic", "premium")
+
+
+def _validate_tier_name(request: Request, tier: str) -> None:
+    known = _known_tiers(request)
     if tier not in known:
         raise HTTPException(422, f"unknown tier '{tier}': must be one of {list(known)}")
 
@@ -114,6 +118,13 @@ def _guard_admin_creation(request: Request, actor: CurrentUser, target_email: st
 @router.get("/users")
 def list_users(request: Request) -> list[User]:
     return _store(request).list_users()
+
+
+@router.get("/tiers")
+def list_tiers(request: Request) -> list[str]:
+    """The tier names assignable through create/patch — the admin UI's
+    select options. Names only; tier limits/policy stay config-internal."""
+    return list(_known_tiers(request))
 
 
 @router.post("/users", status_code=201)

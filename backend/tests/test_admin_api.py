@@ -353,3 +353,32 @@ def test_configured_names_replace_defaults(tmp_path):
     )
     assert patched.status_code == 422
     assert "gold" in patched.json()["detail"]
+
+
+class TestListTiers:
+    def test_returns_config_tier_names(self, tmp_path):
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            rules_dir=tmp_path / "rules",
+            tiers={"gold": {"llm": {}, "limits": {
+                "llm_checks_per_day": 100, "max_llm_document_chars": 100000,
+                "concurrent_llm_runs": 5,
+            }}},
+        )
+        client = TestClient(create_app(settings))
+        headers = admin_headers(client)
+        response = client.get("/api/admin/tiers", headers=headers)
+        assert response.status_code == 200
+        assert response.json() == list(settings.tiers)
+
+    def test_defaults_when_no_tiers_configured(self, client):
+        headers = admin_headers(client)
+        response = client.get("/api/admin/tiers", headers=headers)
+        assert response.status_code == 200
+        assert response.json() == ["basic", "premium"]
+
+    def test_non_admin_is_403(self, client):
+        from tests.conftest import second_user_headers
+        second = second_user_headers(client)
+        response = client.get("/api/admin/tiers", headers=second)
+        assert response.status_code == 403
