@@ -6,8 +6,13 @@ import { expireSession } from '../auth/session'
 import { clearSnapshot, readSnapshot, writeSnapshot } from '../documents/buffer'
 import { useStore } from '../state/store'
 import {
+  ADMIN_MIN_PASSWORD_LENGTH,
   HttpError,
   type MeResponse,
+  getAdminTiers,
+  getAdminUsers,
+  patchAdminUser,
+  postAdminUser,
   postLogin,
   postPasswordChange,
   request,
@@ -256,6 +261,75 @@ describe('401 handling', () => {
     const state = useStore.getState()
     expect(state.authStatus).toBe('anonymous')
     expect(state.sessionExpired).toBe(false)
+  })
+})
+
+describe('admin endpoints', () => {
+  it('getAdminUsers GETs /api/admin/users with the bearer header', async () => {
+    useStore.setState({ token: 'tok-admin' })
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(jsonResponse(200, []))
+
+    await getAdminUsers()
+
+    const url = fetchMock.mock.calls[0][0] as string
+    const init = fetchMock.mock.calls[0][1] as { headers: Record<string, string>; method?: string }
+    expect(url).toContain('/api/admin/users')
+    expect(init.method).toBeUndefined() // GET is default
+    expect(init.headers).toMatchObject({
+      Authorization: 'Bearer tok-admin',
+    })
+  })
+
+  it('postAdminUser POSTs the create payload', async () => {
+    useStore.setState({ token: 'tok-admin' })
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(jsonResponse(200, { id: 1, email: 'a@b.c', display_name: null, tier: 'basic', is_admin: false, is_active: true, created_at: '2026-07-28T00:00:00Z', external_id: null, password_changed_at: null }))
+
+    const payload = { email: 'a@b.c', password: 'p'.repeat(12), tier: 'basic', is_admin: false }
+    await postAdminUser(payload)
+
+    const init = fetchMock.mock.calls[0][1] as { method: string; body: string }
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body)).toEqual(payload)
+  })
+
+  it('patchAdminUser PATCHes the given fields only', async () => {
+    useStore.setState({ token: 'tok-admin' })
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(jsonResponse(200, { id: 7, email: 'user@example.com', display_name: null, tier: 'premium', is_admin: false, is_active: true, created_at: '2026-07-28T00:00:00Z', external_id: null, password_changed_at: null }))
+
+    await patchAdminUser(7, { tier: 'premium' })
+
+    const url = fetchMock.mock.calls[0][0] as string
+    const init = fetchMock.mock.calls[0][1] as { method: string; body: string }
+    expect(url).toContain('/api/admin/users/7')
+    expect(init.method).toBe('PATCH')
+    expect(init.body).toBe('{"tier":"premium"}')
+  })
+
+  it('getAdminTiers GETs /api/admin/tiers with the bearer header', async () => {
+    useStore.setState({ token: 'tok-admin' })
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(jsonResponse(200, ['basic', 'premium', 'enterprise']))
+
+    await getAdminTiers()
+
+    const url = fetchMock.mock.calls[0][0] as string
+    const init = fetchMock.mock.calls[0][1] as { headers: Record<string, string>; method?: string }
+    expect(url).toContain('/api/admin/tiers')
+    expect(init.method).toBeUndefined() // GET is default
+    expect(init.headers).toMatchObject({
+      Authorization: 'Bearer tok-admin',
+    })
+  })
+
+  it('admin password floor mirrors the backend', () => {
+    expect(ADMIN_MIN_PASSWORD_LENGTH).toBe(12)
   })
 })
 

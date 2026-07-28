@@ -204,6 +204,60 @@ export const postPasswordChange = (current: string, next: string) =>
     body: JSON.stringify({ current, new: next }),
   })
 
+/** Mirrors backend/app/services/users.py User — no password material, ever
+ * (token_epoch is excluded server-side). */
+export interface AdminUser {
+  id: number
+  email: string
+  display_name: string | null
+  tier: string
+  is_admin: boolean
+  is_active: boolean
+  created_at: string
+  external_id: string | null
+  password_changed_at: string | null
+}
+
+export interface AdminUserCreate {
+  email: string
+  password: string
+  display_name?: string
+  tier: string
+  is_admin: boolean
+}
+
+/** PATCH semantics (backend/app/api/admin.py UserPatch): only submitted
+ * fields change; display_name: null explicitly clears the name; password
+ * present = reset. Callers send exactly the fields they mean. */
+export interface AdminUserPatch {
+  display_name?: string | null
+  tier?: string
+  is_admin?: boolean
+  is_active?: boolean
+  password?: string
+}
+
+// The server's ADMIN_SET_MIN_PASSWORD_LENGTH (backend/app/core/auth.py) is
+// 12 and no endpoint exposes it — hardcoded here like MIN_PASSWORD_LENGTH
+// above, so admin forms pre-validate before sending.
+export const ADMIN_MIN_PASSWORD_LENGTH = 12
+
+export const getAdminUsers = () => request<AdminUser[]>('/api/admin/users')
+
+export const getAdminTiers = () => request<string[]>('/api/admin/tiers')
+
+export const postAdminUser = (body: AdminUserCreate) =>
+  request<AdminUser>('/api/admin/users', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+
+export const patchAdminUser = (id: number, patch: AdminUserPatch) =>
+  request<AdminUser>(`/api/admin/users/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+
 // Injected by auth/session.ts (avoids a module cycle): session.ts imports
 // this module for postLogin/getMe, so this module must not import
 // session.ts back to call expireSession() directly. getUnauthorizedHandler
