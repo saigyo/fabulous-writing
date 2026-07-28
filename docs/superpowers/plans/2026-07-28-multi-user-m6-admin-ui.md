@@ -57,8 +57,9 @@ class TestListTiers:
         assert response.status_code == 200
         assert response.json() == list(settings.tiers)
 
-    def test_defaults_when_no_tiers_configured(self, client, admin_headers):
-        assert client.get("/api/admin/tiers", headers=admin_headers).json() == ["basic", "premium"]
+    def test_defaults_when_no_tiers_configured(self, client):
+        headers = admin_headers(client)  # module-local helper function, not a fixture
+        assert client.get("/api/admin/tiers", headers=headers).json() == ["basic", "premium"]
 
     def test_non_admin_is_403(self, client):
         second = second_user_headers(client)
@@ -261,7 +262,9 @@ Create `frontend/src/App.admin-gate.test.tsx` — its own file, precedent `App.d
 
 ```typescript
 it('admin nav button renders only for admins', () => {
-  // render <App /> with a non-admin user via setAuth: no button labeled 'Admin';
+  // render <App /> with a non-admin user seeded via useStore.setState
+  // ({ user, token } — App.test.tsx's user() factory pattern): no button
+  // labeled 'Admin';
   // re-render with is_admin: true: the button appears
 })
 
@@ -384,7 +387,7 @@ git commit -m "feat(admin-ui): admin as fifth activeView, gated on is_admin (M6)
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `frontend/src/admin/AdminView.test.tsx`. Mock `../api/client` with the `importOriginal`-spread form (`App.test.tsx` top shows it: `async (importOriginal) => ({ ...(await importOriginal<…>()), getAdminUsers: vi.fn(), … })`) so `HttpError` and `ADMIN_MIN_PASSWORD_LENGTH` stay real while the four admin functions are mocks; seed the store with an admin user (`is_admin: true`, `allow_additional_admins` true/false per test) the way `App.test.tsx` seeds `setAuth`. Tests:
+Create `frontend/src/admin/AdminView.test.tsx`. Mock `../api/client` with the `importOriginal`-spread form (`App.test.tsx` top shows it: `async (importOriginal) => ({ ...(await importOriginal<…>()), getAdminUsers: vi.fn(), … })`) so `HttpError` and `ADMIN_MIN_PASSWORD_LENGTH` stay real while the four admin functions are mocks; seed the store user the way `App.test.tsx` actually does it — `useStore.setState({ user: user({...}) })` with a local `user()` MeResponse factory (App.test.tsx:54; there is no `setAuth` call there) — with `is_admin: true` and `allow_additional_admins` true/false per test, plus a token in the store. Tests:
 
 ```typescript
 test('mount fetches users and tiers, renders one row per user', async () => {})
