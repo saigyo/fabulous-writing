@@ -21,6 +21,7 @@ from app.core.auth import (
 )
 from app.core import auth as auth_module
 from app.core.config import Settings
+from tests.conftest import PRODUCTION_BCRYPT_ROUNDS
 
 
 def test_secret_from_env_is_returned():
@@ -315,3 +316,7 @@ def test_suite_runs_at_reduced_work_factor():
     # would carry the production cost (12) again — and the suite would
     # silently be ~250x slower per hash.
     assert auth_module.hash_password("some password").startswith("$2b$04$")
+    # Pins the production work factor itself against accidental weakening
+    # (e.g. an edit changing _BCRYPT_ROUNDS's default to 6): captured at
+    # conftest import time, before _fast_bcrypt ever overrides it.
+    assert PRODUCTION_BCRYPT_ROUNDS == 12
