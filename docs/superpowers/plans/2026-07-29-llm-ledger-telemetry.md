@@ -259,9 +259,10 @@ In `backend/app/api/llm_gate.py`, replace `LlmReservation.finish`:
 Run: `uv run pytest tests/test_usage.py -v`
 Expected: all PASS.
 
-- [ ] **Step 5: Mutation-verify the NULL-on-success guard**
+- [ ] **Step 5: Mutation-verify both guards**
 
-Temporarily delete the `if status != "failed":` block in `finish_run`, run `uv run pytest tests/test_usage.py::TestFailureColumns::test_non_failed_status_nulls_stage_and_detail -v`, confirm it FAILS, restore the block, confirm it passes again.
+1. Temporarily delete the `if status != "failed":` block in `finish_run`, run `uv run pytest tests/test_usage.py::TestFailureColumns::test_non_failed_status_nulls_stage_and_detail -v`, confirm it FAILS, restore, confirm green.
+2. Temporarily delete the `CHECK (fail_stage IN ...)` line from `_SCHEMA`, run `uv run pytest tests/test_usage.py::TestFailureColumns::test_check_constraint_rejects_unknown_stage -v`, confirm it FAILS, restore, confirm green.
 
 - [ ] **Step 6: Full-suite gate and commit**
 
@@ -382,7 +383,9 @@ class FakeProvider:
     ) -> None:
         self.response = response
         self.progress_steps = progress_steps or []
-        self.usage = usage or TokenUsage()
+        # `is not None`, not `or`: None means "not configured" everywhere in
+        # this module and must not be conflated with falsiness.
+        self.usage = usage if usage is not None else TokenUsage()
         self.calls: list[tuple[str, str]] = []
 
     async def generate(
@@ -641,10 +644,16 @@ Append to `TestGenerate` in `backend/tests/test_openai_compat.py` (the `_sse` he
 
 Add `from app.checkers.llm.provider import TokenUsage` to the imports.
 
+Also pin the absent-usage path for OpenAI-compat (spec §5: no usage fields ⇒ `TokenUsage(None, None)`, no error) with one line at the end of the existing `test_sends_chat_completions_request_and_returns_content`:
+
+```python
+        assert result.usage == TokenUsage()
+```
+
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `uv run pytest tests/test_providers.py tests/test_openai_compat.py -v`
-Expected: the new tests FAIL (usage is `TokenUsage(None, None)`; `stream_options` assertion fails).
+Expected: the new tests FAIL (usage is `TokenUsage(None, None)` where counts are expected; the `stream_options` assertion fails). The one-line absent-usage assertion already passes — it is a regression pin for the no-usage-fields path, not a RED test.
 
 - [ ] **Step 3: Implement**
 
@@ -695,8 +704,7 @@ StreamEvent = tuple[str, str | int | TokenUsage]
                         elif kind == "tokens":
                             on_progress(int(value))
                         elif kind == "usage":
-                            assert isinstance(value, TokenUsage)
-                            usage = value
+                            usage = value  # always a TokenUsage (StreamEvent contract)
                         elif kind == "done":
                             done = True
                     if done:
@@ -789,24 +797,38 @@ git commit -m "feat(llm): real token usage from Ollama and OpenAI-compat respons
 
 - [ ] **Step 1: Write the failing tests**
 
-In `backend/tests/test_providers.py`, extend `_StubMessages.create`'s `Response` class with a usage attribute:
+The shared stubs (`_StubMessages`, `_FakeRuntimeClient.converse`) stay **without** usage fields — the existing non-streaming tests become the absent-usage regression pins (spec §5: no usage fields ⇒ `TokenUsage(None, None)`, no error). The new usage tests bring their own local stubs.
+
+In `backend/tests/test_providers.py`, add one line at the end of the existing `test_generate_passes_prompts_and_returns_text`:
 
 ```python
-        class Usage:
-            input_tokens = 55
-            output_tokens = 9
-
-        class Response:
-            content = [Block()]
-            usage = Usage()
+        assert result.usage == TokenUsage()
 ```
 
 and append to `TestClaudeProvider`:
 
 ```python
     async def test_generate_extracts_usage(self) -> None:
-        stub = _StubAnthropicClient()
-        provider = ClaudeProvider(model="claude-sonnet-5", client=stub)
+        class Usage:
+            input_tokens = 55
+            output_tokens = 9
+
+        class Block:
+            type = "text"
+            text = "[]"
+
+        class Response:
+            content = [Block()]
+            usage = Usage()
+
+        class Messages:
+            async def create(self, **kwargs: Any) -> Any:
+                return Response()
+
+        class Client:
+            messages = Messages()
+
+        provider = ClaudeProvider(model="claude-sonnet-5", client=Client())
         result = await provider.generate("s", "u")
         assert result.usage == TokenUsage(input_tokens=55, output_tokens=9)
 ```
@@ -868,22 +890,29 @@ and append to `TestClaudeStreaming`:
         assert result.usage == TokenUsage(input_tokens=44, output_tokens=12)
 ```
 
-In `backend/tests/test_bedrock.py`, extend `_FakeRuntimeClient.converse`'s return value:
+In `backend/tests/test_bedrock.py`, the shared `_FakeRuntimeClient` stays unchanged. Add absent-usage pins to the two existing tests — at the end of `test_generate_uses_converse_and_returns_text`:
 
 ```python
-        return {
-            "output": {
-                "message": {"role": "assistant", "content": [{"text": "[]"}]}
-            },
-            "usage": {"inputTokens": 70, "outputTokens": 5},
-        }
+        assert result.usage == TokenUsage()
 ```
 
-and the streaming metadata event (line 44) to `{"metadata": {"usage": {"inputTokens": 66, "outputTokens": 5}}}`; append to `TestBedrockProvider`:
+and at the end of `test_generate_streams_and_reports_progress` (its metadata event carries only `outputTokens`):
+
+```python
+        assert result.usage == TokenUsage(input_tokens=None, output_tokens=5)
+```
+
+Append to `TestBedrockProvider`:
 
 ```python
     async def test_generate_extracts_usage(self) -> None:
-        provider = BedrockProvider(model="m", client=_FakeRuntimeClient())
+        class Client(_FakeRuntimeClient):
+            def converse(self, **kwargs: Any) -> dict[str, Any]:
+                response = super().converse(**kwargs)
+                response["usage"] = {"inputTokens": 70, "outputTokens": 5}
+                return response
+
+        provider = BedrockProvider(model="m", client=Client())
         result = await provider.generate("s", "u")
         assert result.usage == TokenUsage(input_tokens=70, output_tokens=5)
 
@@ -896,9 +925,10 @@ and the streaming metadata event (line 44) to `{"metadata": {"usage": {"inputTok
             model="m", client=_FakeRuntimeClient(stream_events=events)
         )
         result = await provider.generate("s", "u", on_progress=lambda n: None)
-        await asyncio.sleep(0)
         assert result.usage == TokenUsage(input_tokens=66, output_tokens=5)
 ```
+
+(No `asyncio.sleep(0)` in the usage tests: usage arrives via the `to_thread` return value, not via `call_soon_threadsafe`.)
 
 Add `from app.checkers.llm.provider import TokenUsage` to `test_bedrock.py` imports (already added to `test_providers.py` in Task 3).
 
@@ -985,10 +1015,12 @@ Non-streaming:
                     report(len(parts))
             elif "metadata" in event:
                 usage = event["metadata"].get("usage", {})
+                # Report only a count this event actually carries — never
+                # re-report an accumulated value from an earlier event.
+                if usage.get("outputTokens") is not None:
+                    report(usage["outputTokens"])
                 input_tokens = usage.get("inputTokens", input_tokens)
                 output_tokens = usage.get("outputTokens", output_tokens)
-                if output_tokens is not None:
-                    report(output_tokens)
         return GenerationResult(
             text="".join(parts),
             usage=TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens),
@@ -1251,117 +1283,126 @@ git commit -m "feat(llm): UnparseableResponseError + central failure classifier 
 
 - [ ] **Step 1: Write the failing endpoint tests**
 
-In `backend/tests/test_check_api.py`, inside `TestCheckMetering` (which already has the `_rows`-style ledger helper around line 843 and `make_client` at line 33), add — matching the file's existing helper names exactly as found in the class:
+In `backend/tests/test_check_api.py`: the ledger helper is **module-level** `_read_usage_rows(db_path)` at line ~840 (takes a `db_path`), the module-level `make_client(tmp_path, provider)` at line 33 builds its `Settings` with `db_path=tmp_path / "test.db"`, and completion is observed by draining SSE (`_read_sse_events`) — there is no `wait_for_done` helper.
+
+First, extend the existing `test_provider_failure_writes_a_failed_row` (line ~887) with two assertions after its `assert rows[0]["status"] == "failed"`:
+
+```python
+        assert rows[0]["fail_stage"] == "provider"
+        assert rows[0]["fail_detail"] == "RuntimeError: model exploded"
+```
+
+Then add to `TestCheckMetering`:
 
 ```python
     def test_completed_run_settles_provider_usage(self, tmp_path: Path) -> None:
+        # progress_steps make the approximation (41) available, so this
+        # pins that reported usage WINS over the approximation (spec §3.3) —
+        # without them, an inverted precedence would still pass.
         provider = FakeProvider(
-            LLM_RESPONSE, usage=TokenUsage(input_tokens=100, output_tokens=20)
+            LLM_RESPONSE, progress_steps=[5, 40, 41],
+            usage=TokenUsage(input_tokens=100, output_tokens=20),
         )
         with make_client(tmp_path, provider) as client:
             post = client.post(
-                "/api/checks", json={"text": TEXT, "language": "en", "checkers": ["llm"]}
+                "/api/checks",
+                json={"text": "This is very nice.", "language": "en",
+                      "checkers": ["llm"]},
             )
-            wait_for_done(client, post.json()["check_id"])
-            (row,) = self._rows(tmp_path)
-            assert row["status"] == "completed"
-            assert row["input_tokens"] == 100
-            assert row["output_tokens"] == 20
-            assert row["fail_stage"] is None
-            assert row["fail_detail"] is None
-
-    def test_failed_run_is_classified_provider_stage(self, tmp_path: Path) -> None:
-        class BrokenProvider:
-            name = "broken"
-
-            async def generate(self, system: str, user: str, on_progress=None):
-                raise RuntimeError("model exploded")
-
-        with make_client(tmp_path, BrokenProvider()) as client:
-            post = client.post(
-                "/api/checks", json={"text": TEXT, "language": "en", "checkers": ["llm"]}
-            )
-            wait_for_done(client, post.json()["check_id"])
-            (row,) = self._rows(tmp_path)
-            assert row["status"] == "failed"
-            assert row["fail_stage"] == "provider"
-            assert row["fail_detail"] == "RuntimeError: model exploded"
+            check_id = post.json()["check_id"]
+            with client.stream("GET", f"/api/checks/{check_id}/events") as stream:
+                _read_sse_events(stream)
+        (row,) = _read_usage_rows(tmp_path / "test.db")
+        assert row["status"] == "completed"
+        assert row["input_tokens"] == 100
+        assert row["output_tokens"] == 20  # reported count, not the 41 approximation
+        assert row["fail_stage"] is None
+        assert row["fail_detail"] is None
 
     def test_unparseable_response_is_response_stage_failure(self, tmp_path: Path) -> None:
         # Spec §4.4: garbage output no longer settles 'completed' with zero
-        # findings; the detail records length metadata, never the text.
-        garbage = "I could not find any issues worth reporting."
-        with make_client(tmp_path, FakeProvider(garbage)) as client:
+        # findings; the detail records length metadata, never the text —
+        # and the usage generate() already burned still settles (spec §3.3).
+        provider = FakeProvider(
+            "I could not find any issues worth reporting.",
+            usage=TokenUsage(input_tokens=90, output_tokens=15),
+        )
+        with make_client(tmp_path, provider) as client:
             post = client.post(
-                "/api/checks", json={"text": TEXT, "language": "en", "checkers": ["llm"]}
+                "/api/checks",
+                json={"text": "This is very nice.", "language": "en",
+                      "checkers": ["llm"]},
             )
-            wait_for_done(client, post.json()["check_id"])
-            (row,) = self._rows(tmp_path)
-            assert row["status"] == "failed"
-            assert row["fail_stage"] == "response"
-            assert "UnparseableResponseError" in row["fail_detail"]
-            assert "could not find" not in row["fail_detail"]  # guardrail
+            check_id = post.json()["check_id"]
+            with client.stream("GET", f"/api/checks/{check_id}/events") as stream:
+                events = _read_sse_events(stream)
+            assert any(name == "checker_error" for name, _ in events)
+        (row,) = _read_usage_rows(tmp_path / "test.db")
+        assert row["status"] == "failed"
+        assert row["fail_stage"] == "response"
+        assert "UnparseableResponseError" in row["fail_detail"]
+        assert "could not find" not in row["fail_detail"]  # guardrail
+        assert row["input_tokens"] == 90   # usage survives the parse failure
+        assert row["output_tokens"] == 15
 
     def test_empty_findings_envelope_still_completes(self, tmp_path: Path) -> None:
         with make_client(tmp_path, FakeProvider('{"findings": []}')) as client:
             post = client.post(
-                "/api/checks", json={"text": TEXT, "language": "en", "checkers": ["llm"]}
+                "/api/checks",
+                json={"text": "This is very nice.", "language": "en",
+                      "checkers": ["llm"]},
             )
-            status = wait_for_done(client, post.json()["check_id"])
-            assert status["findings"] == []
-            (row,) = self._rows(tmp_path)
-            assert row["status"] == "completed"
-            assert row["fail_stage"] is None
+            check_id = post.json()["check_id"]
+            with client.stream("GET", f"/api/checks/{check_id}/events") as stream:
+                _read_sse_events(stream)
+            final = client.get(f"/api/checks/{check_id}").json()
+            assert final["findings"] == []
+        (row,) = _read_usage_rows(tmp_path / "test.db")
+        assert row["status"] == "completed"
+        assert row["fail_stage"] is None
 ```
 
-Adapt the request-body dict, `wait_for_done`, and row-reading helper to the exact names used by the neighboring tests in `TestCheckMetering` (e.g. the existing `test_llm_run_writes_a_completed_ledger_row` at line ~859 shows the file's precise idiom — reuse it verbatim; the shapes above show what to assert, the neighboring test shows how to drive the API). Add `TokenUsage` to the file's provider imports.
+Add `TokenUsage` to the file's `app.checkers.llm.provider` import.
 
-In `backend/tests/test_suggestions_api.py`, inside the metering class (rows helper around line 366, completed-row test at line 435):
+In `backend/tests/test_suggestions_api.py`, `TestSuggestionsMetering` (line ~379) builds its app inline per test (`Settings(db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules")` → `create_app` → `TestClient` → `auth_headers`) and reads rows via the **module-level** `_read_usage_rows(settings.db_path)` (line ~364). No new tests — extend three existing ones in place:
+
+1. `test_suggestion_writes_a_completed_ledger_row` (line ~435): give its `FakeProvider` a usage argument —
 
 ```python
-    def test_completed_suggestion_settles_usage(self, tmp_path: Path) -> None:
-        provider = FakeProvider(
+        app.state.provider_factory = lambda name=None, model=None: FakeProvider(
             json.dumps(["excellent"]),
             usage=TokenUsage(input_tokens=40, output_tokens=6),
         )
-        client = self.make_client(tmp_path, provider)
-        response = client.post("/api/suggestions", json=suggestion_request())
-        assert response.status_code == 200
-        (row,) = self._rows(tmp_path)
-        assert row["status"] == "completed"
+```
+
+— and append to its row assertions:
+
+```python
         assert row["input_tokens"] == 40
         assert row["output_tokens"] == 6
         assert row["fail_stage"] is None
-
-    def test_no_json_array_failure_is_response_stage(self, tmp_path: Path) -> None:
-        client = self.make_client(
-            tmp_path, FakeProvider("I have no suggestions for you.")
-        )
-        response = client.post("/api/suggestions", json=suggestion_request())
-        assert response.status_code == 502
-        (row,) = self._rows(tmp_path)
-        assert row["status"] == "failed"
-        assert row["fail_stage"] == "response"
-        assert row["fail_detail"] == "LLM response contained no JSON array"
-
-    def test_provider_exception_is_classified(self, tmp_path: Path) -> None:
-        class BrokenProvider:
-            name = "broken"
-
-            async def generate(self, system: str, user: str, on_progress=None):
-                raise RuntimeError("model exploded")
-
-        client = self.make_client(tmp_path, BrokenProvider())
-        response = client.post("/api/suggestions", json=suggestion_request())
-        assert response.status_code == 502
-        (row,) = self._rows(tmp_path)
-        assert row["fail_stage"] == "provider"
-        assert row["fail_detail"] == "RuntimeError: model exploded"
+        assert row["fail_detail"] is None
 ```
 
-(Adapt helper names to the class's existing idiom — the metering class's own `make_client`/rows helpers at lines 189/366 govern.) Add `TokenUsage` to the imports.
+2. `test_unparseable_response_writes_failed_and_returns_502` (line ~455): append to its ledger assertions:
 
-In `backend/tests/test_documents_api.py`, next to `test_generate_name_writes_a_ledger_row` (line ~303, rows helper at ~290):
+```python
+        assert rows[0]["fail_stage"] == "response"
+        assert rows[0]["fail_detail"] == "LLM response contained no JSON array"
+```
+
+3. The provider-exception metering test directly below it (the `BrokenProvider` one around line ~476): append to its ledger assertions:
+
+```python
+        assert rows[0]["fail_stage"] == "provider"
+        assert rows[0]["fail_detail"] == "RuntimeError: model exploded"
+```
+
+Add `TokenUsage` to the file's `app.checkers.llm.provider` import.
+
+In `backend/tests/test_documents_api.py`, the rows helper is the **module-level** `_read_usage_rows(db_path)` at line ~288, read as `_read_usage_rows(authed_client.app.state.settings.db_path)` (see `test_generate_name_writes_a_ledger_row` at line ~303).
+
+1. Add next to that test (set `provider_factory` directly — the file's `with_provider` helper has no usage parameter):
 
 ```python
 def test_generate_name_settles_usage(authed_client):
@@ -1370,32 +1411,29 @@ def test_generate_name_settles_usage(authed_client):
         FakeProvider('"Widget Assembly Guide."',
                      usage=TokenUsage(input_tokens=30, output_tokens=8))
     )
-    authed_client.post(f"/api/documents/{doc['id']}/generate-name")
-    row = ledger_rows(authed_client)[-1]
-    assert row["status"] == "completed"
-    assert row["input_tokens"] == 30
-    assert row["output_tokens"] == 8
-
-
-def test_generate_name_unusable_title_is_response_stage(authed_client):
-    doc = make_doc(authed_client, text="A long enough body about widget assembly.")
-    authed_client.app.state.provider_factory = lambda name=None, model=None: (
-        FakeProvider('"..."')  # clean_title strips this to nothing
-    )
     response = authed_client.post(f"/api/documents/{doc['id']}/generate-name")
-    assert response.status_code == 200  # silent fallback still applies
-    row = ledger_rows(authed_client)[-1]
-    assert row["status"] == "failed"
-    assert row["fail_stage"] == "response"
-    assert row["fail_detail"] == "title generation produced no usable title"
+    assert response.status_code == 200
+
+    rows = _read_usage_rows(authed_client.app.state.settings.db_path)
+    assert len(rows) == 1
+    assert rows[0]["status"] == "completed"
+    assert rows[0]["input_tokens"] == 30
+    assert rows[0]["output_tokens"] == 8
 ```
 
-(Adapt `ledger_rows`/`with_provider` to the file's existing helpers around lines 290–305.) Add `TokenUsage` to the imports.
+2. Extend the existing `test_generate_name_unusable_title_falls_back_and_marks_run_failed` (line ~318) — append to its ledger assertions:
+
+```python
+    assert rows[0]["fail_stage"] == "response"
+    assert rows[0]["fail_detail"] == "title generation produced no usable title"
+```
+
+Add `TokenUsage` to the file's `app.checkers.llm.provider` import.
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `uv run pytest tests/test_check_api.py tests/test_suggestions_api.py tests/test_documents_api.py -v -k "usage or stage or unparseable or envelope"`
-Expected: the new tests FAIL — tokens land NULL (or approximate), `fail_stage` is NULL, unparseable settles completed.
+Run: `uv run pytest tests/test_check_api.py tests/test_suggestions_api.py tests/test_documents_api.py -v`
+Expected: the new tests and the extended assertions FAIL — tokens land NULL (or approximate), `fail_stage` is NULL, unparseable settles completed. Everything else stays green.
 
 - [ ] **Step 3: Pass usage through `LLMChecker`**
 
@@ -1413,7 +1451,15 @@ and in `check`:
 
 ```python
         result = await self.provider.generate(system, user, on_progress)
-        raw_findings, scorecard = parse_response(result.text)
+        try:
+            raw_findings, scorecard = parse_response(result.text)
+        except UnparseableResponseError as exc:
+            # generate() succeeded and burned real tokens before the parse
+            # failed — carry the usage out with the exception so the ledger
+            # can still settle exact counts on this failed run (spec §3.3:
+            # "whatever usage was obtained before the failure").
+            exc.usage = result.usage
+            raise
 ```
 
 …anchoring loop reads `text` (the document) exactly as before, and the return becomes:
@@ -1422,9 +1468,17 @@ and in `check`:
         return LLMCheckResult(findings=findings, scorecard=scorecard, usage=result.usage)
 ```
 
+In `UnparseableResponseError` (Task 5), add a class-level annotation so the attach is a declared part of the contract, not an ad-hoc attribute:
+
+```python
+    usage: "TokenUsage | None" = None
+```
+
+(with `TokenUsage` imported in `checker.py` — this task adds that import anyway).
+
 - [ ] **Step 4: Settle in `_run_llm` (`backend/app/api/checks.py`)**
 
-Imports: extend `from app.api.llm_gate import ...` with `classify_failure`; add `TokenUsage` to the `app.checkers.llm.provider` import. Replace the body from `status = "completed"` down:
+Imports: extend `from app.api.llm_gate import ...` with `classify_failure`; add `TokenUsage` to the `app.checkers.llm.provider` import; add `UnparseableResponseError` to the existing `app.checkers.llm.checker` import. Replace the body from `status = "completed"` down:
 
 ```python
     status = "completed"
@@ -1446,6 +1500,10 @@ Imports: extend `from app.api.llm_gate import ...` with `classify_failure`; add 
     except Exception as exc:
         status = "failed"
         fail_stage, fail_detail = classify_failure(exc)
+        # An unparseable response carries the usage generate() already
+        # obtained (see LLMChecker.check) — settle those real counts.
+        if isinstance(exc, UnparseableResponseError) and exc.usage is not None:
+            usage = exc.usage
         error = str(exc) or type(exc).__name__
         logger.warning("llm check failed (provider %s): %s", provider.name, error)
         job.emit("checker_error", {"checker": "llm", "error": error})
@@ -1566,7 +1624,7 @@ Temporarily change `UnparseableResponseError.__init__` to embed the response tex
 
 In `docs/backend-architecture.md`:
 - Ledger/`llm_usage` section: add `fail_stage`/`fail_detail` (failed-path only, enum values, metadata-only guardrail, migration note) and note that `input_tokens`/`output_tokens` now carry provider-reported counts (checks fall back to the progress approximation for output).
-- Provider/LLM section: `generate` returns `GenerationResult(text, usage: TokenUsage)`; per-provider usage sources (one line each); `classify_failure` in `llm_gate.py`; `UnparseableResponseError` semantics for the checks path.
+- Provider/LLM section: `generate` returns `GenerationResult(text, usage: TokenUsage)`; per-provider usage sources (one line each); `classify_failure` in `llm_gate.py`; `UnparseableResponseError` semantics for the checks path. Note the known risk that `stream_options: {"include_usage": true}` goes to every OpenAI-compat endpoint — openai and mistral accept it, but a future compat endpoint that rejects unknown fields would surface as a `'provider'`-stage failure (the ledger itself would show it).
 
 - [ ] **Step 10: Full-suite gate and commit**
 
