@@ -3317,3 +3317,51 @@ levers (schema/app scoping, CI caching, ResourceWarning cleanups) stay in the
 roadmap Backlog, re-measured against CI after this lands.
 
 **Next**: M6 — admin UI (unchanged from the M5 pointer).
+
+## 2026-07-28 — M6: admin UI
+
+PR: [#33](https://github.com/saigyo/fabulous-writing/pull/33), branch
+`multi-user-m6-admin-ui` (plan: [#32](https://github.com/saigyo/fabulous-writing/pull/32)).
+
+**Why.** M1 shipped the admin API, M2–M5 the enforcement, ownership,
+tiers, and metering around it — but managing accounts still meant curl or
+the operator CLI. M6 puts the M1 surface into the product: an admin view
+as the fifth `activeView`, so user create/edit/deactivate/reset happens
+where the admin already is.
+
+**What.** One backend addition (the recorded deviation from the roadmap's
+"frontend-only" line): `GET /api/admin/tiers` exposes the config-defined
+assignable tier names — extracted into `_known_tiers()`, shared with
+`_validate_tier_name`, inheriting the router-level `require_admin` by
+construction and returning names only. Frontend: `ActiveView` gains
+`'admin'`; the nav button renders only for `is_admin` users and the view
+is conditionally mounted (`activeView === 'admin' && isAdmin`), so a
+non-admin session issues zero `/api/admin/*` requests — structural, and
+pinned by `App.admin-gate.test.tsx` including a forced-`activeView` test.
+`AdminView` lists users and creates them; tiers are *required load data*
+(`string[] | null`, creation disabled until `GET /api/admin/tiers`
+succeeds — no hardcoded fallback that a custom-tier config would 422).
+Row editing mirrors the server guards it cannot replace: self-row
+admin/active controls disabled (server 409), promotion disabled with a
+hint while `allow_additional_admins` is off (server 403), demotion of
+others stays enabled; `ADMIN_MIN_PASSWORD_LENGTH = 12` pre-validates
+resets client-side via the existing `passwordTooShort(min)` key. Rows keep
+stable `user.id` keys with a draft-or-prop name input (no remount — a
+typed reset password survives a name save); `save()` returns
+`Promise<boolean>` so the reset field clears only on committed success;
+`sessionGeneration()` guards every state write, pinned by two dedicated
+turnover tests after the final review found the guard family unpinned.
+14 new i18n keys ×7 catalogs. Architecture docs updated on both sides.
+
+**Gates.** Backend `uv run pytest -q` → 1,085 passed (1,082 + 3), zero
+warnings. Frontend 504 passed (480 + 24), oxlint clean, build green.
+Guard tests mutation-verified (union pin, in-handler guards via a
+commented fiber-props bypass — plain `fireEvent.click` on a disabled
+button never reaches the handler in React 19 — and the
+`sessionGeneration` family). E2E against a scratch backend (tmp DB, port
+8123): admin login → tiers 200 → create 201 → tier PATCH committed →
+non-admin 403.
+
+**Next**: backlog pickup per the owner — B5+B7 (failure classification +
+provider usage protocol) is the natural pair; B6 credit budgeting expects
+its own spec section.
