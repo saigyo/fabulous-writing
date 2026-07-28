@@ -88,15 +88,22 @@ test, not overhead.
 ### 3. Parallel execution by default
 
 - `pytest-xdist` is added to the dev dependency group.
-- `[tool.pytest.ini_options]` gains `addopts = "-n auto --dist loadfile"`,
+- `[tool.pytest.ini_options]` gains `addopts = "-n auto --dist load"`,
   so the canonical `uv run pytest -q` — what every agent runs — is
   parallel with no invocation change. CI runs a coverage variant
   (`--cov… --junitxml=…`) that inherits the same `addopts`; that exact
   command must be verified locally under xdist, including its artifacts
   (`coverage.json`, `htmlcov/`, `test-results.xml`), which the badge job
   and `scripts/ci-summary.py` consume.
-- `--dist loadfile` keeps all tests of a file on one worker as a
-  conservative guard against intra-file coupling.
+- As-built: `--dist loadfile` (one worker per file, a conservative guard
+  against intra-file coupling) was measured first and found to have a
+  hard floor — 47.2 s full-suite, with `test_check_api.py` alone taking
+  ~40 s serial, since loadfile can never split a file's tests across
+  workers. `--dist load` (dynamic work-stealing across all workers) was
+  then measured three times at ~28.5 s (28.40 s / 28.58 s / 28.97 s),
+  all green, with no failures. Per-test `tmp_path` isolation means the
+  intra-file coupling loadfile guarded against is structurally absent
+  here, so the finer `load` mode was adopted instead.
 - Escape hatch: `uv run pytest -n0 …` restores serial execution (for
   `--pdb`, debugging, or bisecting a suspected parallelism issue). This
   gets a line in `docs/backend-architecture.md`'s testing section.

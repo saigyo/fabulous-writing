@@ -1781,11 +1781,13 @@ each API router, anchoring, vetting, providers, profiles, seeding, …). Convent
   README's coverage badge renders.
 
 **Suite performance.** `uv run pytest -q` runs parallel by default
-(`pytest-xdist`, `-n auto --dist loadfile` via `addopts`); pass `-n0`
+(`pytest-xdist`, `-n auto --dist load` via `addopts`); pass `-n0`
 for serial runs when debugging (`--pdb`) or bisecting a suspected
 parallelism issue. Per-test isolation is structural — every app is
-built on a test-unique `tmp_path` — which is what makes parallelism
-safe. Two test-only accelerators keep the fixed cost per test low:
+built on a test-unique `tmp_path` — which is what makes any distribution
+mode safe, so the finer `load` mode (dynamic work-stealing across all
+workers, rather than pinning a whole file to one worker) is used. Two
+test-only accelerators keep the fixed cost per test low:
 `tests/conftest.py` runs bcrypt at cost 4 inside the test process
 (production stays at 12; deliberately not a config knob), and the
 `document_clock` fixture replaces real sleeps for second-precision
