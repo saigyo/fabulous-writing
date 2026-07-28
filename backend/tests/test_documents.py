@@ -1,5 +1,4 @@
 import sqlite3
-import time
 from pathlib import Path
 
 import pytest
@@ -80,14 +79,14 @@ def test_create_and_get_document(store):
     assert store.get_document(9999, owner_id=1) is None
 
 
-def test_list_orders_by_recency(store):
+def test_list_orders_by_recency(document_clock, store):
     a = store.create_document("A", Language.EN, owner_id=1)
     b = store.create_document("B", Language.EN, owner_id=1)
     listing = store.list_documents(owner_id=1)
     assert [d.id for d in listing] == [b.id, a.id]  # same timestamp: id DESC
     assert listing[0].name == "B"
     # Updating A moves it to the front.
-    time.sleep(1.1)  # updated_at has second precision
+    document_clock.advance()
     store.update_document(a.id, 0, text="changed", owner_id=1)
     assert [d.id for d in store.list_documents(owner_id=1)] == [a.id, b.id]
 
@@ -210,9 +209,9 @@ def test_create_sets_edited_at_and_optional_checked_at(store):
     assert checked.checked_at == checked.created_at
 
 
-def test_check_only_update_does_not_bump_edited_at(store):
+def test_check_only_update_does_not_bump_edited_at(document_clock, store):
     doc = store.create_document("A", Language.EN, text="same text", owner_id=1)
-    time.sleep(1.1)  # second-precision timestamps
+    document_clock.advance()
     updated = store.update_document(
         doc.id,
         0,
@@ -227,9 +226,9 @@ def test_check_only_update_does_not_bump_edited_at(store):
     assert updated.revision == 1
 
 
-def test_text_change_bumps_edited_at(store):
+def test_text_change_bumps_edited_at(document_clock, store):
     doc = store.create_document("A", Language.EN, text="old", owner_id=1)
-    time.sleep(1.1)
+    document_clock.advance()
     updated = store.update_document(
         doc.id, 0, text="new", last_findings=[], scorecard=None, owner_id=1
     )
@@ -237,30 +236,30 @@ def test_text_change_bumps_edited_at(store):
     assert updated.checked_at is not None  # findings/scorecard were carried
 
 
-def test_rename_bumps_edited_at_but_settings_do_not(store):
+def test_rename_bumps_edited_at_but_settings_do_not(document_clock, store):
     doc = store.create_document("A", Language.EN, owner_id=1)
-    time.sleep(1.1)
+    document_clock.advance()
     renamed = store.update_document(doc.id, 0, name="Better", name_source="user", owner_id=1)
     assert renamed.edited_at > doc.edited_at
     assert renamed.checked_at is None  # no check state carried
-    time.sleep(1.1)
+    document_clock.advance()
     settings_only = store.update_document(renamed.id, 1, llm_tier="cheap", owner_id=1)
     assert settings_only.edited_at == renamed.edited_at
 
 
-def test_set_name_and_set_folder_never_bump_edited_at(store):
+def test_set_name_and_set_folder_never_bump_edited_at(document_clock, store):
     doc = store.create_document("A", Language.EN, text="enough words here", owner_id=1)
-    time.sleep(1.1)
+    document_clock.advance()
     titled = store.set_name(doc.id, "Auto Title", "llm", owner_id=1)
     assert titled.edited_at == doc.edited_at
     moved = store.set_folder(doc.id, 5, owner_id=1)
     assert moved.edited_at == doc.edited_at
 
 
-def test_list_orders_by_edited_at(store):
+def test_list_orders_by_edited_at(document_clock, store):
     a = store.create_document("A", Language.EN, text="a", owner_id=1)
     b = store.create_document("B", Language.EN, text="b", owner_id=1)
-    time.sleep(1.1)
+    document_clock.advance()
     # A check-only write on B must NOT move it above... it is already newest;
     # instead: edit A (older) -> A moves to front despite B's later check.
     store.update_document(

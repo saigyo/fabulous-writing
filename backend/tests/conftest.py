@@ -7,6 +7,7 @@ threading env vars through fifteen test modules.
 """
 
 import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -52,6 +53,35 @@ def _fast_bcrypt():
     auth._BCRYPT_ROUNDS = 4
     yield
     auth._BCRYPT_ROUNDS = previous
+
+
+class DocumentClock:
+    """Deterministic stand-in for app.services.documents._utcnow."""
+
+    def __init__(self) -> None:
+        self.current = datetime(2026, 1, 1, tzinfo=UTC)
+
+    def advance(self, seconds: int = 2) -> None:
+        self.current += timedelta(seconds=seconds)
+
+    def now_iso(self) -> str:
+        return self.current.isoformat(timespec="seconds")
+
+
+@pytest.fixture()
+def document_clock(monkeypatch: pytest.MonkeyPatch) -> DocumentClock:
+    """Second-precision document timestamps under test control.
+
+    Replaces the real clock so ordering tests advance time explicitly
+    instead of sleeping 1.1 s. No fixture writes document rows (`store`
+    only constructs the DocumentStore; `authed_client` only builds the
+    app and logs in), so the patch merely has to be active before the
+    test body runs — every row then carries clock time, never a mix of
+    real and patched timestamps.
+    """
+    clock = DocumentClock()
+    monkeypatch.setattr("app.services.documents._utcnow", clock.now_iso)
+    return clock
 
 
 def auth_headers(client: TestClient) -> dict[str, str]:

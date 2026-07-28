@@ -1,5 +1,4 @@
 import asyncio
-import time
 
 from fastapi.testclient import TestClient
 
@@ -518,10 +517,10 @@ def test_documents_api_is_owner_scoped(tmp_path):
     )
 
 
-def test_summaries_expose_timestamps_and_order_by_edited(authed_client):
+def test_summaries_expose_timestamps_and_order_by_edited(document_clock, authed_client):
     a = make_doc(authed_client, name="A")
     b = make_doc(authed_client, name="B")
-    time.sleep(1.1)  # second-precision timestamps: the edit must be later
+    document_clock.advance()
     # A check-style save on B (same text, findings only)...
     authed_client.put(
         f"/api/documents/{b['id']}",
