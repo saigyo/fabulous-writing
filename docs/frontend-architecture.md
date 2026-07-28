@@ -1220,12 +1220,14 @@ the view). The nav button rendering it is gated the same way
 
 **Load.** On mount, `getAdminUsers()` and `getAdminTiers()` fire once each,
 both guarded by `sessionGeneration()` exactly like every other view's load
-effect (a session change mid-flight drops the response). `tiers` starts
-`null` — not an empty array — so the create form's tier select and submit
-button stay disabled until the config-defined catalog actually lands
-(`docs/backend-architecture.md`'s tier config), rather than briefly
-offering a hardcoded guess. Either fetch's failure surfaces
-`m.adminLoadFailed` via `useCrudError`'s `fail` (the same
+effect (a session change mid-flight drops the response). Both `users` and
+`tiers` start `null` — not an empty array — and both gate the create form's
+submit button: `tiers` so the tier select never briefly offers a hardcoded
+guess before the config-defined catalog lands (`docs/backend-architecture.md`'s
+tier config), and `users` so a create can never race the initial list
+fetch — appending to a list that hasn't settled yet could drop the new row
+under a stale `setUsers(list)` or duplicate it. Either fetch's failure
+surfaces `m.adminLoadFailed` via `useCrudError`'s `fail` (the same
 `hooks/useCrudError.ts` used by `RulesView`/`ProfilesView`/`TerminologyView`,
 [described above](#profiles-in-the-frontend)); a load failure leaves the
 table empty rather than partially populated.

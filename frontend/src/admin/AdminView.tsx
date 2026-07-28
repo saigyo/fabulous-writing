@@ -16,11 +16,12 @@ import { useStore } from '../state/store'
 export function AdminView() {
   const me = useStore((s) => s.user)
   const m = useMessages()
-  const [users, setUsers] = useState<AdminUser[]>([])
-  // null = not loaded (or failed). Tier names are config-defined and never
-  // guessed client-side: a hardcoded fallback would offer options a
-  // custom-tier deployment rejects with 422, so creation stays disabled
-  // until this loads.
+  // null = not loaded (or failed), for both. Tier names are config-defined
+  // and never guessed client-side: a hardcoded fallback would offer options
+  // a custom-tier deployment rejects with 422. The user list is required
+  // too — creation must wait for it to settle, or a stale setUsers(list)
+  // landing after a create can drop the new row or duplicate it.
+  const [users, setUsers] = useState<AdminUser[] | null>(null)
   const [tiers, setTiers] = useState<string[] | null>(null)
   const { error, run, fail } = useCrudError(m.adminChangeFailed)
 
@@ -51,7 +52,7 @@ export function AdminView() {
     await run(async () => {
       const updated = await patchAdminUser(user.id, patch)
       if (sessionGeneration() !== gen) return // session ended: do not write
-      setUsers((current) => current.map((u) => (u.id === updated.id ? updated : u)))
+      setUsers((current) => current?.map((u) => (u.id === updated.id ? updated : u)) ?? current)
       committed = true
     })
     return committed
@@ -63,8 +64,9 @@ export function AdminView() {
       {error && <p className="admin-error" role="alert">{error}</p>}
       <CreateForm
         tiers={tiers}
+        usersLoaded={users !== null}
         allowMoreAdmins={allowMoreAdmins}
-        onCreated={(user) => setUsers((current) => [...current, user])}
+        onCreated={(user) => setUsers((current) => [...(current ?? []), user])}
         run={run}
         fail={fail}
       />
@@ -80,7 +82,7 @@ export function AdminView() {
           </tr>
         </thead>
         <tbody>
-          {users.map((user) => (
+          {(users ?? []).map((user) => (
             <UserRow
               // Key stays user.id: folding display_name in would remount the
               // row after a name save and silently erase a password already
@@ -104,13 +106,14 @@ export function AdminView() {
 
 interface CreateFormProps {
   tiers: string[] | null
+  usersLoaded: boolean
   allowMoreAdmins: boolean
   onCreated: (user: AdminUser) => void
   run: (action: () => Promise<void>) => Promise<void>
   fail: (message: string) => void
 }
 
-function CreateForm({ tiers, allowMoreAdmins, onCreated, run, fail }: CreateFormProps) {
+function CreateForm({ tiers, usersLoaded, allowMoreAdmins, onCreated, run, fail }: CreateFormProps) {
   const m = useMessages()
   const [email, setEmail] = useState('')
   const [displayName, setDisplayName] = useState('')
@@ -129,7 +132,7 @@ function CreateForm({ tiers, allowMoreAdmins, onCreated, run, fail }: CreateForm
   }, [tiers, tier])
 
   async function create() {
-    if (!tiers || pending || !email.trim() || !password) return
+    if (!tiers || !usersLoaded || pending || !email.trim() || !password) return
     if (password.length < ADMIN_MIN_PASSWORD_LENGTH) {
       // Reuses the existing parameterized key (AccountMenu precedent) —
       // no second hardcoded-floor message to drift.
@@ -202,7 +205,7 @@ function CreateForm({ tiers, allowMoreAdmins, onCreated, run, fail }: CreateForm
       </label>
       <button
         onClick={() => void create()}
-        disabled={!tiers || pending || !email.trim() || !password}
+        disabled={!tiers || !usersLoaded || pending || !email.trim() || !password}
       >
         {m.adminCreate}
       </button>
