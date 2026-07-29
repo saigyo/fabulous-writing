@@ -34,7 +34,7 @@ class TestGenerate:
         )
         result = await provider.generate("system prompt", "user prompt")
 
-        assert result == "[]"
+        assert result.text == "[]"
         assert seen["url"] == "https://api.test/v1/chat/completions"
         assert seen["auth"] == "Bearer sk-test"
         assert seen["body"]["model"] == "gpt-5-mini"
@@ -79,7 +79,7 @@ class TestGenerate:
         progress: list[int] = []
         result = await provider.generate("s", "u", on_progress=progress.append)
 
-        assert result == "[]"
+        assert result.text == "[]"
         # Chunk counts while streaming, exact usage from the final chunk.
         assert progress[-1] == 7
         assert progress[:-1] == [1, 2]

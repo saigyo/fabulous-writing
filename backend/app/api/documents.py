@@ -254,7 +254,7 @@ async def generate_name(
                 name_status = "completed"
                 try:
                     system, prompt = build_title_prompt(document.text, document.language)
-                    title = clean_title(await provider.generate(system, prompt))
+                    title = clean_title((await provider.generate(system, prompt)).text)
                     if title is None:
                         # The provider call succeeded but produced nothing
                         # usable -- a burned-token run with no value, just

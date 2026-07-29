@@ -10,7 +10,7 @@ from collections.abc import Iterable
 
 import httpx
 
-from .provider import ProgressCallback
+from .provider import GenerationResult, ProgressCallback, TokenUsage
 
 # One parsed streaming line: ("content", text) appends and counts progress,
 # ("tokens", n) reports an exact token count, ("done", "") ends the stream.
@@ -47,18 +47,20 @@ class HttpChatProvider(ABC):
 
     async def generate(
         self, system: str, user: str, on_progress: ProgressCallback | None = None
-    ) -> str:
+    ) -> GenerationResult:
         payload = self._payload(system, user, stream=on_progress is not None)
         if on_progress is not None:
             return await self._generate_streaming(payload, on_progress)
         async with self._client() as client:
             response = await client.post(self._chat_path, json=payload)
             response.raise_for_status()
-            return self._response_text(response.json())
+            return GenerationResult(
+                text=self._response_text(response.json()), usage=TokenUsage()
+            )
 
     async def _generate_streaming(
         self, payload: dict, on_progress: ProgressCallback
-    ) -> str:
+    ) -> GenerationResult:
         parts: list[str] = []
         async with self._client() as client:
             async with client.stream("POST", self._chat_path, json=payload) as response:
@@ -75,4 +77,4 @@ class HttpChatProvider(ABC):
                             done = True
                     if done:
                         break
-        return "".join(parts)
+        return GenerationResult(text="".join(parts), usage=TokenUsage())
