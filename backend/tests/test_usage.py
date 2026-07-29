@@ -318,3 +318,104 @@ def test_startup_sweeps_started_ledger_rows(tmp_path: Path):
             "SELECT status FROM llm_usage WHERE run_id = 'orphan'"
         ).fetchone()
     assert status == "abandoned"
+
+
+class TestFailureColumns:
+    def test_failed_run_records_stage_and_detail(self, store):
+        decision = reserve(store)
+        store.finish_run(
+            decision.reservation_id,
+            "failed",
+            fail_stage="provider",
+            fail_detail="HTTPStatusError (503): upstream unavailable",
+        )
+        (row,) = rows(store)
+        assert row["status"] == "failed"
+        assert row["fail_stage"] == "provider"
+        assert row["fail_detail"] == "HTTPStatusError (503): upstream unavailable"
+
+    @pytest.mark.parametrize("status", ["completed", "cancelled"])
+    def test_non_failed_status_nulls_stage_and_detail(self, store, status):
+        # Guard (spec §4.2): NULL by construction, not caller discipline —
+        # a caller passing classification alongside a success must not
+        # smuggle it into the row.
+        decision = reserve(store)
+        store.finish_run(
+            decision.reservation_id,
+            status,
+            fail_stage="provider",
+            fail_detail="should be discarded",
+        )
+        (row,) = rows(store)
+        assert row["status"] == status
+        assert row["fail_stage"] is None
+        assert row["fail_detail"] is None
+
+    def test_finish_run_rejects_unknown_stage_in_code(self, store):
+        # Migrated databases have no CHECK constraint on fail_stage; the
+        # store itself must refuse a typo'd stage on every database.
+        decision = reserve(store)
+        with pytest.raises(ValueError, match="unknown fail_stage"):
+            store.finish_run(
+                decision.reservation_id, "failed",
+                fail_stage="parse", fail_detail="typo'd stage",
+            )
+        (row,) = rows(store)
+        assert row["status"] == "started"  # the write never happened
+
+    def test_check_constraint_rejects_unknown_stage(self, store):
+        with connect(store.db_path) as conn:
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute(
+                    """INSERT INTO llm_usage (user_id, day, created_at, status,
+                       provider, model, text_chars, source, run_id, fail_stage)
+                       VALUES (1, '2026-07-29', '2026-07-29T00:00:00+00:00',
+                               'failed', 'p', 'm', 1, 'check', 'r', 'parse')"""
+                )
+
+    def test_migration_adds_columns_to_pre_b5_database(self, tmp_path):
+        # A database created before this change lacks both columns; opening
+        # it through UsageStore must add them and leave old rows NULL.
+        db_path = tmp_path / "old.db"
+        with connect(db_path) as conn:
+            conn.executescript(_PRE_B5_SCHEMA)
+            conn.execute(
+                """INSERT INTO llm_usage (user_id, day, created_at, status,
+                   provider, model, text_chars, source, run_id)
+                   VALUES (1, '2026-07-20', '2026-07-20T00:00:00+00:00',
+                           'failed', 'p', 'm', 1, 'check', 'r')"""
+            )
+        store = UsageStore(db_path)
+        (row,) = rows(store)
+        assert row["fail_stage"] is None
+        assert row["fail_detail"] is None
+        # And the migrated store accepts classified writes.
+        decision = reserve(store, run_id="r2")
+        store.finish_run(
+            decision.reservation_id, "failed",
+            fail_stage="request", fail_detail="ConnectError: refused",
+        )
+        assert rows(store)[-1]["fail_stage"] == "request"
+
+
+_PRE_B5_SCHEMA = """
+CREATE TABLE IF NOT EXISTS llm_usage (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id            INTEGER NOT NULL,
+    day                TEXT NOT NULL,
+    created_at         TEXT NOT NULL,
+    status             TEXT NOT NULL,
+    llm_tier           TEXT,
+    provider           TEXT NOT NULL,
+    model              TEXT NOT NULL,
+    requested_tier     TEXT,
+    requested_provider TEXT,
+    requested_model    TEXT,
+    text_chars         INTEGER NOT NULL,
+    input_tokens       INTEGER,
+    output_tokens      INTEGER,
+    source             TEXT NOT NULL,
+    run_id             TEXT NOT NULL,
+    CHECK (status IN ('started','completed','failed','cancelled','abandoned'))
+);
+"""

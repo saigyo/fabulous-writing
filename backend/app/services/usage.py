@@ -15,13 +15,17 @@ from typing import Literal, Protocol
 
 from app.core.config import LimitsSettings, TierLimitsSettings
 from app.core.permissions import EffectiveSelection, RequestedLLM
-from app.services._sqlite import connect
+from app.services._sqlite import connect, migrate_columns
 
 logger = logging.getLogger(__name__)
 
 # Spec §6.6: small and fixed — a longer value would only hold connections
 # open against the very pressure the cap relieves.
 RETRY_AFTER_SECONDS = 5
+
+# The single source for the fresh-schema CHECK and finish_run's code-level
+# enforcement (migrated databases have no CHECK).
+_FAIL_STAGES = ("request", "provider", "response")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS llm_usage (
@@ -41,9 +45,15 @@ CREATE TABLE IF NOT EXISTS llm_usage (
     output_tokens      INTEGER,
     source             TEXT NOT NULL,
     run_id             TEXT NOT NULL,
+    fail_stage         TEXT,
+    fail_detail        TEXT,
     -- Not decoration: a typo'd terminal status would silently leak a
     -- concurrency slot for llm_run_max_age (spec §5.3).
-    CHECK (status IN ('started','completed','failed','cancelled','abandoned'))
+    CHECK (status IN ('started','completed','failed','cancelled','abandoned')),
+    -- Enum guard for fresh databases only; migrated tables rely on the
+    -- code-level guarantee (SQLite cannot add a CHECK without a rebuild,
+    -- and a bad fail_stage cannot leak a concurrency slot).
+    CHECK (fail_stage IN ('request','provider','response') OR fail_stage IS NULL)
 );
 CREATE INDEX IF NOT EXISTS idx_llm_usage_user_day ON llm_usage(user_id, day);
 -- The server-wide in-flight count has no user_id predicate; without this
@@ -90,6 +100,11 @@ class UsageStore:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         with connect(db_path, timeout=timeout) as conn:
             conn.executescript(_SCHEMA)
+            migrate_columns(
+                conn,
+                "llm_usage",
+                [("fail_stage", "TEXT"), ("fail_detail", "TEXT")],
+            )
 
     def _raw_connect(self) -> sqlite3.Connection:
         """reserve_llm_run only: it needs explicit commit/rollback on every
@@ -209,16 +224,31 @@ class UsageStore:
         *,
         input_tokens: int | None = None,
         output_tokens: int | None = None,
+        fail_stage: str | None = None,
+        fail_detail: str | None = None,
     ) -> None:
         """Terminal write — conditional on the row still being 'started'
         (spec §6.6): a swept row's slot is already gone, so it is warned
-        about, never resurrected. Callers run this in a finally block."""
+        about, never resurrected. Callers run this in a finally block.
+
+        fail_stage/fail_detail land only with status='failed' — nulled here
+        by construction, not by caller discipline. The stage enum is
+        enforced here in code, not only by the fresh-schema CHECK: migrated
+        databases have no CHECK, and a typo'd stage must fail loudly on
+        them too."""
+        if status != "failed":
+            fail_stage = None
+            fail_detail = None
+        if fail_stage is not None and fail_stage not in _FAIL_STAGES:
+            raise ValueError(f"unknown fail_stage: {fail_stage!r}")
         with connect(self.db_path, timeout=self.timeout) as conn:
             cursor = conn.execute(
                 """UPDATE llm_usage
-                   SET status = ?, input_tokens = ?, output_tokens = ?
+                   SET status = ?, input_tokens = ?, output_tokens = ?,
+                       fail_stage = ?, fail_detail = ?
                    WHERE id = ? AND status = 'started'""",
-                (status, input_tokens, output_tokens, reservation_id),
+                (status, input_tokens, output_tokens,
+                 fail_stage, fail_detail, reservation_id),
             )
             if cursor.rowcount == 0:
                 logger.warning(
