@@ -146,7 +146,7 @@ def classify_failure(exc: BaseException) -> tuple[str, str]:
 
 | Exception shape | Stage |
 |---|---|
-| httpx transport errors (`ConnectError`, `TimeoutException`, …), `MissingApiKeyError` (raised by both the OpenAI-compat and Claude client constructors when their env key is absent), botocore credential/endpoint errors | `'request'` |
+| httpx transport errors (`ConnectError`, `TimeoutException`, …), `MissingApiKeyError` (raised by both the OpenAI-compat and Claude client constructors when their env key is absent), botocore credential/endpoint/read-timeout errors, and any failure carrying HTTP status 401/403 (rejected credentials, whichever SDK surfaced them) | `'request'` |
 | `httpx.HTTPStatusError`, anthropic SDK API-status errors, botocore `ClientError` | `'provider'` |
 | `UnparseableResponseError` (new, §4.4); `json.JSONDecodeError` (the provider returned a body that fails to decode) | `'response'` |
 | anything unrecognized | `'provider'`, class name preserved in detail |
@@ -168,8 +168,9 @@ for the `'response'` stage must not embed the response text in their message
 `parse_response` (`app/checkers/llm/checker.py`) raises a new
 `UnparseableResponseError` when the response contains **neither** a JSON
 object envelope **nor** a bare JSON array. A response whose top-level JSON
-value is an object without a `findings` list (e.g. `{"alternatives": []}`)
-also raises — a nested array inside a wrong-shaped object must not be
+value is valid but neither an envelope nor an array — a wrong-shaped
+object (`{"alternatives": []}`), a quoted string (`'"[]"'`), a bare
+scalar — also raises: bracket characters inside such a value must not be
 mistaken for a bare findings array. A valid envelope with an empty
 findings list — the model legitimately reporting "no issues" — remains a
 success, as does a parseable response whose individual items fail

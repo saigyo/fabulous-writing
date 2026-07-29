@@ -1210,6 +1210,12 @@ Replace `test_unparseable_response_returns_empty` in `backend/tests/test_llm_che
         with pytest.raises(UnparseableResponseError):
             parse_response('{"alternatives": []}')
 
+    def test_top_level_scalar_with_brackets_raises(self) -> None:
+        # A quoted JSON string is not an array; its bracket characters must
+        # not be rescued by the substring scan either.
+        with pytest.raises(UnparseableResponseError):
+            parse_response('"[]"')
+
     def test_envelope_with_empty_findings_is_success(self) -> None:
         findings, scorecard = parse_response('{"findings": []}')
         assert findings == []
@@ -1286,8 +1292,39 @@ class TestStageMapping:
         class NoCredentialsError(Exception):
             pass
 
+        class ReadTimeoutError(Exception):
+            pass
+
+        class PartialCredentialsError(Exception):
+            pass
+
         assert classify_failure(APIConnectionError("down"))[0] == "request"
         assert classify_failure(NoCredentialsError())[0] == "request"
+        assert classify_failure(ReadTimeoutError("slow read"))[0] == "request"
+        assert classify_failure(PartialCredentialsError())[0] == "request"
+
+    def test_auth_status_is_request_stage(self) -> None:
+        # Rejected credentials (401/403) are 'request' per the stage
+        # definitions, unlike other HTTP statuses.
+        request = httpx.Request("POST", "https://api.test/v1/chat")
+        response = httpx.Response(401, request=request)
+        exc = httpx.HTTPStatusError("unauthorized", request=request, response=response)
+        stage, detail = classify_failure(exc)
+        assert stage == "request"
+        assert "(401)" in detail
+
+    def test_hostile_status_property_never_breaks_classification(self) -> None:
+        # "Never raises" must hold even against an exception whose
+        # status_code property itself raises (getattr only swallows
+        # AttributeError, not a raising property).
+        class Hostile(Exception):
+            @property
+            def status_code(self) -> int:
+                raise RuntimeError("gotcha")
+
+        stage, detail = classify_failure(Hostile("hostile"))
+        assert stage == "provider"
+        assert detail == "Hostile: hostile"
 
     def test_unknown_exception_defaults_to_provider_stage(self) -> None:
         stage, detail = classify_failure(RuntimeError("model exploded"))
@@ -1342,10 +1379,13 @@ Replace the tail of `parse_response` (keep the envelope branch unchanged) and ad
             except ValidationError:
                 scorecard = None
         return ParsedResponse(_validate_findings(data["findings"]), scorecard)
-    if isinstance(_top_level_json(response), dict):
-        # The whole response IS a JSON object but not a findings envelope
-        # (e.g. {"alternatives": []}) — a nested array inside it must not
-        # be mistaken for a bare findings array by the substring scan below.
+    top_level = _top_level_json(response)
+    if top_level is not _NO_TOP_LEVEL and not isinstance(top_level, list):
+        # The whole response IS valid JSON but neither a findings envelope
+        # (handled above) nor an array: a wrong-shaped object
+        # ({"alternatives": []}), a quoted string ('"[]"'), a bare scalar.
+        # Bracket characters inside it must not be rescued by the substring
+        # scan below.
         raise UnparseableResponseError(len(response))
     array = extract_json_array(response)
     if array is None:
@@ -1353,16 +1393,20 @@ Replace the tail of `parse_response` (keep the envelope branch unchanged) and ad
     return ParsedResponse(_validate_findings(array), None)
 
 
+_NO_TOP_LEVEL = object()  # sentinel: json.loads("null") is a parse, not a miss
+
+
 def _top_level_json(response: str) -> Any:
-    """The response's primary JSON value (whole or fence-stripped); None
-    when neither parses. Substring extraction deliberately does not count:
-    prose around a bare array must keep falling through to the array path."""
+    """The response's primary JSON value (whole or fence-stripped);
+    _NO_TOP_LEVEL when neither parses. Substring extraction deliberately
+    does not count: prose around a bare array must keep falling through to
+    the array path."""
     for candidate in (response, _CODE_FENCE.sub("", response).strip()):
         try:
             return json.loads(candidate)
         except json.JSONDecodeError:
             continue
-    return None
+    return _NO_TOP_LEVEL
 ```
 
 Update `parse_response`'s docstring first line to say unparseable input raises `UnparseableResponseError` (a valid envelope with an empty findings list, or a parseable response whose individual items all fail validation, remains a success).
@@ -1378,11 +1422,14 @@ _FAIL_DETAIL_LIMIT = 200
 # reached provider processing: connection, timeout, credentials. Matched by
 # name so this module needs neither the anthropic nor the botocore SDK.
 _REQUEST_STAGE_CLASS_NAMES = frozenset({
-    "APIConnectionError",      # anthropic (APITimeoutError subclasses it)
-    "NoCredentialsError",      # botocore
-    "NoRegionError",           # botocore
-    "EndpointConnectionError", # botocore
-    "ConnectTimeoutError",     # botocore
+    "APIConnectionError",         # anthropic (APITimeoutError subclasses it)
+    "NoCredentialsError",         # botocore
+    "PartialCredentialsError",    # botocore
+    "CredentialRetrievalError",   # botocore
+    "NoRegionError",              # botocore
+    "EndpointConnectionError",    # botocore
+    "ConnectTimeoutError",        # botocore
+    "ReadTimeoutError",           # botocore
 })
 
 
@@ -1402,12 +1449,33 @@ def classify_failure(exc: BaseException) -> tuple[str, str]:
     if isinstance(exc, httpx.TransportError):
         # ConnectError, all timeout flavors, protocol errors — never got a
         # response. httpx.HTTPStatusError is NOT a TransportError and falls
-        # through to 'provider'.
+        # through past the auth-status rule to 'provider'.
+        return "request", detail
+    if _status_of(exc) in (401, 403):
+        # Rejected credentials are an auth failure — 'request' by the
+        # stage definitions — whichever SDK surfaced the status.
         return "request", detail
     names = {klass.__name__ for klass in type(exc).__mro__}
     if names & _REQUEST_STAGE_CLASS_NAMES:
         return "request", detail
     return "provider", detail
+
+
+def _status_of(exc: BaseException) -> int | None:
+    """Best-effort HTTP status extraction; never raises (a hostile
+    property on an exception must not break classification)."""
+    try:
+        status = getattr(exc, "status_code", None)
+        if status is None:
+            response = getattr(exc, "response", None)
+            status = getattr(response, "status_code", None)
+            if status is None and isinstance(response, dict):
+                # botocore ClientError carries a dict response; its status
+                # lives under ResponseMetadata, not a .status_code attribute.
+                status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        return status if isinstance(status, int) else None
+    except Exception:
+        return None
 
 
 def _fail_detail(exc: BaseException) -> str:
@@ -1417,14 +1485,7 @@ def _fail_detail(exc: BaseException) -> str:
         message = " ".join(str(exc).split())
     except Exception:  # a broken __str__ must not break classification
         message = ""
-    status = getattr(exc, "status_code", None)
-    if status is None:
-        response = getattr(exc, "response", None)
-        status = getattr(response, "status_code", None)
-        if status is None and isinstance(response, dict):
-            # botocore ClientError carries a dict response; its status
-            # lives under ResponseMetadata, not a .status_code attribute.
-            status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+    status = _status_of(exc)
     head = type(exc).__name__ if status is None else f"{type(exc).__name__} ({status})"
     detail = f"{head}: {message}" if message else head
     return detail[:_FAIL_DETAIL_LIMIT]
