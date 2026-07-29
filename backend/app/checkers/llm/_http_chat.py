@@ -13,8 +13,10 @@ import httpx
 from .provider import GenerationResult, ProgressCallback, TokenUsage
 
 # One parsed streaming line: ("content", text) appends and counts progress,
-# ("tokens", n) reports an exact token count, ("done", "") ends the stream.
-StreamEvent = tuple[str, str | int]
+# ("tokens", n) reports an exact output-token count for progress,
+# ("usage", TokenUsage) carries the final reported usage,
+# ("done", "") ends the stream.
+StreamEvent = tuple[str, str | int | TokenUsage]
 
 
 class HttpChatProvider(ABC):
@@ -30,6 +32,11 @@ class HttpChatProvider(ABC):
     @abstractmethod
     def _response_text(self, data: dict) -> str:
         """Extract the message text from a non-streaming response body."""
+
+    def _response_usage(self, data: dict) -> TokenUsage:
+        """Extract reported usage from a non-streaming response body.
+        Default: nothing reported."""
+        return TokenUsage()
 
     @abstractmethod
     def _stream_events(self, line: str) -> Iterable[StreamEvent]:
@@ -54,14 +61,16 @@ class HttpChatProvider(ABC):
         async with self._client() as client:
             response = await client.post(self._chat_path, json=payload)
             response.raise_for_status()
+            data = response.json()
             return GenerationResult(
-                text=self._response_text(response.json()), usage=TokenUsage()
+                text=self._response_text(data), usage=self._response_usage(data)
             )
 
     async def _generate_streaming(
         self, payload: dict, on_progress: ProgressCallback
     ) -> GenerationResult:
         parts: list[str] = []
+        usage = TokenUsage()
         async with self._client() as client:
             async with client.stream("POST", self._chat_path, json=payload) as response:
                 response.raise_for_status()
@@ -73,8 +82,10 @@ class HttpChatProvider(ABC):
                             on_progress(len(parts))
                         elif kind == "tokens":
                             on_progress(int(value))
+                        elif kind == "usage":
+                            usage = value  # always a TokenUsage (StreamEvent contract)
                         elif kind == "done":
                             done = True
                     if done:
                         break
-        return GenerationResult(text="".join(parts), usage=TokenUsage())
+        return GenerationResult(text="".join(parts), usage=usage)
