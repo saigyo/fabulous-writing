@@ -4,7 +4,7 @@ from collections.abc import Iterable
 import httpx
 
 from ._http_chat import HttpChatProvider, StreamEvent
-from .provider import MissingApiKeyError
+from .provider import MissingApiKeyError, TokenUsage
 
 
 class OpenAICompatProvider(HttpChatProvider):
@@ -47,8 +47,26 @@ class OpenAICompatProvider(HttpChatProvider):
 
     _chat_path = "/chat/completions"
 
+    def _payload(self, system: str, user: str, stream: bool) -> dict:
+        payload = super()._payload(system, user, stream)
+        if stream and self.name in ("openai", "mistral"):
+            # OpenAI sends the final usage chunk only when asked; Mistral
+            # accepts the option too. Configured extra compat endpoints are
+            # left untouched — some reject unknown fields, and a rejected
+            # request would fail a previously-working deployment. They just
+            # lack streaming usage telemetry.
+            payload["stream_options"] = {"include_usage": True}
+        return payload
+
     def _response_text(self, data: dict) -> str:
         return data["choices"][0]["message"]["content"]
+
+    def _response_usage(self, data: dict) -> TokenUsage:
+        usage = data.get("usage") or {}
+        return TokenUsage(
+            input_tokens=usage.get("prompt_tokens"),
+            output_tokens=usage.get("completion_tokens"),
+        )
 
     def _stream_events(self, line: str) -> Iterable[StreamEvent]:
         # SSE: one `data: {json}` line per chunk, `data: [DONE]` terminates.
@@ -62,8 +80,10 @@ class OpenAICompatProvider(HttpChatProvider):
             return
         chunk = json.loads(data)
         usage = chunk.get("usage")
-        if usage and usage.get("completion_tokens") is not None:
-            yield ("tokens", usage["completion_tokens"])
+        if usage:
+            if usage.get("completion_tokens") is not None:
+                yield ("tokens", usage["completion_tokens"])
+            yield ("usage", self._response_usage(chunk))
             return
         choices = chunk.get("choices") or []
         content = choices[0].get("delta", {}).get("content") if choices else None

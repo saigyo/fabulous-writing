@@ -6,6 +6,7 @@ import pytest
 
 from app.checkers.llm.claude import ClaudeProvider
 from app.checkers.llm.ollama import OllamaProvider
+from app.checkers.llm.provider import TokenUsage
 
 
 class TestOllamaProvider:
@@ -48,6 +49,37 @@ class TestOllamaProvider:
             transport=httpx.MockTransport(handler),
         )
         assert await provider.list_models() == ["llama3.1", "mistral"]
+
+    async def test_generate_extracts_usage_counts(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "message": {"role": "assistant", "content": "[]"},
+                    "prompt_eval_count": 120,
+                    "eval_count": 30,
+                },
+            )
+
+        provider = OllamaProvider(
+            base_url="http://ollama.test", model="llama3.1",
+            transport=httpx.MockTransport(handler),
+        )
+        result = await provider.generate("s", "u")
+        assert result.usage == TokenUsage(input_tokens=120, output_tokens=30)
+
+    async def test_generate_without_usage_reports_none(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200, json={"message": {"role": "assistant", "content": "[]"}}
+            )
+
+        provider = OllamaProvider(
+            base_url="http://ollama.test", model="llama3.1",
+            transport=httpx.MockTransport(handler),
+        )
+        result = await provider.generate("s", "u")
+        assert result.usage == TokenUsage(input_tokens=None, output_tokens=None)
 
 
 class _StubMessages:
@@ -138,6 +170,21 @@ class TestOllamaStreaming:
         result = await provider.generate("s", "u", on_progress=progress.append)
         assert result.text == '["a"]'
         assert progress == [1, 2, 3]
+
+    async def test_streaming_extracts_usage_from_final_chunk(self) -> None:
+        chunks = [
+            {"message": {"content": "["}, "done": False},
+            {"message": {"content": "]"}, "done": True,
+             "prompt_eval_count": 80, "eval_count": 2},
+        ]
+        body = "\n".join(json.dumps(c) for c in chunks)
+        provider = OllamaProvider(
+            base_url="http://ollama.test", model="llama3.1",
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, text=body)),
+        )
+        result = await provider.generate("s", "u", on_progress=lambda n: None)
+        assert result.text == "[]"
+        assert result.usage == TokenUsage(input_tokens=80, output_tokens=2)
 
 
 class _StubStreamingMessages:
