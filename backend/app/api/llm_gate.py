@@ -7,12 +7,15 @@ concurrency reservation, in that order around resolve_llm_selection.
 """
 
 import asyncio
+import httpx
+import json
 from dataclasses import dataclass, replace
 
 from fastapi import FastAPI, HTTPException
 
 from app.api.deps import CurrentUser
-from app.checkers.llm.provider import LLMProvider
+from app.checkers.llm.checker import UnparseableResponseError
+from app.checkers.llm.provider import LLMProvider, MissingApiKeyError
 from app.core.config import known_provider_names
 from app.core.models import EffectiveLlmReport, LlmSelectionInfo
 from app.core.permissions import (
@@ -23,6 +26,81 @@ from app.core.permissions import (
     resolve_llm_selection,
 )
 from app.services.usage import UsageStore
+
+
+_FAIL_DETAIL_LIMIT = 200
+
+# Exception class names (searched through the MRO) meaning the request never
+# reached provider processing: connection, timeout, credentials. Matched by
+# name so this module needs neither the anthropic nor the botocore SDK.
+_REQUEST_STAGE_CLASS_NAMES = frozenset({
+    "APIConnectionError",         # anthropic (APITimeoutError subclasses it)
+    "NoCredentialsError",         # botocore
+    "PartialCredentialsError",    # botocore
+    "CredentialRetrievalError",   # botocore
+    "NoRegionError",              # botocore
+    "EndpointConnectionError",    # botocore
+    "ConnectTimeoutError",        # botocore
+    "ReadTimeoutError",           # botocore
+})
+
+
+def classify_failure(exc: BaseException) -> tuple[str, str]:
+    """Map an exception from the LLM path to (fail_stage, fail_detail)
+    (spec §4.3). Never raises: an unrecognized exception lands as
+    'provider' — an in-flight run that raised is by definition past the
+    request stage — with its class preserved in the detail for later
+    reclassification."""
+    detail = _fail_detail(exc)
+    if isinstance(exc, (UnparseableResponseError, json.JSONDecodeError)):
+        # JSONDecodeError on this path means the provider returned a body
+        # that fails to decode — broken output on reception (spec §4.3).
+        return "response", detail
+    if isinstance(exc, MissingApiKeyError):
+        return "request", detail
+    if isinstance(exc, httpx.TransportError):
+        # ConnectError, all timeout flavors, protocol errors — never got a
+        # response. httpx.HTTPStatusError is NOT a TransportError and falls
+        # through past the auth-status rule to 'provider'.
+        return "request", detail
+    if _status_of(exc) in (401, 403):
+        # Rejected credentials are an auth failure — 'request' by the
+        # stage definitions — whichever SDK surfaced the status.
+        return "request", detail
+    names = {klass.__name__ for klass in type(exc).__mro__}
+    if names & _REQUEST_STAGE_CLASS_NAMES:
+        return "request", detail
+    return "provider", detail
+
+
+def _status_of(exc: BaseException) -> int | None:
+    """Best-effort HTTP status extraction; never raises (a hostile
+    property on an exception must not break classification)."""
+    try:
+        status = getattr(exc, "status_code", None)
+        if status is None:
+            response = getattr(exc, "response", None)
+            status = getattr(response, "status_code", None)
+            if status is None and isinstance(response, dict):
+                # botocore ClientError carries a dict response; its status
+                # lives under ResponseMetadata, not a .status_code attribute.
+                status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        return status if isinstance(status, int) else None
+    except Exception:
+        return None
+
+
+def _fail_detail(exc: BaseException) -> str:
+    """Error metadata only — exception class, HTTP status, first 200
+    whitespace-collapsed chars of the message. Never response bodies."""
+    try:
+        message = " ".join(str(exc).split())
+    except Exception:  # a broken __str__ must not break classification
+        message = ""
+    status = _status_of(exc)
+    head = type(exc).__name__ if status is None else f"{type(exc).__name__} ({status})"
+    detail = f"{head}: {message}" if message else head
+    return detail[:_FAIL_DETAIL_LIMIT]
 
 
 @dataclass

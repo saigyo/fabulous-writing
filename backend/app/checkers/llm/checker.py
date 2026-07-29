@@ -16,6 +16,19 @@ from .vetting import split_advice, vet_candidates
 _CODE_FENCE = re.compile(r"^```[a-z]*\s*|\s*```$", re.MULTILINE)
 
 
+class UnparseableResponseError(Exception):
+    """The LLM response contained neither a JSON object envelope nor a bare
+    array — a 'response'-stage failure (spec §4.4).
+
+    The message carries only the response length, never the text itself:
+    it feeds the ledger's fail_detail, which stores metadata only."""
+
+    def __init__(self, response_chars: int) -> None:
+        super().__init__(
+            f"no JSON object or array in LLM response ({response_chars} chars)"
+        )
+
+
 class RawFinding(BaseModel):
     category: Category
     severity: Severity = Severity.WARNING
@@ -56,10 +69,13 @@ class ParsedResponse(NamedTuple):
 
 def parse_response(response: str) -> ParsedResponse:
     """Parse the check response: object envelope, or bare-array fallback.
+    Raises UnparseableResponseError when the response contains neither.
 
     The envelope must have a "findings" list — a lone finding object (e.g.
     the {...} inside a one-element bare array) is not mistaken for it. A
-    scorecard that fails validation is discarded whole (strict gate); the
+    valid envelope with an empty findings list, or a parseable response
+    whose individual items all fail validation, remains a success.
+    A scorecard that fails validation is discarded whole (strict gate); the
     findings from the same response are unaffected.
     """
     data = extract_json_object(response)
@@ -71,7 +87,34 @@ def parse_response(response: str) -> ParsedResponse:
             except ValidationError:
                 scorecard = None
         return ParsedResponse(_validate_findings(data["findings"]), scorecard)
-    return ParsedResponse(_validate_findings(extract_json_array(response) or []), None)
+    top_level = _top_level_json(response)
+    if top_level is not _NO_TOP_LEVEL and not isinstance(top_level, list):
+        # The whole response IS valid JSON but neither a findings envelope
+        # (handled above) nor an array: a wrong-shaped object
+        # ({"alternatives": []}), a quoted string ('"[]"'), a bare scalar.
+        # Bracket characters inside it must not be rescued by the substring
+        # scan below.
+        raise UnparseableResponseError(len(response))
+    array = extract_json_array(response)
+    if array is None:
+        raise UnparseableResponseError(len(response))
+    return ParsedResponse(_validate_findings(array), None)
+
+
+_NO_TOP_LEVEL = object()  # sentinel: json.loads("null") is a parse, not a miss
+
+
+def _top_level_json(response: str) -> Any:
+    """The response's primary JSON value (whole or fence-stripped);
+    _NO_TOP_LEVEL when neither parses. Substring extraction deliberately
+    does not count: prose around a bare array must keep falling through to
+    the array path."""
+    for candidate in (response, _CODE_FENCE.sub("", response).strip()):
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+    return _NO_TOP_LEVEL
 
 
 def _validate_findings(items: list) -> list[RawFinding]:

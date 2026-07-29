@@ -1,6 +1,8 @@
 import json
 
-from app.checkers.llm.checker import LLMChecker, parse_findings, parse_response
+import pytest
+
+from app.checkers.llm.checker import LLMChecker, UnparseableResponseError, parse_findings, parse_response
 from app.checkers.llm.prompts import build_prompt
 from app.checkers.llm.provider import FakeProvider
 from app.core.models import Category, Language, Severity, Source
@@ -43,8 +45,35 @@ class TestParseFindings:
         assert len(items) == 1
         assert items[0].quote == "ok"
 
-    def test_unparseable_response_returns_empty(self) -> None:
-        assert parse_findings("I could not find any issues.") == []
+    def test_unparseable_response_raises(self) -> None:
+        # Spec §4.4: garbage output is a 'response'-stage failure, not a
+        # silent zero-findings success.
+        with pytest.raises(UnparseableResponseError) as excinfo:
+            parse_findings("I could not find any issues.")
+        # Guardrail: the message must never quote the response text.
+        assert "could not find" not in str(excinfo.value)
+
+    def test_object_without_findings_key_raises(self) -> None:
+        with pytest.raises(UnparseableResponseError):
+            parse_response('{"verdict": "fine"}')
+
+    def test_wrong_shaped_object_with_nested_array_raises(self) -> None:
+        # extract_json_array's substring scan would find the nested [] —
+        # a top-level object that is not a findings envelope must raise
+        # regardless of what it contains.
+        with pytest.raises(UnparseableResponseError):
+            parse_response('{"alternatives": []}')
+
+    def test_top_level_scalar_with_brackets_raises(self) -> None:
+        # A quoted JSON string is not an array; its bracket characters must
+        # not be rescued by the substring scan either.
+        with pytest.raises(UnparseableResponseError):
+            parse_response('"[]"')
+
+    def test_envelope_with_empty_findings_is_success(self) -> None:
+        findings, scorecard = parse_response('{"findings": []}')
+        assert findings == []
+        assert scorecard is None
 
 
 class TestPrompts:
