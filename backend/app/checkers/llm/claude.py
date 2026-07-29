@@ -3,6 +3,16 @@ from typing import Any
 from .provider import GenerationResult, MissingApiKeyError, ProgressCallback, TokenUsage
 
 
+def _usage_of(source: Any) -> TokenUsage:
+    """Read input/output token counts off an SDK usage object, tolerating
+    absence — missing telemetry is never an error."""
+    usage = getattr(source, "usage", None)
+    return TokenUsage(
+        input_tokens=getattr(usage, "input_tokens", None),
+        output_tokens=getattr(usage, "output_tokens", None),
+    )
+
+
 class ClaudeProvider:
     """LLM provider backed by the Claude API (Anthropic SDK).
 
@@ -45,7 +55,7 @@ class ClaudeProvider:
         text = "".join(
             block.text for block in response.content if block.type == "text"
         )
-        return GenerationResult(text=text, usage=TokenUsage())
+        return GenerationResult(text=text, usage=_usage_of(response))
 
     async def list_models(self) -> list[str]:
         # Anthropic lists newest first; keep that order (unlike the sorted
@@ -57,10 +67,19 @@ class ClaudeProvider:
         self, kwargs: dict[str, Any], on_progress: ProgressCallback
     ) -> GenerationResult:
         parts: list[str] = []
+        input_tokens: int | None = None
+        output_tokens: int | None = None
         stream = await self._get_client().messages.create(**kwargs, stream=True)
         async for event in stream:
             if event.type == "content_block_delta" and event.delta.type == "text_delta":
                 parts.append(event.delta.text)
+            elif event.type == "message_start":
+                input_tokens = _usage_of(event.message).input_tokens
             elif event.type == "message_delta":
+                # Cumulative; the last one is the final count.
+                output_tokens = event.usage.output_tokens
                 on_progress(event.usage.output_tokens)
-        return GenerationResult(text="".join(parts), usage=TokenUsage())
+        return GenerationResult(
+            text="".join(parts),
+            usage=TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens),
+        )
