@@ -10,7 +10,7 @@ from app.core.config import LimitsSettings, Settings, TierLimitsSettings
 from app.core.permissions import EffectiveSelection, RequestedLLM
 from app.main import create_app
 from app.services._sqlite import connect
-from app.services.usage import UsageStore
+from app.services.usage import _FAIL_STAGES, UsageStore
 
 
 class FakeUser:
@@ -372,6 +372,20 @@ class TestFailureColumns:
                        VALUES (1, '2026-07-29', '2026-07-29T00:00:00+00:00',
                                'failed', 'p', 'm', 1, 'check', 'r', 'parse')"""
                 )
+
+    def test_every_fail_stage_is_accepted_end_to_end(self, store):
+        # _SCHEMA's CHECK is generated from _FAIL_STAGES (single source, no
+        # drift possible) -- exercise every member on a fresh store's real
+        # CHECK constraint, not just finish_run's code-level guard.
+        for i, stage in enumerate(_FAIL_STAGES):
+            decision = reserve(store, run_id=f"run-{stage}-{i}")
+            store.finish_run(
+                decision.reservation_id, "failed",
+                fail_stage=stage, fail_detail="x",
+            )
+        all_rows = rows(store)
+        assert len(all_rows) == len(_FAIL_STAGES)
+        assert [row["fail_stage"] for row in all_rows] == list(_FAIL_STAGES)
 
     def test_migration_adds_columns_to_pre_b5_database(self, tmp_path):
         # A database created before this change lacks both columns; opening

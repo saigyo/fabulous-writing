@@ -442,8 +442,9 @@ sources: `ollama` reads `prompt_eval_count`/`eval_count` off the final
 response; `claude` reads the Anthropic SDK's `usage.input_tokens`/
 `usage.output_tokens` (streamed responses combine the `message_start` input
 count with the final `message_delta`'s output count); `bedrock` reads
-`usage.inputTokens`/`usage.outputTokens` (streamed: accumulated from each
-chunk's `metadata.usage`); `openai`/`mistral` (`openai_compat.py`) read
+`usage.inputTokens`/`usage.outputTokens` (streamed: taken from each
+metadata event's usage; the last reported value wins); `openai`/`mistral`
+(`openai_compat.py`) read
 `usage.prompt_tokens`/`usage.completion_tokens` from the response body, and
 additionally send `stream_options: {"include_usage": true}` on streaming
 requests so the final SSE chunk carries usage at all — sent only for those

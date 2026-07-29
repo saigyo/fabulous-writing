@@ -24,10 +24,12 @@ logger = logging.getLogger(__name__)
 RETRY_AFTER_SECONDS = 5
 
 # The single source for the fresh-schema CHECK and finish_run's code-level
-# enforcement (migrated databases have no CHECK).
+# enforcement (migrated databases have no CHECK): _SCHEMA interpolates
+# _FAIL_STAGE_CHECK below, so the two can never drift apart.
 _FAIL_STAGES = ("request", "provider", "response")
+_FAIL_STAGE_CHECK = ", ".join(f"'{s}'" for s in _FAIL_STAGES)
 
-_SCHEMA = """
+_SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS llm_usage (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id            INTEGER NOT NULL,
@@ -53,7 +55,7 @@ CREATE TABLE IF NOT EXISTS llm_usage (
     -- Enum guard for fresh databases only; migrated tables rely on the
     -- code-level guarantee (SQLite cannot add a CHECK without a rebuild,
     -- and a bad fail_stage cannot leak a concurrency slot).
-    CHECK (fail_stage IN ('request','provider','response') OR fail_stage IS NULL)
+    CHECK (fail_stage IN ({_FAIL_STAGE_CHECK}) OR fail_stage IS NULL)
 );
 CREATE INDEX IF NOT EXISTS idx_llm_usage_user_day ON llm_usage(user_id, day);
 -- The server-wide in-flight count has no user_id predicate; without this

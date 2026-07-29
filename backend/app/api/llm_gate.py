@@ -7,10 +7,10 @@ concurrency reservation, in that order around resolve_llm_selection.
 """
 
 import asyncio
-import httpx
 import json
 from dataclasses import dataclass, replace
 
+import httpx
 from fastapi import FastAPI, HTTPException
 
 from app.api.deps import CurrentUser

@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.checkers.llm.prompts import build_rewrite_prompt, build_suggestion_prompt
-from app.checkers.llm.provider import FakeProvider, LLMProvider, TokenUsage
+from app.checkers.llm.provider import FakeProvider, GenerationResult, LLMProvider, TokenUsage
 from app.core.config import LimitsSettings, Settings, TierLimitsSettings
 from app.core.models import Language
 from app.main import create_app
@@ -97,7 +97,7 @@ class TestSuggestionsEndpoint:
         class BrokenProvider:
             name = "broken"
 
-            async def generate(self, system: str, user: str) -> str:
+            async def generate(self, system: str, user: str) -> GenerationResult:
                 raise RuntimeError("model exploded")
 
         client = make_client(tmp_path, BrokenProvider())
@@ -372,7 +372,7 @@ class HangingProvider:
 
     name = "hanging"
 
-    async def generate(self, system: str, user: str, on_progress=None) -> str:
+    async def generate(self, system: str, user: str, on_progress=None) -> GenerationResult:
         await asyncio.Event().wait()
 
 
@@ -483,7 +483,7 @@ class TestSuggestionsMetering:
         class BrokenProvider:
             name = "broken"
 
-            async def generate(self, system: str, user: str) -> str:
+            async def generate(self, system: str, user: str) -> GenerationResult:
                 raise RuntimeError("model exploded")
 
         settings = Settings(db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules")

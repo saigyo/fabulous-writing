@@ -235,7 +235,7 @@ def test_llm_failure_still_finishes_job_with_fast_findings(tmp_path: Path) -> No
     class BrokenProvider:
         name = "broken"
 
-        async def generate(self, system: str, user: str) -> str:
+        async def generate(self, system: str, user: str) -> GenerationResult:
             raise RuntimeError("model exploded")
 
     with make_client(tmp_path, BrokenProvider()) as client:
@@ -758,7 +758,7 @@ def test_at_capacity_with_all_jobs_running_refuses_new_check_with_429(
 
         name = "hanging"
 
-        async def generate(self, system: str, user: str, on_progress=None) -> str:
+        async def generate(self, system: str, user: str, on_progress=None) -> GenerationResult:
             await asyncio.Event().wait()
 
     settings = Settings(db_path=tmp_path / "t.db", rules_dir=RULES_DIR)
@@ -851,7 +851,7 @@ class HangingProvider:
 
     name = "hanging"
 
-    async def generate(self, system: str, user: str, on_progress=None) -> str:
+    async def generate(self, system: str, user: str, on_progress=None) -> GenerationResult:
         await asyncio.Event().wait()
 
 
@@ -888,7 +888,7 @@ class TestCheckMetering:
         class BrokenProvider:
             name = "broken"
 
-            async def generate(self, system: str, user: str, on_progress=None) -> str:
+            async def generate(self, system: str, user: str, on_progress=None) -> GenerationResult:
                 raise RuntimeError("model exploded")
 
         settings = Settings(db_path=tmp_path / "test.db", rules_dir=RULES_DIR)
