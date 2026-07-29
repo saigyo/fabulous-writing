@@ -69,7 +69,7 @@ live-UI progress mechanism and keeps its existing approximate semantics.
 | Implementation | Non-streaming | Streaming |
 |---|---|---|
 | Ollama (native API) | `prompt_eval_count` / `eval_count` in the response body | same fields on the final `done: true` NDJSON object |
-| OpenAI-compat (openai, mistral) | `usage.prompt_tokens` / `usage.completion_tokens` | payload gains `stream_options: {"include_usage": true}`; the final usage chunk carries both counts |
+| OpenAI-compat (openai, mistral) | `usage.prompt_tokens` / `usage.completion_tokens` | payload gains `stream_options: {"include_usage": true}` for the built-in `openai`/`mistral` names only — configured extra compat endpoints are left untouched (some reject unknown fields) and may simply lack streaming usage; the final usage chunk carries both counts |
 | Claude | `response.usage.input_tokens` / `.output_tokens` | `message_start` event (input) + `message_delta` events (output) |
 | Bedrock (Converse) | `response["usage"]["inputTokens"/"outputTokens"]` | the `metadata` event's `usage` (already read for progress; now kept) |
 | FakeProvider | optional `usage=` constructor argument, default `TokenUsage()` (both `None`) | same |
@@ -121,9 +121,10 @@ Fresh databases get the columns in `_SCHEMA` with
 `CHECK (fail_stage IN ('request','provider','response') OR fail_stage IS NULL)`.
 Existing databases get them via the established `migrate_columns` helper
 (`app/services/_sqlite.py`); migrated tables skip the CHECK — SQLite cannot
-add one without a table rebuild. The enum is enforced in code either way,
-and unlike `status`, a malformed `fail_stage` cannot leak a concurrency
-slot, so the code-level guarantee suffices.
+add one without a table rebuild. The enum is enforced in code either way —
+`finish_run` rejects an unknown non-null stage with a `ValueError`, so the
+guarantee holds on migrated databases too — and unlike `status`, a
+malformed `fail_stage` cannot leak a concurrency slot.
 
 ### 4.2 Write path
 
@@ -145,9 +146,9 @@ def classify_failure(exc: BaseException) -> tuple[str, str]:
 
 | Exception shape | Stage |
 |---|---|
-| httpx transport errors (`ConnectError`, `TimeoutException`, …), missing-API-key `RuntimeError` (OpenAI-compat `_client()`), botocore credential/endpoint errors | `'request'` |
+| httpx transport errors (`ConnectError`, `TimeoutException`, …), `MissingApiKeyError` (raised by both the OpenAI-compat and Claude client constructors when their env key is absent), botocore credential/endpoint errors | `'request'` |
 | `httpx.HTTPStatusError`, anthropic SDK API-status errors, botocore `ClientError` | `'provider'` |
-| `UnparseableResponseError` (new, §4.4) | `'response'` |
+| `UnparseableResponseError` (new, §4.4); `json.JSONDecodeError` (the provider returned a body that fails to decode) | `'response'` |
 | anything unrecognized | `'provider'`, class name preserved in detail |
 
 The unknown-exception default is `'provider'` because an in-flight run that
@@ -166,10 +167,15 @@ for the `'response'` stage must not embed the response text in their message
 
 `parse_response` (`app/checkers/llm/checker.py`) raises a new
 `UnparseableResponseError` when the response contains **neither** a JSON
-object envelope **nor** a bare JSON array. A valid envelope with an empty
+object envelope **nor** a bare JSON array. A response whose top-level JSON
+value is an object without a `findings` list (e.g. `{"alternatives": []}`)
+also raises — a nested array inside a wrong-shaped object must not be
+mistaken for a bare findings array. A valid envelope with an empty
 findings list — the model legitimately reporting "no issues" — remains a
 success, as does a parseable response whose individual items fail
-validation (item-level tolerance is unchanged).
+validation (item-level tolerance is unchanged). The prose-embedded bare
+array fallback (response text around a top-level JSON array) keeps
+working.
 
 Effects in `_run_llm`: the existing `except Exception` arm settles the run
 `failed` with stage `'response'` via the classifier, and the existing SSE

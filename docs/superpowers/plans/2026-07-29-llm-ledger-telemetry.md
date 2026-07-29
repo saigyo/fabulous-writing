@@ -97,6 +97,18 @@ class TestFailureColumns:
         assert row["fail_stage"] is None
         assert row["fail_detail"] is None
 
+    def test_finish_run_rejects_unknown_stage_in_code(self, store):
+        # Migrated databases have no CHECK constraint on fail_stage; the
+        # store itself must refuse a typo'd stage on every database.
+        decision = reserve(store)
+        with pytest.raises(ValueError, match="unknown fail_stage"):
+            store.finish_run(
+                decision.reservation_id, "failed",
+                fail_stage="parse", fail_detail="typo'd stage",
+            )
+        (row,) = rows(store)
+        assert row["status"] == "started"  # the write never happened
+
     def test_check_constraint_rejects_unknown_stage(self, store):
         with connect(store.db_path) as conn:
             with pytest.raises(sqlite3.IntegrityError):
@@ -182,6 +194,14 @@ In `backend/app/services/usage.py`:
     CHECK (fail_stage IN ('request','provider','response') OR fail_stage IS NULL)
 ```
 
+2b. Add a module-level constant next to `RETRY_AFTER_SECONDS`:
+
+```python
+# The single source for the fresh-schema CHECK and finish_run's code-level
+# enforcement (migrated databases have no CHECK).
+_FAIL_STAGES = ("request", "provider", "response")
+```
+
 3. In `__init__`, after `conn.executescript(_SCHEMA)`:
 
 ```python
@@ -210,10 +230,15 @@ In `backend/app/services/usage.py`:
         about, never resurrected. Callers run this in a finally block.
 
         fail_stage/fail_detail land only with status='failed' — nulled here
-        by construction, not by caller discipline."""
+        by construction, not by caller discipline. The stage enum is
+        enforced here in code, not only by the fresh-schema CHECK: migrated
+        databases have no CHECK, and a typo'd stage must fail loudly on
+        them too."""
         if status != "failed":
             fail_stage = None
             fail_detail = None
+        if fail_stage is not None and fail_stage not in _FAIL_STAGES:
+            raise ValueError(f"unknown fail_stage: {fail_stage!r}")
         with connect(self.db_path, timeout=self.timeout) as conn:
             cursor = conn.execute(
                 """UPDATE llm_usage
@@ -263,6 +288,7 @@ Expected: all PASS.
 
 1. Temporarily delete the `if status != "failed":` block in `finish_run`, run `uv run pytest tests/test_usage.py::TestFailureColumns::test_non_failed_status_nulls_stage_and_detail -v`, confirm it FAILS, restore, confirm green.
 2. Temporarily delete the `CHECK (fail_stage IN ...)` line from `_SCHEMA`, run `uv run pytest tests/test_usage.py::TestFailureColumns::test_check_constraint_rejects_unknown_stage -v`, confirm it FAILS, restore, confirm green.
+3. Temporarily delete the `raise ValueError` guard in `finish_run`, run `uv run pytest tests/test_usage.py::TestFailureColumns::test_finish_run_rejects_unknown_stage_in_code -v`, confirm it FAILS, restore, confirm green.
 
 - [ ] **Step 6: Full-suite gate and commit**
 
@@ -270,7 +296,13 @@ Run: `uv run pytest -q` — zero failures, zero warnings.
 
 ```bash
 git add backend/app/services/usage.py backend/app/api/llm_gate.py backend/tests/test_usage.py
-git commit -m "feat(ledger): fail_stage/fail_detail columns, written only on the failed path (B5, #38)"
+git commit -m "$(cat <<'EOF'
+feat(ledger): fail_stage/fail_detail columns, written only on the failed path (B5, #38)
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01QG5RSDiRACnzQgN89FceuQ
+EOF
+)"
 ```
 
 ---
@@ -312,6 +344,20 @@ In `backend/tests/test_providers.py`, `backend/tests/test_openai_compat.py`, `ba
 - `test_bedrock.py:56` → `assert result.text == "[]"`
 
 The missing-API-key test (`test_openai_compat.py:47-55`) stays as-is: `MissingApiKeyError` subclasses `RuntimeError`, so `pytest.raises(RuntimeError, match="MISTRAL_API_KEY")` still passes.
+
+Also add to `TestClaudeProvider` in `test_providers.py` (Claude constructs `AsyncAnthropic()` lazily; without this guard a missing `ANTHROPIC_API_KEY` surfaces as an SDK constructor error that classification would file as `'provider'` instead of `'request'`):
+
+```python
+    async def test_missing_api_key_raises_clear_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        provider = ClaudeProvider(model="claude-sonnet-5")
+        with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+            await provider.generate("s", "u")
+```
+
+(Add `import pytest` to `test_providers.py` if not present.)
 
 - [ ] **Step 2: Run them to verify they fail**
 
@@ -438,7 +484,25 @@ class FakeProvider:
         return GenerationResult(text="".join(parts), usage=TokenUsage())
 ```
 
-`backend/app/checkers/llm/claude.py` — import `GenerationResult, TokenUsage` from `.provider`; wrap both paths:
+`backend/app/checkers/llm/claude.py` — import `GenerationResult, MissingApiKeyError, TokenUsage` from `.provider`. Guard the lazy client construction (mirroring OpenAI-compat, so a missing key classifies as `'request'`):
+
+```python
+    def _get_client(self) -> Any:
+        if self._client is None:
+            import os
+
+            if not os.environ.get("ANTHROPIC_API_KEY"):
+                raise MissingApiKeyError(
+                    "No API key for provider 'claude' — "
+                    "set the ANTHROPIC_API_KEY environment variable."
+                )
+            from anthropic import AsyncAnthropic
+
+            self._client = AsyncAnthropic()
+        return self._client
+```
+
+and wrap both generate paths:
 
 ```python
     async def generate(
@@ -519,7 +583,13 @@ Expected: all PASS, zero warnings. (test_llm_checker, test_check_api, test_sugge
 
 ```bash
 git add backend/app/checkers/llm/ backend/app/api/suggestions.py backend/app/api/documents.py backend/tests/
-git commit -m "feat(llm): generate() returns GenerationResult with TokenUsage (B7, #39)"
+git commit -m "$(cat <<'EOF'
+feat(llm): generate() returns GenerationResult with TokenUsage (B7, #39)
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01QG5RSDiRACnzQgN89FceuQ
+EOF
+)"
 ```
 
 ---
@@ -642,6 +712,49 @@ Append to `TestGenerate` in `backend/tests/test_openai_compat.py` (the `_sse` he
         assert progress[-1] == 7  # exact-count correction still reported
 ```
 
+```python
+    async def test_streaming_extra_provider_gets_no_stream_options(self) -> None:
+        # Extra compat endpoints (main.py extra_providers) may reject
+        # unknown fields — only the built-in openai/mistral names opt in.
+        body = _sse(
+            {"choices": [{"delta": {"content": "[]"}}]},
+            "[DONE]",
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert "stream_options" not in json.loads(request.content)
+            return httpx.Response(
+                200, content=body, headers={"content-type": "text/event-stream"}
+            )
+
+        provider = OpenAICompatProvider(
+            name="groq", base_url="https://api.test/v1", api_key="sk-test",
+            model="some-model", transport=httpx.MockTransport(handler),
+        )
+        result = await provider.generate("s", "u", on_progress=lambda n: None)
+        assert result.text == "[]"
+        assert result.usage == TokenUsage()
+
+    async def test_usage_chunk_with_only_prompt_tokens_keeps_input_count(self) -> None:
+        body = _sse(
+            {"choices": [{"delta": {"content": "[]"}}]},
+            {"choices": [], "usage": {"prompt_tokens": 60}},
+            "[DONE]",
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200, content=body, headers={"content-type": "text/event-stream"}
+            )
+
+        provider = OpenAICompatProvider(
+            name="openai", base_url="https://api.test/v1", api_key="sk-test",
+            model="gpt-5-mini", transport=httpx.MockTransport(handler),
+        )
+        result = await provider.generate("s", "u", on_progress=lambda n: None)
+        assert result.usage == TokenUsage(input_tokens=60, output_tokens=None)
+```
+
 Add `from app.checkers.llm.provider import TokenUsage` to the imports.
 
 Also pin the absent-usage path for OpenAI-compat (spec §5: no usage fields ⇒ `TokenUsage(None, None)`, no error) with one line at the end of the existing `test_sends_chat_completions_request_and_returns_content`:
@@ -745,9 +858,12 @@ Import `TokenUsage` from `.provider` in `ollama.py`.
 ```python
     def _payload(self, system: str, user: str, stream: bool) -> dict:
         payload = super()._payload(system, user, stream)
-        if stream:
+        if stream and self.name in ("openai", "mistral"):
             # OpenAI sends the final usage chunk only when asked; Mistral
-            # accepts the option and reports usage either way.
+            # accepts the option too. Configured extra compat endpoints are
+            # left untouched — some reject unknown fields, and a rejected
+            # request would fail a previously-working deployment. They just
+            # lack streaming usage telemetry.
             payload["stream_options"] = {"include_usage": True}
         return payload
 
@@ -759,12 +875,13 @@ Import `TokenUsage` from `.provider` in `ollama.py`.
         )
 ```
 
-and extend `_stream_events` so the usage chunk yields both event kinds:
+and extend `_stream_events` so a usage chunk always yields the usage event — the progress correction only when an output count exists (a chunk carrying only `prompt_tokens` must not drop the input count):
 
 ```python
         usage = chunk.get("usage")
-        if usage and usage.get("completion_tokens") is not None:
-            yield ("tokens", usage["completion_tokens"])
+        if usage:
+            if usage.get("completion_tokens") is not None:
+                yield ("tokens", usage["completion_tokens"])
             yield ("usage", self._response_usage(chunk))
             return
 ```
@@ -780,7 +897,13 @@ Run: `uv run pytest -q` — zero failures, zero warnings.
 
 ```bash
 git add backend/app/checkers/llm/_http_chat.py backend/app/checkers/llm/ollama.py backend/app/checkers/llm/openai_compat.py backend/tests/test_providers.py backend/tests/test_openai_compat.py
-git commit -m "feat(llm): real token usage from Ollama and OpenAI-compat responses (B7, #39)"
+git commit -m "$(cat <<'EOF'
+feat(llm): real token usage from Ollama and OpenAI-compat responses (B7, #39)
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01QG5RSDiRACnzQgN89FceuQ
+EOF
+)"
 ```
 
 ---
@@ -1038,7 +1161,13 @@ Run: `uv run pytest -q` — zero failures, zero warnings.
 
 ```bash
 git add backend/app/checkers/llm/claude.py backend/app/checkers/llm/bedrock.py backend/tests/test_providers.py backend/tests/test_bedrock.py
-git commit -m "feat(llm): real token usage from Claude and Bedrock responses (B7, #39)"
+git commit -m "$(cat <<'EOF'
+feat(llm): real token usage from Claude and Bedrock responses (B7, #39)
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01QG5RSDiRACnzQgN89FceuQ
+EOF
+)"
 ```
 
 ---
@@ -1074,6 +1203,13 @@ Replace `test_unparseable_response_returns_empty` in `backend/tests/test_llm_che
         with pytest.raises(UnparseableResponseError):
             parse_response('{"verdict": "fine"}')
 
+    def test_wrong_shaped_object_with_nested_array_raises(self) -> None:
+        # extract_json_array's substring scan would find the nested [] —
+        # a top-level object that is not a findings envelope must raise
+        # regardless of what it contains.
+        with pytest.raises(UnparseableResponseError):
+            parse_response('{"alternatives": []}')
+
     def test_envelope_with_empty_findings_is_success(self) -> None:
         findings, scorecard = parse_response('{"findings": []}')
         assert findings == []
@@ -1087,6 +1223,8 @@ Create `backend/tests/test_failure_classification.py`:
 ```python
 """classify_failure maps LLM-path exceptions to the fail_stage enum
 (spec §4.3). Classification must never raise."""
+
+import json
 
 import httpx
 
@@ -1118,6 +1256,26 @@ class TestStageMapping:
         assert stage == "provider"
         assert "HTTPStatusError" in detail
         assert "503" in detail
+
+    def test_provider_body_decode_failure_is_response_stage(self) -> None:
+        # An HTTP 200 whose body fails json.loads is broken output on
+        # reception — 'response', not 'provider'.
+        try:
+            json.loads("not json at all")
+        except json.JSONDecodeError as exc:
+            stage, detail = classify_failure(exc)
+        assert stage == "response"
+        assert "JSONDecodeError" in detail
+
+    def test_botocore_client_error_status_from_response_dict(self) -> None:
+        # botocore's ClientError carries a dict response, not an object
+        # with .status_code — the status lives under ResponseMetadata.
+        class ClientError(Exception):
+            response = {"ResponseMetadata": {"HTTPStatusCode": 429}}
+
+        stage, detail = classify_failure(ClientError("throttled"))
+        assert stage == "provider"
+        assert "(429)" in detail
 
     def test_sdk_connection_errors_matched_by_class_name(self) -> None:
         # anthropic/botocore types are matched by name through the MRO so
@@ -1172,7 +1330,7 @@ class UnparseableResponseError(Exception):
         )
 ```
 
-Replace the tail of `parse_response` (keep the envelope branch unchanged):
+Replace the tail of `parse_response` (keep the envelope branch unchanged) and add the `_top_level_json` helper below it:
 
 ```python
     data = extract_json_object(response)
@@ -1184,17 +1342,34 @@ Replace the tail of `parse_response` (keep the envelope branch unchanged):
             except ValidationError:
                 scorecard = None
         return ParsedResponse(_validate_findings(data["findings"]), scorecard)
+    if isinstance(_top_level_json(response), dict):
+        # The whole response IS a JSON object but not a findings envelope
+        # (e.g. {"alternatives": []}) — a nested array inside it must not
+        # be mistaken for a bare findings array by the substring scan below.
+        raise UnparseableResponseError(len(response))
     array = extract_json_array(response)
     if array is None:
         raise UnparseableResponseError(len(response))
     return ParsedResponse(_validate_findings(array), None)
+
+
+def _top_level_json(response: str) -> Any:
+    """The response's primary JSON value (whole or fence-stripped); None
+    when neither parses. Substring extraction deliberately does not count:
+    prose around a bare array must keep falling through to the array path."""
+    for candidate in (response, _CODE_FENCE.sub("", response).strip()):
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+    return None
 ```
 
 Update `parse_response`'s docstring first line to say unparseable input raises `UnparseableResponseError` (a valid envelope with an empty findings list, or a parseable response whose individual items all fail validation, remains a success).
 
 - [ ] **Step 4: Implement `classify_failure` in `llm_gate.py`**
 
-Add `import httpx` and `from app.checkers.llm.checker import UnparseableResponseError`; extend the existing `app.checkers.llm.provider` import with `MissingApiKeyError`. Add at module level:
+Add `import httpx`, `import json`, and `from app.checkers.llm.checker import UnparseableResponseError`; extend the existing `app.checkers.llm.provider` import with `MissingApiKeyError`. Add at module level:
 
 ```python
 _FAIL_DETAIL_LIMIT = 200
@@ -1218,7 +1393,9 @@ def classify_failure(exc: BaseException) -> tuple[str, str]:
     request stage — with its class preserved in the detail for later
     reclassification."""
     detail = _fail_detail(exc)
-    if isinstance(exc, UnparseableResponseError):
+    if isinstance(exc, (UnparseableResponseError, json.JSONDecodeError)):
+        # JSONDecodeError on this path means the provider returned a body
+        # that fails to decode — broken output on reception (spec §4.3).
         return "response", detail
     if isinstance(exc, MissingApiKeyError):
         return "request", detail
@@ -1240,9 +1417,14 @@ def _fail_detail(exc: BaseException) -> str:
         message = " ".join(str(exc).split())
     except Exception:  # a broken __str__ must not break classification
         message = ""
-    status = getattr(exc, "status_code", None) or getattr(
-        getattr(exc, "response", None), "status_code", None
-    )
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+        if status is None and isinstance(response, dict):
+            # botocore ClientError carries a dict response; its status
+            # lives under ResponseMetadata, not a .status_code attribute.
+            status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
     head = type(exc).__name__ if status is None else f"{type(exc).__name__} ({status})"
     detail = f"{head}: {message}" if message else head
     return detail[:_FAIL_DETAIL_LIMIT]
@@ -1262,7 +1444,13 @@ Expected: all PASS — no existing checks-API test feeds unparseable output (ver
 
 ```bash
 git add backend/app/checkers/llm/checker.py backend/app/api/llm_gate.py backend/tests/test_llm_checker.py backend/tests/test_failure_classification.py
-git commit -m "feat(llm): UnparseableResponseError + central failure classifier (B5, #38)"
+git commit -m "$(cat <<'EOF'
+feat(llm): UnparseableResponseError + central failure classifier (B5, #38)
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01QG5RSDiRACnzQgN89FceuQ
+EOF
+)"
 ```
 
 ---
@@ -1624,7 +1812,7 @@ Temporarily change `UnparseableResponseError.__init__` to embed the response tex
 
 In `docs/backend-architecture.md`:
 - Ledger/`llm_usage` section: add `fail_stage`/`fail_detail` (failed-path only, enum values, metadata-only guardrail, migration note) and note that `input_tokens`/`output_tokens` now carry provider-reported counts (checks fall back to the progress approximation for output).
-- Provider/LLM section: `generate` returns `GenerationResult(text, usage: TokenUsage)`; per-provider usage sources (one line each); `classify_failure` in `llm_gate.py`; `UnparseableResponseError` semantics for the checks path. Note the known risk that `stream_options: {"include_usage": true}` goes to every OpenAI-compat endpoint — openai and mistral accept it, but a future compat endpoint that rejects unknown fields would surface as a `'provider'`-stage failure (the ledger itself would show it).
+- Provider/LLM section: `generate` returns `GenerationResult(text, usage: TokenUsage)`; per-provider usage sources (one line each); `classify_failure` in `llm_gate.py`; `UnparseableResponseError` semantics for the checks path. Note that `stream_options: {"include_usage": true}` is sent only for the built-in `openai`/`mistral` names — configured extra compat endpoints are left untouched (some reject unknown fields) and simply lack streaming usage telemetry.
 
 - [ ] **Step 10: Full-suite gate and commit**
 
@@ -1632,7 +1820,13 @@ Run: `uv run pytest -q` — zero failures, zero warnings.
 
 ```bash
 git add backend/app/checkers/llm/checker.py backend/app/api/checks.py backend/app/api/suggestions.py backend/app/api/documents.py backend/tests/ docs/backend-architecture.md
-git commit -m "feat(ledger): settle real usage and failure classification at all three LLM paths (B5+B7, #38 #39)"
+git commit -m "$(cat <<'EOF'
+feat(ledger): settle real usage and failure classification at all three LLM paths (B5+B7, #38 #39)
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01QG5RSDiRACnzQgN89FceuQ
+EOF
+)"
 ```
 
 ---
