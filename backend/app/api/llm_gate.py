@@ -34,9 +34,22 @@ class LlmReservation:
     store: UsageStore
     reservation_id: int
 
-    def finish(self, status: str, *, output_tokens: int | None = None) -> None:
+    def finish(
+        self,
+        status: str,
+        *,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        fail_stage: str | None = None,
+        fail_detail: str | None = None,
+    ) -> None:
         self.store.finish_run(
-            self.reservation_id, status, output_tokens=output_tokens
+            self.reservation_id,
+            status,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            fail_stage=fail_stage,
+            fail_detail=fail_detail,
         )
 
 
