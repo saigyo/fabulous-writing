@@ -315,6 +315,22 @@ def test_generate_name_writes_a_ledger_row(authed_client):
     assert row["requested_tier"] == "cheap"
 
 
+def test_generate_name_settles_usage(authed_client):
+    doc = make_doc(authed_client, text="A long enough body about widget assembly.")
+    authed_client.app.state.provider_factory = lambda name=None, model=None: (
+        FakeProvider('"Widget Assembly Guide."',
+                     usage=TokenUsage(input_tokens=30, output_tokens=8))
+    )
+    response = authed_client.post(f"/api/documents/{doc['id']}/generate-name")
+    assert response.status_code == 200
+
+    rows = _read_usage_rows(authed_client.app.state.settings.db_path)
+    assert len(rows) == 1
+    assert rows[0]["status"] == "completed"
+    assert rows[0]["input_tokens"] == 30
+    assert rows[0]["output_tokens"] == 8
+
+
 def test_generate_name_unusable_title_falls_back_and_marks_run_failed(authed_client):
     # The provider call succeeds, but clean_title rejects the response (here:
     # quote marks with nothing usable inside) -- a burned-token run that
@@ -334,6 +350,8 @@ def test_generate_name_unusable_title_falls_back_and_marks_run_failed(authed_cli
     assert len(rows) == 1
     assert rows[0]["source"] == "name"
     assert rows[0]["status"] == "failed"
+    assert rows[0]["fail_stage"] == "response"
+    assert rows[0]["fail_detail"] == "title generation produced no usable title"
 
 
 def test_generate_name_quota_exhausted_falls_back_silently(tmp_path):

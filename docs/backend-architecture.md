@@ -430,9 +430,30 @@ The checker (`app/checkers/terminology.py`) produces two kinds of findings, both
 ### Providers
 
 `LLMProvider` (`app/checkers/llm/provider.py`) is a small protocol: `name` plus
-`async generate(system, user, on_progress) -> str`. When `on_progress` is passed,
-providers stream and report cumulative output tokens (that is what feeds the
-`llm_progress` SSE events and the UI's token counter). Implementations:
+`async generate(system, user, on_progress) -> GenerationResult`, where
+`GenerationResult` is `(text: str, usage: TokenUsage)` and `TokenUsage` is
+`(input_tokens: int | None, output_tokens: int | None)` — `None` means "the
+provider didn't report this," never 0, which is a real reported value. When
+`on_progress` is passed, providers stream and report cumulative output tokens
+(that is what feeds the `llm_progress` SSE events and the UI's token
+counter); reported usage, when the provider supplies it, is preferred over
+that progress approximation everywhere it is available. Per-provider usage
+sources: `ollama` reads `prompt_eval_count`/`eval_count` off the final
+response; `claude` reads the Anthropic SDK's `usage.input_tokens`/
+`usage.output_tokens` (streamed responses combine the `message_start` input
+count with the final `message_delta`'s output count); `bedrock` reads
+`usage.inputTokens`/`usage.outputTokens` (streamed: accumulated from each
+chunk's `metadata.usage`); `openai`/`mistral` (`openai_compat.py`) read
+`usage.prompt_tokens`/`usage.completion_tokens` from the response body, and
+additionally send `stream_options: {"include_usage": true}` on streaming
+requests so the final SSE chunk carries usage at all — sent only for those
+two built-in names; configured extra compat endpoints (e.g. `deepseek`) are
+left untouched since some reject unknown request fields, and so simply lack
+streaming usage telemetry (their non-streaming responses are unaffected). A
+provider that cannot find usage anywhere in a response returns
+`TokenUsage(None, None)` — missing telemetry is never an error. `FakeProvider`
+takes an optional `usage: TokenUsage` (defaulting to `TokenUsage()`, both
+fields `None`) for tests that need to pin specific counts. Implementations:
 
 `ollama.py` and `openai_compat.py` both speak the same shape of HTTP chat API — "POST a
 `{model, stream, messages}` payload; non-streaming returns one JSON body, streaming
@@ -496,11 +517,24 @@ no-op.
 The LLM's raw response passes through four deterministic stages in
 `LLMChecker.check()`:
 
-1. **Parse** (`checker.py`): `extract_json_array` tolerates code fences and surrounding
-   prose; items that don't validate as `RawFinding` are skipped individually. The
-   optional `scorecard` object gets the opposite treatment — a **strict gate**: it must
-   validate as `Scorecard` (all six dimensions present, each score in range) or it is
-   discarded whole, with no effect on the findings list.
+1. **Parse** (`checker.py`): `parse_response` tries the object envelope first
+   (`{"findings": [...], "scorecard": {...}}`), falling back to a bare
+   `extract_json_array` array for models that ignore the envelope
+   instruction; either way, items that don't validate as `RawFinding` are
+   skipped individually. The optional `scorecard` object gets the opposite
+   treatment — a **strict gate**: it must validate as `Scorecard` (all six
+   dimensions present, each score in range) or it is discarded whole, with
+   no effect on the findings list. A response that is neither a findings
+   envelope nor a bare array raises `UnparseableResponseError` — a
+   `'response'`-stage failure (`classify_failure`, `app/api/llm_gate.py`)
+   rather than a silent zero-findings success. Its message carries only the
+   response's character count, never the text, so it is safe to store
+   verbatim as the ledger's `fail_detail`; `LLMChecker.check` also attaches
+   `result.usage` to the exception (`exc.usage`) before re-raising, since
+   `generate()` already succeeded and burned real tokens before the parse
+   failed — `_run_llm` reads that attached usage back off the exception to
+   settle the failed run's real `input_tokens`/`output_tokens` instead of
+   `NULL`.
 2. **Anchor** (`anchoring.py`): LLM-reported offsets are unreliable, so each finding is
    located by its verbatim quote — exact match, then whitespace-tolerant match, then a
    fuzzy sliding-window match (difflib, ratio ≥ 0.8 with edge refinement). Ambiguous
@@ -1528,7 +1562,8 @@ CREATE TABLE llm_usage (
     llm_tier, provider, model,           -- effective selection
     requested_tier, requested_provider, requested_model,
     text_chars INTEGER NOT NULL, input_tokens, output_tokens,
-    source TEXT NOT NULL, run_id TEXT NOT NULL
+    source TEXT NOT NULL, run_id TEXT NOT NULL,
+    fail_stage TEXT, fail_detail TEXT    -- failed-path only (CHECK); see below
 );
 ```
 
@@ -1537,6 +1572,38 @@ count and `/me`'s `used_today`; `idx_llm_usage_inflight` is a **partial**
 index on `(status, created_at) WHERE status = 'started'` — without it the
 server-wide in-flight count (no `user_id` predicate) would degrade to a
 full table scan inside the transaction that serializes every reservation.
+
+`input_tokens`/`output_tokens` carry the provider's own reported counts
+(`TokenUsage`, below) whenever the provider returned them; `NULL` means "not
+reported," not zero. The checks path (`_run_llm`) additionally falls back to
+the SSE progress approximation for `output_tokens` when the provider
+reported none — suggestions and naming have no such fallback since they
+never stream progress.
+
+`fail_stage`/`fail_detail` are written only on the `'failed'` path — every
+other terminal status (`completed`, `cancelled`, `abandoned`) leaves both
+`NULL` (`UsageStore.finish_run` nulls them in code even if a caller passes
+values, since only a `'failed'` row's classification is meaningful).
+`fail_stage` is one of `request` (never reached the provider: missing API
+key, connection/timeout, 401/403), `provider` (an in-flight run raised —
+the default for anything unrecognized), or `response` (the provider replied
+but the payload was unusable). An exception raised anywhere in the pipeline
+is mapped to `(fail_stage, fail_detail)` by `classify_failure`
+(`app/api/llm_gate.py`), which recognizes `UnparseableResponseError` and
+`json.JSONDecodeError` as `response`-stage; suggestions' "no JSON array" and
+naming's "no usable title" are not exceptions at all — a value the caller
+recognizes as unusable without the provider raising — so those two set
+`fail_stage = "response"` directly instead of going through
+`classify_failure`.
+`fail_detail` is metadata only — exception class name, HTTP status if
+available, and up to 200 whitespace-collapsed characters of the message
+(`_fail_detail`) — **never** the document text or the response body; an
+`UnparseableResponseError`'s message in particular carries only the
+response's character count, not its content. Migrated (pre-M5/pre-B5)
+databases gain both columns via `migrate_columns` at startup with no
+`CHECK`; `finish_run` re-enforces the `fail_stage` enum in code for exactly
+that reason — a typo'd stage on a migrated table would otherwise pass
+silently.
 
 ### The reservation transaction
 
@@ -1577,12 +1644,16 @@ One transaction, in order:
    reservation_id=cursor.lastrowid)`.
 
 `finish_run(reservation_id, status, *, input_tokens=None,
-output_tokens=None)` is the terminal write, conditional on the row's status
-still being `'started'` — a row either sweep already reclaimed logs a
-warning and is left alone, never resurrected. Every gate call site runs
-this in a `finally` block (`LlmReservation.finish`, `app/api/llm_gate.py`)
-so success, failure, and `asyncio.CancelledError` all reach it with their
-own terminal status.
+output_tokens=None, fail_stage=None, fail_detail=None)` is the terminal
+write, conditional on the row's status still being `'started'` — a row
+either sweep already reclaimed logs a warning and is left alone, never
+resurrected. Every gate call site runs this in a `finally` block
+(`LlmReservation.finish`, `app/api/llm_gate.py`) so success, failure, and
+`asyncio.CancelledError` all reach it with their own terminal status; each
+of the three call sites (`checks.py`'s `_run_llm`, suggestions, document
+naming) tracks its own `usage: TokenUsage` and `fail_stage`/`fail_detail`
+locals through a `try`/`except`/`finally` and settles them here regardless
+of which branch was taken.
 
 **Both sweeps** mark `'started'` rows `'abandoned'`: the per-reservation
 staleness sweep above (age-based, inside the transaction) and

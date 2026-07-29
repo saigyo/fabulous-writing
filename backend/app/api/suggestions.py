@@ -6,9 +6,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from app.api.deps import CurrentUser, get_current_user
-from app.api.llm_gate import get_effective_provider
+from app.api.llm_gate import classify_failure, get_effective_provider
 from app.checkers.llm.checker import extract_json_array
 from app.checkers.llm.prompts import build_rewrite_prompt, build_suggestion_prompt
+from app.checkers.llm.provider import TokenUsage
 from app.checkers.llm.vetting import split_advice, vet_suggestions
 from app.checkers.rules.text import expand_to_sentences
 from app.core.models import Language, QualityTier
@@ -105,11 +106,17 @@ async def create_suggestions(
     # `except Exception` below) any failure among them must settle 'failed',
     # not 'completed', before its error response propagates.
     status = "completed"
+    usage = TokenUsage()
+    fail_stage: str | None = None
+    fail_detail: str | None = None
     try:
-        response = (await provider.generate(system, prompt)).text
-        items = extract_json_array(response)
+        result = await provider.generate(system, prompt)
+        usage = result.usage
+        items = extract_json_array(result.text)
         if items is None:
             status = "failed"
+            fail_stage = "response"
+            fail_detail = "LLM response contained no JSON array"
             raise HTTPException(502, "LLM response contained no JSON array")
 
         suggestions = [
@@ -160,7 +167,14 @@ async def create_suggestions(
         raise
     except Exception as exc:
         status = "failed"
+        fail_stage, fail_detail = classify_failure(exc)
         detail = str(exc) or type(exc).__name__
         raise HTTPException(502, f"LLM request failed: {detail}") from exc
     finally:
-        reservation.finish(status)
+        reservation.finish(
+            status,
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            fail_stage=fail_stage,
+            fail_detail=fail_detail,
+        )
