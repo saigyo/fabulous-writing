@@ -2,7 +2,12 @@ import json
 
 import pytest
 
-from app.checkers.llm.checker import LLMChecker, UnparseableResponseError, parse_findings, parse_response
+from app.checkers.llm.checker import (
+    LLMChecker,
+    UnparseableResponseError,
+    parse_findings,
+    parse_response,
+)
 from app.checkers.llm.prompts import build_prompt
 from app.checkers.llm.provider import FakeProvider
 from app.core.models import Category, Language, Severity, Source

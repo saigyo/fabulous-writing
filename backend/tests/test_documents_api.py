@@ -296,7 +296,7 @@ class HangingProvider:
 
     name = "hanging"
 
-    async def generate(self, system: str, user: str, on_progress=None) -> str:
+    async def generate(self, system: str, user: str, on_progress=None) -> GenerationResult:
         await asyncio.Event().wait()
 
 

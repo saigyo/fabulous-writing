@@ -84,7 +84,9 @@ class OpenAICompatProvider(HttpChatProvider):
             if usage.get("completion_tokens") is not None:
                 yield ("tokens", usage["completion_tokens"])
             yield ("usage", self._response_usage(chunk))
-            return
+        # Deliberately not `elif`/early-return: some endpoints pack the final
+        # content delta into the same chunk that also carries usage, so the
+        # choices/content check below must still run on a usage chunk.
         choices = chunk.get("choices") or []
         content = choices[0].get("delta", {}).get("content") if choices else None
         if content:

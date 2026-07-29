@@ -171,6 +171,32 @@ class TestGenerate:
         result = await provider.generate("s", "u", on_progress=lambda n: None)
         assert result.usage == TokenUsage(input_tokens=60, output_tokens=None)
 
+    async def test_usage_chunk_with_content_still_yields_content(self) -> None:
+        # Some endpoints pack the final content delta into the same chunk
+        # that also carries usage; the usage branch must not `return` early
+        # and silently drop that chunk's content.
+        body = _sse(
+            {"choices": [{"delta": {"content": "["}}]},
+            {
+                "choices": [{"delta": {"content": "]"}}],
+                "usage": {"prompt_tokens": 60, "completion_tokens": 7},
+            },
+            "[DONE]",
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200, content=body, headers={"content-type": "text/event-stream"}
+            )
+
+        provider = OpenAICompatProvider(
+            name="openai", base_url="https://api.test/v1", api_key="sk-test",
+            model="gpt-5-mini", transport=httpx.MockTransport(handler),
+        )
+        result = await provider.generate("s", "u", on_progress=lambda n: None)
+        assert result.text == "[]"
+        assert result.usage == TokenUsage(input_tokens=60, output_tokens=7)
+
 
 class TestListModels:
     async def test_lists_and_filters_models(self) -> None:
