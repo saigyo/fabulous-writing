@@ -87,12 +87,21 @@ class BedrockProvider:
         response = await asyncio.to_thread(lambda: self._get_client().converse(**kwargs))
         blocks = response["output"]["message"]["content"]
         text = "".join(block.get("text", "") for block in blocks)
-        return GenerationResult(text=text, usage=TokenUsage())
+        usage = response.get("usage") or {}
+        return GenerationResult(
+            text=text,
+            usage=TokenUsage(
+                input_tokens=usage.get("inputTokens"),
+                output_tokens=usage.get("outputTokens"),
+            ),
+        )
 
     def _stream_sync(
         self, kwargs: dict[str, Any], report: ProgressCallback
     ) -> GenerationResult:
         parts: list[str] = []
+        input_tokens: int | None = None
+        output_tokens: int | None = None
         response = self._get_client().converse_stream(**kwargs)
         for event in response["stream"]:
             if "contentBlockDelta" in event:
@@ -101,7 +110,14 @@ class BedrockProvider:
                     parts.append(text)
                     report(len(parts))
             elif "metadata" in event:
-                tokens = event["metadata"].get("usage", {}).get("outputTokens")
-                if tokens is not None:
-                    report(tokens)
-        return GenerationResult(text="".join(parts), usage=TokenUsage())
+                usage = event["metadata"].get("usage", {})
+                # Report only a count this event actually carries — never
+                # re-report an accumulated value from an earlier event.
+                if usage.get("outputTokens") is not None:
+                    report(usage["outputTokens"])
+                input_tokens = usage.get("inputTokens", input_tokens)
+                output_tokens = usage.get("outputTokens", output_tokens)
+        return GenerationResult(
+            text="".join(parts),
+            usage=TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens),
+        )

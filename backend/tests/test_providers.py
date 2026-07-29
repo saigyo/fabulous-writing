@@ -138,6 +138,7 @@ class TestClaudeProvider:
         assert stub.messages.kwargs["messages"] == [
             {"role": "user", "content": "user prompt"}
         ]
+        assert result.usage == TokenUsage()
 
     async def test_missing_api_key_raises_clear_error(
         self, monkeypatch: pytest.MonkeyPatch
@@ -146,6 +147,30 @@ class TestClaudeProvider:
         provider = ClaudeProvider(model="claude-sonnet-5")
         with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
             await provider.generate("s", "u")
+
+    async def test_generate_extracts_usage(self) -> None:
+        class Usage:
+            input_tokens = 55
+            output_tokens = 9
+
+        class Block:
+            type = "text"
+            text = "[]"
+
+        class Response:
+            content = [Block()]
+            usage = Usage()
+
+        class Messages:
+            async def create(self, **kwargs: Any) -> Any:
+                return Response()
+
+        class Client:
+            messages = Messages()
+
+        provider = ClaudeProvider(model="claude-sonnet-5", client=Client())
+        result = await provider.generate("s", "u")
+        assert result.usage == TokenUsage(input_tokens=55, output_tokens=9)
 
 
 class TestOllamaStreaming:
@@ -195,7 +220,10 @@ class _StubStreamingMessages:
             type = "text_delta"
             text = ""
 
-        def event(kind: str, text: str = "", tokens: int | None = None) -> Any:
+        def event(
+            kind: str, text: str = "", tokens: int | None = None,
+            input_tokens: int | None = None,
+        ) -> Any:
             class Event:
                 type = kind
 
@@ -204,6 +232,19 @@ class _StubStreamingMessages:
                 d = Delta()
                 d.text = text
                 e.delta = d
+            if kind == "message_start":
+                class Usage:
+                    pass
+
+                usage = Usage()
+                usage.input_tokens = input_tokens
+
+                class Message:
+                    pass
+
+                message = Message()
+                message.usage = usage
+                e.message = message
             if tokens is not None:
                 class Usage:
                     output_tokens = tokens
@@ -212,6 +253,7 @@ class _StubStreamingMessages:
             return e
 
         async def stream() -> Any:
+            yield event("message_start", input_tokens=44)
             yield event("content_block_delta", "[")
             yield event("message_delta", tokens=7)
             yield event("content_block_delta", "]")
@@ -230,3 +272,11 @@ class TestClaudeStreaming:
         result = await provider.generate("s", "u", on_progress=progress.append)
         assert result.text == "[]"
         assert progress == [7, 12]
+
+    async def test_streaming_extracts_usage(self) -> None:
+        class Client:
+            messages = _StubStreamingMessages()
+
+        provider = ClaudeProvider(model="claude-sonnet-5", client=Client())
+        result = await provider.generate("s", "u", on_progress=lambda n: None)
+        assert result.usage == TokenUsage(input_tokens=44, output_tokens=12)

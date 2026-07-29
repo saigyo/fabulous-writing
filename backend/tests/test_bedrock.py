@@ -2,6 +2,7 @@ import asyncio
 from typing import Any
 
 from app.checkers.llm.bedrock import BedrockProvider
+from app.checkers.llm.provider import TokenUsage
 
 
 class _FakeRuntimeClient:
@@ -35,6 +36,7 @@ class TestBedrockProvider:
         assert client.kwargs["messages"] == [
             {"role": "user", "content": [{"text": "user prompt"}]}
         ]
+        assert result.usage == TokenUsage()
 
     async def test_generate_streams_and_reports_progress(self) -> None:
         events = [
@@ -56,3 +58,26 @@ class TestBedrockProvider:
         assert result.text == "[]"
         assert progress[-1] == 5
         assert progress[:-1] == [1, 2]
+        assert result.usage == TokenUsage(input_tokens=None, output_tokens=5)
+
+    async def test_generate_extracts_usage(self) -> None:
+        class Client(_FakeRuntimeClient):
+            def converse(self, **kwargs: Any) -> dict[str, Any]:
+                response = super().converse(**kwargs)
+                response["usage"] = {"inputTokens": 70, "outputTokens": 5}
+                return response
+
+        provider = BedrockProvider(model="m", client=Client())
+        result = await provider.generate("s", "u")
+        assert result.usage == TokenUsage(input_tokens=70, output_tokens=5)
+
+    async def test_streaming_extracts_usage(self) -> None:
+        events = [
+            {"contentBlockDelta": {"delta": {"text": "[]"}}},
+            {"metadata": {"usage": {"inputTokens": 66, "outputTokens": 5}}},
+        ]
+        provider = BedrockProvider(
+            model="m", client=_FakeRuntimeClient(stream_events=events)
+        )
+        result = await provider.generate("s", "u", on_progress=lambda n: None)
+        assert result.usage == TokenUsage(input_tokens=66, output_tokens=5)
