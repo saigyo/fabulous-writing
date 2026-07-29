@@ -3380,3 +3380,47 @@ constraints are restated. No parallel backlog doc.
 
 **Next**: owner picks from the issue backlog — B5+B7 (#38 + #39) remain the
 natural first pair; B6 (#40) follows and expects a full spec section.
+
+## 2026-07-29 — B5+B7: ledger failure classification + real token usage (PR #45)
+
+Implemented the combined B5 (#38) + B7 (#39) backend follow-up per the
+spec/plan merged in PR #44, executed as six task-reviewed commits plus a
+final-review fix wave on `b5-b7-ledger-telemetry-impl`.
+
+**B5.** `llm_usage` gained `fail_stage` (`'request'|'provider'|'response'`)
+and `fail_detail`, written only on the failed path — the store nulls both
+for any other status by construction and enforces the enum in code (the
+fresh-schema CHECK is interpolated from the same `_FAIL_STAGES` tuple;
+migrated DBs get the columns via `migrate_columns`). A central
+`classify_failure` in `llm_gate.py` maps exceptions to stages (httpx
+transport / missing-key / 401-403 / botocore credential-class names →
+`'request'`; JSON decode + the new `UnparseableResponseError` →
+`'response'`; everything else `'provider'` with the class preserved) and
+never raises. The checks-path hole closed: garbage LLM output now settles
+`failed`/`'response'` instead of `'completed'` with zero findings, while a
+valid empty envelope stays a success. `fail_detail` carries metadata only
+(class, status, 200 whitespace-collapsed chars) — never document text;
+guardrail mutation-verified.
+
+**B7.** `LLMProvider.generate` returns `GenerationResult(text, usage:
+TokenUsage)` across all five implementations; `None` means "not reported",
+never 0, and absent telemetry is never an error. Real extraction: Ollama
+(`prompt_eval_count`/`eval_count`, final done-object), OpenAI-compat
+(`usage.*`; `stream_options: include_usage` only for built-in
+openai/mistral), Claude (`response.usage`, `message_start`/`message_delta`),
+Bedrock (Converse `usage`, streaming `metadata`, last-wins). All three call
+sites settle real counts; checks keep the progress approximation as output
+fallback only when the provider reported nothing, and an unparseable
+response still settles the usage its `generate()` burned (carried on the
+exception).
+
+**Gates.** Backend `uv run pytest -q` → 1,125 passed (1,091 → 1,125),
+zero warnings; 34 new tests incl. migration round-trip, per-provider
+streaming/non-streaming extraction, the classifier unit table, and
+endpoint settling with precedence pinning. Four guard families
+mutation-verified. Frontend untouched. Final whole-branch review (Opus):
+0 Critical, 1 Important (fail-stage enum single-sourcing) — fixed with
+five bundled minors in the fix-wave commit, scoped re-review clean.
+
+**Next**: PR #45 through Copilot review and owner merge; then #38/#39 →
+Done and B6 (#40, credit budgeting) becomes unblocked on the B7 protocol.
