@@ -2,6 +2,7 @@ import json
 from typing import Any
 
 import httpx
+import pytest
 
 from app.checkers.llm.claude import ClaudeProvider
 from app.checkers.llm.ollama import OllamaProvider
@@ -24,7 +25,7 @@ class TestOllamaProvider:
         )
         result = await provider.generate("system prompt", "user prompt")
 
-        assert result == "[]"
+        assert result.text == "[]"
         assert seen["url"] == "http://ollama.test/api/chat"
         assert seen["body"]["model"] == "llama3.1"
         assert seen["body"]["stream"] is False
@@ -99,12 +100,20 @@ class TestClaudeProvider:
         provider = ClaudeProvider(model="claude-sonnet-5", client=stub)
         result = await provider.generate("system prompt", "user prompt")
 
-        assert result == "[]"
+        assert result.text == "[]"
         assert stub.messages.kwargs["model"] == "claude-sonnet-5"
         assert stub.messages.kwargs["system"] == "system prompt"
         assert stub.messages.kwargs["messages"] == [
             {"role": "user", "content": "user prompt"}
         ]
+
+    async def test_missing_api_key_raises_clear_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        provider = ClaudeProvider(model="claude-sonnet-5")
+        with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+            await provider.generate("s", "u")
 
 
 class TestOllamaStreaming:
@@ -127,7 +136,7 @@ class TestOllamaStreaming:
         )
         progress: list[int] = []
         result = await provider.generate("s", "u", on_progress=progress.append)
-        assert result == '["a"]'
+        assert result.text == '["a"]'
         assert progress == [1, 2, 3]
 
 
@@ -172,5 +181,5 @@ class TestClaudeStreaming:
         provider = ClaudeProvider(model="claude-sonnet-5", client=Client())
         progress: list[int] = []
         result = await provider.generate("s", "u", on_progress=progress.append)
-        assert result == "[]"
+        assert result.text == "[]"
         assert progress == [7, 12]

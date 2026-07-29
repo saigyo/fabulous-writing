@@ -114,7 +114,7 @@ class LLMChecker:
         instructions: str = "",
     ) -> "LLMCheckResult":
         system, user = build_prompt(text, language, instructions=instructions)
-        response = await self.provider.generate(system, user, on_progress)
+        response = (await self.provider.generate(system, user, on_progress)).text
         raw_findings, scorecard = parse_response(response)
         findings: list[Finding] = []
         for raw in raw_findings:

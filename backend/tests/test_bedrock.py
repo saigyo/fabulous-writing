@@ -29,7 +29,7 @@ class TestBedrockProvider:
 
         result = await provider.generate("system prompt", "user prompt")
 
-        assert result == "[]"
+        assert result.text == "[]"
         assert client.kwargs["modelId"] == "eu.anthropic.claude-sonnet-4-5"
         assert client.kwargs["system"] == [{"text": "system prompt"}]
         assert client.kwargs["messages"] == [
@@ -53,6 +53,6 @@ class TestBedrockProvider:
         # queued when generate() returns (flaked on slow CI runners).
         await asyncio.sleep(0)
 
-        assert result == "[]"
+        assert result.text == "[]"
         assert progress[-1] == 5
         assert progress[:-1] == [1, 2]

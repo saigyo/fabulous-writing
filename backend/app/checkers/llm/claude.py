@@ -1,6 +1,6 @@
 from typing import Any
 
-from .provider import ProgressCallback
+from .provider import GenerationResult, MissingApiKeyError, ProgressCallback, TokenUsage
 
 
 class ClaudeProvider:
@@ -18,6 +18,13 @@ class ClaudeProvider:
 
     def _get_client(self) -> Any:
         if self._client is None:
+            import os
+
+            if not os.environ.get("ANTHROPIC_API_KEY"):
+                raise MissingApiKeyError(
+                    "No API key for provider 'claude' — "
+                    "set the ANTHROPIC_API_KEY environment variable."
+                )
             from anthropic import AsyncAnthropic
 
             self._client = AsyncAnthropic()
@@ -25,7 +32,7 @@ class ClaudeProvider:
 
     async def generate(
         self, system: str, user: str, on_progress: ProgressCallback | None = None
-    ) -> str:
+    ) -> GenerationResult:
         kwargs: dict[str, Any] = dict(
             model=self.model,
             max_tokens=4096,
@@ -35,9 +42,10 @@ class ClaudeProvider:
         if on_progress is not None:
             return await self._generate_streaming(kwargs, on_progress)
         response = await self._get_client().messages.create(**kwargs)
-        return "".join(
+        text = "".join(
             block.text for block in response.content if block.type == "text"
         )
+        return GenerationResult(text=text, usage=TokenUsage())
 
     async def list_models(self) -> list[str]:
         # Anthropic lists newest first; keep that order (unlike the sorted
@@ -47,7 +55,7 @@ class ClaudeProvider:
 
     async def _generate_streaming(
         self, kwargs: dict[str, Any], on_progress: ProgressCallback
-    ) -> str:
+    ) -> GenerationResult:
         parts: list[str] = []
         stream = await self._get_client().messages.create(**kwargs, stream=True)
         async for event in stream:
@@ -55,4 +63,4 @@ class ClaudeProvider:
                 parts.append(event.delta.text)
             elif event.type == "message_delta":
                 on_progress(event.usage.output_tokens)
-        return "".join(parts)
+        return GenerationResult(text="".join(parts), usage=TokenUsage())

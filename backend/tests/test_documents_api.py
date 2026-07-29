@@ -108,7 +108,7 @@ def test_delete(authed_client):
     assert authed_client.delete(f"/api/documents/{doc['id']}").status_code == 404
 
 
-from app.checkers.llm.provider import FakeProvider
+from app.checkers.llm.provider import FakeProvider, GenerationResult, TokenUsage
 
 
 def with_provider(authed_client: TestClient, response: str | None) -> None:
@@ -167,11 +167,11 @@ class RenamingProvider:
         self.document_id = document_id
         self.response = response
 
-    async def generate(self, system, user, on_progress=None) -> str:
+    async def generate(self, system, user, on_progress=None) -> GenerationResult:
         self.store.update_document(
             self.document_id, 0, owner_id=1, name="User Renamed", name_source="user"
         )
-        return self.response
+        return GenerationResult(text=self.response, usage=TokenUsage())
 
 
 def test_generate_name_toctou_user_rename_wins(authed_client):

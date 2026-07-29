@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
-from app.checkers.llm.provider import FakeProvider, LLMProvider
+from app.checkers.llm.provider import FakeProvider, GenerationResult, LLMProvider, TokenUsage
 from app.core.config import LimitsSettings, NlpSettings, Settings, TierLimitsSettings
 from app.main import create_app
 from tests.conftest import auth_headers, second_user_headers
@@ -199,9 +199,9 @@ class RecordingProvider:
     def __init__(self) -> None:
         self.last_system: str | None = None
 
-    async def generate(self, system, user, on_progress=None) -> str:
+    async def generate(self, system, user, on_progress=None) -> GenerationResult:
         self.last_system = system
-        return "[]"
+        return GenerationResult(text="[]", usage=TokenUsage())
 
 
 @pytest.fixture()

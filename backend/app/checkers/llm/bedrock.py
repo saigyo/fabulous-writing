@@ -1,7 +1,7 @@
 import asyncio
 from typing import Any
 
-from .provider import ProgressCallback
+from .provider import GenerationResult, ProgressCallback, TokenUsage
 
 
 def credentials_available() -> bool:
@@ -75,7 +75,7 @@ class BedrockProvider:
 
     async def generate(
         self, system: str, user: str, on_progress: ProgressCallback | None = None
-    ) -> str:
+    ) -> GenerationResult:
         kwargs = self._converse_kwargs(system, user)
         if on_progress is not None:
             loop = asyncio.get_running_loop()
@@ -86,9 +86,12 @@ class BedrockProvider:
             return await asyncio.to_thread(self._stream_sync, kwargs, report)
         response = await asyncio.to_thread(lambda: self._get_client().converse(**kwargs))
         blocks = response["output"]["message"]["content"]
-        return "".join(block.get("text", "") for block in blocks)
+        text = "".join(block.get("text", "") for block in blocks)
+        return GenerationResult(text=text, usage=TokenUsage())
 
-    def _stream_sync(self, kwargs: dict[str, Any], report: ProgressCallback) -> str:
+    def _stream_sync(
+        self, kwargs: dict[str, Any], report: ProgressCallback
+    ) -> GenerationResult:
         parts: list[str] = []
         response = self._get_client().converse_stream(**kwargs)
         for event in response["stream"]:
@@ -101,4 +104,4 @@ class BedrockProvider:
                 tokens = event["metadata"].get("usage", {}).get("outputTokens")
                 if tokens is not None:
                     report(tokens)
-        return "".join(parts)
+        return GenerationResult(text="".join(parts), usage=TokenUsage())

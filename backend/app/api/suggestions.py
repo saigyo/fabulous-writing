@@ -106,7 +106,7 @@ async def create_suggestions(
     # not 'completed', before its error response propagates.
     status = "completed"
     try:
-        response = await provider.generate(system, prompt)
+        response = (await provider.generate(system, prompt)).text
         items = extract_json_array(response)
         if items is None:
             status = "failed"

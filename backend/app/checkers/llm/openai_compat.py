@@ -4,6 +4,7 @@ from collections.abc import Iterable
 import httpx
 
 from ._http_chat import HttpChatProvider, StreamEvent
+from .provider import MissingApiKeyError
 
 
 class OpenAICompatProvider(HttpChatProvider):
@@ -33,7 +34,7 @@ class OpenAICompatProvider(HttpChatProvider):
 
     def _client(self) -> httpx.AsyncClient:
         if not self.api_key:
-            raise RuntimeError(
+            raise MissingApiKeyError(
                 f"No API key for provider '{self.name}' — "
                 f"set the {self.name.upper()}_API_KEY environment variable."
             )
