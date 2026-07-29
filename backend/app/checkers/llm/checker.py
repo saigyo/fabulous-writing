@@ -10,7 +10,7 @@ from app.core.models import Category, Finding, Language, Scorecard, Severity, So
 
 from .anchoring import anchor
 from .prompts import build_prompt
-from .provider import LLMProvider, ProgressCallback
+from .provider import LLMProvider, ProgressCallback, TokenUsage
 from .vetting import split_advice, vet_candidates
 
 _CODE_FENCE = re.compile(r"^```[a-z]*\s*|\s*```$", re.MULTILINE)
@@ -22,6 +22,8 @@ class UnparseableResponseError(Exception):
 
     The message carries only the response length, never the text itself:
     it feeds the ledger's fail_detail, which stores metadata only."""
+
+    usage: "TokenUsage | None" = None
 
     def __init__(self, response_chars: int) -> None:
         super().__init__(
@@ -136,6 +138,7 @@ def parse_findings(response: str) -> list[RawFinding]:
 class LLMCheckResult:
     findings: list[Finding]
     scorecard: Scorecard | None
+    usage: TokenUsage = TokenUsage()
 
 
 class LLMChecker:
@@ -157,8 +160,16 @@ class LLMChecker:
         instructions: str = "",
     ) -> "LLMCheckResult":
         system, user = build_prompt(text, language, instructions=instructions)
-        response = (await self.provider.generate(system, user, on_progress)).text
-        raw_findings, scorecard = parse_response(response)
+        result = await self.provider.generate(system, user, on_progress)
+        try:
+            raw_findings, scorecard = parse_response(result.text)
+        except UnparseableResponseError as exc:
+            # generate() succeeded and burned real tokens before the parse
+            # failed — carry the usage out with the exception so the ledger
+            # can still settle exact counts on this failed run (spec §3.3:
+            # "whatever usage was obtained before the failure").
+            exc.usage = result.usage
+            raise
         findings: list[Finding] = []
         for raw in raw_findings:
             span = anchor(text, raw.quote, raw.context_before)
@@ -188,4 +199,4 @@ class LLMChecker:
                 )
             )
         findings.sort(key=lambda f: (f.span.start, f.span.end))
-        return LLMCheckResult(findings=findings, scorecard=scorecard)
+        return LLMCheckResult(findings=findings, scorecard=scorecard, usage=result.usage)

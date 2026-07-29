@@ -7,9 +7,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, get_current_user
-from app.api.llm_gate import get_effective_provider
+from app.api.llm_gate import classify_failure, get_effective_provider
 from app.api.validation import validate_name
 from app.checkers.llm.prompts import build_title_prompt
+from app.checkers.llm.provider import TokenUsage
 from app.core.models import Language
 from app.core.permissions import RequestedLLM
 from app.services.documents import (
@@ -252,9 +253,14 @@ async def generate_name(
             if provider is not None:
                 assert reservation is not None
                 name_status = "completed"
+                usage = TokenUsage()
+                fail_stage: str | None = None
+                fail_detail: str | None = None
                 try:
                     system, prompt = build_title_prompt(document.text, document.language)
-                    title = clean_title((await provider.generate(system, prompt)).text)
+                    result = await provider.generate(system, prompt)
+                    usage = result.usage
+                    title = clean_title(result.text)
                     if title is None:
                         # The provider call succeeded but produced nothing
                         # usable -- a burned-token run with no value, just
@@ -262,14 +268,23 @@ async def generate_name(
                         # The silent local fallback below is unaffected;
                         # only the ledger's own status changes.
                         name_status = "failed"
+                        fail_stage = "response"
+                        fail_detail = "title generation produced no usable title"
                 except asyncio.CancelledError:
                     name_status = "cancelled"
                     raise
-                except Exception:
+                except Exception as exc:
                     name_status = "failed"
+                    fail_stage, fail_detail = classify_failure(exc)
                     raise
                 finally:
-                    reservation.finish(name_status)
+                    reservation.finish(
+                        name_status,
+                        input_tokens=usage.input_tokens,
+                        output_tokens=usage.output_tokens,
+                        fail_stage=fail_stage,
+                        fail_detail=fail_detail,
+                    )
         except HTTPException:
             # The gate's own 429 (concurrency cap) applies to every LLM-
             # invoking endpoint alike (spec §7.2) and must propagate, not be

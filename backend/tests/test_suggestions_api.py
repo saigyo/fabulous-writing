@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.checkers.llm.prompts import build_rewrite_prompt, build_suggestion_prompt
-from app.checkers.llm.provider import FakeProvider, LLMProvider
+from app.checkers.llm.provider import FakeProvider, LLMProvider, TokenUsage
 from app.core.config import LimitsSettings, Settings, TierLimitsSettings
 from app.core.models import Language
 from app.main import create_app
@@ -436,7 +436,8 @@ class TestSuggestionsMetering:
         settings = Settings(db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules")
         app = create_app(settings)
         app.state.provider_factory = lambda name=None, model=None: FakeProvider(
-            json.dumps(["excellent"])
+            json.dumps(["excellent"]),
+            usage=TokenUsage(input_tokens=40, output_tokens=6),
         )
         client = TestClient(app)
         client.headers.update(auth_headers(client))
@@ -451,6 +452,10 @@ class TestSuggestionsMetering:
         assert row["status"] == "completed"
         assert isinstance(row["run_id"], str) and row["run_id"]
         assert row["text_chars"] == len(TEXT)
+        assert row["input_tokens"] == 40
+        assert row["output_tokens"] == 6
+        assert row["fail_stage"] is None
+        assert row["fail_detail"] is None
 
     def test_unparseable_response_writes_failed_and_returns_502(self, tmp_path: Path) -> None:
         # A response the provider actually returned still burns tokens even
@@ -471,6 +476,8 @@ class TestSuggestionsMetering:
         rows = _read_usage_rows(settings.db_path)
         assert len(rows) == 1
         assert rows[0]["status"] == "failed"
+        assert rows[0]["fail_stage"] == "response"
+        assert rows[0]["fail_detail"] == "LLM response contained no JSON array"
 
     def test_provider_failure_writes_failed_and_returns_502(self, tmp_path: Path) -> None:
         class BrokenProvider:
@@ -491,6 +498,8 @@ class TestSuggestionsMetering:
         rows = _read_usage_rows(settings.db_path)
         assert len(rows) == 1
         assert rows[0]["status"] == "failed"  # a burned run still spends quota
+        assert rows[0]["fail_stage"] == "provider"
+        assert rows[0]["fail_detail"] == "RuntimeError: model exploded"
 
     def test_vetting_crash_writes_failed_and_returns_5xx(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

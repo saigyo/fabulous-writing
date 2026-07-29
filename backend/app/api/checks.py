@@ -8,9 +8,14 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, get_current_user
-from app.api.llm_gate import LlmReservation, effective_llm_report, get_effective_provider
-from app.checkers.llm.checker import LLMChecker
-from app.checkers.llm.provider import LLMProvider
+from app.api.llm_gate import (
+    LlmReservation,
+    classify_failure,
+    effective_llm_report,
+    get_effective_provider,
+)
+from app.checkers.llm.checker import LLMChecker, UnparseableResponseError
+from app.checkers.llm.provider import LLMProvider, TokenUsage
 from app.checkers.pipeline import drop_duplicates
 from app.checkers.rules.engine import RuleConfig
 from app.checkers.terminology import TerminologyChecker
@@ -178,11 +183,15 @@ async def _run_llm(
     # 900s sweep is the backstop for a reservation that never got settled,
     # but a client must never hang waiting for `done`.
     status = "completed"
+    usage = TokenUsage()
+    fail_stage: str | None = None
+    fail_detail: str | None = None
     try:
         checker = LLMChecker(provider, vet=vet, dictionaries_dir=dictionaries_dir)
         result = await checker.check(
             text, language, on_progress=on_progress, instructions=instructions
         )
+        usage = result.usage
         job.add_findings("llm", drop_duplicates(result.findings, job.findings))
         if result.scorecard is not None:
             job.set_scorecard(result.scorecard)
@@ -191,13 +200,27 @@ async def _run_llm(
         raise
     except Exception as exc:
         status = "failed"
+        fail_stage, fail_detail = classify_failure(exc)
+        # An unparseable response carries the usage generate() already
+        # obtained (see LLMChecker.check) — settle those real counts.
+        if isinstance(exc, UnparseableResponseError) and exc.usage is not None:
+            usage = exc.usage
         error = str(exc) or type(exc).__name__
         logger.warning("llm check failed (provider %s): %s", provider.name, error)
         job.emit("checker_error", {"checker": "llm", "error": error})
     finally:
         try:
+            # Real counts when the provider reported them; the progress
+            # approximation remains the output fallback (spec §3.3).
+            output_tokens = usage.output_tokens
+            if output_tokens is None and latest_tokens > 0:
+                output_tokens = latest_tokens
             reservation.finish(
-                status, output_tokens=latest_tokens if latest_tokens > 0 else None
+                status,
+                input_tokens=usage.input_tokens,
+                output_tokens=output_tokens,
+                fail_stage=fail_stage,
+                fail_detail=fail_detail,
             )
         except Exception:
             logger.exception("ledger settle failed for run %s; 900s sweep will reclaim it", job.id)

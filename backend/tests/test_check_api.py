@@ -911,6 +911,74 @@ class TestCheckMetering:
         rows = _read_usage_rows(settings.db_path)
         assert len(rows) == 1
         assert rows[0]["status"] == "failed"
+        assert rows[0]["fail_stage"] == "provider"
+        assert rows[0]["fail_detail"] == "RuntimeError: model exploded"
+
+    def test_completed_run_settles_provider_usage(self, tmp_path: Path) -> None:
+        # progress_steps make the approximation (41) available, so this
+        # pins that reported usage WINS over the approximation (spec §3.3) —
+        # without them, an inverted precedence would still pass.
+        provider = FakeProvider(
+            LLM_RESPONSE, progress_steps=[5, 40, 41],
+            usage=TokenUsage(input_tokens=100, output_tokens=20),
+        )
+        with make_client(tmp_path, provider) as client:
+            post = client.post(
+                "/api/checks",
+                json={"text": "This is very nice.", "language": "en",
+                      "checkers": ["llm"]},
+            )
+            check_id = post.json()["check_id"]
+            with client.stream("GET", f"/api/checks/{check_id}/events") as stream:
+                _read_sse_events(stream)
+        (row,) = _read_usage_rows(tmp_path / "test.db")
+        assert row["status"] == "completed"
+        assert row["input_tokens"] == 100
+        assert row["output_tokens"] == 20  # reported count, not the 41 approximation
+        assert row["fail_stage"] is None
+        assert row["fail_detail"] is None
+
+    def test_unparseable_response_is_response_stage_failure(self, tmp_path: Path) -> None:
+        # Spec §4.4: garbage output no longer settles 'completed' with zero
+        # findings; the detail records length metadata, never the text —
+        # and the usage generate() already burned still settles (spec §3.3).
+        provider = FakeProvider(
+            "I could not find any issues worth reporting.",
+            usage=TokenUsage(input_tokens=90, output_tokens=15),
+        )
+        with make_client(tmp_path, provider) as client:
+            post = client.post(
+                "/api/checks",
+                json={"text": "This is very nice.", "language": "en",
+                      "checkers": ["llm"]},
+            )
+            check_id = post.json()["check_id"]
+            with client.stream("GET", f"/api/checks/{check_id}/events") as stream:
+                events = _read_sse_events(stream)
+            assert any(name == "checker_error" for name, _ in events)
+        (row,) = _read_usage_rows(tmp_path / "test.db")
+        assert row["status"] == "failed"
+        assert row["fail_stage"] == "response"
+        assert "UnparseableResponseError" in row["fail_detail"]
+        assert "could not find" not in row["fail_detail"]  # guardrail
+        assert row["input_tokens"] == 90   # usage survives the parse failure
+        assert row["output_tokens"] == 15
+
+    def test_empty_findings_envelope_still_completes(self, tmp_path: Path) -> None:
+        with make_client(tmp_path, FakeProvider('{"findings": []}')) as client:
+            post = client.post(
+                "/api/checks",
+                json={"text": "This is very nice.", "language": "en",
+                      "checkers": ["llm"]},
+            )
+            check_id = post.json()["check_id"]
+            with client.stream("GET", f"/api/checks/{check_id}/events") as stream:
+                _read_sse_events(stream)
+            final = client.get(f"/api/checks/{check_id}").json()
+            assert final["findings"] == []
+        (row,) = _read_usage_rows(tmp_path / "test.db")
+        assert row["status"] == "completed"
+        assert row["fail_stage"] is None
 
     def test_quota_exhausted_degrades_with_skip_code(self, tmp_path: Path) -> None:
         settings = Settings(
