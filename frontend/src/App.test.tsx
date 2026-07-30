@@ -241,7 +241,9 @@ describe('Header quota indicator', () => {
     render(<Header />)
     await waitFor(() => expect(getProfiles).toHaveBeenCalled())
 
-    expect(screen.queryByTitle(en.quotaIndicatorTitle)).toBeNull()
+    // `title` is the per-window breakdown, never en.quotaIndicatorTitle
+    // verbatim (Task 6) -- match the aria-label, which does start with it.
+    expect(screen.queryByLabelText(new RegExp(en.quotaIndicatorTitle))).toBeNull()
   })
 
   it('is absent when logged out', async () => {
@@ -250,6 +252,6 @@ describe('Header quota indicator', () => {
     render(<Header />)
     await waitFor(() => expect(getProfiles).toHaveBeenCalled())
 
-    expect(screen.queryByTitle(en.quotaIndicatorTitle)).toBeNull()
+    expect(screen.queryByLabelText(new RegExp(en.quotaIndicatorTitle))).toBeNull()
   })
 })
