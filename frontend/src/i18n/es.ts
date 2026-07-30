@@ -75,11 +75,15 @@ export const es: Messages = {
   llmNotIncluded: 'La verificación LLM no está incluida en el plan actual.',
   llmSkippedServer: 'Verificación LLM omitida: no disponible en el servidor.',
   serverBusy: 'Servidor ocupado; vuelva a intentarlo en unos instantes.',
-  llmQuotaExhausted: (limit) =>
-    `Cuota diaria de comprobaciones LLM agotada (${limit}). Se restablece a medianoche (UTC).`,
+  llmQuotaExhausted:
+    'Presupuesto LLM agotado. La capacidad se libera al finalizar el período actual.',
   llmDocumentTooLarge: (limit) =>
     `El texto supera el límite LLM de ${limit.toLocaleString('es-ES')} caracteres.`,
-  quotaIndicatorTitle: 'Comprobaciones LLM utilizadas hoy',
+  quotaIndicatorTitle: 'Presupuesto LLM utilizado',
+  windowName: (window) =>
+    ({ hour: 'hora', day: 'día', week: 'semana', month: 'mes' } as Record<string, string>)[
+      window
+    ] ?? window,
   charCount: (n) => `${n.toLocaleString('es-ES')} caracteres`,
   charCountOverLlm: 'por encima del límite LLM',
   charCountOverDoc: 'por encima del límite del documento',

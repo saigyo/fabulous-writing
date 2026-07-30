@@ -6,7 +6,7 @@ const user = (over: object) => ({
   id: 1, email: 'u@example.com', display_name: null, tier: 'basic',
   is_admin: false,
   policy: { llm: { tiers: null, providers: null, models: null }, features: [] },
-  usage: { used_today: 20, limit: 20 },
+  usage: { label: 'Basic', windows: [{ window: 'day', used_percent: 100 }] },
   limits: { max_document_chars: 200000, max_llm_document_chars: 20000,
             concurrent_llm_runs: 3 },
   allow_additional_admins: false,
@@ -14,9 +14,9 @@ const user = (over: object) => ({
 })
 
 describe('skipNoticeText', () => {
-  it('maps quota_exhausted with the caller limit', () => {
+  it('maps quota_exhausted to the plain exhausted-budget copy', () => {
     expect(skipNoticeText('quota_exhausted', user({}), messages)).toBe(
-      messages.llmQuotaExhausted(20),
+      messages.llmQuotaExhausted,
     )
   })
   it('maps document_too_large with the LLM char limit', () => {

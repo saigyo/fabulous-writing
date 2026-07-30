@@ -44,7 +44,7 @@ function user(policy: MeResponse['policy']): MeResponse {
     tier: 'basic',
     is_admin: false,
     policy,
-    usage: { used_today: 0, limit: 500 },
+    usage: { label: 'Basic', windows: [{ window: 'day', used_percent: 0 }] },
     limits: {
       max_document_chars: 200000,
       max_llm_document_chars: 200000,
@@ -255,7 +255,7 @@ describe('fetchSuggestions', () => {
     expect(useStore.getState().suggestErrors.f1).toBeTruthy()
   })
 
-  it('maps a quota_exhausted skip to the shared notice, with the caller limit', async () => {
+  it('maps a quota_exhausted skip to the shared notice', async () => {
     useStore.setState({ user: user(RESTRICTED) })
     vi.mocked(postSuggestions).mockResolvedValue({
       suggestions: [],
@@ -269,9 +269,7 @@ describe('fetchSuggestions', () => {
 
     await fetchSuggestions('f1')
 
-    expect(useStore.getState().suggestErrors.f1).toBe(
-      messages.llmQuotaExhausted(user(RESTRICTED).usage.limit),
-    )
+    expect(useStore.getState().suggestErrors.f1).toBe(messages.llmQuotaExhausted)
   })
 
   it('maps a 429 rejection to serverBusy', async () => {

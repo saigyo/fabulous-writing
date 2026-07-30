@@ -59,7 +59,7 @@ function user(overrides: Partial<MeResponse> = {}): MeResponse {
     tier: 'basic',
     is_admin: false,
     policy: { llm: { tiers: null, providers: null, models: null }, features: [] },
-    usage: { used_today: 0, limit: 500 },
+    usage: { label: 'Basic', windows: [{ window: 'day', used_percent: 0 }] },
     limits: {
       max_document_chars: 200000,
       max_llm_document_chars: 200000,
@@ -195,19 +195,44 @@ describe('Header LLM-phase gating', () => {
 })
 
 describe('Header quota indicator', () => {
-  it('shows the usage/limit text for a signed-in user, with the quota indicator title', async () => {
+  it('shows the tier label and used percent, with the per-window breakdown as title', async () => {
     vi.mocked(getProfiles).mockResolvedValue([])
-    useStore.setState({ user: user({ usage: { used_today: 0, limit: 20 } }) })
+    useStore.setState({
+      user: user({ usage: { label: 'Basic', windows: [{ window: 'day', used_percent: 0 }] } }),
+    })
     render(<Header />)
     await waitFor(() => expect(getProfiles).toHaveBeenCalled())
 
-    const indicator = screen.getByText('0/20')
-    expect(indicator.getAttribute('title')).toBe(en.quotaIndicatorTitle)
+    const indicator = screen.getByText('Basic · 0%')
+    expect(indicator.getAttribute('title')).toBe(`${en.windowName('day')}: 0%`)
     // A `title` attribute alone is not exposed as an accessible name on a
     // non-focusable span -- assistive tech needs aria-label too.
     expect(
-      screen.getByLabelText(`${en.quotaIndicatorTitle}: 0/20`),
+      screen.getByLabelText(`${en.quotaIndicatorTitle}: Basic · ${en.windowName('day')}: 0%`),
     ).toBe(indicator)
+  })
+
+  it('shows the tier label and the tightest window percentage', async () => {
+    vi.mocked(getProfiles).mockResolvedValue([])
+    useStore.setState({
+      user: user({
+        usage: {
+          label: 'Basic',
+          windows: [
+            { window: 'day', used_percent: 30 },
+            { window: 'month', used_percent: 70 },
+          ],
+        },
+      }),
+    })
+    render(<Header />)
+    await waitFor(() => expect(getProfiles).toHaveBeenCalled())
+
+    const indicator = screen.getByText('Basic · 70%')
+    expect(indicator.getAttribute('title')).toContain(`${en.windowName('day')}: 30%`)
+    expect(indicator.getAttribute('title')).toContain(`${en.windowName('month')}: 70%`)
+    expect(indicator.getAttribute('aria-label')).toContain(`${en.windowName('day')}: 30%`)
+    expect(indicator.getAttribute('aria-label')).toContain(`${en.windowName('month')}: 70%`)
   })
 
   it('is absent for a floor-policy user (llmDisabled)', async () => {

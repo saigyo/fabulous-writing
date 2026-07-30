@@ -140,7 +140,7 @@
   background: var(--accent-soft);
 }
 
-/* Today's LLM usage vs. the daily cap — muted and out of the way, not a
+/* Tier label + tightest usage window — muted and out of the way, not a
    warning; it only tells the story once a note or a skip does that job. */
 .quota-indicator {
   font-size: 0.8rem;

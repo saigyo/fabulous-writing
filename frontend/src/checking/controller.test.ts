@@ -39,7 +39,7 @@ function user(policy: MeResponse['policy']): MeResponse {
     tier: 'basic',
     is_admin: false,
     policy,
-    usage: { used_today: 0, limit: 500 },
+    usage: { label: 'Basic', windows: [{ window: 'day', used_percent: 0 }] },
     limits: {
       max_document_chars: 200000,
       max_llm_document_chars: 200000,
@@ -393,7 +393,7 @@ describe('check controller', () => {
     'subscription is torn down (cancelCheck) before done ever fires', async () => {
     // The ledger row for an admitted run is inserted at ADMISSION, inside
     // postCheck's own request/response cycle — status 'running' here is
-    // exactly that: a real reservation, already reflected in used_today.
+    // exactly that: a real reservation, already reflected in the usage windows.
     vi.mocked(postCheck).mockResolvedValue({
       check_id: 'c1',
       status: 'running',

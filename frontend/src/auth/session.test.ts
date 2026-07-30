@@ -43,7 +43,7 @@ function user(id: number, overrides: Partial<MeResponse> = {}): MeResponse {
     tier: 'basic',
     is_admin: false,
     policy: { llm: { tiers: null, providers: null, models: null }, features: [] },
-    usage: { used_today: 0, limit: 500 },
+    usage: { label: 'Basic', windows: [{ window: 'day', used_percent: 0 }] },
     limits: {
       max_document_chars: 200000,
       max_llm_document_chars: 200000,
@@ -354,11 +354,15 @@ describe('refreshUser', () => {
 
   it('commits the fresh user under the same token on a clean round trip', async () => {
     useStore.setState({ token: 'tok', user: user(1), authStatus: 'authenticated' })
-    vi.mocked(getMe).mockResolvedValue(user(1, { usage: { used_today: 5, limit: 500 } }))
+    vi.mocked(getMe).mockResolvedValue(
+      user(1, { usage: { label: 'Basic', windows: [{ window: 'day', used_percent: 1 }] } }),
+    )
     await refreshUser()
     const state = useStore.getState()
     expect(state.token).toBe('tok')
-    expect(state.user).toEqual(user(1, { usage: { used_today: 5, limit: 500 } }))
+    expect(state.user).toEqual(
+      user(1, { usage: { label: 'Basic', windows: [{ window: 'day', used_percent: 1 }] } }),
+    )
   })
 
   it('drops the response when logout() runs while getMe() is in flight', async () => {
@@ -417,7 +421,7 @@ describe('refreshUser', () => {
   it('keeps the newer of two overlapping refreshes even when the older one resolves last', async () => {
     // Two LLM completions can each trigger their own refreshUser() call; both
     // pass the generation/token guards untouched, so without the seq counter
-    // the older response landing last would regress used_today back down.
+    // the older response landing last would regress the usage windows back down.
     useStore.setState({ token: 'tok', user: user(1), authStatus: 'authenticated' })
     let resolveFirst!: (u: MeResponse) => void
     let resolveSecond!: (u: MeResponse) => void
@@ -438,15 +442,19 @@ describe('refreshUser', () => {
     const first = refreshUser()
     const second = refreshUser()
 
-    // The second (newer) refresh resolves first, with the higher used_today.
-    resolveSecond(user(1, { usage: { used_today: 20, limit: 500 } }))
+    // The second (newer) refresh resolves first, with the higher used_percent.
+    resolveSecond(
+      user(1, { usage: { label: 'Basic', windows: [{ window: 'day', used_percent: 4 }] } }),
+    )
     await second
     // The first (older) refresh resolves last, with stale, lower data.
-    resolveFirst(user(1, { usage: { used_today: 5, limit: 500 } }))
+    resolveFirst(
+      user(1, { usage: { label: 'Basic', windows: [{ window: 'day', used_percent: 1 }] } }),
+    )
     await first
 
     expect(useStore.getState().user).toEqual(
-      user(1, { usage: { used_today: 20, limit: 500 } }),
+      user(1, { usage: { label: 'Basic', windows: [{ window: 'day', used_percent: 4 }] } }),
     )
   })
 })

@@ -41,7 +41,7 @@ function user(overrides: Partial<MeResponse> = {}): MeResponse {
     tier: 'basic',
     is_admin: false,
     policy: { llm: { tiers: null, providers: null, models: null }, features: [] },
-    usage: { used_today: 0, limit: 500 },
+    usage: { label: 'Basic', windows: [{ window: 'day', used_percent: 0 }] },
     limits: {
       max_document_chars: 200000,
       max_llm_document_chars: 200000,

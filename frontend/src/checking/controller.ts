@@ -152,12 +152,12 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
     return
   }
 
-  // used_today is status-blind (spec §7.1): reserve_llm_run() inserts the
-  // ledger row at ADMISSION time — inside this very request/response cycle —
-  // and used_today counts every row for the day regardless of status, so the
-  // count already changed the moment postCheck() resolved, never later at
-  // completion. `effective_llm` present with no skipped code is exactly
-  // "this POST admitted an LLM run" (a skip never takes a reservation,
+  // The usage windows are status-blind (spec §7.1): reserve_llm_run() inserts
+  // the ledger row at ADMISSION time — inside this very request/response
+  // cycle — and each window counts every row for its period regardless of
+  // status, so the count already changed the moment postCheck() resolved,
+  // never later at completion. `effective_llm` present with no skipped code
+  // is exactly "this POST admitted an LLM run" (a skip never takes a reservation,
   // matching the never-refresh-on-skip rule elsewhere — see
   // checking/suggest.ts's 429 branches, which skip the refresh for the same
   // reason: no ledger row was written, so a refresh there would just be

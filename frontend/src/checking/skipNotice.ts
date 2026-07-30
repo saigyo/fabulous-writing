@@ -14,7 +14,7 @@ export function skipNoticeText(
 ): string | null {
   switch (code) {
     case 'quota_exhausted':
-      return m.llmQuotaExhausted(user?.usage.limit ?? 0)
+      return m.llmQuotaExhausted
     case 'document_too_large':
       return m.llmDocumentTooLarge(user?.limits.max_llm_document_chars ?? 0)
     case 'llm_unavailable':
