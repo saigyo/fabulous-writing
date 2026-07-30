@@ -3471,3 +3471,15 @@ must swap the counter for credit windows (local `config.yaml` converted;
 `config.example.yaml` documents it).
 
 **Next**: PR #47 through Copilot review and owner merge; then #40 → Done.
+
+## 2026-07-30 — B10: usage indicator hung below the header buttons (PR #49)
+
+Frontend-only follow-up to B6 (#48): the `Label · N%` quota indicator
+moves out of the header control row into a compact second-line caption
+below the Check and account-menu buttons, right-aligned — absolutely
+positioned off `.header-controls` at `0.72rem`, the same recipe as the
+resolved-model caption below the LLM selector, so header height and the
+control row's horizontal budget are untouched. Content, tooltip,
+aria-label, and hide conditions unchanged; the account-menu popover
+(z-index 20, opaque) overlays the caption when open. 507 frontend tests
+green + clean build; `docs/frontend-architecture.md` updated.
