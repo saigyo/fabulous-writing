@@ -134,6 +134,12 @@ class TestRounding:
     def test_zero_tokens_cost_zero(self):
         assert cost(input_tokens=0, output_tokens=0) == 0
 
+    def test_float_factor_does_not_phantom_round_up(self):
+        # 1.1 * 100 is 110.00000000000001 in binary floats; a naive ceil
+        # would price it 111. Must be exactly 110.
+        config = CreditCostSettings(default_factor=1.1)
+        assert cost(input_tokens=100, output_tokens=0, config=config) == 110
+
 
 class TestEstimate:
     def test_estimate_from_chars(self):
@@ -180,7 +186,7 @@ class ProviderCreditSettings(BaseModel):
     model; output_weight is the provider's input->output price ratio
     (near-constant within a provider, widely varying across them)."""
 
-    model_config = ConfigDict(extra="forbid")  # see TierLimitsSettings
+    model_config = ConfigDict(extra="forbid")  # a typo'd key must fail loudly
 
     output_weight: float | None = None
     default_factor: float | None = None
@@ -214,7 +220,7 @@ class CreditCostSettings(BaseModel):
     priced at factor 1.0 with output weight 4 -- usable defaults, no
     fail-open risk (budgets, not pricing, are the enforcement)."""
 
-    model_config = ConfigDict(extra="forbid")  # see TierLimitsSettings
+    model_config = ConfigDict(extra="forbid")  # a typo'd key must fail loudly
 
     default_factor: float = 1.0
     default_output_weight: float = 4.0
@@ -317,7 +323,9 @@ def run_cost(
         if model in block.models:
             factor = block.models[model]
     weighted = input_tokens + output_weight * output_tokens
-    return math.ceil(weight * factor * weighted)
+    # round() before ceil: binary-float artifacts (1.1 * 100 ==
+    # 110.00000000000001) must not buy a phantom credit.
+    return math.ceil(round(weight * factor * weighted, 9))
 
 
 def estimate_cost(
@@ -536,7 +544,7 @@ class TestCreditSettlement:
 
 Add the imports the new tests need at the top of the file (alongside the existing config imports): `CreditCostSettings, ProviderCreditSettings`.
 
-Also extend the existing migration test class (around `backend/tests/test_usage.py:199` — it creates a `UsageStore`, drops to raw SQL to simulate an old schema, and re-opens): add `credits` to its expectations the same way `fail_stage`/`fail_detail` were added there in B5 — a pre-B6 table re-opened by `UsageStore` must gain the `credits` column, and old rows read back as `None`. Follow the exact pattern already in that class.
+Also extend the existing migration test `test_migration_adds_columns_to_pre_b5_database` (`backend/tests/test_usage.py:390`, with `_PRE_B5_SCHEMA` just below it): add `credits` to its expectations the same way `fail_stage`/`fail_detail` were added there in B5 — a pre-B6 table re-opened by `UsageStore` must gain the `credits` column, and the pre-existing row must read back `row["credits"] is None`. Follow the exact pattern already in that test.
 
 - [ ] **Step 2: Run them to verify they fail**
 
@@ -598,7 +606,7 @@ In `backend/app/services/usage.py`:
         )
 ```
 
-and change the INSERT to include the column (13 → 14 placeholders):
+and change the INSERT to include the column (13 → 14 columns; 12 → 13 `?` placeholders — the status is the literal `'started'`):
 
 ```python
             cursor = conn.execute(
@@ -648,7 +656,7 @@ and change the INSERT to include the column (13 → 14 placeholders):
                 )
                 return
             credits = self._settled_credits(row, status, input_tokens, output_tokens)
-            conn.execute(
+            cursor = conn.execute(
                 """UPDATE llm_usage
                    SET status = ?, input_tokens = ?, output_tokens = ?,
                        fail_stage = ?, fail_detail = ?, credits = ?
@@ -656,6 +664,15 @@ and change the INSERT to include the column (13 → 14 placeholders):
                 (status, input_tokens, output_tokens,
                  fail_stage, fail_detail, credits, reservation_id),
             )
+            if cursor.rowcount == 0:
+                # Swept between the read above and this write -- same
+                # warning as the read-side miss, never resurrected.
+                logger.warning(
+                    "llm_usage row %s was already swept; terminal status %r"
+                    " discarded",
+                    reservation_id,
+                    status,
+                )
 ```
 
 (The docstring keeps its existing content; append one line: "Credits settle here from actual tokens — B6 spec §4.")
@@ -852,8 +869,14 @@ class TestWindowEnforcement:
         ).kind == "admitted"
 
     def test_no_windows_configured_means_no_budget_check(self, store):
+        # budget_limits() without window kwargs: counter 500, concurrency 10.
+        # The module LIMITS would trip its own counter (3) and concurrency
+        # cap (2) here -- do not use it.
+        limits = budget_limits()
         for i in range(4):
-            assert reserve(store, run_id=f"r{i}", now=self.NOON).kind == "admitted"
+            assert reserve(
+                store, limits=limits, run_id=f"r{i}", now=self.NOON
+            ).kind == "admitted"
 
 
 class TestCreditsUsed:
@@ -958,6 +981,9 @@ CREATE INDEX IF NOT EXISTS idx_llm_usage_user_created
 def _window_start(moment: datetime, window: str) -> datetime:
     """Calendar-aligned UTC window starts (B6 spec §3). `day` never comes
     through here -- it predicates on the ledger's day column."""
+    # created_at comparisons are lexicographic on +00:00 isoformat strings;
+    # a non-UTC-aware moment must not leak a different offset into them.
+    moment = moment.astimezone(UTC)
     if window == "hour":
         return moment.replace(minute=0, second=0, microsecond=0)
     if window == "week":
@@ -1072,6 +1098,7 @@ Claude-Session: https://claude.ai/code/session_01QG5RSDiRACnzQgN89FceuQ"
   - `UsagePayload(label: str, windows: list[WindowUsage])`, `WindowUsage(window: str, used_percent: int)`
   - `MeResponse.from_user(user, settings, *, usage_store)` — takes the store instead of a precomputed count.
   - `UsageStore.used_today` no longer exists.
+  - NOTE: until Task 5's ≥1-window validator lands, a tier block without `credits_per_*` keys is legal and yields `usage.windows == []` — test fixtures without windows must expect the empty list in this task.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1122,27 +1149,27 @@ In `backend/tests/test_auth_api.py`, rewrite the usage assertions:
 ```
 
 - The site around line 455 similarly asserts against `limits.admin.llm_checks_per_day` — same replacement.
-- Add one new test next to the existing /me usage test (~line 430) exercising the percent math end-to-end. Reuse that test's exact fixtures and login helper (read it first); the mechanics are: settle spend directly on the store, then read `/me`. Body:
+- `test_auth_api.py:420` (`test_used_today_counts_every_status`): asserts `body["usage"]["used_today"] == 3` — KeyError under the new payload. Its intent (all statuses count) is unit-covered by Task 3's `TestCreditsUsed`; delete the test in THIS task.
+- `test_auth_api.py:442` (`test_tier_user_sees_their_tier_block`): asserts `body["usage"]["limit"] == 100`. In THIS task the fixture tier has no credit windows yet, so assert `body["usage"]["windows"] == []` (and `body["usage"]["label"]`). Task 5's sweep then gives that tier `credits_per_day` and the assertion changes to `[{"window": "day", "used_percent": 0}]` — Task 5 rule C covers it.
+- Add one new test next to the existing /me usage test (~line 430) exercising the percent math end-to-end. **The caller must be a NON-ADMIN tier user** — `limits_for` hands admins the admin block (budget 5,000,000, where 49 credits reads as 1%, not 5%). Reuse the file's tier-app construction (line 31's pattern) with the tier's limits carrying `credits_per_day=1000` (plus the block's other required members), and the file's existing non-admin login helper. Mechanics: settle spend directly on the store, then read `/me`:
 
 ```python
-def test_me_reports_ceil_percent_capped_at_100(...):  # same fixtures as the
-    # /me usage test above it; the tier's limits carry credits_per_day=1000
-    # for this test (construct the app the way line 31 does).
+def test_me_reports_ceil_percent(...):  # non-admin fixtures; tier budget 1000
     store = <app>.state.usage_store
     decision = store.reserve_llm_run(
-        FakeMeteredUser(user_id), <that tier's limits>, <settings>.limits,
-        RequestedLLM(tier="cheap"),
+        FakeMeteredUser(<non-admin user id>), <that tier's limits>,
+        <settings>.limits, RequestedLLM(tier="cheap"),
         EffectiveSelection(tier="cheap", provider="ollama", model="m", degraded=False),
         100, "check", "run-pct",
     )
     store.finish_run(decision.reservation_id, "completed",
                      input_tokens=49, output_tokens=0)  # 49 of 1000
-    me = <client>.get("/api/auth/me", headers=<auth headers>).json()
+    me = <client>.get("/api/auth/me", headers=<non-admin auth headers>).json()
     (day,) = [w for w in me["usage"]["windows"] if w["window"] == "day"]
-    assert day["used_percent"] == 5  # ceil(4.9), not floor -> 4
+    assert day["used_percent"] == 5  # ceil(4.9); floor would read 4
 ```
 
-The angle-bracketed pieces name the file's real fixtures/helpers — substitute them 1:1 (if the file has no metered-user stub, a 2-line `FakeMeteredUser` class with `id`/`is_admin` like test_usage.py's `FakeUser` works). The assertion values are binding: settled spend 49 against budget 1000 must read exactly 5.
+The angle-bracketed pieces name the file's real fixtures/helpers — substitute them 1:1 (if the file has no metered-user stub, a 2-line `FakeMeteredUser` class with `id`/`is_admin` attributes like test_usage.py's `FakeUser` works). The assertion values are binding: settled spend 49 against budget 1000 must read exactly 5.
 
 In `backend/tests/test_admin_api.py` around line 248, `test_no_admin_endpoint_can_raise_the_ceiling` asserts `me["usage"]["limit"] == admin_limits.llm_checks_per_day`. The guard's point is "the PATCH changed nothing" — re-express it:
 
@@ -1171,7 +1198,8 @@ Expected: FAIL — `label_for` does not exist; payload shape mismatch.
 ```python
 def label_for(*, tier: str, is_admin: bool, settings: Settings) -> str:
     """The user-facing tier label (B6 spec §5): the only budget-related
-    string /me exposes besides percentages."""
+    string /me exposes besides percentages. capitalize() is the fallback
+    for unlabeled single-word tier names; multi-word tiers set `label`."""
     if is_admin:
         return "Admin"
     cfg = settings.tiers.get(tier)
@@ -1332,7 +1360,9 @@ In `backend/tests/test_config.py`, add to `TestCreditWindows` (and update its `C
 
 2. `_default_admin_limits`: delete `llm_checks_per_day=500` (keeping `credits_per_day=5_000_000` from Task 3).
 
-3. `backend/app/services/usage.py`, `reserve_llm_run`: delete the entire `day_count` block (the SELECT COUNT, the `if day_count > limits.llm_checks_per_day` branch, and its admin-warning) — the window loop from Task 3 is now the sole quota check. `day` stays: the INSERT and the day-window predicate still use it. Update the class docstring's "one daily quota" phrasing to "credit-window budgets".
+3. `backend/app/services/usage.py`, `reserve_llm_run`: delete the entire `day_count` block (the SELECT COUNT, the `if day_count > limits.llm_checks_per_day` branch, and its admin-warning) — the window loop from Task 3 is now the sole quota check. `day` stays: the INSERT and the day-window predicate still use it. Update the MODULE docstring (`usage.py:5-6` — "one daily quota plus two concurrency caps") to name credit-window budgets instead.
+
+3b. Stale-comment sweep, same commit: `backend/app/api/llm_gate.py:188-189` — the quota-exhausted comment says "not retryable until tomorrow"; with hour/week/month windows that reads "not retryable until the binding window rolls over". Then `grep -rn "llm_checks_per_day\|checks per day" app/` must return nothing.
 
 4. `backend/config.yaml` — replace both counters:
 
@@ -1377,15 +1407,35 @@ for `basic`, and for `premium`:
 
 Run `grep -rn "llm_checks_per_day" tests/` and convert every site. Rules:
 
-**A. Plain fixture blocks** (the tier exists so the app boots; the test is not about quotas): replace `"llm_checks_per_day": <n>` / `llm_checks_per_day=<n>` with `"credits_per_day": 1_000_000` / `credits_per_day=1_000_000`. This covers: `test_auth_api.py:31`, `test_check_api.py:334,508,1046,1067,1126,1167,1201,1255,1302,1345,1401`, `test_documents_api.py:217,420`, `test_permissions.py:27,198,202,212,228`, `test_profiles_api.py:224`, `test_providers_api.py:15`, `test_admin_api.py:327,364`, and the analogous sites in `test_routing_api.py`, `test_suggestions_api.py`, `test_terminology_api.py` (grep finds them; same rule).
+**A. Plain fixture blocks** (the tier exists so the app boots; the test is not about quotas): replace `"llm_checks_per_day": <n>` / `llm_checks_per_day=<n>` with `"credits_per_day": 1_000_000` / `credits_per_day=1_000_000`. This covers: `test_auth_api.py:31`, `test_check_api.py:334,508,1046,1067,1126,1167,1201,1255,1302,1345,1401`, `test_documents_api.py:217,420`, `test_permissions.py:27,198,202,212,228`, `test_profiles_api.py:224`, `test_providers_api.py:15`, `test_admin_api.py:327,364`, and the analogous sites in `test_routing_api.py`, `test_terminology_api.py`, and `test_suggestions_api.py` (grep finds them; same rule) — EXCEPT `test_suggestions_api.py:386`, which is a rule-B site (see B).
 
-**A2. `test_usage.py` special cases** (it tested the counter itself):
+**A2. `test_usage.py` special cases** (it tested the counter itself). Baseline changes:
 - Module `LIMITS` (line 22, `llm_checks_per_day=3`): replace the counter with `credits_per_day=1_000_000`. Its `concurrent_llm_runs=2` stays — the concurrency tests keep working unchanged.
-- The `budget_limits` helper from Task 3: delete its `llm_checks_per_day=500` line (every call site passes at least one window, so the ≥1-window validator is satisfied).
-- Run-counter exhaustion tests (search the file for `quota_exhausted` outside `TestWindowEnforcement`): tests asserting "the 4th run is rejected by the day counter" are superseded by Task 3's `TestWindowEnforcement` — delete them. Keep every concurrency test and any quota test that still holds under `credits_per_day=1_000_000`.
-- Delete `test_no_windows_configured_means_no_budget_check` (Task 3): after the ≥1-window validator, a windowless `TierLimitsSettings` cannot be constructed — the test's premise is now an impossible config.
+- The `budget_limits` helper from Task 3: delete its `llm_checks_per_day=500` line (every remaining call site passes at least one window, so the ≥1-window validator is satisfied).
+- Delete `test_no_windows_configured_means_no_budget_check` (from Task 3): after the ≥1-window validator a windowless `TierLimitsSettings` cannot be constructed — the premise is now an impossible config. Its replacement is the new no-run-counter test below.
 
-**B. Quota-exhaustion tests** (`llm_checks_per_day=1` at `test_check_api.py:987,1090,1441` and `test_documents_api.py:363`): these arrange "the NEXT run is rejected". Recreate that state with a budget the first run exactly fills. Add this helper to each file that needs it (imports: `from app.core.config import CreditCostSettings` and `from app.services.credits import estimate_cost`):
+Counter-based tests that must be **restaged onto credit windows, never deleted** — each guards behavior that survives B6 and has no other coverage (the default-`reserve()` text is 100 chars → estimate 49):
+- `test_quota_outranks_concurrency` (~line 119) — the spec §4 evaluation order. Restage: `limits = budget_limits(credits_per_day=2 * 49)` with `concurrent_llm_runs=2` passed explicitly into a `TierLimitsSettings` (or extend `budget_limits` to accept it); two admitted reservations left in flight, the third must return `quota_exhausted` (budget binds), NOT `concurrency_rejected`.
+- `test_admin_ceiling_denial_logs_warning` (~line 134) and `test_normal_user_denial_does_not_warn` (~line 150) — the only coverage of the admin-warning branch, which now lives in the window loop. Restage both onto `budget_limits(credits_per_day=49)`: second reservation rejected; admin caller logs the "exhausted the day credit budget" warning, normal user does not.
+- `test_two_simultaneous_reservations_admit_exactly_one` (~line 197) — the suite's only TOCTOU/insert-first serialization guard. Restage: `budget_limits(credits_per_day=49)`, two threads race one reservation each; assert exactly `["admitted", "quota_exhausted"]` in some order.
+- `test_swept_rows_still_count_toward_the_day` (~line 251) — abandoned rows still count (their estimate stands, spec §4). Restage onto `budget_limits(credits_per_day=49)`: reserve, advance past `llm_run_max_age` so the sweep abandons it, then the next reservation must still be `quota_exhausted`.
+
+New test (spec §7: "run-count check gone"):
+
+```python
+    def test_many_cheap_runs_pass_without_a_run_counter(self, store):
+        # 20 tiny runs would have tripped any counter <= 20; only credits
+        # bind now. 5-char text -> est_input 2, est_output 0 -> 2 credits.
+        limits = budget_limits(credits_per_day=100)
+        noon = datetime(2026, 7, 29, 12, 30, tzinfo=UTC)
+        for i in range(20):
+            decision = reserve(store, limits=limits, run_id=f"r{i}",
+                               text_chars=5, now=noon)
+            assert decision.kind == "admitted"
+            store.finish_run(decision.reservation_id, "completed")  # frees the slot
+```
+
+**B. Quota-exhaustion tests** (`llm_checks_per_day=1` at `test_check_api.py:987,1090,1441`, `test_documents_api.py:363`, and `test_suggestions_api.py:386` — `TestSuggestionsMetering::test_quota_exhausted_returns_200_with_skip_code` is a rule-B site, NOT rule A: at `credits_per_day=1_000_000` its second POST would succeed and the test would fail): these arrange "the NEXT run is rejected". Recreate that state with a budget the first run exactly fills. This works because the endpoints' `FakeProvider` reports `TokenUsage()` (both sides `None`), so a completed run keeps its admission estimate — if a test's fake DOES report tokens, size the budget from those settled numbers instead. Add this helper to each file that needs it (imports: `from app.core.config import CreditCostSettings` and `from app.services.credits import estimate_cost`):
 
 ```python
 def one_run_budget(text: str, source: str = "check") -> int:
@@ -1396,7 +1446,7 @@ def one_run_budget(text: str, source: str = "check") -> int:
 ```
 
 Set the tier's `credits_per_day=one_run_budget(TEXT)` where `TEXT` is the exact text the test posts. Read each test first: if it asserts the FIRST run already degrades (counter pre-exhausted by an earlier request in the test), mirror that by issuing the same prior request — the mechanics carry over 1:1 because both counter and credits count the admission row.
-**`test_documents_api.py:363` special case:** naming runs cost 0 credits, so a name run can no longer exhaust its own budget. If that test pre-exhausts via naming runs, restage it: pre-exhaust with one `check` run against `credits_per_day=one_run_budget(check_text)`, then assert the *check* degrades while naming still proceeds (zero-cost runs pass at a full-but-not-overshot budget — Task 3's `test_zero_cost_run_admitted_at_a_full_budget` is the unit-level twin). Preserve the test's original intent (read its docstring/comments) — if its point was "naming consumes quota", its point is now "naming is free"; rewrite the test name and assertions to say that.
+**`test_documents_api.py:363` special case:** naming runs cost 0 credits, so a name run can no longer exhaust its own budget — but the naming endpoint's `quota_exhausted` degradation path must KEEP endpoint-level coverage (it must not become untested dead code). Restage via **overshoot**: set `credits_per_day = one_run_budget(short_text)` and burn the budget with one check run of a LONGER text (its larger estimate lands `spent > budget`); the subsequent name run is then rejected and the endpoint falls back to the local name. Add a companion assertion (or sibling test) for the free-run side: at an exactly-full (not overshot) budget, naming still proceeds — Task 3's `test_zero_cost_run_admitted_at_a_full_budget` is the unit-level twin. Rewrite test names/docstrings to say "naming is free until the budget is overshot".
 
 **C. Assertion sites** (`test_config.py:169–394`, `test_permissions.py:207,216,221,232`, `test_auth_api.py` leftovers): re-express against the new fields — e.g. `assert tier.limits.llm_checks_per_day == 100` becomes `assert tier.limits.credits_per_day == 1_000_000` (matching the fixture value chosen under rule A); `test_config.py:288-290` (the zero-value validator test) switches to `credits_per_day: 0` expecting `match="credits_per_day"`; `test_config.py:331` (admin defaults) becomes `assert settings.limits.admin.credits_per_day == 5_000_000`.
 
@@ -1504,7 +1554,7 @@ In `frontend/src/App.tsx`, replace the quota-indicator block (lines 222–230). 
   )
 ```
 
-(import `WindowUsage` from `../types` — match the file's existing types import path.) Then:
+(`App.tsx` sits at `src/App.tsx`, so the import is `import type { WindowUsage } from './types'` — the file currently imports nothing from `types`, add the line.) Then:
 
 ```tsx
         {store.user && !llmDisabled(store.user) && tightestWindow && (
@@ -1528,15 +1578,15 @@ Every fixture `usage: { used_today: 0, limit: 500 }` becomes:
     usage: { label: 'Basic', windows: [{ window: 'day', used_percent: 0 }] },
 ```
 
-Files: `App.test.tsx:62`, `App.admin-gate.test.tsx:45`, `Sidebar.notes.test.tsx:40`, `TerminologyView.ownership.test.tsx:43`, `TerminologyView.features.test.tsx:33`, `session.integration.test.ts:35`, `AccountMenu.test.tsx:36`, `policy.test.ts:15`, `LoginGate.test.tsx:34`, `session.test.ts:46`, `client.test.ts:30`, `sse.test.ts:28`.
+**The authority is `grep -rn "used_today" src/` — every hit must be converted; `npm run build` (`tsc -b` over all of `src`, tests included) fails on any stale literal.** Known sites: `App.test.tsx:62`, `App.admin-gate.test.tsx:45`, `App.domains-guard.test.tsx:44`, `Sidebar.notes.test.tsx:40`, `TerminologyView.ownership.test.tsx:43`, `TerminologyView.features.test.tsx:33`, `session.integration.test.ts:35`, `AccountMenu.test.tsx:36`, `policy.test.ts:15`, `LoginGate.test.tsx:34`, `session.test.ts:46`, `client.test.ts:30`, `sse.test.ts:28`, `skipNotice.test.ts:9`, `admin/AdminView.test.tsx:44`, `state/store.test.ts:266`, `rules/RulesView.ownership.test.tsx:27`, `documents/FolderDefaultsDialog.policy.test.tsx:24`, `documents/documents.test.ts:115`, `documents/autosave.test.ts:39`, `checking/controller.test.ts:42`, `profiles/ProfilesView.ownership.test.tsx:29`, `profiles/ProfilesView.features.test.tsx:28`.
 
 Behavior-bearing sites:
 
 - `session.test.ts:357,361,420-449` (the refresh-race test uses `used_today: 5` vs `20`): use `windows: [{ window: 'day', used_percent: 1 }]` vs `used_percent: 4` — the guard is sequence-based, the values only need to differ.
 - `Sidebar.notes.test.tsx:162-172`: `en.llmQuotaExhausted(500)` → `en.llmQuotaExhausted`; update the test name (drop "(with the fixture limit)").
 - `skipNotice.test.ts:19` and `suggest.test.ts:273`: `messages.llmQuotaExhausted(...)` → `messages.llmQuotaExhausted`.
-- `App.test.tsx`: any assertion on the rendered `0/500` indicator text becomes `Basic · 0%` (grep the file for `0/500` / `used_today`).
-- Comment-only mentions of `used_today` at `checking/suggest.ts:75` and `checking/controller.ts:155`: reword to name the credit windows (the described refresh behavior is unchanged — usage is still status-blind and refresh is still cosmetic).
+- `App.test.tsx:200-211`: the existing indicator test renders `0/20` and asserts THREE things — the text, `title === en.quotaIndicatorTitle`, and `getByLabelText(`${en.quotaIndicatorTitle}: 0/20`)`. All three change: text `Basic · 0%`, `title` is now the per-window list (`${en.windowName('day')}: 0%`), aria-label `${en.quotaIndicatorTitle}: Basic · 0%`.
+- Comment-only mentions of `used_today` at `checking/suggest.ts:75`, `checking/controller.ts:155`, and `auth/session.ts:137`: reword to name the credit windows (the described refresh behavior is unchanged — usage is still status-blind and refresh is still cosmetic). The stale CSS comment at `App.css:143-144` ("Today's LLM usage vs. the daily cap") likewise. No styling change is needed: `.quota-indicator` has no at-limit state today, and B6 adds none (spec §6's "same exhausted styling" is vacuously satisfied — note this in the task report).
 
 Add one new indicator test in `App.test.tsx` next to the existing indicator coverage:
 
@@ -1581,7 +1631,7 @@ Claude-Session: https://claude.ai/code/session_01QG5RSDiRACnzQgN89FceuQ"
 
 - [ ] **Step 1: Update `docs/backend-architecture.md`**
 
-Locate the ledger/metering section (it documents `llm_usage`, `reserve_llm_run`, the M5 quota, and the B5/B7 columns). Update it to record:
+Locate the ledger/metering section (it documents `llm_usage`, `reserve_llm_run`, the M5 quota, and the B5/B7 columns; known stale sites: `docs/backend-architecture.md:1382, 1572, 1635, 1756-1759, 1787` — the closing grep is the authority). Update it to record:
 
 - The `credits INTEGER` column: admission estimate while `started` (chars/4 input, quarter of that output, priced through `run_cost`), settled from actual tokens at `finish_run` (completed → actual, estimate stands if none reported; failed → actual else 0; cancelled/abandoned → estimate stands). Pre-B6 rows are `NULL` and count 0.
 - `services/credits.py`: `credits = ceil(source_weight × factor × (input + output_weight × output))`; factor chain model → provider default → global default; per-provider `output_weight`; `name` free by default.
@@ -1593,7 +1643,7 @@ Also sweep the document for `llm_checks_per_day` / `used_today` mentions and upd
 
 - [ ] **Step 2: Update `docs/frontend-architecture.md`**
 
-Update the quota-indicator/usage passages: `usage.label` + `usage.windows[]`, indicator renders the tightest window as `Label · N%`, tooltip lists all windows via `windowName`, `llmQuotaExhausted` is now a plain string (budgets are never shown as numbers).
+Update the quota-indicator/usage passages (known stale sites: `docs/frontend-architecture.md:1132, 1138, 1182, 1195` — the closing grep is the authority): `usage.label` + `usage.windows[]`, indicator renders the tightest window as `Label · N%`, tooltip lists all windows via `windowName`, `llmQuotaExhausted` is now a plain string (budgets are never shown as numbers).
 
 - [ ] **Step 3: Verify and commit**
 
