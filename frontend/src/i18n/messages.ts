@@ -73,9 +73,10 @@ export interface Messages {
   llmNotIncluded: string
   llmSkippedServer: string
   serverBusy: string
-  llmQuotaExhausted: (limit: number) => string
+  llmQuotaExhausted: string
   llmDocumentTooLarge: (limit: number) => string
   quotaIndicatorTitle: string
+  windowName: (window: string) => string
   charCount: (n: number) => string
   charCountOverLlm: string
   charCountOverDoc: string

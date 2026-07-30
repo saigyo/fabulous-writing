@@ -25,7 +25,7 @@ import { LOCALES, LOCALE_NAMES, useLocale, useMessages, type Locale } from './i1
 import { languageLabel } from './languages'
 import { useStore } from './state/store'
 import { TerminologyView } from './terminology/TerminologyView'
-import type { Language } from './types'
+import type { Language, WindowUsage } from './types'
 import { Wordmark } from './Wordmark'
 
 export default function App() {
@@ -161,6 +161,12 @@ export function Header() {
       })
   }, [store.language])
 
+  const usageWindows = store.user?.usage.windows ?? []
+  const tightestWindow = usageWindows.reduce<WindowUsage | null>(
+    (acc, w) => (acc === null || w.used_percent > acc.used_percent ? w : acc),
+    null,
+  )
+
   return (
     <header className="header">
       <Wordmark />
@@ -219,13 +225,17 @@ export function Header() {
           <DomainMultiSelect />
         </label>
         <LlmSelector />
-        {store.user && !llmDisabled(store.user) && (
+        {store.user && !llmDisabled(store.user) && tightestWindow && (
           <span
             className="quota-indicator"
-            title={m.quotaIndicatorTitle}
-            aria-label={`${m.quotaIndicatorTitle}: ${store.user.usage.used_today}/${store.user.usage.limit}`}
+            title={usageWindows
+              .map((w) => `${m.windowName(w.window)}: ${w.used_percent}%`)
+              .join(' · ')}
+            aria-label={`${m.quotaIndicatorTitle}: ${store.user.usage.label} · ${usageWindows
+              .map((w) => `${m.windowName(w.window)}: ${w.used_percent}%`)
+              .join(', ')}`}
           >
-            {store.user.usage.used_today}/{store.user.usage.limit}
+            {store.user.usage.label} · {tightestWindow.used_percent}%
           </span>
         )}
         {!llmDisabled(store.user) && (

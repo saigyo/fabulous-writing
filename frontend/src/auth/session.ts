@@ -134,7 +134,7 @@ setUnauthorizedHandler(expireSession)
 // Bumped by every refreshUser() call. Two LLM completions can each trigger
 // their own refresh; the generation/token guards below only catch a session
 // change, not two in-flight refreshes racing each other — an older response
-// landing last would otherwise regress used_today back down. This counter's
+// landing last would otherwise regress the usage windows back down. This counter's
 // last-issued value is the only one allowed to commit, so whichever refresh
 // started most recently wins regardless of completion order.
 let refreshSeq = 0

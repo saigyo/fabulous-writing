@@ -37,7 +37,7 @@ function user(
     tier: 'basic',
     is_admin: false,
     policy,
-    usage: { used_today: 0, limit: 500 },
+    usage: { label: 'Basic', windows: [{ window: 'day', used_percent: 0 }] },
     limits: {
       max_document_chars: 200000,
       max_llm_document_chars: 200000,
@@ -159,7 +159,7 @@ describe('Sidebar degradation/skip notes', () => {
     expect(note.getAttribute('role')).toBe('status')
   })
 
-  it('shows llmQuotaExhausted (with the fixture limit) when skipped for quota exhaustion', () => {
+  it('shows llmQuotaExhausted when skipped for quota exhaustion', () => {
     const llmEffective: EffectiveLlm = {
       requested: { tier: 'balanced', provider: null, model: null },
       effective: { tier: 'balanced', provider: null, model: null },
@@ -169,7 +169,7 @@ describe('Sidebar degradation/skip notes', () => {
     useStore.setState({ llmEffective, user: user(FULL) })
     render(<Sidebar />)
 
-    const note = screen.getByText(en.llmQuotaExhausted(500))
+    const note = screen.getByText(en.llmQuotaExhausted)
     expect(note).toBeTruthy()
     expect(note.getAttribute('role')).toBe('status')
   })

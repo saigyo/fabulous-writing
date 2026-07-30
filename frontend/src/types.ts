@@ -173,10 +173,17 @@ export interface PolicyPayload {
   features: string[]
 }
 
-/** Mirrors backend UsagePayload (app/api/auth.py). */
+/** Mirrors backend WindowUsage (app/api/auth.py). */
+export interface WindowUsage {
+  window: string
+  used_percent: number
+}
+
+/** Mirrors backend UsagePayload (app/api/auth.py): tier label + whole-
+ * percent usage per configured window — never absolute numbers (B6). */
 export interface UsagePayload {
-  used_today: number
-  limit: number
+  label: string
+  windows: WindowUsage[]
 }
 
 /** Mirrors backend LimitsPayload (app/api/auth.py). */

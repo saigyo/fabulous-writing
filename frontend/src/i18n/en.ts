@@ -64,11 +64,15 @@ export const en: Messages = {
   llmNotIncluded: 'LLM checking is not included in your plan.',
   llmSkippedServer: 'LLM check skipped: not available on the server.',
   serverBusy: 'Server busy — please retry shortly.',
-  llmQuotaExhausted: (limit) =>
-    `Daily LLM allowance used (${limit} checks). Resets at midnight UTC.`,
+  llmQuotaExhausted:
+    'LLM budget used up. Capacity frees up when the current period ends.',
   llmDocumentTooLarge: (limit) =>
     `The text exceeds the plan's LLM limit of ${limit.toLocaleString('en-US')} characters.`,
-  quotaIndicatorTitle: 'LLM checks used today',
+  quotaIndicatorTitle: 'LLM budget used',
+  windowName: (window) =>
+    ({ hour: 'hour', day: 'day', week: 'week', month: 'month' } as Record<string, string>)[
+      window
+    ] ?? window,
   charCount: (n) => `${n.toLocaleString('en-US')} characters`,
   charCountOverLlm: 'over the LLM limit',
   charCountOverDoc: 'over the document limit',

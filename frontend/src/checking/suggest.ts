@@ -72,8 +72,8 @@ export async function fetchSuggestions(findingId: string): Promise<void> {
       return
     }
     // A provider failure (e.g. a 502) still spends quota — its ledger row
-    // settles as 'failed' server-side — so used_today goes stale unless this
-    // fires too.
+    // settles as 'failed' server-side — so the usage windows go stale unless
+    // this fires too.
     refreshUserNow()
     useStore.getState().setSuggestError(findingId, error instanceof Error ? error.message : String(error))
   } finally {
