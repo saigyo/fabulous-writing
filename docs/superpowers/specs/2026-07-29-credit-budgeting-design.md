@@ -142,8 +142,10 @@ contribute their admission estimate; pre-B6 rows have `credits NULL` and count 0
     response-stage failures carry real counts via B7/`UnparseableResponseError.usage`.
   - `cancelled` → the estimate stands (cost was plausibly incurred; actuals unknown).
   - Abandoned rows are swept by UPDATEs that never touch `credits` — the estimate stands.
-- `finish_run` gains a `credit_cost: CreditCostSettings` parameter, passed by the same callers that
-  pass limits today (threaded through `LlmReservation.finish` like the existing fields).
+- `UsageStore` gains a `credit_cost: CreditCostSettings` constructor parameter (defaulting to
+  `CreditCostSettings()`; `app.main` passes `settings.credit_cost`). Unlike per-tier limits, pricing
+  is global and static — constructor injection leaves `finish_run`'s signature and all three
+  settle frames untouched.
 - `used_today` is replaced by `credits_used(user_id, windows, *, now) -> dict[str, int]` returning
   the summed usage per requested window (one query per window; `/me` is the only caller).
 
@@ -165,17 +167,18 @@ contribute their admission estimate; pre-B6 rows have `credits NULL` and count 0
 - `used_percent = min(100, ceil(used / budget × 100))` — whole percent, rounded up (0.2% shows as
   1%), capped at 100. No absolute numbers in the payload, for any caller.
 - `label` from the tier block (default capitalized tier name; `"Admin"` for admins).
-- The quota-exhausted 429 keeps its shape; its `detail` names the window ("hourly/daily/weekly/monthly
-  credit budget exhausted"). The concurrency 429s are unchanged.
+- Budget exhaustion keeps its existing surface: the run degrades with `skipped="quota_exhausted"`
+  (an exhausted allowance is not retryable, so no 429 — unchanged §6.4 behavior). The binding
+  window travels internally as `QuotaDecision.exhausted_window` for tests and logs. The
+  concurrency 429s are unchanged.
 
 ## 6. Frontend
 
 - The header quota indicator shows the tier label and the **tightest** window — the highest
   `used_percent` — e.g. `Pro · 82%`. The tooltip/aria-label lists every configured window's
   percentage. Percent ≥ 100 renders the same exhausted styling the counter used at limit.
-- The session-refresh monotonic guard (a stale `/me` response must not regress usage) generalizes:
-  keep, per window, the maximum `used_percent` seen for the current session refresh cycle — same
-  race, same fix, per window.
+- The session-refresh race guard (`refreshSeq` in `session.ts`: only the last-issued refresh may
+  commit) is payload-shape-agnostic and needs no change.
 - Test fixtures (~10 files construct `usage: { used_today, limit }`) move to the new shape.
 
 ## 7. Testing
