@@ -311,11 +311,38 @@ class TierLimitsSettings(BaseModel):
     llm_checks_per_day: int
     max_llm_document_chars: int
     concurrent_llm_runs: int
+    # Credit budgets per calendar-aligned UTC window (B6 spec §2.3): each
+    # optional. Task-5 note: once llm_checks_per_day is removed, at least
+    # one window becomes mandatory.
+    credits_per_hour: int | None = None
+    credits_per_day: int | None = None
+    credits_per_week: int | None = None
+    credits_per_month: int | None = None
+
+    def credit_windows(self) -> dict[str, int]:
+        """Configured windows in enforcement order (B6 spec §4)."""
+        pairs = (
+            ("hour", self.credits_per_hour),
+            ("day", self.credits_per_day),
+            ("week", self.credits_per_week),
+            ("month", self.credits_per_month),
+        )
+        return {name: budget for name, budget in pairs if budget is not None}
 
     @field_validator("llm_checks_per_day", "max_llm_document_chars", "concurrent_llm_runs")
     @classmethod
     def _positive(cls, value: int, info) -> int:
         if value <= 0:
+            raise ValueError(f"{info.field_name} must be a positive integer")
+        return value
+
+    @field_validator(
+        "credits_per_hour", "credits_per_day", "credits_per_week",
+        "credits_per_month",
+    )
+    @classmethod
+    def _window_positive(cls, value: int | None, info) -> int | None:
+        if value is not None and value <= 0:
             raise ValueError(f"{info.field_name} must be a positive integer")
         return value
 
@@ -326,6 +353,9 @@ def _default_admin_limits() -> TierLimitsSettings:
         llm_checks_per_day=500,
         max_llm_document_chars=200000,
         concurrent_llm_runs=5,
+        # Generous but not unlimited (B6 spec §2.3): ~500 checks of ~10k
+        # weighted tokens per day.
+        credits_per_day=5_000_000,
     )
 
 
