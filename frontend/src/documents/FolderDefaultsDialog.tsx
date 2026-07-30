@@ -6,6 +6,7 @@ import {
   type FolderDefaults,
 } from '../api/client'
 import { tierAllowed } from '../auth/policy'
+import { Dialog } from '../ui/Dialog'
 import { useMessages } from '../i18n'
 import { languageLabel } from '../languages'
 import { ownershipLabel } from '../ownership'
@@ -140,17 +141,12 @@ export function FolderDefaultsDialog({
   }
 
   return (
-    <div
-      className="dialog-overlay"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose()
-      }}
+    <Dialog
+      title={`${m.folderDefaults}: ${folder.name}`}
+      onClose={onClose}
+      className="folder-defaults-dialog"
     >
-      <div className="folder-defaults-dialog">
-        <h2>
-          {m.folderDefaults}: {folder.name}
-        </h2>
-        <label>
+      <label>
           {m.language}
           <select
             className="fd-language"
@@ -304,7 +300,6 @@ export function FolderDefaultsDialog({
             {m.folderDefaultsSave}
           </button>
         </div>
-      </div>
-    </div>
+    </Dialog>
   )
 }

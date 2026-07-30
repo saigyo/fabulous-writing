@@ -1834,31 +1834,9 @@ dialog.app-dialog h2 {
 }
 
 /* Folder-defaults dialog */
-.dialog-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.35);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-}
 .folder-defaults-dialog {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 1rem 1.25rem;
   width: 340px;
-  max-height: 80vh;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
   gap: 0.6rem;
-}
-.folder-defaults-dialog h2 {
-  font-size: 0.95rem;
-  margin: 0 0 0.25rem;
-  color: var(--text);
 }
 .folder-defaults-dialog label {
   display: flex;
