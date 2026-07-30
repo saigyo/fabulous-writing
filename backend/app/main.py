@@ -125,7 +125,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.document_store = DocumentStore(settings.db_path)
     app.state.folder_store = FolderStore(settings.db_path)
     app.state.profile_store = ProfileStore(settings.db_path)
-    app.state.usage_store = UsageStore(settings.db_path)
+    app.state.usage_store = UsageStore(settings.db_path, credit_cost=settings.credit_cost)
     if settings.auth.mode != "local":
         raise AuthConfigError(
             "auth.mode 'supabase' is not implemented yet (sub-project 2)"

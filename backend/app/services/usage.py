@@ -13,9 +13,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal, Protocol
 
-from app.core.config import LimitsSettings, TierLimitsSettings
+from app.core.config import CreditCostSettings, LimitsSettings, TierLimitsSettings
 from app.core.permissions import EffectiveSelection, RequestedLLM
 from app.services._sqlite import connect, migrate_columns
+from app.services.credits import estimate_cost, run_cost
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,9 @@ CREATE TABLE IF NOT EXISTS llm_usage (
     run_id             TEXT NOT NULL,
     fail_stage         TEXT,
     fail_detail        TEXT,
+    -- Integer credits (B6): admission estimate while 'started', settled
+    -- from actual tokens at finish_run. NULL only on pre-B6 rows.
+    credits            INTEGER,
     -- Not decoration: a typo'd terminal status would silently leak a
     -- concurrency slot for llm_run_max_age (spec §5.3).
     CHECK (status IN ('started','completed','failed','cancelled','abandoned')),
@@ -96,8 +100,18 @@ def _utc_now() -> datetime:
 
 
 class UsageStore:
-    def __init__(self, db_path: Path, *, timeout: float | None = None) -> None:
+    def __init__(
+        self,
+        db_path: Path,
+        *,
+        credit_cost: CreditCostSettings | None = None,
+        timeout: float | None = None,
+    ) -> None:
         self.db_path = db_path
+        # Pricing is global and static, unlike per-tier limits -- injected
+        # once here so finish_run's signature (and every settle frame that
+        # calls it) stays untouched (B6 spec §4).
+        self.credit_cost = credit_cost or CreditCostSettings()
         self.timeout = timeout
         db_path.parent.mkdir(parents=True, exist_ok=True)
         with connect(db_path, timeout=timeout) as conn:
@@ -105,7 +119,8 @@ class UsageStore:
             migrate_columns(
                 conn,
                 "llm_usage",
-                [("fail_stage", "TEXT"), ("fail_detail", "TEXT")],
+                [("fail_stage", "TEXT"), ("fail_detail", "TEXT"),
+                 ("credits", "INTEGER")],
             )
 
     def _raw_connect(self) -> sqlite3.Connection:
@@ -149,6 +164,11 @@ class UsageStore:
         cutoff = (moment - timedelta(seconds=server_limits.llm_run_max_age)).isoformat(
             timespec="seconds"
         )
+        estimate = estimate_cost(
+            source=source, provider=effective.provider or "",
+            model=effective.model or "", text_chars=text_chars,
+            config=self.credit_cost,
+        )
         conn = self._raw_connect()
         try:
             # The transaction begins with the staleness fallback (spec §6.6):
@@ -164,8 +184,8 @@ class UsageStore:
                 """INSERT INTO llm_usage (user_id, day, created_at, status,
                        llm_tier, provider, model, requested_tier,
                        requested_provider, requested_model, text_chars,
-                       source, run_id)
-                   VALUES (?, ?, ?, 'started', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       source, run_id, credits)
+                   VALUES (?, ?, ?, 'started', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     user.id,
                     day,
@@ -179,6 +199,7 @@ class UsageStore:
                     text_chars,
                     source,
                     run_id,
+                    estimate,
                 ),
             )
             reservation_id = cursor.lastrowid
@@ -237,28 +258,65 @@ class UsageStore:
         by construction, not by caller discipline. The stage enum is
         enforced here in code, not only by the fresh-schema CHECK: migrated
         databases have no CHECK, and a typo'd stage must fail loudly on
-        them too."""
+        them too. Credits settle here from actual tokens — B6 spec §4."""
         if status != "failed":
             fail_stage = None
             fail_detail = None
         if fail_stage is not None and fail_stage not in _FAIL_STAGES:
             raise ValueError(f"unknown fail_stage: {fail_stage!r}")
         with connect(self.db_path, timeout=self.timeout) as conn:
-            cursor = conn.execute(
-                """UPDATE llm_usage
-                   SET status = ?, input_tokens = ?, output_tokens = ?,
-                       fail_stage = ?, fail_detail = ?
+            row = conn.execute(
+                """SELECT provider, model, source, credits FROM llm_usage
                    WHERE id = ? AND status = 'started'""",
-                (status, input_tokens, output_tokens,
-                 fail_stage, fail_detail, reservation_id),
-            )
-            if cursor.rowcount == 0:
+                (reservation_id,),
+            ).fetchone()
+            if row is None:
                 logger.warning(
                     "llm_usage row %s was already swept; terminal status %r"
                     " discarded",
                     reservation_id,
                     status,
                 )
+                return
+            credits = self._settled_credits(row, status, input_tokens, output_tokens)
+            cursor = conn.execute(
+                """UPDATE llm_usage
+                   SET status = ?, input_tokens = ?, output_tokens = ?,
+                       fail_stage = ?, fail_detail = ?, credits = ?
+                   WHERE id = ? AND status = 'started'""",
+                (status, input_tokens, output_tokens,
+                 fail_stage, fail_detail, credits, reservation_id),
+            )
+            if cursor.rowcount == 0:
+                # Swept between the read above and this write -- same
+                # warning as the read-side miss, never resurrected.
+                logger.warning(
+                    "llm_usage row %s was already swept; terminal status %r"
+                    " discarded",
+                    reservation_id,
+                    status,
+                )
+
+    def _settled_credits(
+        self,
+        row: sqlite3.Row,
+        status: str,
+        input_tokens: int | None,
+        output_tokens: int | None,
+    ) -> int | None:
+        """B6 spec §4: completed -> actual tokens (estimate stands if the
+        provider reported none at all); failed -> actual tokens if any, else
+        0 (a request-stage failure never reached the provider); cancelled ->
+        the estimate stands (cost plausibly incurred, actuals unknown)."""
+        if input_tokens is None and output_tokens is None:
+            return 0 if status == "failed" else row["credits"]
+        if status == "cancelled":
+            return row["credits"]
+        return run_cost(
+            source=row["source"], provider=row["provider"], model=row["model"],
+            input_tokens=input_tokens or 0, output_tokens=output_tokens or 0,
+            config=self.credit_cost,
+        )
 
     def used_today(self, user_id: int, *, now: datetime | None = None) -> int:
         """Spec §7.1: all of the user's rows for the UTC day regardless of
