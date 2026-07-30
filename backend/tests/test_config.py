@@ -401,3 +401,68 @@ class TestLimitsSettings:
         # M4 kept the block optional "until M5 requires it" — M5 requires it.
         with pytest.raises(ValidationError, match="limits"):
             Settings.model_validate({"tiers": {"basic": {}}})
+
+
+class TestCreditCostConfig:
+    def test_absent_block_defaults(self):
+        settings = Settings()
+        assert settings.credit_cost.default_factor == 1.0
+        assert settings.credit_cost.default_output_weight == 4.0
+        assert settings.credit_cost.source_weights == {
+            "check": 1.0, "suggestion": 1.0, "name": 0.0,
+        }
+
+    def test_partial_source_weights_merge_over_defaults(self):
+        settings = Settings.model_validate(
+            {"credit_cost": {"source_weights": {"suggestion": 0.5}}}
+        )
+        assert settings.credit_cost.source_weights == {
+            "check": 1.0, "suggestion": 0.5, "name": 0.0,
+        }
+
+    def test_unknown_source_key_fails(self):
+        with pytest.raises(ValidationError, match="unknown source"):
+            Settings.model_validate(
+                {"credit_cost": {"source_weights": {"naming": 0.0}}}
+            )
+
+    def test_negative_weight_fails(self):
+        with pytest.raises(ValidationError, match=">= 0"):
+            Settings.model_validate(
+                {"credit_cost": {"source_weights": {"check": -1.0}}}
+            )
+
+    def test_unknown_provider_key_fails(self):
+        with pytest.raises(ValidationError, match="unknown provider 'nope'"):
+            Settings.model_validate(
+                {"credit_cost": {"providers": {"nope": {"default_factor": 1.0}}}}
+            )
+
+    def test_known_provider_key_accepted(self):
+        settings = Settings.model_validate(
+            {"credit_cost": {"providers": {"ollama": {"default_factor": 0.1}}}}
+        )
+        assert settings.credit_cost.providers["ollama"].default_factor == 0.1
+
+    def test_extra_key_fails(self):
+        with pytest.raises(ValidationError):
+            Settings.model_validate({"credit_cost": {"output_weight": 4}})
+
+    def test_zero_output_weight_fails(self):
+        with pytest.raises(ValidationError, match="must be a finite number > 0"):
+            Settings.model_validate({"credit_cost": {"default_output_weight": 0}})
+
+    def test_non_finite_values_fail(self):
+        # NaN passes every sign comparison and inf passes > 0; both would
+        # survive to run time and make math.ceil raise on every run.
+        for bad in (float("nan"), float("inf")):
+            with pytest.raises(ValidationError, match="finite"):
+                Settings.model_validate({"credit_cost": {"default_factor": bad}})
+            with pytest.raises(ValidationError, match="finite"):
+                Settings.model_validate(
+                    {"credit_cost": {"source_weights": {"check": bad}}}
+                )
+            with pytest.raises(ValidationError, match="finite"):
+                Settings.model_validate({"credit_cost": {"providers": {
+                    "ollama": {"models": {"m": bad}},
+                }}})
