@@ -1791,6 +1791,31 @@ input {
   cursor: default;
 }
 
+/* Reusable modal dialog (B3). Panel look shared by all dialogs; width and
+   inner layout are per-dialog. display is scoped to [open]: an unscoped
+   `display: flex` would override the UA's display:none for closed dialogs. */
+dialog.app-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+dialog.app-dialog {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+dialog.app-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.35);
+}
+dialog.app-dialog h2 {
+  font-size: 0.95rem;
+  margin: 0 0 0.25rem;
+  color: var(--text);
+}
+
 /* Folder-defaults dialog */
 .dialog-overlay {
   position: fixed;
