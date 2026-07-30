@@ -147,9 +147,12 @@ not synthesize it from Escape keydown).
   callbacks; Escape cancels.
 - **Migrated surfaces:** FolderDefaults tests keep passing on the new
   shell; AccountMenu tests move password-flow assertions onto the dialog
-  (incl. focus returning to the badge); DocumentSidebar delete tests swap
-  `window.confirm` stubs for dialog interaction; AdminView gains a self-row
-  disabled + hint test and keeps the other-row reset test.
+  (incl. focus returning to the badge — the popover's outside-click and
+  Escape dismissal tests are reframed for modal semantics); DocumentSidebar
+  gains a component-test harness (today it holds only pure-helper tests;
+  nothing renders `<DocumentSidebar>` yet) covering both delete confirms;
+  AdminView gains a self-row disabled + hint test and keeps the other-row
+  reset test.
 - Every new guard test is mutation-verified (delete the guard, watch the
   test fail, restore).
 - Gates: `npm test -- --run` green, `npm run build` clean. Backend

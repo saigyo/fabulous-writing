@@ -143,7 +143,7 @@ describe('Dialog', () => {
           <button onClick={() => setOpen(true)}>open</button>
           {open && (
             <Dialog title="T" onClose={() => setOpen(false)}>
-              <p>body</p>
+              <button>inside</button>
             </Dialog>
           )}
         </>
@@ -153,6 +153,11 @@ describe('Dialog', () => {
     const opener = screen.getByText('open')
     opener.focus()
     fireEvent.click(opener)
+    // Move focus into the dialog explicitly: happy-dom's showModal() does
+    // not move focus by itself, and without this step the assertion below
+    // could not tell "restored" from "never left" — the restore mutation
+    // (Task 1 Step 5 #4) must be able to fail this test.
+    screen.getByText('inside').focus()
     fireCancel(dialogEl())
     expect(document.activeElement).toBe(opener)
   })
@@ -195,10 +200,10 @@ export function Dialog({
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const titleId = useId()
-  // Read in the cleanup, which only closes over mount-time values.
-  const returnFocusRef = useRef(returnFocusTo)
-  returnFocusRef.current = returnFocusTo
 
+  // The cleanup closes over mount-time values, which is correct here:
+  // returnFocusTo is a stable ref object (its .current is what changes),
+  // so no re-subscription indirection is needed.
   useEffect(() => {
     const dialog = dialogRef.current
     if (!dialog) return
@@ -211,9 +216,15 @@ export function Dialog({
     return () => {
       document.body.style.overflow = priorOverflow
       if (dialog.open) dialog.close()
-      const target = returnFocusRef.current?.current ?? opener
+      // StrictMode note (dev only): the double-invoked mount effect runs
+      // this cleanup once between the two mounts, restoring focus to the
+      // opener; React's autoFocus fires only on an element's first DOM
+      // mount, so a dialog with an autofocused control starts with focus
+      // on the opener in dev. Cosmetic, dev-only; production mounts once.
+      const target = returnFocusTo?.current ?? opener
       target?.focus()
     }
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- mount-once modal lifecycle; returnFocusTo is a stable ref object
   }, [])
 
   return (
@@ -505,7 +516,7 @@ Delete the `.dialog-overlay` block entirely. Reduce `.folder-defaults-dialog` to
 }
 ```
 
-(`background/border/radius/padding/max-height/overflow-y/display/flex-direction` all come from `dialog.app-dialog[open]` / `dialog.app-dialog`. The `.folder-defaults-dialog h2` rule, if present, dies with the moved title; keep the `label`/`select`/`.fd-*` rules.)
+(`background/border/radius/padding/max-height/overflow-y/display/flex-direction` all come from `dialog.app-dialog[open]` / `dialog.app-dialog`. Delete the `.folder-defaults-dialog h2` rule: the Dialog-rendered `<h2>` would still match it — the element carries both classes — but `dialog.app-dialog h2` supersedes it with identical values. Keep the `label`/`select`/`.fd-*` rules.)
 
 - [ ] **Step 3: Verify nothing else references the deleted class**
 
@@ -538,33 +549,39 @@ git commit -m "refactor(documents): FolderDefaultsDialog onto the Dialog primiti
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to `DocumentSidebar.test.tsx` (follow the file's existing render/store setup; the assertions that matter):
+**There is no component harness to follow:** `DocumentSidebar.test.tsx` today holds only pure-helper tests (`documentTime`, `grouping`) — no env docblock, no `render`, no store seeding — and nothing in the repo renders `<DocumentSidebar>` yet. Build the harness in this task:
+
+- Make `// @vitest-environment happy-dom` the FIRST line of the file (the existing helper tests are environment-agnostic and keep passing).
+- Mock the module the delete paths call: `vi.mock('./documents', ...)` returning `vi.fn()`s for every export DocumentSidebar imports (`createNewDocument`, `initDocuments`, `moveDocumentToFolder`, `openDocument`, `removeDocument`, `removeFolder`, `renameDocument`), with `removeFolder`/`removeDocument` resolving (`vi.fn(() => Promise.resolve())`).
+- Seed the store per test with one folder and one document in it — build the fixtures against the `DocumentSummary` and `Folder` types in `src/api/client.ts` (the compiler enforces the exact fields) and set them via `useStore.setState({ folders: [...], documents: [...], ... })` alongside whatever sidebar state the component reads (e.g. collapsed flag) — derive the exact store keys from `DocumentSidebar.tsx`'s `useStore` selectors.
+- Open the folder/document menus the way the component labels them (read the menu-button `aria-label`s in `DocumentSidebar.tsx` and query by them).
+
+The tests themselves:
 
 ```tsx
-it('folder delete asks via ConfirmDialog and only deletes on confirm', async () => {
-  // open the folder menu, click its delete item
-  // ...existing menu-opening pattern from this file...
+it('folder delete asks via ConfirmDialog and only deletes on confirm', () => {
+  render(<DocumentSidebar />)
+  // open the folder menu (query by its aria-label), click its delete item
   fireEvent.click(screen.getByText(en.folderDelete))
   // dialog is up, nothing deleted yet
   expect(document.querySelector('dialog')?.open).toBe(true)
-  expect(removeFolderSpy).not.toHaveBeenCalled()
+  expect(vi.mocked(removeFolder)).not.toHaveBeenCalled()
   // cancel closes without deleting
   fireEvent.click(screen.getByRole('button', { name: en.dialogCancel }))
-  expect(removeFolderSpy).not.toHaveBeenCalled()
+  expect(vi.mocked(removeFolder)).not.toHaveBeenCalled()
   expect(document.querySelector('dialog')).toBeNull()
-  // reopen, confirm deletes
-  // ...reopen menu, click delete...
+  // reopen menu, click delete again, confirm deletes
   fireEvent.click(screen.getByRole('button', { name: en.dialogConfirm }))
-  expect(removeFolderSpy).toHaveBeenCalledWith(folderId)
+  expect(vi.mocked(removeFolder)).toHaveBeenCalledWith(folderId)
 })
 ```
 
-Mirror the same shape for the document delete (`en.docDelete`, `removeDocument` spy, `doc.id`). Spy via `vi.mock`/`vi.spyOn` on `./documents` exactly as the file already stubs those module functions (match its existing mocking style).
+Mirror the same shape for the document delete (`en.docDelete`, `vi.mocked(removeDocument)`, `doc.id`).
 
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `npm test -- --run src/documents/DocumentSidebar.test.tsx`
-Expected: FAIL — no dialog appears; `window.confirm` (unstubbed) path either blocks or auto-deletes.
+Expected: FAIL — happy-dom implements no `window.confirm` at all, so the click on the delete item throws `TypeError: window.confirm is not a function` (and no dialog appears).
 
 - [ ] **Step 3: Implement**
 
@@ -695,21 +712,41 @@ Remove the `view` state and the `'menu' | 'password'` union; add `const [passwor
 
 The document-level Escape listener stays but now serves only the popover; trim its password-form comment accordingly (the dialog handles its own Escape and focus restore via `returnFocusTo`). `PasswordForm` itself is untouched — every guard (`sessionGeneration` captures, silent re-login, `expireSession()` fallback, `pending`, alert/status roles, `autoFocus`) stays exactly as is.
 
+**`passwordOpen` must not survive the account it belongs to.** The component stays mounted across logout/expiry (it renders `null` on `!user` — the existing test at ~line 382 documents this hazard for `open`). A 401 mid-change runs `expireSession()` while `passwordOpen` is `true`; without a reset, the dialog springs open unprompted at the next login. Add above the `if (!user) return null` line:
+
+```tsx
+  // The dialog belongs to the session that opened it: the component stays
+  // mounted across logout/expiry (rendering null), so a password dialog
+  // left open by a mid-change 401 would otherwise reappear on re-login.
+  useEffect(() => {
+    if (!user) setPasswordOpen(false)
+  }, [user])
+```
+
 - [ ] **Step 2: CSS**
 
 Rename the `.account-password-panel` rules (~1977-2016) to `.account-password-dialog`, dropping popover-specific positioning (it inherits panel look from `dialog.app-dialog`); keep the form layout, `.login-field` sizing, and message rules; add `width: 300px`. `.account-password-actions/-cancel/-submit` rules stay as-is.
 
 - [ ] **Step 3: Adapt the tests**
 
-In `AccountMenu.test.tsx`, the password-flow tests currently reach the form by clicking "Change password" inside the popover — that still works; assertions about the popover staying open with the form switch to the dialog being open (`document.querySelector('dialog')`). Add two guards:
+In `AccountMenu.test.tsx`, the password-flow tests reach the form by clicking "Change password" inside the popover — that path still works, and the completion-guard tests (session turnover, wrong password, success notice) keep their logic with container queries moved to `document.querySelector('dialog')`. **Three tests change semantics, not just queries:**
+
+- ~L418 "an outside click dismisses the popover…": a modal is intentionally NOT outside-click dismissible (the page is inert). Reframe it: an outside `mousedown` leaves the dialog open; dismissal is `fireEvent.mouseDown(dialog)` (backdrop lands on the element itself).
+- ~L432 "Escape dismisses the popover…" and ~L445 "Escape returns focus to the badge": both drive `u.keyboard('{Escape}')`, which reached the popover's document-level listener — that listener is now gated on `open === false` while the dialog is up, and happy-dom does not synthesize `cancel` from Escape. Rewrite both to fire the native event the browser would send: `fireEvent(document.querySelector('dialog')!, new Event('cancel', { cancelable: true }))`.
+
+Add three guards:
 
 ```tsx
-it('opens the password form in a modal dialog and closes the popover', () => { /* click badge, click change password; expect dialog open, expect menu gone */ })
+it('opens the password form in a modal dialog and closes the popover', () => { /* click badge, click change password; expect dialog open, expect .account-menu gone */ })
 
 it('returns focus to the badge when the password dialog closes', () => { /* open dialog, fire cancel event on it; expect document.activeElement to be the badge button */ })
+
+it('closes the password dialog on session turnover', () => { /* open dialog, set store user to null (mirror the ~L382 turnover test); expect document.querySelector('dialog') to be null; log back in — no dialog reappears */ })
 ```
 
-All existing completion-guard tests (session turnover, wrong password, success notice) keep their logic — only the container queries change.
+- [ ] **Step 3b: Mutation-verify the turnover guard**
+
+Delete the `if (!user) setPasswordOpen(false)` effect → the session-turnover test fails. Restore.
 
 - [ ] **Step 4: Run tests, gates; mutation-verify**
 
@@ -738,12 +775,18 @@ git commit -m "feat(auth): change-password form in an accessible modal dialog (B
 
 - [ ] **Step 1: Write the failing test**
 
-Following the file's existing render/fixture pattern (admin user + second user):
+Self-detection is by **id**, not email (`AdminView.tsx` renders `isSelf={user.id === me?.id}`), and the file's fixtures (`user()`, `adminUser()`) both default to `id: 1, email: 'ada@example.com'`. Seed the list with the self fixture plus a second user:
 
 ```tsx
-it('disables the password reset on the own row with a hint', () => {
-  // render with me=admin@example.com among the users
-  const input = screen.getByLabelText(`${en.adminResetPassword}: admin@example.com`)
+it('disables the password reset on the own row with a hint', async () => {
+  // store user (me) = the id-1 admin fixture, per the file's existing setup;
+  // user list: self + one other row
+  vi.mocked(getAdminUsers).mockResolvedValue([
+    adminUser(),
+    adminUser({ id: 2, email: 'bea@example.com' }),
+  ])
+  // render AdminView and await the list (file's existing pattern)
+  const input = await screen.findByLabelText(`${en.adminResetPassword}: ada@example.com`)
   expect(input).toHaveProperty('disabled', true)
   expect(input.getAttribute('title')).toBe(en.adminSelfResetHint)
   const button = input
@@ -751,8 +794,8 @@ it('disables the password reset on the own row with a hint', () => {
     .querySelector('button') as HTMLButtonElement
   expect(button.disabled).toBe(true)
   expect(button.getAttribute('title')).toBe(en.adminSelfResetHint)
-  // another user's row stays enabled
-  const other = screen.getByLabelText(`${en.adminResetPassword}: user@example.com`)
+  // the other row stays enabled
+  const other = screen.getByLabelText(`${en.adminResetPassword}: bea@example.com`)
   expect(other).toHaveProperty('disabled', false)
 })
 ```
