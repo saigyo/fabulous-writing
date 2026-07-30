@@ -1487,7 +1487,7 @@ Claude-Session: https://claude.ai/code/session_01QG5RSDiRACnzQgN89FceuQ"
 - Modify: `frontend/src/App.tsx` (indicator)
 - Modify: `frontend/src/checking/skipNotice.ts:17`
 - Modify: `frontend/src/i18n/messages.ts` + all seven locales (`en.ts`, `de.ts`, `es.ts`, `fr.ts`, `it.ts`, `ja.ts`, `zh.ts`)
-- Modify (fixture sweep): every file `grep -rn "used_today" src/` hits — ~23 test files plus the comment-only sites; Step 5 lists the known ones
+- Modify (fixture sweep): every file `grep -rn "used_today" src/` hits — 26 test files plus the comment-only sites; Step 5 lists the known ones
 
 **Interfaces:**
 - Consumes: the Task 4 payload: `usage: { label: string, windows: [{ window, used_percent }] }`.
