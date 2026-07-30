@@ -46,10 +46,12 @@ export function Dialog({
 - **Escape:** the native `cancel` event. Handler calls `preventDefault()`
   (the element must not close itself out from under React) and `onClose()`.
 - **Backdrop dismissal:** `mousedown` on the `<dialog>` element itself
-  (`event.target === dialogRef.current`) — native backdrop clicks land on
-  the element, while clicks inside land on descendants. `mousedown` (not
-  `click`) matches the current FolderDefaults behavior: a drag that starts
-  inside and releases outside must not dismiss.
+  (`event.target === dialogRef.current`) **with pointer coordinates outside
+  the element's `getBoundingClientRect()`** — native backdrop clicks land
+  on the element, but so do clicks on the panel's own padding, which must
+  not dismiss (they don't today: the panel is a child of the overlay).
+  `mousedown` (not `click`) matches the current FolderDefaults behavior: a
+  drag that starts inside and releases outside must not dismiss.
 - **Scroll lock:** `document.body.style.overflow = 'hidden'` while open,
   restored to its prior value on cleanup.
 - **Focus restore:** on cleanup, focus `returnFocusTo.current` if provided,
@@ -78,10 +80,14 @@ export function ConfirmDialog({
   confirmLabel,
   onConfirm,
   onCancel,
+  returnFocusTo,
 }: { ... })
 ```
 
-Built on `Dialog` (`onClose = onCancel`). Message paragraph + two buttons:
+Built on `Dialog` (`onClose = onCancel`; `returnFocusTo` forwarded — the
+delete menus unmount before the dialog opens, so callers pass the
+persistent menu-toggle button's ref or focus would fall back to `<body>`
+on close). Message paragraph + two buttons:
 Cancel (autofocus — destructive-safe default) and a danger-styled confirm.
 New i18n keys `dialogCancel` and `dialogConfirm` (generic labels, all 7
 locales); `confirmLabel` overrides `dialogConfirm` where a more specific
@@ -115,15 +121,16 @@ The popover's document-level Escape listener shrinks back to menu-only
 duty; the dialog handles its own Escape and focus restore. Success behavior
 unchanged: the notice renders inside the dialog; the user closes it.
 
-### 5. Admin own-row reset: disabled
+### 5. Admin own-row reset: replaced by a hint
 
-In `AdminView`'s `UserRow`, when `isSelf` the reset input and button are
-`disabled` with `title={m.adminSelfResetHint}` on both (the input keeps its
-existing aria-label; the hint is supplementary). New key
-`adminSelfResetHint` ≈ "Use the account menu to change your own password."
-(all 7 locales). The abrupt self-logout path becomes unreachable from the
-admin table; server-side revocation semantics are untouched and other rows
-are unaffected.
+In `AdminView`'s `UserRow`, when `isSelf` the reset cell renders the hint
+text (new key `adminSelfResetHint` ≈ "Use the account menu to change your
+own password.", all 7 locales) **instead of** the input and button. Visible
+text rather than disabled controls with a `title`: disabled elements are
+unfocusable, so a tooltip-only hint would be undiscoverable for keyboard
+and screen-reader users. The abrupt self-logout path becomes unreachable
+from the admin table; server-side revocation semantics are untouched and
+other rows are unaffected.
 
 ## Error handling
 
@@ -151,8 +158,8 @@ not synthesize it from Escape keydown).
   Escape dismissal tests are reframed for modal semantics); DocumentSidebar
   gains a component-test harness (today it holds only pure-helper tests;
   nothing renders `<DocumentSidebar>` yet) covering both delete confirms;
-  AdminView gains a self-row disabled + hint test and keeps the other-row
-  reset test.
+  AdminView gains a self-row test (hint text rendered, no reset controls)
+  and keeps the other-row reset test.
 - Every new guard test is mutation-verified (delete the guard, watch the
   test fail, restore).
 - Gates: `npm test -- --run` green, `npm run build` clean. Backend

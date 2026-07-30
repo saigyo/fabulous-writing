@@ -23,6 +23,8 @@
 - Every commit message ends with exactly:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
   `Claude-Session: https://claude.ai/code/session_01QG5RSDiRACnzQgN89FceuQ`
+  The per-task `git commit -m` examples omit these two trailers for
+  brevity — every actual commit MUST append them as the final lines.
 
 ---
 
@@ -89,16 +91,26 @@ describe('Dialog', () => {
     expect(dialogEl().open).toBe(true) // parent unmounts it; it never self-closes
   })
 
-  it('dismisses on backdrop mousedown but not on content mousedown', () => {
+  it('dismisses on backdrop mousedown but not on content or padding mousedown', () => {
     const onClose = vi.fn()
     render(
       <Dialog title="T" onClose={onClose}>
         <button>inner</button>
       </Dialog>,
     )
-    fireEvent.mouseDown(screen.getByText('inner'))
+    // Outside coordinates on an inner target: physically impossible in a
+    // browser, but it exercises the target guard independently of the rect
+    // guard — with default (0,0) coords the rect check would mask a deleted
+    // target check (happy-dom rects are 0×0 at the origin).
+    fireEvent.mouseDown(screen.getByText('inner'), { clientX: -10, clientY: -10 })
     expect(onClose).not.toHaveBeenCalled()
-    fireEvent.mouseDown(dialogEl()) // backdrop clicks land on the element itself
+    // A click on the panel's own padding targets the <dialog> element too
+    // but lies inside its box — must NOT dismiss. happy-dom rects are 0×0
+    // at (0,0), so the default (0,0) coordinates land exactly on the rect.
+    fireEvent.mouseDown(dialogEl())
+    expect(onClose).not.toHaveBeenCalled()
+    // Outside the box: a true ::backdrop click.
+    fireEvent.mouseDown(dialogEl(), { clientX: -10, clientY: -10 })
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
@@ -238,9 +250,19 @@ export function Dialog({
       }}
       onMouseDown={(event) => {
         // Backdrop clicks land on the <dialog> element itself; clicks on
-        // content land on descendants. mousedown (not click): a drag that
-        // starts inside and releases outside must not dismiss.
-        if (event.target === dialogRef.current) onClose()
+        // content land on descendants — but clicks on the panel's own
+        // padding also target the element, so only coordinates outside its
+        // box count as backdrop. mousedown (not click): a drag that starts
+        // inside and releases outside must not dismiss.
+        const dialog = dialogRef.current
+        if (!dialog || event.target !== dialog) return
+        const rect = dialog.getBoundingClientRect()
+        const insidePanel =
+          event.clientX >= rect.left &&
+          event.clientX <= rect.right &&
+          event.clientY >= rect.top &&
+          event.clientY <= rect.bottom
+        if (!insidePanel) onClose()
       }}
     >
       <h2 id={titleId}>{title}</h2>
@@ -288,7 +310,7 @@ Expected: PASS, build clean.
 
 One at a time — delete, watch the named test fail, restore:
 1. Remove `event.preventDefault()` in `onCancel` → "routes Escape…" fails on `defaultPrevented`.
-2. Remove the `event.target === dialogRef.current` condition (always call `onClose()`) → "dismisses on backdrop…" fails on the inner-mousedown assertion.
+2. Remove the `event.target !== dialog` early return (treat every mousedown as a candidate) → "dismisses on backdrop…" fails on the inner-mousedown assertion. Separately, remove the `insidePanel` rect check (dismiss whenever the target is the dialog) → the same test fails on the padding-mousedown assertion.
 3. Remove the `document.body.style.overflow` restore in the cleanup → the scroll-lock test fails on `'auto'`.
 4. Remove the `target?.focus()` line → both focus-restore tests fail.
 
@@ -311,7 +333,7 @@ git commit -m "feat(ui): accessible modal Dialog on native <dialog> (B3, #36)"
 
 **Interfaces:**
 - Consumes: `Dialog` from Task 1.
-- Produces: `ConfirmDialog({ title: string, message: string, confirmLabel?: string, onConfirm: () => void, onCancel: () => void })`; i18n keys `dialogCancel: string`, `dialogConfirm: string`.
+- Produces: `ConfirmDialog({ title: string, message: string, confirmLabel?: string, onConfirm: () => void, onCancel: () => void, returnFocusTo?: RefObject<HTMLElement | null> })` (`returnFocusTo` forwarded to `Dialog`); i18n keys `dialogCancel: string`, `dialogConfirm: string`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -396,6 +418,7 @@ Catalog values (place next to each catalog's `passwordCancel`):
 
 ```tsx
 // frontend/src/ui/ConfirmDialog.tsx
+import type { RefObject } from 'react'
 import { useMessages } from '../i18n'
 import { Dialog } from './Dialog'
 
@@ -408,16 +431,26 @@ export function ConfirmDialog({
   confirmLabel,
   onConfirm,
   onCancel,
+  returnFocusTo,
 }: {
   title: string
   message: string
   confirmLabel?: string
   onConfirm: () => void
   onCancel: () => void
+  /** Forwarded to Dialog. Callers whose opener unmounts before this dialog
+   * mounts (menu items) pass the persistent menu-toggle ref — without it,
+   * focus would fall back to <body> on close. */
+  returnFocusTo?: RefObject<HTMLElement | null>
 }) {
   const m = useMessages()
   return (
-    <Dialog title={title} onClose={onCancel} className="confirm-dialog">
+    <Dialog
+      title={title}
+      onClose={onCancel}
+      returnFocusTo={returnFocusTo}
+      className="confirm-dialog"
+    >
       <p>{message}</p>
       <div className="confirm-dialog-buttons">
         {/* autoFocus: React focuses on mount, deterministic in happy-dom
@@ -591,6 +624,16 @@ In the folder-header component (the one holding `defaultsOpen`, ~line 189), add:
 const [confirmingDelete, setConfirmingDelete] = useState(false)
 ```
 
+Focus restore: the delete menu item unmounts with the menu before the
+dialog mounts, so the dialog needs the **persistent menu-toggle button** as
+its restore target. Attach a ref to the toggle that opens this menu (find
+it in the component — the button controlling `menuOpen`):
+
+```tsx
+const menuButtonRef = useRef<HTMLButtonElement>(null)
+// ...on the existing menu-toggle <button>: ref={menuButtonRef}
+```
+
 Change the delete menu item (lines ~283-291):
 
 ```tsx
@@ -612,6 +655,7 @@ Render next to the existing `{defaultsOpen && (<FolderDefaultsDialog .../>)}`:
   <ConfirmDialog
     title={m.folderDelete}
     message={m.folderDeleteConfirm(folder.name)}
+    returnFocusTo={menuButtonRef}
     onConfirm={() => {
       setConfirmingDelete(false)
       removeFolder(folder.id).catch(() => {
@@ -623,13 +667,14 @@ Render next to the existing `{defaultsOpen && (<FolderDefaultsDialog .../>)}`:
 )}
 ```
 
-In `DocumentItem`, the same pattern: a `confirmingDelete` state; the delete menu item sets `setMenuOpen(false); setMoving(false); setConfirmingDelete(true)`; render:
+In `DocumentItem`, the same pattern: a `confirmingDelete` state; a `menuButtonRef` on its menu toggle; the delete menu item sets `setMenuOpen(false); setMoving(false); setConfirmingDelete(true)`; render:
 
 ```tsx
 {confirmingDelete && (
   <ConfirmDialog
     title={m.docDelete}
     message={m.docDeleteConfirm(doc.name)}
+    returnFocusTo={menuButtonRef}
     onConfirm={() => {
       setConfirmingDelete(false)
       void removeDocument(doc.id)
@@ -638,6 +683,8 @@ In `DocumentItem`, the same pattern: a `confirmingDelete` state; the delete menu
   />
 )}
 ```
+
+Add to the folder test after the cancel step: `expect(document.activeElement).toBe(/* the folder's menu-toggle button */)` — queried by the same aria-label used to open it.
 
 Verify: `grep -n "window.confirm" frontend/src` → no matches.
 
@@ -767,6 +814,7 @@ git commit -m "feat(auth): change-password form in an accessible modal dialog (B
 **Files:**
 - Modify: `frontend/src/admin/AdminView.tsx` (UserRow, the `admin-reset` cell, lines ~313-327)
 - Modify: `frontend/src/i18n/messages.ts` + all 7 catalogs (`adminSelfResetHint`)
+- Modify: `frontend/src/App.css` (`.admin-self-reset-hint`)
 - Test: `frontend/src/admin/AdminView.test.tsx` (extend)
 
 **Interfaces:**
@@ -777,8 +825,12 @@ git commit -m "feat(auth): change-password form in an accessible modal dialog (B
 
 Self-detection is by **id**, not email (`AdminView.tsx` renders `isSelf={user.id === me?.id}`), and the file's fixtures (`user()`, `adminUser()`) both default to `id: 1, email: 'ada@example.com'`. Seed the list with the self fixture plus a second user:
 
+The hint is **visible text replacing the controls** — not a `title` on
+disabled controls, which keyboard and screen-reader users could never
+discover (disabled elements are unfocusable).
+
 ```tsx
-it('disables the password reset on the own row with a hint', async () => {
+it('replaces the own-row password reset with a hint', async () => {
   // store user (me) = the id-1 admin fixture, per the file's existing setup;
   // user list: self + one other row
   vi.mocked(getAdminUsers).mockResolvedValue([
@@ -786,15 +838,12 @@ it('disables the password reset on the own row with a hint', async () => {
     adminUser({ id: 2, email: 'bea@example.com' }),
   ])
   // render AdminView and await the list (file's existing pattern)
-  const input = await screen.findByLabelText(`${en.adminResetPassword}: ada@example.com`)
-  expect(input).toHaveProperty('disabled', true)
-  expect(input.getAttribute('title')).toBe(en.adminSelfResetHint)
-  const button = input
-    .closest('td')!
-    .querySelector('button') as HTMLButtonElement
-  expect(button.disabled).toBe(true)
-  expect(button.getAttribute('title')).toBe(en.adminSelfResetHint)
-  // the other row stays enabled
+  expect(await screen.findByText(en.adminSelfResetHint)).toBeTruthy()
+  // no reset controls on the own row
+  expect(
+    screen.queryByLabelText(`${en.adminResetPassword}: ada@example.com`),
+  ).toBeNull()
+  // the other row keeps its enabled controls
   const other = screen.getByLabelText(`${en.adminResetPassword}: bea@example.com`)
   expect(other).toHaveProperty('disabled', false)
 })
@@ -803,7 +852,7 @@ it('disables the password reset on the own row with a hint', async () => {
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `npm test -- --run src/admin/AdminView.test.tsx`
-Expected: FAIL — `disabled` is `false`, no title.
+Expected: FAIL — the hint text is nowhere in the document; the self row still renders reset controls.
 
 - [ ] **Step 3: Add the key and implement**
 
@@ -821,39 +870,52 @@ Expected: FAIL — `disabled` is `false`, no title.
 
 (Each catalog's `accountMenu` translation is the authority for how "account menu" is rendered — align the noun with it.)
 
-`AdminView.tsx`, the reset cell:
+`AdminView.tsx`, the reset cell (input and button unchanged from today's
+code — they just move into the non-self branch):
 
 ```tsx
 <td className="admin-reset">
-  <input
-    type="password"
-    value={newPassword}
-    placeholder={m.adminPassword}
-    disabled={isSelf}
-    title={isSelf ? m.adminSelfResetHint : undefined}
-    aria-label={`${m.adminResetPassword}: ${user.email}`}
-    onChange={(e) => setNewPassword(e.target.value)}
-  />
-  <button
-    disabled={isSelf || !newPassword || resetPending}
-    title={isSelf ? m.adminSelfResetHint : undefined}
-    onClick={() => void resetPassword()}
-  >
-    {m.adminResetPassword}
-  </button>
+  {isSelf ? (
+    <span className="admin-self-reset-hint">{m.adminSelfResetHint}</span>
+  ) : (
+    <>
+      <input
+        type="password"
+        value={newPassword}
+        placeholder={m.adminPassword}
+        aria-label={`${m.adminResetPassword}: ${user.email}`}
+        onChange={(e) => setNewPassword(e.target.value)}
+      />
+      <button
+        disabled={!newPassword || resetPending}
+        onClick={() => void resetPassword()}
+      >
+        {m.adminResetPassword}
+      </button>
+    </>
+  )}
 </td>
+```
+
+CSS (append near the `.admin-reset` rules in `App.css`):
+
+```css
+.admin-self-reset-hint {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
 ```
 
 - [ ] **Step 4: Run tests, gates; mutation-verify**
 
 Run: `npm test -- --run src/admin/AdminView.test.tsx`, then full gates. Expected: PASS (including the existing other-row reset test).
-Mutation: change `disabled={isSelf}` on the input to `disabled={false}` → the new test fails. Restore.
+Mutation: render the controls branch for the self row too (change `isSelf ?` to `false ?`) → the new test fails on the hint-text and no-controls assertions. Restore.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add frontend/src/admin/AdminView.tsx frontend/src/admin/AdminView.test.tsx frontend/src/i18n
-git commit -m "feat(admin): disable own-row password reset, point at the account menu (B3, #36)"
+git add frontend/src/admin/AdminView.tsx frontend/src/admin/AdminView.test.tsx frontend/src/i18n frontend/src/App.css
+git commit -m "feat(admin): replace own-row password reset with account-menu hint (B3, #36)"
 ```
 
 ---
@@ -872,7 +934,7 @@ Add a "Dialogs (B3)" subsection where the M2 password-popover and FolderDefaults
 - `ui/Dialog.tsx`: native `<dialog>`/`showModal()`; platform focus trap (inert page); `cancel` event → `preventDefault()` + `onClose` (React owns unmounting); backdrop **mousedown** on the element itself dismisses; body scroll lock with prior-value restore; focus restore to `returnFocusTo` else the mount-time active element; `aria-labelledby` wired to the rendered `<h2>`; styling via `dialog.app-dialog` + `::backdrop` (`.dialog-overlay` is gone).
 - `ui/ConfirmDialog.tsx`: Cancel autofocused (destructive-safe), danger confirm, generic `dialogCancel`/`dialogConfirm` keys; adopted by both DocumentSidebar deletes (no `window.confirm` remains).
 - Change-password: now a modal dialog off the account popover, `returnFocusTo` = badge; all M2 completion guards unchanged (update the section that describes the drill-in `view` state).
-- Admin: own-row reset disabled with `adminSelfResetHint`; the M6 abrupt-self-logout note is resolved (revocation semantics unchanged).
+- Admin: the own-row reset cell renders the `adminSelfResetHint` text instead of controls (visible-text accessibility rationale); the M6 abrupt-self-logout note is resolved (revocation semantics unchanged).
 
 Accuracy rule: describe only behavior that exists in the merged code; verify each claim against the files before writing it.
 
