@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AdminUser, MeResponse } from '../api/client'
@@ -552,8 +552,12 @@ describe('AdminView', () => {
     expect(
       screen.queryByLabelText(`${en.adminResetPassword}: ada@example.com`),
     ).toBeNull()
-    // the other row keeps its enabled controls
+    // the other row keeps its reset controls (disabled-ness follows
+    // `!newPassword`, so assert presence of the button, not enabled state)
     const other = screen.getByLabelText(`${en.adminResetPassword}: bea@example.com`)
-    expect(other).toHaveProperty('disabled', false)
+    const row = other.closest('td')!
+    expect(
+      within(row).getByRole('button', { name: en.adminResetPassword }),
+    ).toBeTruthy()
   })
 })

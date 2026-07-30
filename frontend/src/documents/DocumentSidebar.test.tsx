@@ -166,4 +166,18 @@ describe('DocumentSidebar delete confirmations', () => {
     fireEvent.click(screen.getByRole('button', { name: en.dialogConfirm }))
     expect(vi.mocked(removeDocument)).toHaveBeenCalledWith(doc.id)
   })
+
+  it('folder defaults dialog returns focus to the menu toggle on dismiss', () => {
+    render(<DocumentSidebar />)
+    const menuButton = screen.getByRole('button', { name: en.folderMenu })
+
+    fireEvent.click(menuButton)
+    fireEvent.click(screen.getByText(en.folderDefaults))
+    const dialog = document.querySelector('dialog')!
+    expect(dialog.open).toBe(true)
+
+    fireEvent(dialog, new Event('cancel', { cancelable: true }))
+    expect(document.querySelector('dialog')).toBeNull()
+    expect(document.activeElement).toBe(menuButton)
+  })
 })

@@ -46,6 +46,7 @@ export function Dialog({
       // opener; React's autoFocus fires only on an element's first DOM
       // mount, so a dialog with an autofocused control starts with focus
       // on the opener in dev. Cosmetic, dev-only; production mounts once.
+      // oxlint-disable-next-line react-hooks/exhaustive-deps -- returnFocusTo is caller-owned; .current must be read at cleanup time
       const target = returnFocusTo?.current ?? opener
       target?.focus()
     }
