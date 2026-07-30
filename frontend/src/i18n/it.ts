@@ -54,6 +54,7 @@ export const it: Messages = {
   adminSelf: '(questo account)',
   adminLoadFailed: 'Caricamento utenti non riuscito.',
   adminGrantDisabledHint: 'La creazione di ulteriori admin è disattivata.',
+  adminSelfResetHint: "La propria password si modifica dal menu dell'account.",
   adminChangeFailed: (error) => `Modifica non riuscita: ${error}`,
   tierName: (t) =>
     ({ quality: 'Migliore qualità', balanced: 'Bilanciato', cheap: 'Veloce ed economico', local: 'Privato (locale)' })[t],

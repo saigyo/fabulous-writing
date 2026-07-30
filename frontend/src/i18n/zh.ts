@@ -52,6 +52,7 @@ export const zh: Messages = {
   adminSelf: '（此账户）',
   adminLoadFailed: '无法加载用户。',
   adminGrantDisabledHint: '已禁用创建其他管理员。',
+  adminSelfResetHint: '自己的密码请通过账户菜单修改。',
   adminChangeFailed: (error) => `更改失败：${error}`,
   tierName: (t) =>
     ({ quality: '最佳质量', balanced: '均衡', cheap: '快速经济', local: '私密(本地)' })[t],

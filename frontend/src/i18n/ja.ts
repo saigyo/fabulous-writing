@@ -52,6 +52,7 @@ export const ja: Messages = {
   adminSelf: '（このアカウント）',
   adminLoadFailed: 'ユーザーを読み込めませんでした。',
   adminGrantDisabledHint: '追加の管理者の作成は無効になっています。',
+  adminSelfResetHint: '自分のパスワードはアカウントメニューから変更します。',
   adminChangeFailed: (error) => `変更に失敗しました: ${error}`,
   tierName: (t) =>
     ({ quality: '最高品質', balanced: 'バランス', cheap: '高速・低コスト', local: 'プライベート(ローカル)' })[t],

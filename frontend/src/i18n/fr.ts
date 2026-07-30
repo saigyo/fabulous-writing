@@ -58,6 +58,7 @@ export const fr: Messages = {
   adminSelf: '(ce compte)',
   adminLoadFailed: 'Échec du chargement des utilisateurs.',
   adminGrantDisabledHint: "La création d'administrateurs supplémentaires est désactivée.",
+  adminSelfResetHint: 'Le mot de passe personnel se modifie via le menu du compte.',
   adminChangeFailed: (error) => `Échec de la modification : ${error}`,
   tierName: (t) =>
     ({ quality: 'Meilleure qualité', balanced: 'Équilibré', cheap: 'Rapide et économique', local: 'Privé (local)' })[t],

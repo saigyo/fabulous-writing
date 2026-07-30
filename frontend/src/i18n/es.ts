@@ -58,6 +58,7 @@ export const es: Messages = {
   adminSelf: '(esta cuenta)',
   adminLoadFailed: 'No se pudieron cargar los usuarios.',
   adminGrantDisabledHint: 'La creación de administradores adicionales está desactivada.',
+  adminSelfResetHint: 'La contraseña propia se cambia desde el menú de la cuenta.',
   adminChangeFailed: (error) => `Error al cambiar: ${error}`,
   tierName: (t) =>
     ({ quality: 'Máxima calidad', balanced: 'Equilibrado', cheap: 'Rápido y económico', local: 'Privado (local)' })[t],

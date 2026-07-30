@@ -54,6 +54,7 @@ export const de: Messages = {
   adminSelf: '(dieses Konto)',
   adminLoadFailed: 'Benutzer konnten nicht geladen werden.',
   adminGrantDisabledHint: 'Das Anlegen weiterer Admins ist deaktiviert.',
+  adminSelfResetHint: 'Das eigene Passwort wird über das Kontomenü geändert.',
   adminChangeFailed: (error) => `Änderung fehlgeschlagen: ${error}`,
   tierName: (t) =>
     ({ quality: 'Beste Qualität', balanced: 'Ausgewogen', cheap: 'Schnell & günstig', local: 'Privat (lokal)' })[t],

@@ -2068,3 +2068,7 @@ dialog.app-dialog h2 {
 .admin-self { opacity: 0.6; }
 .admin-inactive td { opacity: 0.55; }
 .admin-reset { white-space: nowrap; }
+.admin-self-reset-hint {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}

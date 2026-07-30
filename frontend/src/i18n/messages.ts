@@ -58,6 +58,7 @@ export interface Messages {
   adminSelf: string
   adminLoadFailed: string
   adminGrantDisabledHint: string
+  adminSelfResetHint: string
   adminChangeFailed: (error: string) => string
   tierName: (tier: Tier) => string
   tierPinnedOption: (model: string) => string
