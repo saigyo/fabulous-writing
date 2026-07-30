@@ -1868,7 +1868,32 @@ dialog.app-dialog h2 {
   display: flex;
   gap: 0.5rem;
   margin-top: 0.5rem;
-  align-items: center;
+  /* Stretch, not center: when a long localized label wraps (de/fr), all
+     three buttons share the taller height instead of Cancel/Save floating
+     small beside a tall take-current button. */
+  align-items: stretch;
+}
+.fd-buttons button {
+  font-size: 0.8rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+/* Secondary/utility action: compact type keeps even the longest localized
+   labels ("Vom aktuellen Dokument übernehmen") to ~2 lines in every
+   locale — same treatment always, no per-language special-casing. */
+.fd-take-current {
+  font-size: 0.72rem;
+  line-height: 1.25;
+  max-width: 45%;
+}
+/* The primary pair never breaks mid-word (ja "キャンセル" wrapped). */
+.fd-cancel,
+.fd-save {
+  white-space: nowrap;
 }
 .fd-spacer {
   flex: 1;
