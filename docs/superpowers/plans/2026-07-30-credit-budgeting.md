@@ -17,7 +17,7 @@
 - The live database `backend/data/fabulous.db` is never read or written by tests; every test passes `tmp_path`-based `Settings`; `create_app()` is never called with default settings in tests.
 - Never kill, restart, or start anything on ports 5173 and 8000.
 - Never widen a wall-clock test bound. Mutation-verify every guard test (delete the guard, watch the test fail, restore).
-- Credit limits are enforced **between** runs, never as mid-run cutoffs (spec §1). Overshoot is bounded by one run.
+- Credit limits are enforced **between** runs, never as mid-run cutoffs (spec §1). Overshoot is bounded by the runs in flight when a window fills (at most `concurrent_llm_runs` per user), never cut off mid-flight.
 - Credits are **integers** (SQLite `INTEGER`); the formula rounds up via `math.ceil`; budgets and sums are exact integer arithmetic (spec §2.1).
 - The user never sees absolute credit numbers — `/me` reports label + whole percents only, admins included (spec §1).
 - `name` runs are free: `source_weights["name"] = 0.0` by default (spec §2.1).
@@ -1219,6 +1219,19 @@ def test_me_reports_ceil_percent(...):  # non-admin fixtures; tier budget 1000
     me = <client>.get("/api/auth/me", headers=<non-admin auth headers>).json()
     (day,) = [w for w in me["usage"]["windows"] if w["window"] == "day"]
     assert day["used_percent"] == 5  # ceil(4.9); floor would read 4
+    # Overshoot the budget (settlement above estimate) and re-read: the
+    # percent must cap at exactly 100, never report the raw 205.
+    decision = store.reserve_llm_run(
+        FakeMeteredUser(<non-admin user id>), <that tier's limits>,
+        <settings>.limits, RequestedLLM(tier="cheap"),
+        EffectiveSelection(tier="cheap", provider="ollama", model="m", degraded=False),
+        100, "check", "run-cap",
+    )
+    store.finish_run(decision.reservation_id, "completed",
+                     input_tokens=2000, output_tokens=0)  # total 2049 of 1000
+    me = <client>.get("/api/auth/me", headers=<non-admin auth headers>).json()
+    (day,) = [w for w in me["usage"]["windows"] if w["window"] == "day"]
+    assert day["used_percent"] == 100  # capped; uncapped ceil would be 205
 ```
 
 The angle-bracketed pieces name the file's real fixtures/helpers — substitute them 1:1 (if the file has no metered-user stub, a 2-line `FakeMeteredUser` class with `id`/`is_admin` attributes like test_usage.py's `FakeUser` works). The assertion values are binding: settled spend 49 against budget 1000 must read exactly 5.
@@ -1344,7 +1357,7 @@ Run: `uv run pytest -q` — green, zero warnings. (Frontend is expected to be st
 
 - [ ] **Step 5: Mutation-verify the guard tests**
 
-Temporarily drop the `min(100, ...)` cap → drive `used` above budget in the percent test (or add a one-off assert) and confirm a >100 value escapes; the binding check: temporarily change `-(-used * 100 // budget)` to `used * 100 // budget` (floor) → `test_me_reports_ceil_percent_capped_at_100` must fail (4 ≠ 5); restore. Green after restoring.
+Temporarily drop the `min(100, ...)` cap → `test_me_reports_ceil_percent`'s second assertion must fail (205 escapes); restore. Temporarily change `-(-used * 100 // budget)` to `used * 100 // budget` (floor) → its first assertion must fail (4 ≠ 5); restore. Green after restoring.
 
 - [ ] **Step 6: Commit**
 
@@ -1505,7 +1518,7 @@ Set the tier's `credits_per_day=one_run_budget(TEXT)` where `TEXT` is the exact 
 - [ ] **Step 4: Run the full suite**
 
 Run: `uv run pytest -q`
-Expected: green, zero warnings. Iterate on missed sweep sites until clean — `grep -rn "llm_checks_per_day" app tests ../backend/config*.yaml` must return nothing (only docs/ mentions may remain until Task 7).
+Expected: green, zero warnings. Iterate on missed sweep sites until clean — `grep -rn "llm_checks_per_day" app config.yaml config.example.yaml` must return nothing, and in `tests/` the ONLY permitted matches are inside `test_config.py`'s `test_stale_llm_checks_per_day_fails_loudly` (the intentional stale-key guard from Step 1 — do NOT delete it to satisfy this gate). Docs/ mentions may remain until Task 7.
 
 - [ ] **Step 5: Mutation-verify the fail-closed guard**
 
@@ -1690,7 +1703,7 @@ Locate the ledger/metering section (it documents `llm_usage`, `reserve_llm_run`,
 - The `credits INTEGER` column: admission estimate while `started` (chars/4 input, quarter of that output, priced through `run_cost`), settled from actual tokens at `finish_run` (completed → actual, estimate stands if none reported; failed → actual else 0; cancelled/abandoned → estimate stands). Pre-B6 rows are `NULL` and count 0.
 - `services/credits.py`: `credits = ceil(source_weight × factor × (input + output_weight × output))`; factor chain model → provider default → global default; per-provider `output_weight`; `name` free by default.
 - The `credit_cost` config block and the tier `credits_per_{hour,day,week,month}` windows (≥1 required, calendar-aligned UTC, `llm_checks_per_day` removed — breaking config change).
-- Enforcement: per-window `SUM(COALESCE(credits,0))` inside the reservation transaction, insert-first unchanged, between-runs only (overshoot ≤ one run), `QuotaDecision.exhausted_window`, new `(user_id, created_at)` index.
+- Enforcement: per-window `SUM(COALESCE(credits,0))` inside the reservation transaction, insert-first unchanged, between-runs only (overshoot bounded by the user's in-flight runs, ≤ `concurrent_llm_runs`), `QuotaDecision.exhausted_window`, new `(user_id, created_at)` index.
 - `/me`: `label` + per-window `used_percent` (ceil, capped 100), no absolute numbers; `used_today` replaced by `credits_used`.
 
 Also sweep the document for `llm_checks_per_day` / `used_today` mentions and update them.

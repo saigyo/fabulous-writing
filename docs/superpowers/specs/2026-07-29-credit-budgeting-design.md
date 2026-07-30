@@ -14,7 +14,11 @@ concurrency today — admit on a size estimate, settle on actual tokens at `fini
 
 **Binding constraints (carried from the owner decisions):**
 
-- Credit limits are enforced **between** runs, never as mid-run cutoffs. Overshoot is bounded by one run.
+- Credit limits are enforced **between** runs, never as mid-run cutoffs. Overshoot is bounded by
+  the runs in flight when a window fills — at most `concurrent_llm_runs` per user, each admitted on
+  its estimate before any could settle above it. (Serializing budgeted runs per user was considered
+  and rejected: it would forfeit concurrency to tighten a bound the small per-user caps already
+  keep modest.)
 - `name` runs (auto-titles) are effectively free: they are system-triggered, not user-initiated.
 - The user never sees absolute credit numbers — only a tier label and per-window usage percentages
   (admins included; `/me` has one payload shape). Raw numbers exist only in config and the ledger.
