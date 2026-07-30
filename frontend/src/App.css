@@ -1691,6 +1691,12 @@ input {
   background: none;
   border: none;
   cursor: pointer;
+  /* No global button reset exists, so without this the items render in
+     the UA's default button font — larger and off-family. No `color`
+     here: .doc-menu-delete's danger red has lower specificity and must
+     keep winning. */
+  font: inherit;
+  font-size: 0.85rem;
 }
 .doc-menu button:hover {
   background: var(--accent-soft);
@@ -2015,6 +2021,10 @@ dialog.app-dialog h2 {
   background: none;
   border: none;
   cursor: pointer;
+  /* Same UA-default-font fix as .doc-menu button (the recipe this was
+     copied from). */
+  font: inherit;
+  font-size: 0.85rem;
 }
 
 .account-menu > button:hover {
