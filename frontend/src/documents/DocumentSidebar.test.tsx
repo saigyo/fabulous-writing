@@ -1,6 +1,24 @@
-import { describe, expect, it } from 'vitest'
+// @vitest-environment happy-dom
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { DocumentSummary, Folder } from '../api/client'
+import { en } from '../i18n/en'
+import { useStore } from '../state/store'
 import { absoluteTime, relativeTime } from './documentTime'
 import { groupDocuments } from './grouping'
+
+vi.mock('./documents', () => ({
+  createNewDocument: vi.fn(),
+  initDocuments: vi.fn(),
+  moveDocumentToFolder: vi.fn(),
+  openDocument: vi.fn(),
+  removeDocument: vi.fn(() => Promise.resolve()),
+  removeFolder: vi.fn(() => Promise.resolve()),
+  renameDocument: vi.fn(),
+}))
+
+import { DocumentSidebar } from './DocumentSidebar'
+import { removeDocument, removeFolder } from './documents'
 
 describe('absoluteTime', () => {
   it('renders a localized date and time', () => {
@@ -58,5 +76,94 @@ describe('groupDocuments', () => {
     const grouped = groupDocuments([], folders)
     expect(grouped.byFolder.get(1)).toEqual([])
     expect(grouped.byFolder.get(2)).toEqual([])
+  })
+})
+
+const folder: Folder = {
+  id: 1,
+  name: 'Blog',
+  created_at: '',
+  default_language: null,
+  default_profile_id: null,
+  default_domain_ids: null,
+  default_llm_provider: null,
+  default_llm_model: null,
+  default_llm_tier: null,
+  default_llm_auto: null,
+}
+
+const doc: DocumentSummary = {
+  id: 10,
+  name: 'Draft',
+  language: 'en',
+  folder_id: folder.id,
+  created_at: '2026-07-29T12:00:00+00:00',
+  edited_at: '2026-07-29T12:00:00+00:00',
+  checked_at: null,
+  updated_at: '2026-07-29T12:00:00+00:00',
+}
+
+describe('DocumentSidebar delete confirmations', () => {
+  afterEach(() => {
+    cleanup()
+  })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useStore.setState({
+      uiLocale: 'en',
+      documents: [doc],
+      folders: [folder],
+      docSidebarCollapsed: false,
+      docFoldersCollapsed: [],
+      docListError: false,
+      docMeta: null,
+    })
+  })
+
+  it('folder delete asks via ConfirmDialog and only deletes on confirm', () => {
+    render(<DocumentSidebar />)
+    const menuButton = screen.getByRole('button', { name: en.folderMenu })
+
+    fireEvent.click(menuButton)
+    fireEvent.click(screen.getByText(en.folderDelete))
+    // dialog is up, nothing deleted yet
+    expect(document.querySelector('dialog')?.open).toBe(true)
+    expect(vi.mocked(removeFolder)).not.toHaveBeenCalled()
+
+    // cancel closes without deleting, and returns focus to the menu toggle
+    fireEvent.click(screen.getByRole('button', { name: en.dialogCancel }))
+    expect(vi.mocked(removeFolder)).not.toHaveBeenCalled()
+    expect(document.querySelector('dialog')).toBeNull()
+    expect(document.activeElement).toBe(menuButton)
+
+    // reopen menu, click delete again, confirm deletes
+    fireEvent.click(menuButton)
+    fireEvent.click(screen.getByText(en.folderDelete))
+    fireEvent.click(screen.getByRole('button', { name: en.dialogConfirm }))
+    expect(vi.mocked(removeFolder)).toHaveBeenCalledWith(folder.id)
+  })
+
+  it('document delete asks via ConfirmDialog and only deletes on confirm', () => {
+    render(<DocumentSidebar />)
+    const menuButton = screen.getByRole('button', { name: en.docMenu })
+
+    fireEvent.click(menuButton)
+    fireEvent.click(screen.getByText(en.docDelete))
+    // dialog is up, nothing deleted yet
+    expect(document.querySelector('dialog')?.open).toBe(true)
+    expect(vi.mocked(removeDocument)).not.toHaveBeenCalled()
+
+    // cancel closes without deleting, and returns focus to the menu toggle
+    fireEvent.click(screen.getByRole('button', { name: en.dialogCancel }))
+    expect(vi.mocked(removeDocument)).not.toHaveBeenCalled()
+    expect(document.querySelector('dialog')).toBeNull()
+    expect(document.activeElement).toBe(menuButton)
+
+    // reopen menu, click delete again, confirm deletes
+    fireEvent.click(menuButton)
+    fireEvent.click(screen.getByText(en.docDelete))
+    fireEvent.click(screen.getByRole('button', { name: en.dialogConfirm }))
+    expect(vi.mocked(removeDocument)).toHaveBeenCalledWith(doc.id)
   })
 })
