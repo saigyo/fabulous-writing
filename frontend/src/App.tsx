@@ -225,19 +225,6 @@ export function Header() {
           <DomainMultiSelect />
         </label>
         <LlmSelector />
-        {store.user && !llmDisabled(store.user) && tightestWindow && (
-          <span
-            className="quota-indicator"
-            title={usageWindows
-              .map((w) => `${m.windowName(w.window)}: ${w.used_percent}%`)
-              .join(' · ')}
-            aria-label={`${m.quotaIndicatorTitle}: ${store.user.usage.label} · ${usageWindows
-              .map((w) => `${m.windowName(w.window)}: ${w.used_percent}%`)
-              .join(', ')}`}
-          >
-            {store.user.usage.label} · {tightestWindow.used_percent}%
-          </span>
-        )}
         {!llmDisabled(store.user) && (
           <button
             type="button"
@@ -257,6 +244,19 @@ export function Header() {
           {store.checkPhase === 'idle' ? m.check : m.checking}
         </button>
         <AccountMenu />
+        {store.user && !llmDisabled(store.user) && tightestWindow && (
+          <span
+            className="quota-indicator"
+            title={usageWindows
+              .map((w) => `${m.windowName(w.window)}: ${w.used_percent}%`)
+              .join(' · ')}
+            aria-label={`${m.quotaIndicatorTitle}: ${store.user.usage.label} · ${usageWindows
+              .map((w) => `${m.windowName(w.window)}: ${w.used_percent}%`)
+              .join(', ')}`}
+          >
+            {store.user.usage.label} · {tightestWindow.used_percent}%
+          </span>
+        )}
       </div>
     </header>
   )

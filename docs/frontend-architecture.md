@@ -1137,8 +1137,11 @@ the M4 `policy` payload. No absolute credit numbers are reported locally —
 the UI shows only the tightest window's percentage.
 
 - **The quota indicator** (`App.tsx`): displays `{label}` + `{used_percent}%`
-  for the tightest configured window (lowest remaining budget), rendered next
-  to the header's `LlmSelector` and hidden entirely (like the selector itself)
+  for the tightest configured window (lowest remaining budget), hung as a
+  compact caption below the Check/account buttons — absolutely positioned off
+  `.header-controls`, right-aligned, the same treatment as the resolved-model
+  caption below the `LlmSelector` (B10), so it never adds header height — and
+  hidden entirely (like the selector itself)
   when `llmDisabled(store.user)` — showing a quota percentage for an account
   with no LLM access at all would be noise, not information. `tightestWindow`
   reduces `usage.windows` to `null` (hiding the whole indicator) when that
