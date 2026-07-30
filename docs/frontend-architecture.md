@@ -1128,17 +1128,19 @@ frontend's job, as with M4's policy gating, is display and UI-level
 gating only — every limit is enforced server-side regardless of what the
 client shows.
 
-**`MeResponse.usage`/`limits` are the one display source.** `GET
-/api/auth/me` (`types.ts`) carries `usage: {used_today, limit}` and
-`limits: {max_document_chars, max_llm_document_chars,
-concurrent_llm_runs}` alongside the M4 `policy` payload. Nothing computes
-quota or size numbers locally — every number shown to the user reads
-straight off the current `store.user`.
+**`MeResponse.usage`/`limits` are the one display source (B6).** `GET
+/api/auth/me` (`types.ts`) carries `usage: {label, windows: [{window,
+budget, used_percent}, ...]}` and `limits: {max_document_chars,
+max_llm_document_chars, concurrent_llm_runs}` alongside the M4 `policy`
+payload. No absolute credit numbers are reported locally — the UI shows only
+the tightest window's percentage.
 
-- **The quota indicator** (`App.tsx`): `{store.user.usage.used_today}/{store.user.usage.limit}`,
-  rendered next to the header's `LlmSelector` and hidden entirely (like the
-  selector itself) when `llmDisabled(store.user)` — showing a quota count
-  for an account with no LLM access at all would be noise, not information.
+- **The quota indicator** (`App.tsx`): `{label}` + `{used_percent}%` for
+  the tightest configured window (lowest remaining budget), rendered next to
+  the header's `LlmSelector` and hidden entirely (like the selector itself)
+  when `llmDisabled(store.user)` — showing a quota percentage for an account
+  with no LLM access at all would be noise, not information. No label is
+  shown if all windows are unconfigured (inert mode).
 - **The char-count dual thresholds** (`sidebar/Sidebar.tsx`): `docChars`
   (live character count of the editor buffer) is compared against **two**
   independent caps — `overLlm = docChars > user.limits.max_llm_document_chars`
@@ -1151,19 +1153,19 @@ straight off the current `store.user`.
 
 **`skipNoticeText` (`checking/skipNotice.ts`) is the one home for skip
 copy.** It maps an `EffectiveLlmReport.skipped`/`SuggestionResponse.skipped`
-code to display text — `quota_exhausted` → `m.llmQuotaExhausted(user?.usage.limit
-?? 0)`, `document_too_large` → `m.llmDocumentTooLarge(user?.limits.max_llm_document_chars
-?? 0)`, `llm_unavailable` → `llmDisabled(user) ? m.llmNotIncluded :
-m.llmSkippedServer` (the M4 split), anything else/`null` → `null`. Both
-`sidebar/Sidebar.tsx` (the check-time skip note, driven by
-`state.llmEffective`) and `checking/suggest.ts` (the on-demand
-suggestion/rewrite error, falling back to `m.llmSkippedServer` if
-`skipNoticeText` returns `null`) call this one function, so the sidebar
-note and a suggestion's error text can never drift apart on wording — the
-numbers themselves come from `/me` (`user.usage`/`user.limits`), never from
-the report, which carries only the code (a documented deviation from spec
-§6.4/§6.5 — see `docs/backend-architecture.md`'s LLM usage metering
-section and the roadmap's Cross-milestone interfaces).
+code to display text — `quota_exhausted` (B6: now means a credit window is
+exhausted, no longer a run count) → `m.llmQuotaExhausted()`, `document_too_large`
+→ `m.llmDocumentTooLarge(user?.limits.max_llm_document_chars ?? 0)`,
+`llm_unavailable` → `llmDisabled(user) ? m.llmNotIncluded : m.llmSkippedServer`
+(the M4 split), anything else/`null` → `null`. Both `sidebar/Sidebar.tsx` (the
+check-time skip note, driven by `state.llmEffective`) and `checking/suggest.ts`
+(the on-demand suggestion/rewrite error, falling back to `m.llmSkippedServer`
+if `skipNoticeText` returns `null`) call this one function, so the sidebar note
+and a suggestion's error text can never drift apart on wording — the window
+percentages come from `/me` (`user.usage`), never from the report, which
+carries only the code (a documented deviation from spec §6.4/§6.5 — see
+`docs/backend-architecture.md`'s LLM usage metering section and the roadmap's
+Cross-milestone interfaces).
 
 **`refreshUser()` and its call sites.** `auth/session.ts#refreshUser()` is
 a best-effort `/me` re-fetch so the quota indicator tracks reality after an
@@ -1179,23 +1181,20 @@ that breaks it the same way. Call sites: `checking/controller.ts#runCheck`
 (immediately once the POST resolves, for any check that requested the LLM
 phase and was actually admitted — i.e. `result.effective_llm` is present
 with `skipped == null` — skip-guarded so a skip, which never reserved a
-ledger row, never triggers a refresh. `used_today` is status-blind:
-`reserve_llm_run()` inserts the ledger row at admission time, inside this
-same request/response cycle, so the count has already changed the moment
-the POST resolved and never changes again at completion — refreshing at
-`onDone` would just re-fetch the same number. `runCheck` deliberately never
-refreshes from the SSE subscription's `onDone` handler for exactly that
-reason, which also means a detached or superseded subscription — one whose
-`onDone` never fires because `cancelCheck()` or a newer `runCheck()` already
-unsubscribed it — still stays accounted for, since the admission-time
-refresh already ran regardless of what happens to the subscription
-afterwards) and `checking/suggest.ts` (`fetchSuggestions`/`fetchRewrite`,
-after a successful, non-skipped response, and again in the `catch` block
-for any non-429 failure — a provider error such as a 502 still settles its
-ledger row as `'failed'` server-side, so `used_today` goes stale unless the
-refresh fires there too. Never on a skip, since a skip never reserved a
-ledger row, and never on a 429, since a rejected reservation rolled back
-and consumed nothing).
+ledger row, never triggers a refresh. The admission-time refresh captures the
+credit cost immediately: `reserve_llm_run()` inserts and settles the admission
+estimate inside this same request/response cycle, so the window percentages
+have already changed the moment the POST resolved. `runCheck` deliberately
+never refreshes from the SSE subscription's `onDone` handler, which also means
+a detached or superseded subscription — one whose `onDone` never fires because
+`cancelCheck()` or a newer `runCheck()` already unsubscribed it — still stays
+accounted for, since the admission-time refresh already ran regardless) and
+`checking/suggest.ts` (`fetchSuggestions`/`fetchRewrite`, after a successful,
+non-skipped response, and again in the `catch` block for any non-429 failure —
+a provider error such as a 502 still settles its ledger row as `'failed'`
+server-side with actual or estimated credits charged. Never on a skip, since
+a skip never reserved a ledger row, and never on a 429, since a rejected
+reservation rolled back and consumed no credits).
 
 **The 429 transient notice.** All three LLM-invoking call sites
 (`controller.ts#runCheck`, `suggest.ts#fetchSuggestions`/`fetchRewrite`)

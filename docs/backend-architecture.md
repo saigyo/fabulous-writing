@@ -1379,13 +1379,14 @@ extra, because access policy must not fail open on a typo:
   `Settings`-level `model_validator`, since only `Settings` knows the
   configured extras.
 - **`limits`** (`TierLimitsSettings`, **required** on every configured tier
-  as of M5): `llm_checks_per_day`, `max_llm_document_chars`,
-  `concurrent_llm_runs`, each a required positive field. `TierSettings.limits`
-  carries no default, so a `tiers:` entry with no `limits:` block at all (or
-  one missing any of the three keys) fails `Settings` validation and aborts
-  startup — a partially-specified or missing block can no longer be allowed
-  to fail open now that M5's `reserve_llm_run` (below) enforces these
-  numbers for real.
+  as of M5): `max_llm_document_chars`, `concurrent_llm_runs`, each a
+  required positive field. (B6: `llm_checks_per_day` was replaced by
+  `credit_cost` config windows — see [LLM usage metering](#llm-usage-metering)
+  below.) `TierSettings.limits` carries no default, so a `tiers:` entry with
+  no `limits:` block at all (or one missing any of the required keys) fails
+  `Settings` validation and aborts startup — a partially-specified or missing
+  block can no longer be allowed to fail open now that M5's `reserve_llm_run`
+  (below) enforces these numbers for real.
 - **`features`** (`list[str]`, default `[]`): must be a subset of
   `KNOWN_FEATURES` (`app/core/config.py`, currently `("custom_profiles",
   "custom_domains")`) — a closed set, so a typo cannot silently withhold or
@@ -1563,16 +1564,19 @@ CREATE TABLE llm_usage (
     llm_tier, provider, model,           -- effective selection
     requested_tier, requested_provider, requested_model,
     text_chars INTEGER NOT NULL, input_tokens, output_tokens,
+    credits INTEGER,                    -- admission estimate while 'started'; settled at 'finish'
     source TEXT NOT NULL, run_id TEXT NOT NULL,
     fail_stage TEXT, fail_detail TEXT    -- failed-path only (CHECK); see below
 );
 ```
 
-Two indexes: `idx_llm_usage_user_day (user_id, day)` backs the daily quota
-count and `/me`'s `used_today`; `idx_llm_usage_inflight` is a **partial**
-index on `(status, created_at) WHERE status = 'started'` — without it the
-server-wide in-flight count (no `user_id` predicate) would degrade to a
-full table scan inside the transaction that serializes every reservation.
+Three indexes: `idx_llm_usage_user_day (user_id, day)` backs per-day credit
+sums; `idx_llm_usage_inflight` is a **partial** index on `(status, created_at)
+WHERE status = 'started'` — without it the server-wide in-flight count would
+degrade to a full table scan inside the transaction that serializes every
+reservation; `idx_llm_usage_user_created (user_id, created_at)` backs the
+per-window credit-window queries that enforce calendar-aligned UTC budgets
+(hour→day→week→month, see [Credit windows](#credit-windows) below).
 
 `input_tokens`/`output_tokens` carry the provider's own reported counts
 (`TokenUsage`, below) whenever the provider returned them; `NULL` means "not
@@ -1580,6 +1584,20 @@ reported," not zero. The checks path (`_run_llm`) additionally falls back to
 the SSE progress approximation for `output_tokens` when the provider
 reported none — suggestions and naming have no such fallback since they
 never stream progress.
+
+**`credits` (B6)** — integer cost of the run, settled at `finish_run` via
+`services/credits.py`. While `status = 'started'` (admission phase), credits
+hold the **admission estimate**: `ceil(source_weight × factor ×
+(estimated_input + output_weight × estimated_output))` where estimates come
+from `text_chars` divided by 4, then output = input / 4. When the run
+completes (`status = 'completed'`), credits are **settled** to the actual cost:
+`ceil(source_weight × factor × (input_tokens + output_weight × output_tokens))`.
+On `'failed'` status, credits are settled to actual if available, else the
+estimate stands. On `'cancelled'` and `'abandoned'`, the estimate stands
+unchanged. Pre-B6 rows are `NULL` and count as 0 in quota calculations. The
+factor/weight lookup chain (`services/credits.py#run_cost`) is: exact model in
+provider block → provider default factor → global default factor; output weight
+is similarly per-provider or global default.
 
 `fail_stage`/`fail_detail` are written only on the `'failed'` path — every
 other terminal status (`completed`, `cancelled`, `abandoned`) leaves both
@@ -1606,6 +1624,27 @@ databases gain both columns via `migrate_columns` at startup with no
 that reason — a typo'd stage on a migrated table would otherwise pass
 silently.
 
+### Credit windows (B6)
+
+**`credit_cost` config block** (`app/core/config.py`, `CreditCostSettings`):
+tier-independent budgets applied to all users equally. Four calendar-aligned
+UTC windows, each with an optional budget: `credits_per_hour`,
+`credits_per_day`, `credits_per_week`, `credits_per_month`. At least one is
+required (or any existing tier is refused at startup). A `NULL` budget (or
+omitted key) means "no limit for that window." The enforcement path
+(`reserve_llm_run`) checks all configured windows in order and rolls back if
+any window's `SUM(COALESCE(credits, 0))` exceeds its budget; overshoot is
+bounded by the user's in-flight runs (`≤ concurrent_llm_runs`).
+
+**Per-provider and per-model factors** (`credit_cost.providers`): the
+`default_factor` and per-model `models: {model_name: factor}` override the
+global `default_factor`, and `output_weight` overrides the global
+`default_output_weight` (weighting of output tokens in cost calculations).
+**`name` source is free by default:** runs via the naming provider carry
+`source="name"` and `credit_cost.source_weights.get("name", 1.0)` — omit from
+config or set to 0.0 to disable cost. Weighted sources (e.g. `suggestions`,
+`name`) multiply into the factor chain.
+
 ### The reservation transaction
 
 `UsageStore.reserve_llm_run(user, limits, server_limits, requested,
@@ -1630,18 +1669,21 @@ One transaction, in order:
    SQLite file — the INSERT takes the write lock before any `COUNT`, so
    concurrent reservations serialize on it. Never reorder into
    count-then-insert.
-3. **Three conditions, evaluated in order, each counting the just-inserted
-   row**: day count (all of the user's rows for `user_id`/`day`, any status)
-   `> limits.llm_checks_per_day` → roll back, `quota_exhausted` (an admin
-   hitting their own ceiling additionally logs a WARNING — routine for a
-   normal user, suspicious for an admin at a generous ceiling); per-user
-   in-flight (`status = 'started'`) `> limits.concurrent_llm_runs` → roll
-   back, `concurrency_rejected(server_wide=False)`; server-wide in-flight `>
-   server_limits.max_concurrent_llm_runs` → roll back,
-   `concurrency_rejected(server_wide=True)`. Quota is checked before
-   concurrency (spec §6.4) — an exhausted quota must never register as a
-   concurrency rejection. Only if all three pass does the transaction
-   commit, returning `QuotaDecision(kind="admitted",
+3. **Per-window budget check (B6)**: for each configured window (hour, day,
+   week, month), `SUM(COALESCE(credits, 0))` where `created_at` falls within
+   the window — roll back with `exhausted_window(window_name)` if any window
+   exceeds its budget. Between-runs only, meaning concurrency does not
+   consume quota — only completed/failed/settled runs do. Overshoot is
+   bounded by the user's in-flight runs (`≤ concurrent_llm_runs`). An admin
+   hitting their own ceiling logs a WARNING.
+
+4. **Concurrency checks**: per-user in-flight (`status = 'started'`) `>
+   limits.concurrent_llm_runs` → roll back, `concurrency_rejected(server_wide=False)`;
+   server-wide in-flight `> server_limits.max_concurrent_llm_runs` → roll
+   back, `concurrency_rejected(server_wide=True)`. Windows are checked
+   before concurrency — an exhausted window must never register as a
+   concurrency rejection. Only if all windows and concurrency checks pass
+   does the transaction commit, returning `QuotaDecision(kind="admitted",
    reservation_id=cursor.lastrowid)`.
 
 `finish_run(reservation_id, status, *, input_tokens=None,
@@ -1753,10 +1795,13 @@ the cap is refused.
 `GET /api/auth/me` (`MeResponse`, `app/api/auth.py`) carries, alongside the
 M4 policy payload:
 
-- `usage: UsagePayload` — `used_today` (defined identically to
-  `reserve_llm_run`'s day count: all of the caller's rows for the UTC day,
-  regardless of status — so the UI and the enforcement can never drift) and
-  `limit` (`limits.llm_checks_per_day`).
+- **`usage: UsagePayload` (B6)** — `label` (tier name from the `limits` block,
+  or the global `label` field if there is one) and `windows: list[WindowUsage]`,
+  each with `window` (hour|day|week|month), `budget` (the limit for that window,
+  or `None` if unconfigured), and `used_percent` (ceil of
+  `used_credits * 100 / budget`, capped at 100). No absolute credit numbers are
+  reported — only the tightest window's label and used percent are shown in the
+  UI. Replaces M5's `used_today`/`limit` pair.
 - `limits: LimitsPayload` — `max_document_chars` (the server-wide byte-budget
   source), `max_llm_document_chars`, and `concurrent_llm_runs` (the latter
   two are the caller's own per-tier numbers from `limits_for`).
@@ -1783,13 +1828,20 @@ result is `NO_LLM_POLICY`, so `resolve_llm_selection` always floors out to
 
 ### Defaults (inert by design)
 
+**`credit_cost` defaults (B6)** (`CreditCostSettings`): global `default_factor=1.0`,
+`default_output_weight=0.5`, `source_weights` empty (all sources factor 1.0,
+`name` free by default), `providers` empty (so per-provider overrides are
+skipped), and `credits_per_day=5_000_000` (effectively unlimited). At startup,
+the single configured window (`day`) is enforced; a deployement without
+`credit_cost:` in config uses inert defaults and metering is invisible.
+
 Shipped defaults (`LimitsSettings`, `_default_admin_limits`):
-`llm_checks_per_day=500`, `max_llm_document_chars=200000`,
-`concurrent_llm_runs=5` (the admin ceiling, also what every caller gets in
-inert mode), `max_concurrent_llm_runs=20` (server-wide),
-`llm_run_max_age=900` (seconds), `concurrency_reject_delay=0.25` (seconds).
-Deliberately generous enough that an existing single-admin deployment never
-notices metering exists until `tiers:`/`limits:` are configured tighter.
+`max_llm_document_chars=200000`, `concurrent_llm_runs=5` (the admin ceiling,
+also what every caller gets in inert mode), `max_concurrent_llm_runs=20`
+(server-wide), `llm_run_max_age=900` (seconds), `concurrency_reject_delay=0.25`
+(seconds). (B6: `llm_checks_per_day` removed — replaced by `credit_cost`
+windows.) Deliberately generous enough that an existing single-admin deployment
+never notices metering exists until `tiers:`/`limits:` are configured tighter.
 
 ## API surface
 
@@ -1806,7 +1858,7 @@ Every endpoint below requires a valid `Authorization: Bearer <token>` caller **e
 | `GET/POST/PUT/DELETE /api/profiles`, `POST /api/profiles/{id}/reset` | profile CRUD |
 | `GET/POST/PUT/DELETE /api/documents`, `POST /api/documents/{id}/generate-name` | revision-guarded document CRUD + auto-titling (see [Documents](#documents)) |
 | `GET/POST/PUT/DELETE /api/folders` | folder CRUD, lossless delete, read-time defaults pruning (see [Folders](#folders)) |
-| `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/password` | local login/session/password-change; `/login` is public, `/me` and `/password` require a caller, `/me` carries the M4 policy/feature payload (see [Authentication](#authentication-and-user-accounts), [Tiers and LLM policy](#tiers-and-llm-policy)) |
+| `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/password` | local login/session/password-change; `/login` is public, `/me` and `/password` require a caller, `/me` carries the M4 policy/feature payload and B6 usage payload (see [Authentication](#authentication-and-user-accounts), [Tiers and LLM policy](#tiers-and-llm-policy), [LLM usage metering](#llm-usage-metering)) |
 | `GET/POST/PATCH /api/admin/users` | admin user management, `require_admin` at router level (see [Authentication](#authentication-and-user-accounts)) |
 | `GET /api/admin/tiers` | admin-only; returns the configured tier names (`_known_tiers`) for the admin UI's select options (added in M6) |
 | `PUT /api/folders/{id}/defaults` | full-replace a folder's per-folder defaults; 422 matrix + 404 (see [Per-folder defaults](#per-folder-defaults)) |
