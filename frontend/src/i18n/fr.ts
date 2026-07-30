@@ -270,4 +270,6 @@ export const fr: Messages = {
   passwordFailed: 'Échec de la modification du mot de passe.',
   connectionFailed: 'Le serveur est injoignable.',
   connectionRetry: 'Réessayer',
+  dialogCancel: 'Annuler',
+  dialogConfirm: 'Confirmer',
 }

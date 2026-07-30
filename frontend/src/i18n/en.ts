@@ -250,4 +250,6 @@ export const en: Messages = {
   passwordFailed: 'Changing the password failed.',
   connectionFailed: 'Cannot reach the server.',
   connectionRetry: 'Try again',
+  dialogCancel: 'Cancel',
+  dialogConfirm: 'Confirm',
 }

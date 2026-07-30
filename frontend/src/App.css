@@ -1816,6 +1816,23 @@ dialog.app-dialog h2 {
   color: var(--text);
 }
 
+.confirm-dialog {
+  width: 320px;
+}
+.confirm-dialog p {
+  margin: 0.25rem 0 0.75rem;
+  font-size: 0.85rem;
+}
+.confirm-dialog-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+.confirm-dialog-danger {
+  color: #e5484d;
+  border-color: #e5484d;
+}
+
 /* Folder-defaults dialog */
 .dialog-overlay {
   position: fixed;

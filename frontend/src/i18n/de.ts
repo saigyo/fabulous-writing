@@ -265,4 +265,6 @@ export const de: Messages = {
   passwordFailed: 'Ändern des Passworts fehlgeschlagen.',
   connectionFailed: 'Der Server ist nicht erreichbar.',
   connectionRetry: 'Erneut versuchen',
+  dialogCancel: 'Abbrechen',
+  dialogConfirm: 'Bestätigen',
 }
