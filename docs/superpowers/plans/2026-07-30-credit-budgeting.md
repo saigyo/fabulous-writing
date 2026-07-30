@@ -982,8 +982,13 @@ def _window_start(moment: datetime, window: str) -> datetime:
     """Calendar-aligned UTC window starts (B6 spec §3). `day` never comes
     through here -- it predicates on the ledger's day column."""
     # created_at comparisons are lexicographic on +00:00 isoformat strings;
-    # a non-UTC-aware moment must not leak a different offset into them.
-    moment = moment.astimezone(UTC)
+    # a non-UTC moment must not leak a different offset into them (a naive
+    # one is declared UTC -- astimezone would misread it as system-local).
+    moment = (
+        moment.replace(tzinfo=UTC)
+        if moment.tzinfo is None
+        else moment.astimezone(UTC)
+    )
     if window == "hour":
         return moment.replace(minute=0, second=0, microsecond=0)
     if window == "week":
@@ -1416,11 +1421,11 @@ Run `grep -rn "llm_checks_per_day" tests/` and convert every site. Rules:
 
 Counter-based tests that must be **restaged onto credit windows, never deleted** — each guards behavior that survives B6 and has no other coverage (the default-`reserve()` text is 100 chars → estimate 49):
 - `test_quota_outranks_concurrency` (~line 119) — the spec §4 evaluation order. Restage: `limits = budget_limits(credits_per_day=2 * 49)` with `concurrent_llm_runs=2` passed explicitly into a `TierLimitsSettings` (or extend `budget_limits` to accept it); two admitted reservations left in flight, the third must return `quota_exhausted` (budget binds), NOT `concurrency_rejected`.
-- `test_admin_ceiling_denial_logs_warning` (~line 134) and `test_normal_user_denial_does_not_warn` (~line 150) — the only coverage of the admin-warning branch, which now lives in the window loop. Restage both onto `budget_limits(credits_per_day=49)`: second reservation rejected; admin caller logs the "exhausted the day credit budget" warning, normal user does not.
-- `test_two_simultaneous_reservations_admit_exactly_one` (~line 197) — the suite's only TOCTOU/insert-first serialization guard. Restage: `budget_limits(credits_per_day=49)`, two threads race one reservation each; assert exactly `["admitted", "quota_exhausted"]` in some order.
+- `test_admin_ceiling_denial_logs_warning` (~line 134) and `test_normal_user_denial_does_not_warn` (~line 150) — the only coverage of the admin-warning branch, which now lives in the window loop. Restage both onto `budget_limits(credits_per_day=49)` and REWRITE the bodies to two reservations each (any priming loop like the existing `for i in range(3)` is dead at this budget — runs 2+ are already rejected): first admitted, second rejected; the admin caller logs the "exhausted the day credit budget" warning, the normal user does not.
+- `test_two_simultaneous_reservations_admit_exactly_one` (~line 197) — the suite's only TOCTOU/insert-first serialization guard. CAUTION: this test calls `store.reserve_llm_run(...)` directly with `text_chars=1` (lines 205/209/219), which estimates at **1 credit**, not 49. Restage: delete its priming reservations, set `budget_limits(credits_per_day=1)`, and race the two `text_chars=1` reservations — run 1 sums to 1 (not > 1, admitted), run 2 sums to 2 (> 1, rejected); assert exactly `["admitted", "quota_exhausted"]` in some order.
 - `test_swept_rows_still_count_toward_the_day` (~line 251) — abandoned rows still count (their estimate stands, spec §4). Restage onto `budget_limits(credits_per_day=49)`: reserve, advance past `llm_run_max_age` so the sweep abandons it, then the next reservation must still be `quota_exhausted`.
 
-New test (spec §7: "run-count check gone"):
+New test (spec §7: "run-count check gone"), added to Task 3's `TestWindowEnforcement` class:
 
 ```python
     def test_many_cheap_runs_pass_without_a_run_counter(self, store):
@@ -1448,7 +1453,7 @@ def one_run_budget(text: str, source: str = "check") -> int:
 Set the tier's `credits_per_day=one_run_budget(TEXT)` where `TEXT` is the exact text the test posts. Read each test first: if it asserts the FIRST run already degrades (counter pre-exhausted by an earlier request in the test), mirror that by issuing the same prior request — the mechanics carry over 1:1 because both counter and credits count the admission row.
 **`test_documents_api.py:363` special case:** naming runs cost 0 credits, so a name run can no longer exhaust its own budget — but the naming endpoint's `quota_exhausted` degradation path must KEEP endpoint-level coverage (it must not become untested dead code). Restage via **overshoot**: set `credits_per_day = one_run_budget(short_text)` and burn the budget with one check run of a LONGER text (its larger estimate lands `spent > budget`); the subsequent name run is then rejected and the endpoint falls back to the local name. Add a companion assertion (or sibling test) for the free-run side: at an exactly-full (not overshot) budget, naming still proceeds — Task 3's `test_zero_cost_run_admitted_at_a_full_budget` is the unit-level twin. Rewrite test names/docstrings to say "naming is free until the budget is overshot".
 
-**C. Assertion sites** (`test_config.py:169–394`, `test_permissions.py:207,216,221,232`, `test_auth_api.py` leftovers): re-express against the new fields — e.g. `assert tier.limits.llm_checks_per_day == 100` becomes `assert tier.limits.credits_per_day == 1_000_000` (matching the fixture value chosen under rule A); `test_config.py:288-290` (the zero-value validator test) switches to `credits_per_day: 0` expecting `match="credits_per_day"`; `test_config.py:331` (admin defaults) becomes `assert settings.limits.admin.credits_per_day == 5_000_000`.
+**C. Assertion sites** (`test_config.py:169–394`, `test_permissions.py:207,216,221,232`, `test_auth_api.py` leftovers — including `test_auth_api.py:442`, whose Task-4 assertion `usage["windows"] == []` becomes `[{"window": "day", "used_percent": 0}]` once rule A gives its tier `credits_per_day`; note the counter-grep will NOT surface this site, only the suite run does): re-express against the new fields — e.g. `assert tier.limits.llm_checks_per_day == 100` becomes `assert tier.limits.credits_per_day == 1_000_000` (matching the fixture value chosen under rule A); `test_config.py:288-290` (the zero-value validator test) switches to `credits_per_day: 0` expecting `match="credits_per_day"`; `test_config.py:331` (admin defaults) becomes `assert settings.limits.admin.credits_per_day == 5_000_000`.
 
 - [ ] **Step 4: Run the full suite**
 
@@ -1482,7 +1487,7 @@ Claude-Session: https://claude.ai/code/session_01QG5RSDiRACnzQgN89FceuQ"
 - Modify: `frontend/src/App.tsx` (indicator)
 - Modify: `frontend/src/checking/skipNotice.ts:17`
 - Modify: `frontend/src/i18n/messages.ts` + all seven locales (`en.ts`, `de.ts`, `es.ts`, `fr.ts`, `it.ts`, `ja.ts`, `zh.ts`)
-- Modify (fixture sweep): `frontend/src/App.test.tsx`, `App.admin-gate.test.tsx`, `sidebar/Sidebar.notes.test.tsx`, `terminology/TerminologyView.ownership.test.tsx`, `terminology/TerminologyView.features.test.tsx`, `auth/session.integration.test.ts`, `auth/AccountMenu.test.tsx`, `auth/policy.test.ts`, `auth/LoginGate.test.tsx`, `auth/session.test.ts`, `api/client.test.ts`, `api/sse.test.ts`, `checking/suggest.test.ts`, `checking/skipNotice.test.ts`
+- Modify (fixture sweep): every file `grep -rn "used_today" src/` hits — ~23 test files plus the comment-only sites; Step 5 lists the known ones
 
 **Interfaces:**
 - Consumes: the Task 4 payload: `usage: { label: string, windows: [{ window, used_percent }] }`.
@@ -1578,7 +1583,7 @@ Every fixture `usage: { used_today: 0, limit: 500 }` becomes:
     usage: { label: 'Basic', windows: [{ window: 'day', used_percent: 0 }] },
 ```
 
-**The authority is `grep -rn "used_today" src/` — every hit must be converted; `npm run build` (`tsc -b` over all of `src`, tests included) fails on any stale literal.** Known sites: `App.test.tsx:62`, `App.admin-gate.test.tsx:45`, `App.domains-guard.test.tsx:44`, `Sidebar.notes.test.tsx:40`, `TerminologyView.ownership.test.tsx:43`, `TerminologyView.features.test.tsx:33`, `session.integration.test.ts:35`, `AccountMenu.test.tsx:36`, `policy.test.ts:15`, `LoginGate.test.tsx:34`, `session.test.ts:46`, `client.test.ts:30`, `sse.test.ts:28`, `skipNotice.test.ts:9`, `admin/AdminView.test.tsx:44`, `state/store.test.ts:266`, `rules/RulesView.ownership.test.tsx:27`, `documents/FolderDefaultsDialog.policy.test.tsx:24`, `documents/documents.test.ts:115`, `documents/autosave.test.ts:39`, `checking/controller.test.ts:42`, `profiles/ProfilesView.ownership.test.tsx:29`, `profiles/ProfilesView.features.test.tsx:28`.
+**The authority is `grep -rn "used_today" src/` — every hit must be converted; `npm run build` (`tsc -b` over all of `src`, tests included) fails on any stale literal.** Known sites: `App.test.tsx:62`, `App.admin-gate.test.tsx:45`, `App.domains-guard.test.tsx:44`, `Sidebar.notes.test.tsx:40`, `TerminologyView.ownership.test.tsx:43`, `TerminologyView.features.test.tsx:33`, `session.integration.test.ts:35`, `AccountMenu.test.tsx:36`, `policy.test.ts:15`, `LoginGate.test.tsx:34`, `session.test.ts:46`, `client.test.ts:30`, `sse.test.ts:28`, `skipNotice.test.ts:9`, `admin/AdminView.test.tsx:44`, `state/store.test.ts:266`, `rules/RulesView.ownership.test.tsx:27`, `documents/FolderDefaultsDialog.policy.test.tsx:24`, `documents/documents.test.ts:115`, `documents/autosave.test.ts:39`, `checking/controller.test.ts:42`, `profiles/ProfilesView.ownership.test.tsx:29`, `profiles/ProfilesView.features.test.tsx:28`, `header/LlmSelector.test.tsx:19`, `header/ProfileSelector.test.tsx:27`, `checking/suggest.test.ts:47`. This list is NON-EXHAUSTIVE — the grep is the authority.
 
 Behavior-bearing sites:
 
