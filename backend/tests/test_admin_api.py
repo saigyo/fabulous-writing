@@ -245,7 +245,7 @@ def test_no_admin_endpoint_can_raise_the_ceiling(client):
     assert "limits" not in response.json()
     me = client.get("/api/auth/me", headers=headers).json()
     admin_limits = client.app.state.settings.limits.admin
-    assert me["usage"]["limit"] == admin_limits.llm_checks_per_day
+    assert me["usage"]["windows"] == [{"window": "day", "used_percent": 0}]
     assert me["limits"]["max_llm_document_chars"] == admin_limits.max_llm_document_chars
     assert me["limits"]["concurrent_llm_runs"] == admin_limits.concurrent_llm_runs
 

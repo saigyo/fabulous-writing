@@ -12,7 +12,8 @@ from pydantic import BaseModel, Field, field_validator
 from app.api.deps import CurrentUser, get_current_user
 from app.core.auth import SELF_MIN_PASSWORD_LENGTH, issue_token, validate_password
 from app.core.config import KNOWN_FEATURES, Settings
-from app.core.permissions import features_for, limits_for, policy_for
+from app.core.permissions import features_for, label_for, limits_for, policy_for
+from app.services.usage import UsageStore
 from app.services.users import User
 
 router = APIRouter(prefix="/api", tags=["auth"])
@@ -271,12 +272,18 @@ def _policy_payload(user: User, settings: Settings) -> PolicyPayload:
     )
 
 
-class UsagePayload(BaseModel):
-    """Spec §7.1: used_today is defined identically to reserve_llm_run's
-    count — all of the caller's UTC-day rows regardless of status."""
+class WindowUsage(BaseModel):
+    window: str
+    used_percent: int
 
-    used_today: int
-    limit: int
+
+class UsagePayload(BaseModel):
+    """B6 spec §5: tier label + whole-percent usage per configured window
+    (fixed order hour, day, week, month), rounded up and capped at 100.
+    Never absolute numbers, for any caller -- admins included."""
+
+    label: str
+    windows: list[WindowUsage]
 
 
 class LimitsPayload(BaseModel):
@@ -305,11 +312,13 @@ class MeResponse(BaseModel):
 
     @classmethod
     def from_user(
-        cls, user: User, settings: Settings, *, used_today: int
+        cls, user: User, settings: Settings, *, usage_store: UsageStore
     ) -> "MeResponse":
         limits = limits_for(
             tier=user.tier, is_admin=user.is_admin, settings=settings
         )
+        windows = limits.credit_windows()
+        used = usage_store.credits_used(user.id, list(windows))
         return cls(
             id=user.id,
             email=user.email,
@@ -318,7 +327,16 @@ class MeResponse(BaseModel):
             is_admin=user.is_admin,
             policy=_policy_payload(user, settings),
             usage=UsagePayload(
-                used_today=used_today, limit=limits.llm_checks_per_day
+                label=label_for(
+                    tier=user.tier, is_admin=user.is_admin, settings=settings
+                ),
+                windows=[
+                    WindowUsage(
+                        window=window,
+                        used_percent=min(100, -(-used[window] * 100 // budget)),
+                    )
+                    for window, budget in windows.items()
+                ],
             ),
             limits=LimitsPayload(
                 max_document_chars=settings.limits.max_document_chars,
@@ -387,8 +405,7 @@ def login(request: Request, body: LoginRequest) -> LoginResponse:
     return LoginResponse(
         token=issue_token(user.id, app.state.auth_secret, epoch=user.token_epoch),
         user=MeResponse.from_user(
-            user, app.state.settings,
-            used_today=app.state.usage_store.used_today(user.id),
+            user, app.state.settings, usage_store=app.state.usage_store,
         ),
     )
 
@@ -400,7 +417,7 @@ def me(request: Request, current: CurrentUser = Depends(get_current_user)) -> Me
         raise HTTPException(401, "Not authenticated")
     return MeResponse.from_user(
         user, request.app.state.settings,
-        used_today=request.app.state.usage_store.used_today(user.id),
+        usage_store=request.app.state.usage_store,
     )
 
 

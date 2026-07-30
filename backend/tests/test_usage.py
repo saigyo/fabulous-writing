@@ -281,24 +281,6 @@ class TestSweeps:
         assert all(r["status"] == "abandoned" for r in rows(store))
 
 
-class TestUsedToday:
-    def test_counts_every_status_for_the_utc_day(self, store):
-        now = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
-        limits = TierLimitsSettings(
-            llm_checks_per_day=10, max_llm_document_chars=20000,
-            concurrent_llm_runs=10,
-        )
-        for i, status in enumerate(["completed", "failed", "cancelled"]):
-            d = reserve(store, limits=limits, run_id=f"r{i}", now=now)
-            store.finish_run(d.reservation_id, status)
-        reserve(store, limits=limits, run_id="r3", now=now)  # still started
-        d_old = reserve(store, limits=limits, run_id="old",
-                        now=now - timedelta(days=1))
-        store.finish_run(d_old.reservation_id, "completed")
-        assert store.used_today(1, now=now) == 4
-        assert store.used_today(2, now=now) == 0
-
-
 def test_startup_sweeps_started_ledger_rows(tmp_path: Path):
     # Build tmp_path-based Settings exactly the way the neighboring
     # create_app tests do (conftest already provides the FW_* env the app

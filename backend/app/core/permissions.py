@@ -124,6 +124,18 @@ def limits_for(*, tier: str, is_admin: bool, settings: Settings) -> TierLimitsSe
     return cfg.limits
 
 
+def label_for(*, tier: str, is_admin: bool, settings: Settings) -> str:
+    """The user-facing tier label (B6 spec §5): the only budget-related
+    string /me exposes besides percentages. capitalize() is the fallback
+    for unlabeled single-word tier names; multi-word tiers set `label`."""
+    if is_admin:
+        return "Admin"
+    cfg = settings.tiers.get(tier)
+    if cfg is not None and cfg.label is not None:
+        return cfg.label
+    return tier.capitalize()
+
+
 def default_model_for(providers: ProviderSettings, name: str) -> str | None:
     """The model a bare provider selection resolves to — mirrors what
     app.main's provider factory would fall back to for each provider."""
