@@ -1130,10 +1130,11 @@ client shows.
 
 **`MeResponse.usage`/`limits` are the one display source (B6).** `GET
 /api/auth/me` (`types.ts`) carries `usage: {label, windows: [{window,
-budget, used_percent}, ...]}` and `limits: {max_document_chars,
-max_llm_document_chars, concurrent_llm_runs}` alongside the M4 `policy`
-payload. No absolute credit numbers are reported locally — the UI shows only
-the tightest window's percentage.
+used_percent}, ...]}` — there is no `budget` field; the backend never sends
+an absolute number, only the rounded percentage — and `limits:
+{max_document_chars, max_llm_document_chars, concurrent_llm_runs}` alongside
+the M4 `policy` payload. No absolute credit numbers are reported locally —
+the UI shows only the tightest window's percentage.
 
 - **The quota indicator** (`App.tsx`): displays `{label}` + `{used_percent}%`
   for the tightest configured window (lowest remaining budget), rendered next
@@ -1159,7 +1160,8 @@ the tightest window's percentage.
 **`skipNoticeText` (`checking/skipNotice.ts`) is the one home for skip
 copy.** It maps an `EffectiveLlmReport.skipped`/`SuggestionResponse.skipped`
 code to display text — `quota_exhausted` (B6: now means a credit window is
-exhausted, no longer a run count) → `m.llmQuotaExhausted()`, `document_too_large`
+exhausted, no longer a run count) → `m.llmQuotaExhausted` (a plain string,
+not a function call), `document_too_large`
 → `m.llmDocumentTooLarge(user?.limits.max_llm_document_chars ?? 0)`,
 `llm_unavailable` → `llmDisabled(user) ? m.llmNotIncluded : m.llmSkippedServer`
 (the M4 split), anything else/`null` → `null`. Both `sidebar/Sidebar.tsx` (the

@@ -1380,10 +1380,12 @@ extra, because access policy must not fail open on a typo:
   configured extras.
 - **`limits`** (`TierLimitsSettings`, **required** on every configured tier
   as of M5): `max_llm_document_chars`, `concurrent_llm_runs`, each a
-  required positive field. (B6: `llm_checks_per_day` was replaced by
-  `credit_cost` config windows — see [LLM usage metering](#llm-usage-metering)
-  below.) `TierSettings.limits` carries no default, so a `tiers:` entry with
-  no `limits:` block at all (or one missing any of the required keys) fails
+  required positive field, plus the four optional per-tier credit-window
+  budgets `credits_per_hour`/`credits_per_day`/`credits_per_week`/
+  `credits_per_month` (B6: `llm_checks_per_day` was replaced by these — at
+  least one is required — see
+  [LLM usage metering](#llm-usage-metering) below). `TierSettings.limits`
+  carries no default, so a `tiers:` entry with
   `Settings` validation and aborts startup — a partially-specified or missing
   block can no longer be allowed to fail open now that M5's `reserve_llm_run`
   (below) enforces these numbers for real.
@@ -1629,24 +1631,29 @@ silently.
 
 ### Credit windows (B6)
 
-**`credit_cost` config block** (`app/core/config.py`, `CreditCostSettings`):
-tier-independent budgets applied to all users equally. Four calendar-aligned
-UTC windows, each with an optional budget: `credits_per_hour`,
+**Per-tier budgets** (`app/core/config.py`, `TierLimitsSettings`): budgets
+live on each tier's `limits` block (and on `limits.admin`), not on
+`credit_cost` — they are per-tier, not global. Four calendar-aligned UTC
+windows, each with an optional budget: `credits_per_hour`,
 `credits_per_day`, `credits_per_week`, `credits_per_month`. At least one is
-required (or any existing tier is refused at startup). A `NULL` budget (or
-omitted key) means "no limit for that window." The enforcement path
-(`reserve_llm_run`) checks all configured windows in order and rolls back if
-any window's `SUM(COALESCE(credits, 0))` exceeds its budget; overshoot is
-bounded by the user's in-flight runs (`≤ concurrent_llm_runs`).
+required per configured tier (`_at_least_one_window`, or that tier is
+refused at startup). A `NULL` budget (or omitted key) means "no limit for
+that window." The enforcement path (`reserve_llm_run`) checks all of the
+caller's configured windows in order and rolls back if any window's
+`SUM(COALESCE(credits, 0))` exceeds its budget; overshoot is bounded by the
+user's in-flight runs (`≤ concurrent_llm_runs`).
 
-**Per-provider and per-model factors** (`credit_cost.providers`): the
-`default_factor` and per-model `models: {model_name: factor}` override the
-global `default_factor`, and `output_weight` overrides the global
-`default_output_weight` (weighting of output tokens in cost calculations).
-**`name` source is free by default:** runs via the naming provider carry
-`source="name"` and `credit_cost.source_weights.get("name", 1.0)` — omit from
-config or set to 0.0 to disable cost. Weighted sources (e.g. `suggestions`,
-`name`) multiply into the factor chain.
+**`credit_cost` config block** (`app/core/config.py`, `CreditCostSettings`)
+is pricing only, not budgets — it has no `credits_per_*` fields
+(`extra="forbid"` rejects them). **Per-provider and per-model factors**
+(`credit_cost.providers`): the `default_factor` and per-model `models:
+{model_name: factor}` override the global `default_factor`, and
+`output_weight` overrides the global `default_output_weight` (weighting of
+output tokens in cost calculations). **`name` source is free by default:**
+runs via the naming provider carry `source="name"`, and
+`credit_cost.source_weights` defaults `name` to `0.0` (merged over defaults
+— an omitted key stays free; set it explicitly to re-enable cost). Weighted
+sources (e.g. `check`, `suggestion`) multiply into the factor chain.
 
 ### The reservation transaction
 
@@ -1674,9 +1681,13 @@ One transaction, in order:
    count-then-insert.
 3. **Per-window budget check (B6)**: for each configured window (hour, day,
    week, month), `SUM(COALESCE(credits, 0))` where `created_at` falls within
-   the window — roll back with `exhausted_window(window_name)` if any window
-   exceeds its budget. Between-runs only, meaning concurrency does not
-   consume quota — only completed/failed/settled runs do. Overshoot is
+   the window — roll back and return `QuotaDecision(kind="quota_exhausted",
+   exhausted_window=window)` if any window exceeds its budget. In-flight
+   `started` rows (this run included, inserted just above) DO count toward
+   every window sum, at their admission estimate — that is exactly what
+   bounds the overshoot below. "Between runs" refers only to there being no
+   mid-run cutoff (a run once admitted is never interrupted partway
+   through), not to concurrency being exempt from the sum. Overshoot is
    bounded by the user's in-flight runs (`≤ concurrent_llm_runs`). An admin
    hitting their own ceiling logs a WARNING.
 
@@ -1798,8 +1809,10 @@ the cap is refused.
 `GET /api/auth/me` (`MeResponse`, `app/api/auth.py`) carries, alongside the
 M4 policy payload:
 
-- **`usage: UsagePayload` (B6)** — `label` (tier name from the `limits` block,
-  or the global `label` field if there is one) and `windows: list[WindowUsage]`,
+- **`usage: UsagePayload` (B6)** — `label` (`label_for`: an admin always gets
+  `"Admin"`; otherwise `TierSettings.label` — a field on the tier block
+  itself, sibling of `limits`, not inside it — if the tier sets one, else the
+  tier name capitalized) and `windows: list[WindowUsage]`,
   each with `window` (hour|day|week|month) and `used_percent` (ceil of
   `used_credits * 100 / budget`, capped at 100, where `used_credits =
   SUM(COALESCE(credits, 0))` over all rows in the window regardless of
@@ -1832,19 +1845,24 @@ result is `NO_LLM_POLICY`, so `resolve_llm_selection` always floors out to
 
 ### Defaults (inert by design)
 
-**`credit_cost` defaults (B6)** (`CreditCostSettings`): global `default_factor=1.0`,
-`default_output_weight=0.5`, `source_weights` empty (all sources factor 1.0,
-`name` free by default), `providers` empty (so per-provider overrides are
-skipped), and `credits_per_day=5_000_000` (effectively unlimited). At startup,
-the single configured window (`day`) is enforced; a deployement without
-`credit_cost:` in config uses inert defaults and metering is invisible.
+**`credit_cost` defaults (B6)** (`CreditCostSettings`, pricing only — no
+budgets here): global `default_factor=1.0`, `default_output_weight=4.0`,
+`source_weights` defaults to `{check: 1.0, suggestion: 1.0, name: 0.0}`
+(`_DEFAULT_SOURCE_WEIGHTS`, merged over any partial override), `providers`
+empty (so per-provider overrides are skipped). The budget default lives
+elsewhere: `_default_admin_limits()` sets `credits_per_day=5_000_000`
+(effectively unlimited) for the admin ceiling / inert-mode fallback. A
+deployment without `credit_cost:` in config uses inert pricing defaults and
+metering is invisible.
 
 Shipped defaults (`LimitsSettings`, `_default_admin_limits`):
-`max_llm_document_chars=200000`, `concurrent_llm_runs=5` (the admin ceiling,
-also what every caller gets in inert mode), `max_concurrent_llm_runs=20`
-(server-wide), `llm_run_max_age=900` (seconds), `concurrency_reject_delay=0.25`
-(seconds). (B6: `llm_checks_per_day` removed — replaced by `credit_cost`
-windows.) Deliberately generous enough that an existing single-admin deployment
+`max_llm_document_chars=200000`, `concurrent_llm_runs=5`,
+`credits_per_day=5_000_000` (the admin ceiling, also what every caller gets
+in inert mode), `max_concurrent_llm_runs=20` (server-wide),
+`llm_run_max_age=900` (seconds), `concurrency_reject_delay=0.25` (seconds).
+(B6: `llm_checks_per_day` removed — replaced by the per-tier
+`credits_per_{hour,day,week,month}` budgets on `TierLimitsSettings`.)
+Deliberately generous enough that an existing single-admin deployment
 never notices metering exists until `tiers:`/`limits:` are configured tighter.
 
 ## API surface
