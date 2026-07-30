@@ -368,6 +368,13 @@ class UsageStore:
         moment = now or _utc_now()
         used: dict[str, int] = {}
         with connect(self.db_path, timeout=self.timeout) as conn:
+            # Plain SELECTs run in sqlite3's autocommit mode (no implicit
+            # transaction), so without an explicit BEGIN a reservation or
+            # settlement could commit between two of this loop's per-window
+            # SELECTs and mix ledger snapshots across windows in one /me
+            # payload. BEGIN pins every window's sum to one snapshot; the
+            # `connect()` context manager's commit on exit ends it.
+            conn.execute("BEGIN")
             for window in windows:
                 if window == "day":
                     (total,) = conn.execute(

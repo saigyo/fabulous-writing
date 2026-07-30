@@ -1385,10 +1385,14 @@ extra, because access policy must not fail open on a typo:
   `credits_per_month` (B6: `llm_checks_per_day` was replaced by these — at
   least one is required — see
   [LLM usage metering](#llm-usage-metering) below). `TierSettings.limits`
-  carries no default, so a `tiers:` entry with
-  `Settings` validation and aborts startup — a partially-specified or missing
-  block can no longer be allowed to fail open now that M5's `reserve_llm_run`
-  (below) enforces these numbers for real.
+  carries no default, so a `tiers:` entry with a missing or incomplete
+  `limits:` block fails `Settings` validation and aborts startup: a
+  `limits:` block still carrying `llm_checks_per_day` trips
+  `TierLimitsSettings`'s `extra="forbid"`, and a `limits:` block configuring
+  none of the four `credits_per_*` windows trips `_at_least_one_window` —
+  a partially-specified or missing block can no longer be allowed to fail
+  open now that M5's `reserve_llm_run` (below) enforces these numbers for
+  real.
 - **`features`** (`list[str]`, default `[]`): must be a subset of
   `KNOWN_FEATURES` (`app/core/config.py`, currently `("custom_profiles",
   "custom_domains")`) — a closed set, so a typo cannot silently withhold or
@@ -1852,8 +1856,12 @@ budgets here): global `default_factor=1.0`, `default_output_weight=4.0`,
 empty (so per-provider overrides are skipped). The budget default lives
 elsewhere: `_default_admin_limits()` sets `credits_per_day=5_000_000`
 (effectively unlimited) for the admin ceiling / inert-mode fallback. A
-deployment without `credit_cost:` in config uses inert pricing defaults and
-metering is invisible.
+deployment without `credit_cost:` in config only gets default pricing
+(factor 1.0, output weight 4.0, the default source weights) — runs are
+still costed, windows still enforce, and `/me` still reports percentages.
+Omitting `credit_cost:` is not the same as being unmetered: even the
+admin ceiling / no-`tiers:` fallback (`credits_per_day=5_000_000`) is a
+real, if generous, budget that a high-volume caller can still exhaust.
 
 Shipped defaults (`LimitsSettings`, `_default_admin_limits`):
 `max_llm_document_chars=200000`, `concurrent_llm_runs=5`,
