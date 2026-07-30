@@ -466,3 +466,27 @@ class TestCreditCostConfig:
                 Settings.model_validate({"credit_cost": {"providers": {
                     "ollama": {"models": {"m": bad}},
                 }}})
+
+
+class TestCreditWindows:
+    COMPLETE = {
+        "llm_checks_per_day": 100, "max_llm_document_chars": 100000,
+        "concurrent_llm_runs": 5,
+    }
+
+    def test_windows_are_optional_and_ordered(self):
+        settings = Settings.model_validate({"tiers": {"basic": {"limits": {
+            **self.COMPLETE, "credits_per_month": 9, "credits_per_hour": 1,
+        }}}})
+        limits = settings.tiers["basic"].limits
+        assert limits.credit_windows() == {"hour": 1, "month": 9}
+        assert list(limits.credit_windows()) == ["hour", "month"]
+
+    def test_zero_window_budget_fails(self):
+        with pytest.raises(ValidationError, match="credits_per_day"):
+            Settings.model_validate({"tiers": {"basic": {"limits": {
+                **self.COMPLETE, "credits_per_day": 0,
+            }}}})
+
+    def test_admin_defaults_include_a_day_budget(self):
+        assert Settings().limits.admin.credits_per_day == 5_000_000

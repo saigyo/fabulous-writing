@@ -67,6 +67,11 @@ CREATE INDEX IF NOT EXISTS idx_llm_usage_user_day ON llm_usage(user_id, day);
 -- that serializes every user's reservation (spec §5.3).
 CREATE INDEX IF NOT EXISTS idx_llm_usage_inflight ON llm_usage(status, created_at)
     WHERE status = 'started';
+-- Hour/week/month windows predicate on created_at (B6 spec §3); without
+-- this the per-user SUM scans the user's full history inside the
+-- serializing reservation transaction.
+CREATE INDEX IF NOT EXISTS idx_llm_usage_user_created
+    ON llm_usage(user_id, created_at);
 """
 
 
@@ -93,10 +98,34 @@ class QuotaDecision:
     reservation_id: int | None = None
     server_wide: bool = False
     retry_after: int = RETRY_AFTER_SECONDS
+    # The window whose budget bound (B6 spec §5) -- internal: tests and
+    # logs only, never a user-facing number.
+    exhausted_window: str | None = None
 
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _window_start(moment: datetime, window: str) -> datetime:
+    """Calendar-aligned UTC window starts (B6 spec §3). `day` never comes
+    through here -- it predicates on the ledger's day column."""
+    # created_at comparisons are lexicographic on +00:00 isoformat strings;
+    # a non-UTC moment must not leak a different offset into them (a naive
+    # one is declared UTC -- astimezone would misread it as system-local).
+    moment = (
+        moment.replace(tzinfo=UTC)
+        if moment.tzinfo is None
+        else moment.astimezone(UTC)
+    )
+    if window == "hour":
+        return moment.replace(minute=0, second=0, microsecond=0)
+    if window == "week":
+        monday = moment - timedelta(days=moment.weekday())
+        return monday.replace(hour=0, minute=0, second=0, microsecond=0)
+    if window == "month":
+        return moment.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    raise ValueError(f"unknown credit window: {window!r}")
 
 
 class UsageStore:
@@ -220,6 +249,36 @@ class UsageStore:
                         day_count,
                     )
                 return QuotaDecision(kind="quota_exhausted")
+            for window, budget in limits.credit_windows().items():
+                if window == "day":
+                    (spent,) = conn.execute(
+                        "SELECT COALESCE(SUM(credits), 0) FROM llm_usage"
+                        " WHERE user_id = ? AND day = ?",
+                        (user.id, day),
+                    ).fetchone()
+                else:
+                    start = _window_start(moment, window).isoformat(
+                        timespec="seconds"
+                    )
+                    (spent,) = conn.execute(
+                        "SELECT COALESCE(SUM(credits), 0) FROM llm_usage"
+                        " WHERE user_id = ? AND created_at >= ?",
+                        (user.id, start),
+                    ).fetchone()
+                if spent > budget:
+                    conn.rollback()
+                    if user.is_admin:
+                        # Same signal as the run-counter ceiling: an admin
+                        # exhausting a generous budget means a runaway loop
+                        # or a compromised account (spec §6.4).
+                        logger.warning(
+                            "admin user %s exhausted the %s credit budget"
+                            " (%s credits in window)",
+                            user.id, window, spent,
+                        )
+                    return QuotaDecision(
+                        kind="quota_exhausted", exhausted_window=window
+                    )
             (user_in_flight,) = conn.execute(
                 "SELECT COUNT(*) FROM llm_usage"
                 " WHERE status = 'started' AND user_id = ?",
@@ -329,6 +388,34 @@ class UsageStore:
                 (user_id, day),
             ).fetchone()
             return count
+
+    def credits_used(
+        self, user_id: int, windows: list[str], *, now: datetime | None = None
+    ) -> dict[str, int]:
+        """Per-window credit sums over ALL the user's rows in the window,
+        regardless of status -- the same all-rows-count rule as used_today
+        (B6 spec §3). /me's data source."""
+        moment = now or _utc_now()
+        used: dict[str, int] = {}
+        with connect(self.db_path, timeout=self.timeout) as conn:
+            for window in windows:
+                if window == "day":
+                    (total,) = conn.execute(
+                        "SELECT COALESCE(SUM(credits), 0) FROM llm_usage"
+                        " WHERE user_id = ? AND day = ?",
+                        (user_id, moment.strftime("%Y-%m-%d")),
+                    ).fetchone()
+                else:
+                    start = _window_start(moment, window).isoformat(
+                        timespec="seconds"
+                    )
+                    (total,) = conn.execute(
+                        "SELECT COALESCE(SUM(credits), 0) FROM llm_usage"
+                        " WHERE user_id = ? AND created_at >= ?",
+                        (user_id, start),
+                    ).fetchone()
+                used[window] = total
+        return used
 
     def sweep_all_started(self) -> int:
         """Startup sweep (spec §6.6): in a single-process deployment no

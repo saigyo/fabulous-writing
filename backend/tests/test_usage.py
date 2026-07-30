@@ -519,6 +519,150 @@ class TestCreditSettlement:
         assert first["credits"] == self.ESTIMATE
 
 
+def budget_limits(**windows):
+    return TierLimitsSettings(
+        llm_checks_per_day=500, max_llm_document_chars=20000,
+        concurrent_llm_runs=10, **windows,
+    )
+
+
+class TestWindowEnforcement:
+    # reserve() default text_chars=100 -> estimate 49 (see TestCreditSettlement)
+    EST = 49
+    NOON = datetime(2026, 7, 29, 12, 30, tzinfo=UTC)  # Wednesday
+
+    def test_admits_up_to_the_budget_and_rejects_past_it(self, store):
+        limits = budget_limits(credits_per_day=2 * self.EST)
+        assert reserve(store, limits=limits, run_id="r1", now=self.NOON).kind == "admitted"
+        assert reserve(store, limits=limits, run_id="r2", now=self.NOON).kind == "admitted"
+        decision = reserve(store, limits=limits, run_id="r3", now=self.NOON)
+        assert decision.kind == "quota_exhausted"
+        assert decision.exhausted_window == "day"
+
+    def test_rejected_reservation_rolls_back_its_row(self, store):
+        limits = budget_limits(credits_per_day=self.EST)
+        reserve(store, limits=limits, run_id="r1", now=self.NOON)
+        reserve(store, limits=limits, run_id="r2", now=self.NOON)
+        assert len(rows(store)) == 1  # the rejected estimate row is gone
+
+    def test_in_flight_estimates_count(self, store):
+        # Two concurrent 'started' rows: the second must see the first's
+        # estimate even though nothing has settled yet.
+        limits = budget_limits(credits_per_day=self.EST)
+        assert reserve(store, limits=limits, run_id="r1", now=self.NOON).kind == "admitted"
+        assert reserve(store, limits=limits, run_id="r2", now=self.NOON).kind == "quota_exhausted"
+
+    def test_tightest_window_binds_and_is_named(self, store):
+        limits = budget_limits(credits_per_hour=self.EST, credits_per_day=10 * self.EST)
+        reserve(store, limits=limits, run_id="r1", now=self.NOON)
+        decision = reserve(store, limits=limits, run_id="r2", now=self.NOON)
+        assert decision.kind == "quota_exhausted"
+        assert decision.exhausted_window == "hour"
+
+    def test_hour_window_resets_on_the_hour(self, store):
+        limits = budget_limits(credits_per_hour=self.EST)
+        reserve(store, limits=limits, run_id="r1", now=self.NOON)
+        next_hour = self.NOON.replace(hour=13, minute=0, second=0)
+        assert reserve(store, limits=limits, run_id="r2", now=next_hour).kind == "admitted"
+
+    def test_week_window_starts_monday_utc(self, store):
+        limits = budget_limits(credits_per_week=self.EST)
+        sunday = datetime(2026, 7, 26, 23, 59, 59, tzinfo=UTC)
+        monday = datetime(2026, 7, 27, 0, 0, 0, tzinfo=UTC)
+        reserve(store, limits=limits, run_id="r1", now=sunday)
+        # Sunday's spend belongs to last week; Monday opens a fresh budget.
+        assert reserve(store, limits=limits, run_id="r2", now=monday).kind == "admitted"
+        assert reserve(store, limits=limits, run_id="r3", now=monday).kind == "quota_exhausted"
+
+    def test_month_window_starts_on_the_first(self, store):
+        limits = budget_limits(credits_per_month=self.EST)
+        july = datetime(2026, 7, 31, 23, 0, tzinfo=UTC)
+        august = datetime(2026, 8, 1, 0, 0, tzinfo=UTC)
+        reserve(store, limits=limits, run_id="r1", now=july)
+        assert reserve(store, limits=limits, run_id="r2", now=august).kind == "admitted"
+
+    def test_settled_credits_replace_the_estimate_in_the_sum(self, store):
+        limits = budget_limits(credits_per_day=100)
+        decision = reserve(store, limits=limits, run_id="r1", now=self.NOON)
+        # Settle far above the estimate: the next run must see 1800, not 49.
+        store.finish_run(decision.reservation_id, "completed",
+                        input_tokens=1000, output_tokens=200)
+        assert reserve(store, limits=limits, run_id="r2", now=self.NOON).kind == "quota_exhausted"
+
+    def test_null_credit_rows_count_zero(self, store):
+        # Pre-B6 rows have credits NULL; they must not poison the SUM.
+        limits = budget_limits(credits_per_day=self.EST)
+        with connect(store.db_path) as conn:
+            conn.execute(
+                """INSERT INTO llm_usage (user_id, day, created_at, status,
+                       provider, model, text_chars, source, run_id)
+                   VALUES (1, '2026-07-29', '2026-07-29T12:00:00+00:00',
+                           'completed', 'ollama', 'm', 5, 'check', 'old')""",
+            )
+        assert reserve(store, limits=limits, run_id="r1", now=self.NOON).kind == "admitted"
+
+    def test_zero_cost_run_admitted_at_a_full_budget(self, store):
+        # name runs cost 0: at spend == budget they still fit (sum does not
+        # exceed); only an already-overshot budget blocks them.
+        limits = budget_limits(credits_per_day=self.EST)
+        reserve(store, limits=limits, run_id="r1", now=self.NOON)
+        assert reserve(
+            store, limits=limits, run_id="r2", source="name", now=self.NOON
+        ).kind == "admitted"
+
+    def test_no_windows_configured_means_no_budget_check(self, store):
+        # budget_limits() without window kwargs: counter 500, concurrency 10.
+        # The module LIMITS would trip its own counter (3) and concurrency
+        # cap (2) here -- do not use it.
+        limits = budget_limits()
+        for i in range(4):
+            assert reserve(
+                store, limits=limits, run_id=f"r{i}", now=self.NOON
+            ).kind == "admitted"
+
+
+class TestCreditsUsed:
+    NOON = datetime(2026, 7, 29, 12, 30, tzinfo=UTC)
+
+    def test_sums_per_window(self, store):
+        limits = budget_limits(credits_per_day=1000)
+        d1 = reserve(store, limits=limits, run_id="r1", now=self.NOON)
+        store.finish_run(d1.reservation_id, "completed", input_tokens=100, output_tokens=0)
+        reserve(store, limits=limits, run_id="r2", now=self.NOON)  # in flight: 49
+        used = store.credits_used(1, ["hour", "day", "week", "month"], now=self.NOON)
+        assert used == {"hour": 149, "day": 149, "week": 149, "month": 149}
+
+    def test_all_statuses_count(self, store):
+        # Status-blind aggregation (spec §3): completed, failed, cancelled
+        # and started rows ALL contribute -- completed/failed at their
+        # settled cost, cancelled at its estimate, started at its estimate.
+        limits = budget_limits(credits_per_day=10_000)
+        for status, rid in (("completed", "r1"), ("failed", "r2"),
+                            ("cancelled", "r3")):
+            decision = reserve(store, limits=limits, run_id=rid, now=self.NOON)
+            store.finish_run(
+                decision.reservation_id, status,
+                input_tokens=100, output_tokens=0,
+                fail_stage="provider" if status == "failed" else None,
+                fail_detail="x" if status == "failed" else None,
+            )
+        reserve(store, limits=limits, run_id="r4", now=self.NOON)  # started
+        # completed 100 + failed 100 + cancelled 49 (estimate) + started 49
+        assert store.credits_used(1, ["day"], now=self.NOON) == {"day": 298}
+
+    def test_day_window_excludes_yesterday(self, store):
+        limits = budget_limits(credits_per_day=1000)
+        yesterday = self.NOON - timedelta(days=1)
+        reserve(store, limits=limits, run_id="r1", now=yesterday)
+        used = store.credits_used(1, ["day"], now=self.NOON)
+        assert used == {"day": 0}
+
+    def test_other_users_do_not_count(self, store):
+        limits = budget_limits(credits_per_day=1000)
+        reserve(store, FakeUser(2), limits=limits, run_id="r1", now=self.NOON)
+        assert store.credits_used(1, ["day"], now=self.NOON) == {"day": 0}
+
+
 _PRE_B5_SCHEMA = """
 CREATE TABLE IF NOT EXISTS llm_usage (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
