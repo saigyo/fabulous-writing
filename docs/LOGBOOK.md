@@ -3424,3 +3424,50 @@ five bundled minors in the fix-wave commit, scoped re-review clean.
 
 **Next**: PR #45 through Copilot review and owner merge; then #38/#39 →
 Done and B6 (#40, credit budgeting) becomes unblocked on the B7 protocol.
+
+## 2026-07-30 — B6: credit-based LLM budgeting (PR #47)
+
+Implements #40 per the design merged in PR #46 (spec
+`2026-07-29-credit-budgeting-design.md`, plan
+`2026-07-30-credit-budgeting.md`), executed as seven task-reviewed
+commit groups plus a final-review fix wave on `b6-credit-budgeting-impl`.
+
+**Costing.** New pure `services/credits.py`: integer credits =
+`ceil(round(source_weight × factor × (input + output_weight × output), 9))`
+— the `round(…, 9)` kills binary-float phantom ceils, negative counts are
+clamped per side, and `name` runs are free (`source_weight 0`). Pricing
+lives in a new server-wide `credit_cost` block (factor chain model →
+provider `default_factor` → global; per-provider `output_weight`), guarded
+by `extra="forbid"`, `math.isfinite` on every coefficient, source keys
+restricted to check/suggestion/name, provider keys validated against
+configured providers.
+
+**Ledger + enforcement.** `llm_usage.credits INTEGER` (nullable;
+`migrate_columns`): the admission estimate (`ceil(chars/4)` input, `//4`
+output) is written in the reservation INSERT and settled at `finish_run`
+from the row's own provider/model/source — completed→actual (both-None →
+estimate stands), failed→actual else 0, cancelled/abandoned→estimate.
+Four calendar-UTC windows (`credits_per_{hour,day,week,month}`, ≥1
+required per tier — fail-closed) are summed status-blind
+(`SUM(COALESCE(credits,0))`) inside the insert-first transaction, hour→
+day→week→month before the concurrency caps; exhaustion degrades
+(`skipped="quota_exhausted"`), never 429s. `llm_checks_per_day` is gone —
+a config still carrying it fails at startup (guard-tested), and the
+counter-era TOCTOU/ordering/admin-warning/swept-rows/day-rollover guards
+were restaged onto credit budgets, each mutation-verified.
+
+**Surface.** `/me` usage is `{label, windows: [{window, used_percent}]}`
+— tier label (`TierSettings.label`, "Admin" for admins) plus whole-percent
+ceil capped at 100; no absolute numbers for anyone. Frontend header shows
+`Label · N%` for the tightest window; tooltip and aria-label list every
+window; `llmQuotaExhausted` became a plain string across all 7 locales;
+~26 fixture files migrated.
+
+**Gates.** Backend 1,181 passed (1,150 → 1,181), zero warnings; frontend
+506 passed + clean build. Final whole-branch review (Opus): 0 Critical,
+5 Important — all doc-accuracy or dead-guard-test issues, fixed in one
+wave, scoped re-review clean. Breaking config change: `limits:` blocks
+must swap the counter for credit windows (local `config.yaml` converted;
+`config.example.yaml` documents it).
+
+**Next**: PR #47 through Copilot review and owner merge; then #40 → Done.
