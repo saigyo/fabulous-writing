@@ -140,6 +140,12 @@ class TestRounding:
         config = CreditCostSettings(default_factor=1.1)
         assert cost(input_tokens=100, output_tokens=0, config=config) == 110
 
+    def test_negative_token_counts_clamp_to_zero(self):
+        # A provider reporting negative counts must not mint budget.
+        assert cost(input_tokens=-500, output_tokens=-10) == 0
+        # claude: factor 3, output_weight 5 -> 3 * (0 + 5*100) = 1500
+        assert cost(input_tokens=-500, output_tokens=100) == 1500
+
 
 class TestEstimate:
     def test_estimate_from_chars(self):
@@ -171,7 +177,7 @@ Expected: collection error — `app.services.credits` does not exist.
 
 - [ ] **Step 3: Add the config models**
 
-In `backend/app/core/config.py`, directly above `class TierLimitsSettings`:
+In `backend/app/core/config.py`, directly above `class TierLimitsSettings` (add `import math` to the module's stdlib imports if absent):
 
 ```python
 # Restricted to the ledger's source values; a typo'd key must fail loudly,
@@ -195,23 +201,25 @@ class ProviderCreditSettings(BaseModel):
     @field_validator("output_weight")
     @classmethod
     def _weight_positive(cls, value: float | None) -> float | None:
-        if value is not None and value <= 0:
-            raise ValueError("output_weight must be > 0")
+        # isfinite: NaN passes every sign comparison and inf passes > 0;
+        # either would survive to run time and blow up math.ceil per run.
+        if value is not None and not (math.isfinite(value) and value > 0):
+            raise ValueError("output_weight must be a finite number > 0")
         return value
 
     @field_validator("default_factor")
     @classmethod
     def _factor_non_negative(cls, value: float | None) -> float | None:
-        if value is not None and value < 0:
-            raise ValueError("default_factor must be >= 0")
+        if value is not None and not (math.isfinite(value) and value >= 0):
+            raise ValueError("default_factor must be a finite number >= 0")
         return value
 
     @field_validator("models")
     @classmethod
     def _model_factors_non_negative(cls, value: dict[str, float]) -> dict[str, float]:
         for model, factor in value.items():
-            if factor < 0:
-                raise ValueError(f"models.{model}: factor must be >= 0")
+            if not (math.isfinite(factor) and factor >= 0):
+                raise ValueError(f"models.{model}: factor must be a finite number >= 0")
         return value
 
 
@@ -232,15 +240,15 @@ class CreditCostSettings(BaseModel):
     @field_validator("default_factor")
     @classmethod
     def _factor_non_negative(cls, value: float) -> float:
-        if value < 0:
-            raise ValueError("default_factor must be >= 0")
+        if not (math.isfinite(value) and value >= 0):
+            raise ValueError("default_factor must be a finite number >= 0")
         return value
 
     @field_validator("default_output_weight")
     @classmethod
     def _weight_positive(cls, value: float) -> float:
-        if value <= 0:
-            raise ValueError("default_output_weight must be > 0")
+        if not (math.isfinite(value) and value > 0):
+            raise ValueError("default_output_weight must be a finite number > 0")
         return value
 
     @field_validator("source_weights")
@@ -251,8 +259,10 @@ class CreditCostSettings(BaseModel):
                 raise ValueError(
                     f"unknown source '{source}': must be one of {_CREDIT_SOURCES}"
                 )
-            if weight < 0:
-                raise ValueError(f"source_weights.{source} must be >= 0")
+            if not (math.isfinite(weight) and weight >= 0):
+                raise ValueError(
+                    f"source_weights.{source} must be a finite number >= 0"
+                )
         # Partial maps merge over the defaults (B6 spec §2.2).
         return {**_DEFAULT_SOURCE_WEIGHTS, **value}
 ```
@@ -322,9 +332,13 @@ def run_cost(
             factor = block.default_factor
         if model in block.models:
             factor = block.models[model]
-    weighted = input_tokens + output_weight * output_tokens
+    # Clamp per side: a malformed provider reporting negative counts must
+    # not mint budget by shrinking the window SUM.
+    weighted = max(0, input_tokens) + output_weight * max(0, output_tokens)
     # round() before ceil: binary-float artifacts (1.1 * 100 ==
-    # 110.00000000000001) must not buy a phantom credit.
+    # 110.00000000000001) must not buy a phantom credit. The 1e-9
+    # quantization is a deliberate tolerance -- pricing has no sub-
+    # nanocredit resolution.
     return math.ceil(round(weight * factor * weighted, 9))
 
 
@@ -402,8 +416,23 @@ class TestCreditCostConfig:
             Settings.model_validate({"credit_cost": {"output_weight": 4}})
 
     def test_zero_output_weight_fails(self):
-        with pytest.raises(ValidationError, match="must be > 0"):
+        with pytest.raises(ValidationError, match="must be a finite number > 0"):
             Settings.model_validate({"credit_cost": {"default_output_weight": 0}})
+
+    def test_non_finite_values_fail(self):
+        # NaN passes every sign comparison and inf passes > 0; both would
+        # survive to run time and make math.ceil raise on every run.
+        for bad in (float("nan"), float("inf")):
+            with pytest.raises(ValidationError, match="finite"):
+                Settings.model_validate({"credit_cost": {"default_factor": bad}})
+            with pytest.raises(ValidationError, match="finite"):
+                Settings.model_validate(
+                    {"credit_cost": {"source_weights": {"check": bad}}}
+                )
+            with pytest.raises(ValidationError, match="finite"):
+                Settings.model_validate({"credit_cost": {"providers": {
+                    "ollama": {"models": {"m": bad}},
+                }}})
 ```
 
 - [ ] **Step 7: Run the config tests, then the full suite**
@@ -890,6 +919,24 @@ class TestCreditsUsed:
         used = store.credits_used(1, ["hour", "day", "week", "month"], now=self.NOON)
         assert used == {"hour": 149, "day": 149, "week": 149, "month": 149}
 
+    def test_all_statuses_count(self, store):
+        # Status-blind aggregation (spec §3): completed, failed, cancelled
+        # and started rows ALL contribute -- completed/failed at their
+        # settled cost, cancelled at its estimate, started at its estimate.
+        limits = budget_limits(credits_per_day=10_000)
+        for status, rid in (("completed", "r1"), ("failed", "r2"),
+                            ("cancelled", "r3")):
+            decision = reserve(store, limits=limits, run_id=rid, now=self.NOON)
+            store.finish_run(
+                decision.reservation_id, status,
+                input_tokens=100, output_tokens=0,
+                fail_stage="provider" if status == "failed" else None,
+                fail_detail="x" if status == "failed" else None,
+            )
+        reserve(store, limits=limits, run_id="r4", now=self.NOON)  # started
+        # completed 100 + failed 100 + cancelled 49 (estimate) + started 49
+        assert store.credits_used(1, ["day"], now=self.NOON) == {"day": 298}
+
     def test_day_window_excludes_yesterday(self, store):
         limits = budget_limits(credits_per_day=1000)
         yesterday = self.NOON - timedelta(days=1)
@@ -1154,7 +1201,7 @@ In `backend/tests/test_auth_api.py`, rewrite the usage assertions:
 ```
 
 - The site around line 455 similarly asserts against `limits.admin.llm_checks_per_day` — same replacement.
-- `test_auth_api.py:420` (`test_used_today_counts_every_status`): asserts `body["usage"]["used_today"] == 3` — KeyError under the new payload. Its intent (all statuses count) is unit-covered by Task 3's `TestCreditsUsed`; delete the test in THIS task.
+- `test_auth_api.py:420` (`test_used_today_counts_every_status`): asserts `body["usage"]["used_today"] == 3` — KeyError under the new payload. Its intent (all statuses count) is unit-covered by Task 3's `TestCreditsUsed::test_all_statuses_count` (completed/failed/cancelled/started all summed); delete the API-level test in THIS task.
 - `test_auth_api.py:442` (`test_tier_user_sees_their_tier_block`): asserts `body["usage"]["limit"] == 100`. In THIS task the fixture tier has no credit windows yet, so assert `body["usage"]["windows"] == []` (and `body["usage"]["label"]`). Task 5's sweep then gives that tier `credits_per_day` and the assertion changes to `[{"window": "day", "used_percent": 0}]` — Task 5 rule C covers it.
 - Add one new test next to the existing /me usage test (~line 430) exercising the percent math end-to-end. **The caller must be a NON-ADMIN tier user** — `limits_for` hands admins the admin block (budget 5,000,000, where 49 credits reads as 1%, not 5%). Reuse the file's tier-app construction (line 31's pattern) with the tier's limits carrying `credits_per_day=1000` (plus the block's other required members), and the file's existing non-admin login helper. Mechanics: settle spend directly on the store, then read `/me`:
 
@@ -1451,7 +1498,7 @@ def one_run_budget(text: str, source: str = "check") -> int:
 ```
 
 Set the tier's `credits_per_day=one_run_budget(TEXT)` where `TEXT` is the exact text the test posts. Read each test first: if it asserts the FIRST run already degrades (counter pre-exhausted by an earlier request in the test), mirror that by issuing the same prior request — the mechanics carry over 1:1 because both counter and credits count the admission row.
-**`test_documents_api.py:363` special case:** naming runs cost 0 credits, so a name run can no longer exhaust its own budget — but the naming endpoint's `quota_exhausted` degradation path must KEEP endpoint-level coverage (it must not become untested dead code). Restage via **overshoot**: set `credits_per_day = one_run_budget(short_text)` and burn the budget with one check run of a LONGER text (its larger estimate lands `spent > budget`); the subsequent name run is then rejected and the endpoint falls back to the local name. Add a companion assertion (or sibling test) for the free-run side: at an exactly-full (not overshot) budget, naming still proceeds — Task 3's `test_zero_cost_run_admitted_at_a_full_budget` is the unit-level twin. Rewrite test names/docstrings to say "naming is free until the budget is overshot".
+**`test_documents_api.py:363` special case:** naming runs cost 0 credits, so a name run can no longer exhaust its own budget — but the naming endpoint's `quota_exhausted` degradation path must KEEP endpoint-level coverage (it must not become untested dead code). Overshoot cannot be staged at ADMISSION — the reservation sum includes the just-inserted estimate, so an over-budget check is rejected and rolled back, leaving the ledger empty. Overshoot only arises at SETTLEMENT: admit a check that fits (`credits_per_day = one_run_budget(check_text)`), then settle it ABOVE the budget — either drive the run through a fake provider that reports large actual usage, or settle directly on the store: `store.finish_run(<that run's reservation id>, "completed", input_tokens=10 * budget, output_tokens=0)`. Now `spent > budget`, and the subsequent name run is rejected → the endpoint falls back to the local name. Add a companion assertion (or sibling test) for the free-run side: at an exactly-full (not overshot) budget, naming still proceeds — Task 3's `test_zero_cost_run_admitted_at_a_full_budget` is the unit-level twin. Rewrite test names/docstrings to say "naming is free until the budget is overshot".
 
 **C. Assertion sites** (`test_config.py:169–394`, `test_permissions.py:207,216,221,232`, `test_auth_api.py` leftovers — including `test_auth_api.py:442`, whose Task-4 assertion `usage["windows"] == []` becomes `[{"window": "day", "used_percent": 0}]` once rule A gives its tier `credits_per_day`; note the counter-grep will NOT surface this site, only the suite run does): re-express against the new fields — e.g. `assert tier.limits.llm_checks_per_day == 100` becomes `assert tier.limits.credits_per_day == 1_000_000` (matching the fixture value chosen under rule A); `test_config.py:288-290` (the zero-value validator test) switches to `credits_per_day: 0` expecting `match="credits_per_day"`; `test_config.py:331` (admin defaults) becomes `assert settings.limits.admin.credits_per_day == 5_000_000`.
 
@@ -1568,7 +1615,9 @@ In `frontend/src/App.tsx`, replace the quota-indicator block (lines 222–230). 
             title={usageWindows
               .map((w) => `${m.windowName(w.window)}: ${w.used_percent}%`)
               .join(' · ')}
-            aria-label={`${m.quotaIndicatorTitle}: ${store.user.usage.label} · ${tightestWindow.used_percent}%`}
+            aria-label={`${m.quotaIndicatorTitle}: ${store.user.usage.label} · ${usageWindows
+              .map((w) => `${m.windowName(w.window)}: ${w.used_percent}%`)
+              .join(', ')}`}
           >
             {store.user.usage.label} · {tightestWindow.used_percent}%
           </span>
@@ -1590,8 +1639,8 @@ Behavior-bearing sites:
 - `session.test.ts:357,361,420-449` (the refresh-race test uses `used_today: 5` vs `20`): use `windows: [{ window: 'day', used_percent: 1 }]` vs `used_percent: 4` — the guard is sequence-based, the values only need to differ.
 - `Sidebar.notes.test.tsx:162-172`: `en.llmQuotaExhausted(500)` → `en.llmQuotaExhausted`; update the test name (drop "(with the fixture limit)").
 - `skipNotice.test.ts:19` and `suggest.test.ts:273`: `messages.llmQuotaExhausted(...)` → `messages.llmQuotaExhausted`.
-- `App.test.tsx:200-211`: the existing indicator test renders `0/20` and asserts THREE things — the text, `title === en.quotaIndicatorTitle`, and `getByLabelText(`${en.quotaIndicatorTitle}: 0/20`)`. All three change: text `Basic · 0%`, `title` is now the per-window list (`${en.windowName('day')}: 0%`), aria-label `${en.quotaIndicatorTitle}: Basic · 0%`.
-- Comment-only mentions of `used_today` at `checking/suggest.ts:75`, `checking/controller.ts:155`, and `auth/session.ts:137`: reword to name the credit windows (the described refresh behavior is unchanged — usage is still status-blind and refresh is still cosmetic). The stale CSS comment at `App.css:143-144` ("Today's LLM usage vs. the daily cap") likewise. No styling change is needed: `.quota-indicator` has no at-limit state today, and B6 adds none (spec §6's "same exhausted styling" is vacuously satisfied — note this in the task report).
+- `App.test.tsx:200-211`: the existing indicator test renders `0/20` and asserts THREE things — the text, `title === en.quotaIndicatorTitle`, and `getByLabelText(`${en.quotaIndicatorTitle}: 0/20`)`. All three change: text `Basic · 0%`, `title` is the per-window list (`${en.windowName('day')}: 0%`), and the aria-label carries the SAME full per-window list — `${en.quotaIndicatorTitle}: Basic · ${en.windowName('day')}: 0%` — so screen-reader users get the breakdown mouse users get from `title` (spec §6).
+- Comment-only mentions of `used_today` at `checking/suggest.ts:75`, `checking/controller.ts:155`, and `auth/session.ts:137`: reword to name the credit windows (the described refresh behavior is unchanged — usage is still status-blind and refresh is still cosmetic). The stale CSS comment at `App.css:143-144` ("Today's LLM usage vs. the daily cap") likewise. No styling change: `.quota-indicator` has no at-limit state today and B6 adds none — spec §6 says so explicitly (a visual exhausted state is future polish outside this design).
 
 Add one new indicator test in `App.test.tsx` next to the existing indicator coverage:
 
@@ -1603,7 +1652,7 @@ Add one new indicator test in `App.test.tsx` next to the existing indicator cove
   })
 ```
 
-(Adapt setup to the file's existing render helpers; the binding assertions: the rendered text is `Basic · 70%`, and the `title` attribute contains both `day: 30%` and `month: 70%` — use the locale's `windowName` values.)
+(Adapt setup to the file's existing render helpers; the binding assertions: the rendered text is `Basic · 70%`, and BOTH the `title` attribute and the aria-label contain `day: 30%` and `month: 70%` — use the locale's `windowName` values.)
 
 - [ ] **Step 6: Run the frontend gates**
 

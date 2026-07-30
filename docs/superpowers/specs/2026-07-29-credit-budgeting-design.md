@@ -69,7 +69,10 @@ credit_cost:
 House-style load-time validation:
 
 - `extra="forbid"` on every block (`CreditCostSettings`, per-provider blocks).
-- All factors and weights ≥ 0 (0 is legal: free local models, free sources); `output_weight` > 0.
+- All factors and weights finite and ≥ 0 (0 is legal: free local models, free sources;
+  NaN/inf are rejected at startup — they would pass sign checks and break `ceil` per run);
+  `output_weight` finite and > 0. Token counts are clamped to ≥ 0 at costing time — a malformed
+  provider reporting negative counts must not shrink the window sum.
 - `source_weights` keys restricted to exactly `check`, `suggestion`, `name`; partial maps merge
   over the defaults.
 - Provider keys under `providers:` validated against the configured provider names (same
@@ -175,8 +178,9 @@ contribute their admission estimate; pre-B6 rows have `credits NULL` and count 0
 ## 6. Frontend
 
 - The header quota indicator shows the tier label and the **tightest** window — the highest
-  `used_percent` — e.g. `Pro · 82%`. The tooltip/aria-label lists every configured window's
-  percentage. Percent ≥ 100 renders the same exhausted styling the counter used at limit.
+  `used_percent` — e.g. `Pro · 82%`. The tooltip AND the aria-label list every configured window's
+  percentage. No dedicated at-limit styling: the counter indicator had none, and B6 adds none — a
+  visual exhausted state is future polish, not part of this design.
 - The session-refresh race guard (`refreshSeq` in `session.ts`: only the last-issued refresh may
   commit) is payload-shape-agnostic and needs no change.
 - Test fixtures (~10 files construct `usage: { used_today, limit }`) move to the new shape.
@@ -198,7 +202,7 @@ access, never widen wall-clock bounds.
   → estimate stands, cancelled → estimate stands; settled credits visible to the next reservation.
 - **Config validation tests:** stale `llm_checks_per_day` fails startup; tier block with no windows
   fails; unknown provider under `credit_cost.providers` fails; unknown `source_weights` key fails;
-  negative factor fails; absent `credit_cost` block works with defaults.
+  negative or non-finite factor/weight fails; absent `credit_cost` block works with defaults.
 - **API/frontend tests:** `/me` payload shape and percent math; indicator shows tightest window and
   label; monotonic guard per window.
 
