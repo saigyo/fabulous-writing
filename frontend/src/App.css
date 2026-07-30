@@ -141,11 +141,20 @@
 }
 
 /* Tier label + tightest usage window — muted and out of the way, not a
-   warning; it only tells the story once a note or a skip does that job. */
+   warning; it only tells the story once a note or a skip does that job.
+   Hung below the Check/account buttons exactly like the resolved-model
+   caption below the LLM selector (.header-controls .llm-resolved):
+   absolutely positioned off .header-controls (the nearest positioned
+   ancestor), so it never adds header height. */
 .quota-indicator {
-  font-size: 0.8rem;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 3px;
+  font-size: 0.72rem;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* Compact mode for narrow windows: same height, tighter type and gaps. */
