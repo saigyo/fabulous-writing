@@ -283,9 +283,9 @@ describe('AccountMenu', () => {
     await u.click(screen.getByRole('button', { name: en.passwordSubmit }))
     await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(1))
 
-    // Dismiss the popover, reopen it, and log out — all while the request
-    // above is still in flight.
-    fireEvent.mouseDown(document.body)
+    // Close the password dialog, reopen the account menu, and log out — all
+    // while the request above is still in flight.
+    fireEvent(document.querySelector('dialog')!, new Event('cancel', { cancelable: true }))
     await openMenu(u)
     await u.click(screen.getByRole('button', { name: en.accountLogOut }))
     expect(useStore.getState().authStatus).toBe('anonymous')
@@ -314,9 +314,10 @@ describe('AccountMenu', () => {
       expect(postLogin).toHaveBeenCalledWith('ada@example.com', 'new-secret1'),
     )
 
-    // Dismiss the popover, reopen it, and log out — the 204 already landed,
-    // but the silent re-login it triggered is still in flight.
-    fireEvent.mouseDown(document.body)
+    // Close the password dialog, reopen the account menu, and log out — the
+    // 204 already landed, but the silent re-login it triggered is still in
+    // flight.
+    fireEvent(document.querySelector('dialog')!, new Event('cancel', { cancelable: true }))
     await openMenu(u)
     await u.click(screen.getByRole('button', { name: en.accountLogOut }))
     expect(useStore.getState().authStatus).toBe('anonymous')
@@ -404,15 +405,28 @@ describe('AccountMenu', () => {
     expect(screen.queryByText('ada@example.com')).toBeNull()
   })
 
-  it('moves focus to the current-password field when switching to the password view', async () => {
-    // Direct attribute assertion, no mutation verification needed: switching
-    // views unmounts the focused "Change password" button, which would
-    // otherwise drop focus to <body> and strand keyboard/screen-reader
-    // users inside the popover.
+  it('moves focus to the current-password field when opening the password dialog', async () => {
+    // Direct attribute assertion, no mutation verification needed: opening
+    // the dialog unmounts the focused "Change password" menu item, which
+    // would otherwise drop focus to <body> and strand keyboard/screen-reader
+    // users.
     const u = userEvent.setup()
     render(<AccountMenu />)
     await openPasswordForm(u)
     expect(document.activeElement).toBe(screen.getByLabelText(en.passwordCurrent))
+  })
+
+  it('Escape closes the account popover and returns focus to the badge', async () => {
+    const u = userEvent.setup()
+    render(<AccountMenu />)
+    const badge = screen.getByRole('button', { name: en.accountMenu })
+    await openMenu(u)
+    screen.getByText('ada@example.com') // popover is open
+
+    await u.keyboard('{Escape}')
+
+    expect(document.querySelector('.account-menu')).toBeNull()
+    expect(document.activeElement).toBe(badge)
   })
 
   it('an outside mousedown leaves the password dialog open; a backdrop mousedown on it closes it', async () => {
@@ -449,20 +463,6 @@ describe('AccountMenu', () => {
 
     await openMenu(u)
     screen.getByRole('button', { name: en.accountChangePassword })
-  })
-
-  it('Escape (the native cancel event) returns focus to the account badge, not <body>', async () => {
-    // returnFocusTo restores focus explicitly; without it, focus would fall
-    // back to whatever was focused at mount, stranding keyboard/screen-reader
-    // users once the autoFocus'd password input unmounts.
-    const u = userEvent.setup()
-    render(<AccountMenu />)
-    const badge = screen.getByRole('button', { name: en.accountMenu })
-    await openPasswordForm(u)
-    const dialog = document.querySelector('dialog')!
-
-    fireEvent(dialog, new Event('cancel', { cancelable: true }))
-    expect(document.activeElement).toBe(badge)
   })
 
   it('opens the password form in a modal dialog and closes the popover', async () => {

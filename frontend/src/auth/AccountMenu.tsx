@@ -223,8 +223,8 @@ function PasswordForm({ email, onCancel }: { email: string; onCancel: () => void
     <form onSubmit={handleSubmit}>
       <label className="login-field">
         {m.passwordCurrent}
-        {/* autoFocus: switching to this view unmounts the "Change password"
-            button that had focus, which would otherwise drop focus to
+        {/* autoFocus: opening this dialog unmounts the "Change password"
+            menu item that had focus, which would otherwise drop focus to
             <body> and strand keyboard/screen-reader users. Same mechanism
             DocumentSidebar.tsx and TerminologyView.tsx already use for
             focus-on-mount elsewhere in this codebase. */}

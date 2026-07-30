@@ -304,6 +304,7 @@ function FolderGroup({
         <FolderDefaultsDialog
           folder={folder}
           onClose={() => setDefaultsOpen(false)}
+          returnFocusTo={menuButtonRef}
         />
       )}
       {confirmingDelete && (

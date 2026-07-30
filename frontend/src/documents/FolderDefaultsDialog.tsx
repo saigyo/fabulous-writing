@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type RefObject } from 'react'
 import {
   getProfiles,
   HttpError,
@@ -67,9 +67,14 @@ function defaultsOf(folder: Folder): FolderDefaults {
 export function FolderDefaultsDialog({
   folder,
   onClose,
+  returnFocusTo,
 }: {
   folder: Folder
   onClose: () => void
+  /** Forwarded to Dialog. The caller's opener (the folder menu toggle) is
+   * unmounted by the time this dialog mounts (a menu item) — without it,
+   * focus would fall back to <body> on close. */
+  returnFocusTo?: RefObject<HTMLElement | null>
 }) {
   const m = useMessages()
   const languages = useStore((s) => s.languages)
@@ -144,6 +149,7 @@ export function FolderDefaultsDialog({
     <Dialog
       title={`${m.folderDefaults}: ${folder.name}`}
       onClose={onClose}
+      returnFocusTo={returnFocusTo}
       className="folder-defaults-dialog"
     >
       <label>
