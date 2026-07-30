@@ -1,3 +1,4 @@
+import math
 import re
 from pathlib import Path
 from typing import Literal
@@ -211,6 +212,93 @@ class AuthSettings(BaseModel):
     allow_additional_admins: bool = False
 
 
+# Restricted to the ledger's source values; a typo'd key must fail loudly,
+# not silently price a source at the default.
+_CREDIT_SOURCES = ("check", "suggestion", "name")
+# name is system-triggered, not user-initiated -- effectively free (B6 spec §2.1).
+_DEFAULT_SOURCE_WEIGHTS = {"check": 1.0, "suggestion": 1.0, "name": 0.0}
+
+
+class ProviderCreditSettings(BaseModel):
+    """Per-provider pricing (B6 spec §2.2): factors are INPUT prices per
+    model; output_weight is the provider's input->output price ratio
+    (near-constant within a provider, widely varying across them)."""
+
+    model_config = ConfigDict(extra="forbid")  # a typo'd key must fail loudly
+
+    output_weight: float | None = None
+    default_factor: float | None = None
+    models: dict[str, float] = Field(default_factory=dict)
+
+    @field_validator("output_weight")
+    @classmethod
+    def _weight_positive(cls, value: float | None) -> float | None:
+        # isfinite: NaN passes every sign comparison and inf passes > 0;
+        # either would survive to run time and blow up math.ceil per run.
+        if value is not None and not (math.isfinite(value) and value > 0):
+            raise ValueError("output_weight must be a finite number > 0")
+        return value
+
+    @field_validator("default_factor")
+    @classmethod
+    def _factor_non_negative(cls, value: float | None) -> float | None:
+        if value is not None and not (math.isfinite(value) and value >= 0):
+            raise ValueError("default_factor must be a finite number >= 0")
+        return value
+
+    @field_validator("models")
+    @classmethod
+    def _model_factors_non_negative(cls, value: dict[str, float]) -> dict[str, float]:
+        for model, factor in value.items():
+            if not (math.isfinite(factor) and factor >= 0):
+                raise ValueError(f"models.{model}: factor must be a finite number >= 0")
+        return value
+
+
+class CreditCostSettings(BaseModel):
+    """Server-wide credit pricing (B6 spec §2.2). Absent block = every model
+    priced at factor 1.0 with output weight 4 -- usable defaults, no
+    fail-open risk (budgets, not pricing, are the enforcement)."""
+
+    model_config = ConfigDict(extra="forbid")  # a typo'd key must fail loudly
+
+    default_factor: float = 1.0
+    default_output_weight: float = 4.0
+    source_weights: dict[str, float] = Field(
+        default_factory=lambda: dict(_DEFAULT_SOURCE_WEIGHTS)
+    )
+    providers: dict[str, ProviderCreditSettings] = Field(default_factory=dict)
+
+    @field_validator("default_factor")
+    @classmethod
+    def _factor_non_negative(cls, value: float) -> float:
+        if not (math.isfinite(value) and value >= 0):
+            raise ValueError("default_factor must be a finite number >= 0")
+        return value
+
+    @field_validator("default_output_weight")
+    @classmethod
+    def _weight_positive(cls, value: float) -> float:
+        if not (math.isfinite(value) and value > 0):
+            raise ValueError("default_output_weight must be a finite number > 0")
+        return value
+
+    @field_validator("source_weights")
+    @classmethod
+    def _known_sources(cls, value: dict[str, float]) -> dict[str, float]:
+        for source, weight in value.items():
+            if source not in _CREDIT_SOURCES:
+                raise ValueError(
+                    f"unknown source '{source}': must be one of {_CREDIT_SOURCES}"
+                )
+            if not (math.isfinite(weight) and weight >= 0):
+                raise ValueError(
+                    f"source_weights.{source} must be a finite number >= 0"
+                )
+        # Partial maps merge over the defaults (B6 spec §2.2).
+        return {**_DEFAULT_SOURCE_WEIGHTS, **value}
+
+
 class TierLimitsSettings(BaseModel):
     """Per-user-tier numeric limits (spec §6.1): the block is all-or-nothing
     and, since M5, required on every configured tier — a missing member (or
@@ -352,6 +440,7 @@ class Settings(BaseModel):
     # every user unrestricted, behavior identical to pre-M4.
     tiers: dict[str, TierSettings] = Field(default_factory=dict)
     limits: LimitsSettings = Field(default_factory=LimitsSettings)
+    credit_cost: CreditCostSettings = Field(default_factory=CreditCostSettings)
 
     @model_validator(mode="after")
     def _validate_tier_provider_names(self) -> "Settings":
@@ -393,6 +482,16 @@ class Settings(BaseModel):
                     f"tiers.{tier_name}.limits.concurrent_llm_runs exceeds"
                     " max_concurrent_llm_runs — a single user could starve"
                     " the shared pool"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_credit_cost_providers(self) -> "Settings":
+        known = set(known_provider_names(self.providers))
+        for name in self.credit_cost.providers:
+            if name not in known:
+                raise ValueError(
+                    f"credit_cost.providers: unknown provider '{name}'"
                 )
         return self
 
