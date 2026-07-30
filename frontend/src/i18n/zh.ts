@@ -254,4 +254,6 @@ export const zh: Messages = {
   passwordFailed: '修改密码失败。',
   connectionFailed: '无法连接到服务器。',
   connectionRetry: '重试',
+  dialogCancel: '取消',
+  dialogConfirm: '确认',
 }

@@ -256,4 +256,6 @@ export const ja: Messages = {
   passwordFailed: 'パスワードの変更に失敗しました。',
   connectionFailed: 'サーバーに接続できません。',
   connectionRetry: '再試行',
+  dialogCancel: 'キャンセル',
+  dialogConfirm: '確認',
 }

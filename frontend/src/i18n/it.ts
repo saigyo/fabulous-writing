@@ -265,4 +265,6 @@ export const it: Messages = {
   passwordFailed: 'Modifica della password non riuscita.',
   connectionFailed: 'Impossibile raggiungere il server.',
   connectionRetry: 'Riprova',
+  dialogCancel: 'Annulla',
+  dialogConfirm: 'Conferma',
 }

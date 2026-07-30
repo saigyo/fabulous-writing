@@ -243,4 +243,8 @@ export interface Messages {
   passwordFailed: string
   connectionFailed: string
   connectionRetry: string
+
+  // Dialog
+  dialogCancel: string
+  dialogConfirm: string
 }
