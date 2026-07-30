@@ -1190,33 +1190,65 @@ the backend enforces the real limit). It cannot be called directly from
 documented above under [Authentication](#authentication) for
 `checking/cancelSlot.ts`) — `auth/refreshSlot.ts` is the matching
 registration-slot leaf module (`setRefreshUserHandler`/`refreshUserNow()`)
-that breaks it the same way. Call sites: `checking/controller.ts#runCheck`
-(immediately once the POST resolves, for any check that requested the LLM
-phase and was actually admitted — i.e. `result.effective_llm` is present
-with `skipped == null` — skip-guarded so a skip, which never reserved a
-ledger row, never triggers a refresh. The ledger row (carrying the admission
-ESTIMATE, not a settled amount) is inserted at admission — inside this same
-POST /check request/response cycle — and the windows are status-blind (every
-row counts toward its window regardless of status), so the window
-percentages have already changed the moment the POST resolved: the /me
-refresh fires once per admitted check, at admission. Settlement to actual
-tokens happens later, server-side, at `finish_run` — so the header's
-percentage is only *eventually* consistent. The settlement delta (bounded by
+that breaks it the same way.
+
+`checking/controller.ts#runCheck` fires **two** refreshes per admitted LLM
+check, not one — a single refresh cannot see both ends of a run. Whether a
+check was admitted at all is decided once, right after `postCheck()`
+resolves: `result.effective_llm` present with `skipped == null` (a skip
+never reserves a ledger row, matching the never-refresh-on-skip rule
+elsewhere — see `checking/suggest.ts`'s 429 branches below). That decision
+is captured in a local (`admittedLlmRun`) and reused by both refresh sites,
+rather than re-derived, so they can't drift apart.
+
+- **Refresh #1, at admission**, immediately once the POST resolves:
+  `reserve_llm_run()` inserts the ledger row at ADMISSION time — inside this
+  same POST /check request/response cycle — and the usage windows are
+  status-blind (every row counts toward its window regardless of status), so
+  the window percentages have already changed the moment the POST resolved.
+  But the row still carries the admission ESTIMATE, not the settled cost —
+  gated on `gen === currentGeneration()` only (not `epoch`), since it must
+  fire even if the same-session document switch that bumped `epoch` tore the
+  subscription down before it was ever opened; a `gen` mismatch means the
+  session itself ended, so refreshing would race the next session's own
+  `/me` fetch instead.
+- **Refresh #2, at settlement**, from the SSE subscription's `onDone`
+  handler. This is not redundant with refresh #1: on an expensive model the
+  settled cost can differ substantially from the admission estimate, and
+  without this second refresh the indicator would lag one check behind —
+  showing the old estimate until the *next* check happened to run. It is
+  safe to treat `done` as settlement-visible because of a concrete backend
+  ordering guarantee: in `backend/app/api/checks.py`'s LLM task, the
+  `finally` block calls `reservation.finish(...)` (the ledger settle, to
+  actual tokens) BEFORE `job.finish()` — the call that emits the `done` SSE
+  event and unblocks the client's stream. So by the time this handler runs,
+  the settled row is already committed; there is no race to lose. (Not
+  `checker_error`: that event fires earlier in the same task, before
+  settlement, so a refresh anchored there could still read the estimate.)
+  This refresh only fires for a subscription that is still live for its own
+  check (`currentCheckId === checkId`, the same guard `onResult`/`onProgress`
+  use) and passes the same `admittedLlmRun`/`gen` checks as refresh #1.
+
+**Detached subscriptions are the accepted gap.** If `cancelCheck()` (a
+document switch) or a newer `runCheck()` tears the subscription down before
+`done` ever arrives, no settlement refresh fires for that run — refresh #1
+already landed the admission estimate, and the settlement delta (bounded by
 one run's estimate-vs-actual difference) is picked up by the next natural
-refresh — the next admitted check, a login, or a reload — not by this one.
-`runCheck` deliberately never refreshes from the SSE subscription's `onDone`
-handler: this is a deliberate trade-off (no per-completion `/me` round-trip,
-and no special case for a detached or superseded subscription — one whose
-`onDone` never fires because `cancelCheck()` or a newer `runCheck()` already
-unsubscribed it — since the admission-time refresh already ran regardless)
-and `checking/suggest.ts` (`fetchSuggestions`/`fetchRewrite`, after a
-successful, non-skipped response, and again in the `catch` block for any
-non-429 failure — a provider error such as a 502 still settles its ledger
-row as `'failed'` server-side, to actual tokens if the provider reported any,
-else to 0 (a request-stage failure never reached the provider, so it costs
-nothing). Never on a skip, since a skip never reserved a ledger row, and
-never on a 429, since a rejected reservation rolled back and consumed no
-credits).
+refresh: the next admitted check, a login, or a reload. This is the same
+trade-off as before, just narrower in scope now that refresh #2 exists for
+every run whose subscription survives to `done`.
+
+`checking/suggest.ts`'s `fetchSuggestions`/`fetchRewrite` need no second
+refresh: `postSuggestions()` is a single synchronous request/response with
+no SSE leg, so settlement completes server-side before the response ever
+returns — the existing single refresh (after a successful, non-skipped
+response, and again in the `catch` block for any non-429 failure — a
+provider error such as a 502 still settles its ledger row as `'failed'`
+server-side, to actual tokens if the provider reported any, else to 0, since
+a request-stage failure never reached the provider and so costs nothing) is
+already settlement-accurate by construction. Never on a skip, since a skip
+never reserved a ledger row, and never on a 429, since a rejected
+reservation rolled back and consumed no credits.
 
 **The 429 transient notice.** All three LLM-invoking call sites
 (`controller.ts#runCheck`, `suggest.ts#fetchSuggestions`/`fetchRewrite`)

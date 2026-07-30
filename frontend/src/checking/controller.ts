@@ -152,19 +152,28 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
     return
   }
 
-  // The usage windows are status-blind (spec §7.1): reserve_llm_run() inserts
-  // the ledger row at ADMISSION time — inside this very request/response
-  // cycle — and each window counts every row for its period regardless of
-  // status, so the count already changed the moment postCheck() resolved,
-  // never later at completion. `effective_llm` present with no skipped code
-  // is exactly "this POST admitted an LLM run" (a skip never takes a reservation,
-  // matching the never-refresh-on-skip rule elsewhere — see
+  // Two refreshes cover this run's whole lifecycle, because a single one
+  // cannot see both ends of it. `effective_llm` present with no skipped code
+  // is exactly "this POST admitted an LLM run" (a skip never takes a
+  // reservation, matching the never-refresh-on-skip rule elsewhere — see
   // checking/suggest.ts's 429 branches, which skip the refresh for the same
   // reason: no ledger row was written, so a refresh there would just be
-  // avoidable /me load). An admitted run reports status 'running', so this
-  // check fires before the done/skip branch below, which only ever sees a
-  // skip (status 'done', provider None) or an LLM-less check (wantLlm
-  // false).
+  // avoidable /me load). Captured once here so both refresh sites — this one
+  // and onDone's below — agree on the same admission decision rather than
+  // each re-deriving it from `result`, which onDone's closure only has by
+  // reference anyway.
+  const admittedLlmRun =
+    wantLlm && result.effective_llm != null && result.effective_llm.skipped == null
+
+  // Refresh #1, at admission: reserve_llm_run() inserts the ledger row at
+  // ADMISSION time — inside this very request/response cycle — and each
+  // usage window counts every row for its period regardless of status, so
+  // the window percentages already changed the moment postCheck() resolved.
+  // But the row still carries the admission ESTIMATE, not the settled cost —
+  // this refresh alone would leave the indicator showing the estimate for
+  // however long the run takes, which is exactly what the owner asked to fix
+  // for expensive models: the gap between estimate and actual can be large,
+  // and a user could sit near 100% without knowing until their next check.
   //
   // This must run BEFORE the epoch check below, not after: cancelCheck()
   // (document switch) or a newer runCheck() bumps checkEpoch while this very
@@ -178,15 +187,8 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
   // session's own /me fetch. refreshUserNow() is itself generation-guarded,
   // so that race can't land the wrong user's data — but the explicit check
   // here keeps the guarantee visible at the call site rather than relying on
-  // that alone. One refresh per admitted check, fired unconditionally of
-  // what happens to the epoch/subscription afterwards — no separate onDone
-  // refresh is needed.
-  if (
-    gen === currentGeneration() &&
-    wantLlm &&
-    result.effective_llm &&
-    result.effective_llm.skipped == null
-  ) {
+  // that alone.
+  if (gen === currentGeneration() && admittedLlmRun) {
     refreshUserNow()
   }
 
@@ -238,6 +240,19 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
     },
     onDone() {
       if (currentCheckId === checkId) {
+        // Refresh #2, at settlement: checks.py's LLM task runs
+        // reservation.finish() (the ledger settle, to actual tokens) in its
+        // `finally` BEFORE job.finish() — the call that emits this `done`
+        // event and unblocks the SSE stream — so by the time this handler
+        // runs the settled cost is already committed and this refresh is
+        // guaranteed to read it, not the admission estimate. `admittedLlmRun`
+        // (captured above, before the epoch check) carries the same
+        // admission decision as refresh #1: a run that took no reservation
+        // never reaches this subscription in the first place, but the guard
+        // is kept here anyway so the two refresh sites can't drift apart.
+        // `gen` is rechecked because the session can end while this
+        // subscription is still open and waiting for `done`.
+        if (gen === currentGeneration() && admittedLlmRun) refreshUserNow()
         useStore.setState({ checkPhase: 'idle', llmStartedAt: null, llmTokens: null })
         currentCheckId = null
       }

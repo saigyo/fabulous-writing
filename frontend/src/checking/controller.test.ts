@@ -420,7 +420,8 @@ describe('check controller', () => {
     expect(refreshUserNow).toHaveBeenCalledTimes(1)
   })
 
-  it('does not refresh again from onDone -- the admission-time refresh already covers it', async () => {
+  it('refreshes again from onDone -- settlement lands between admission and done, so the ' +
+    'indicator would otherwise lag one check behind', async () => {
     vi.mocked(postCheck).mockResolvedValue({
       check_id: 'c1',
       status: 'running',
@@ -435,11 +436,34 @@ describe('check controller', () => {
     vi.mocked(subscribeCheck).mockReturnValue(() => {})
 
     await runCheck(true)
-    expect(refreshUserNow).toHaveBeenCalledTimes(1)
+    expect(refreshUserNow).toHaveBeenCalledTimes(1) // admission-time refresh
 
     lastCallbacks().onDone!()
 
-    expect(refreshUserNow).toHaveBeenCalledTimes(1)
+    expect(refreshUserNow).toHaveBeenCalledTimes(2) // settlement-time refresh too
+  })
+
+  it('does not refresh from onDone for a run that was never admitted (defensive: a skip ' +
+    'never reaches subscribeCheck in practice, but the closure guard must still hold)', async () => {
+    vi.mocked(postCheck).mockResolvedValue({
+      check_id: 'c1',
+      status: 'running',
+      findings: [],
+      effective_llm: {
+        requested: { tier: 'balanced', provider: null, model: null },
+        effective: { tier: 'balanced', provider: null, model: null },
+        degraded: false,
+        skipped: 'quota_exhausted',
+      },
+    } as never)
+    vi.mocked(subscribeCheck).mockReturnValue(() => {})
+
+    await runCheck(true)
+    expect(refreshUserNow).not.toHaveBeenCalled() // no admission-time refresh either
+
+    lastCallbacks().onDone!()
+
+    expect(refreshUserNow).not.toHaveBeenCalled()
   })
 
   it('never includes llm in checkers for a floor-policy user, even when includeLlm is true', async () => {
