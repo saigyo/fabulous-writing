@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from app.core.config import LimitsSettings, Settings, TierLimitsSettings
+from app.core.config import CreditCostSettings, LimitsSettings, ProviderCreditSettings, Settings, TierLimitsSettings
 from app.core.permissions import EffectiveSelection, RequestedLLM
 from app.main import create_app
 from app.services._sqlite import connect
@@ -70,6 +70,7 @@ class TestReservationRow:
         assert row["run_id"] == "check-abc"
         assert row["input_tokens"] is None
         assert row["output_tokens"] is None
+        assert row["credits"] == 19  # estimate for 42 chars (spec B6 §4)
 
     def test_check_constraint_rejects_unknown_status(self, store):
         # A typo'd terminal status would silently leak a concurrency slot
@@ -403,6 +404,7 @@ class TestFailureColumns:
         (row,) = rows(store)
         assert row["fail_stage"] is None
         assert row["fail_detail"] is None
+        assert row["credits"] is None
         # And the migrated store accepts classified writes.
         decision = reserve(store, run_id="r2")
         store.finish_run(
@@ -410,6 +412,100 @@ class TestFailureColumns:
             fail_stage="request", fail_detail="ConnectError: refused",
         )
         assert rows(store)[-1]["fail_stage"] == "request"
+
+
+class TestCreditSettlement:
+    # reserve() uses text_chars=100 by default:
+    # est_input = 25, est_output = 6 -> 25 + 4*6 = 49 (default config)
+    ESTIMATE = 49
+
+    def test_reservation_writes_the_estimate(self, store):
+        reserve(store)
+        (row,) = rows(store)
+        assert row["credits"] == self.ESTIMATE
+
+    def test_name_reservation_is_free(self, store):
+        reserve(store, source="name")
+        (row,) = rows(store)
+        assert row["credits"] == 0
+
+    def test_completed_settles_actual_tokens(self, store):
+        decision = reserve(store)
+        store.finish_run(
+            decision.reservation_id, "completed",
+            input_tokens=1000, output_tokens=200,
+        )
+        (row,) = rows(store)
+        # 1000 + 4*200 = 1800 at factor 1.0, weight 1.0
+        assert row["credits"] == 1800
+
+    def test_completed_without_tokens_keeps_the_estimate(self, store):
+        decision = reserve(store)
+        store.finish_run(decision.reservation_id, "completed")
+        (row,) = rows(store)
+        assert row["credits"] == self.ESTIMATE
+
+    def test_failed_settles_actual_tokens(self, store):
+        decision = reserve(store)
+        store.finish_run(
+            decision.reservation_id, "failed",
+            input_tokens=500, output_tokens=None,
+            fail_stage="response", fail_detail="x",
+        )
+        (row,) = rows(store)
+        assert row["credits"] == 500  # None output side treated as 0
+
+    def test_failed_without_tokens_costs_zero(self, store):
+        # Request-stage failures never reached the provider (spec B6 §4).
+        decision = reserve(store)
+        store.finish_run(
+            decision.reservation_id, "failed",
+            fail_stage="request", fail_detail="x",
+        )
+        (row,) = rows(store)
+        assert row["credits"] == 0
+
+    def test_cancelled_keeps_the_estimate(self, store):
+        decision = reserve(store)
+        store.finish_run(decision.reservation_id, "cancelled")
+        (row,) = rows(store)
+        assert row["credits"] == self.ESTIMATE
+
+    def test_settlement_prices_by_the_rows_own_provider_and_source(self, store):
+        # finish_run must read provider/model/source off the row, not assume
+        # defaults: a claude row at factor 3 prices 3x.
+        config = CreditCostSettings(
+            providers={"claude": ProviderCreditSettings(
+                output_weight=5.0, default_factor=3.0,
+            )},
+        )
+        store = UsageStore(store.db_path, credit_cost=config)
+        effective = EffectiveSelection(
+            tier="quality", provider="claude", model="m", degraded=False
+        )
+        decision = store.reserve_llm_run(
+            FakeUser(1), LIMITS, SERVER, REQUESTED, effective,
+            100, "check", "run-c",
+        )
+        store.finish_run(
+            decision.reservation_id, "completed",
+            input_tokens=100, output_tokens=10,
+        )
+        (row,) = rows(store)
+        assert row["credits"] == 450  # 3 * (100 + 5*10)
+
+    def test_swept_row_keeps_its_estimate(self, store):
+        # The staleness sweep flips status without touching credits: cost
+        # was plausibly incurred, actuals unknown (spec B6 §4).
+        moment = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
+        reserve(store, now=moment)
+        reserve(
+            store, run_id="run-2",
+            now=moment + timedelta(seconds=SERVER.llm_run_max_age + 1),
+        )
+        first, _second = rows(store)
+        assert first["status"] == "abandoned"
+        assert first["credits"] == self.ESTIMATE
 
 
 _PRE_B5_SCHEMA = """
