@@ -3483,3 +3483,34 @@ control row's horizontal budget are untouched. Content, tooltip,
 aria-label, and hide conditions unchanged; the account-menu popover
 (z-index 20, opaque) overlays the caption when open. 507 frontend tests
 green + clean build; `docs/frontend-architecture.md` updated.
+
+## 2026-07-30 — B3: reusable accessible dialog pattern (PR #51)
+
+**What.** One modal primitive (`ui/Dialog.tsx`) on the native `<dialog>`
+element replaces the ad-hoc `.dialog-overlay` scrim: `showModal()` makes
+the page inert (platform focus trap), Escape arrives as the `cancel`
+event (`preventDefault` + `onClose` — React owns unmounting), backdrop
+mousedown outside the panel's bounding rect dismisses (padding clicks
+don't), body scroll locks with prior-value restore, and focus returns to
+`returnFocusTo` (openers that unmount — menu items) else the mount-time
+active element. `ui/ConfirmDialog.tsx` layers the confirm face on top:
+Cancel autofocused, danger confirm, `dialogCancel`/`dialogConfirm` keys
+in all 7 locales.
+
+**Adoption.** FolderDefaultsDialog migrated (shell swap, fields
+byte-identical); both `window.confirm()` deletes became ConfirmDialogs
+with menu-toggle focus restore (plus the first component-test harness
+for DocumentSidebar); the change-password form moved from the account
+popover drill-in into a modal dialog with `PasswordForm` verbatim (M2
+session guards byte-verified) and a `passwordOpen` session-turnover
+reset; the admin own-row reset is now visible hint text
+(`adminSelfResetHint`, 7 locales) instead of controls — the M6 abrupt
+self-logout is unreachable from the table.
+
+**Process.** 7 tasks via SDD (haiku/sonnet implementers, sonnet
+reviewers), 3 fix rounds total (incl. one prettier-style-drift lesson:
+repo has no prettier config — hand-dedent only), final Opus review found
+2 Important cross-task gaps the per-task scopes couldn't see
+(FolderDefaults lacked `returnFocusTo`; popover Escape guard shipped
+uncovered) — one fix wave, scoped re-review clean. 507 → 523 frontend
+tests, every guard mutation-verified; build + oxlint clean.
