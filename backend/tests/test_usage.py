@@ -573,6 +573,13 @@ class TestWindowEnforcement:
         # Sunday's spend belongs to last week; Monday opens a fresh budget.
         assert reserve(store, limits=limits, run_id="r2", now=monday).kind == "admitted"
         assert reserve(store, limits=limits, run_id="r3", now=monday).kind == "quota_exhausted"
+        # Same ISO week, a different day: Monday's spend (r2) must still
+        # bind on Wednesday. A day-start bug would check only Wednesday's
+        # own day and miss it, wrongly admitting past the week budget.
+        wednesday = datetime(2026, 7, 29, 12, 30, tzinfo=UTC)
+        decision = reserve(store, limits=limits, run_id="r4", now=wednesday)
+        assert decision.kind == "quota_exhausted"
+        assert decision.exhausted_window == "week"
 
     def test_month_window_starts_on_the_first(self, store):
         limits = budget_limits(credits_per_month=self.EST)
@@ -605,7 +612,10 @@ class TestWindowEnforcement:
         # name runs cost 0: at spend == budget they still fit (sum does not
         # exceed); only an already-overshot budget blocks them.
         limits = budget_limits(credits_per_day=self.EST)
-        reserve(store, limits=limits, run_id="r1", now=self.NOON)
+        # The budget-filling reservation itself must be admitted (spend ==
+        # budget, not > budget) -- asserted here so a >= off-by-one is
+        # caught on this row too, not only on the zero-cost one below.
+        assert reserve(store, limits=limits, run_id="r1", now=self.NOON).kind == "admitted"
         assert reserve(
             store, limits=limits, run_id="r2", source="name", now=self.NOON
         ).kind == "admitted"
