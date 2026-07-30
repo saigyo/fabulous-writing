@@ -1140,9 +1140,15 @@ the UI shows only the tightest window's percentage.
   for the tightest configured window (lowest remaining budget), rendered next
   to the header's `LlmSelector` and hidden entirely (like the selector itself)
   when `llmDisabled(store.user)` — showing a quota percentage for an account
-  with no LLM access at all would be noise, not information. No label is shown
-  if all windows are unconfigured (inert mode). The `title` attribute
-  (tooltip) and `aria-label` both list **every** configured window's percentage
+  with no LLM access at all would be noise, not information. `tightestWindow`
+  reduces `usage.windows` to `null` (hiding the whole indicator) when that
+  array is empty — a defensive guard, not a reachable state for a logged-in
+  user: every tier's `limits:` block must configure at least one
+  `credits_per_{hour,day,week,month}` window (`_at_least_one_window`), and
+  `_default_admin_limits()` supplies a day budget for the admin ceiling /
+  no-`tiers:` fallback, so `windows` is never empty in practice. The `title`
+  attribute (tooltip) and `aria-label` both list **every** configured
+  window's percentage
   as `{windowName}: {percent}%` (separated by `·` in the tooltip, by `, ` in
   the aria-label) so screen readers and tooltips show the full per-window
   breakdown. There is deliberately **no at-limit styling** — the visual
@@ -1188,20 +1194,29 @@ that breaks it the same way. Call sites: `checking/controller.ts#runCheck`
 (immediately once the POST resolves, for any check that requested the LLM
 phase and was actually admitted — i.e. `result.effective_llm` is present
 with `skipped == null` — skip-guarded so a skip, which never reserved a
-ledger row, never triggers a refresh. The admission-time refresh captures the
-credit cost immediately: `reserve_llm_run()` inserts and settles the admission
-estimate inside this same request/response cycle, so the window percentages
-have already changed the moment the POST resolved. `runCheck` deliberately
-never refreshes from the SSE subscription's `onDone` handler, which also means
-a detached or superseded subscription — one whose `onDone` never fires because
-`cancelCheck()` or a newer `runCheck()` already unsubscribed it — still stays
-accounted for, since the admission-time refresh already ran regardless) and
-`checking/suggest.ts` (`fetchSuggestions`/`fetchRewrite`, after a successful,
-non-skipped response, and again in the `catch` block for any non-429 failure —
-a provider error such as a 502 still settles its ledger row as `'failed'`
-server-side with actual or estimated credits charged. Never on a skip, since
-a skip never reserved a ledger row, and never on a 429, since a rejected
-reservation rolled back and consumed no credits).
+ledger row, never triggers a refresh. The ledger row (carrying the admission
+ESTIMATE, not a settled amount) is inserted at admission — inside this same
+POST /check request/response cycle — and the windows are status-blind (every
+row counts toward its window regardless of status), so the window
+percentages have already changed the moment the POST resolved: the /me
+refresh fires once per admitted check, at admission. Settlement to actual
+tokens happens later, server-side, at `finish_run` — so the header's
+percentage is only *eventually* consistent. The settlement delta (bounded by
+one run's estimate-vs-actual difference) is picked up by the next natural
+refresh — the next admitted check, a login, or a reload — not by this one.
+`runCheck` deliberately never refreshes from the SSE subscription's `onDone`
+handler: this is a deliberate trade-off (no per-completion `/me` round-trip,
+and no special case for a detached or superseded subscription — one whose
+`onDone` never fires because `cancelCheck()` or a newer `runCheck()` already
+unsubscribed it — since the admission-time refresh already ran regardless)
+and `checking/suggest.ts` (`fetchSuggestions`/`fetchRewrite`, after a
+successful, non-skipped response, and again in the `catch` block for any
+non-429 failure — a provider error such as a 502 still settles its ledger
+row as `'failed'` server-side, to actual tokens if the provider reported any,
+else to 0 (a request-stage failure never reached the provider, so it costs
+nothing). Never on a skip, since a skip never reserved a ledger row, and
+never on a 429, since a rejected reservation rolled back and consumed no
+credits).
 
 **The 429 transient notice.** All three LLM-invoking call sites
 (`controller.ts#runCheck`, `suggest.ts#fetchSuggestions`/`fetchRewrite`)
