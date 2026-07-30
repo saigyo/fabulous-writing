@@ -166,7 +166,7 @@ class TestTiersConfig:
     def test_minimal_tier_defaults_to_all(self):
         # M5: limits is required, so the minimal valid tier must supply one.
         settings = Settings.model_validate({"tiers": {"basic": {"limits": {
-            "llm_checks_per_day": 100,
+            "credits_per_day": 1_000_000,
             "max_llm_document_chars": 100000,
             "concurrent_llm_runs": 5,
         }}}})
@@ -175,7 +175,7 @@ class TestTiersConfig:
         assert tier.llm.providers == "all"
         assert tier.llm.models == "all"
         assert tier.features == []
-        assert tier.limits.llm_checks_per_day == 100
+        assert tier.limits.credits_per_day == 1_000_000
 
     def test_spec_sample_config_loads(self):
         settings = Settings.model_validate({
@@ -183,7 +183,7 @@ class TestTiersConfig:
                 "basic": {
                     "llm": {"tiers": ["cheap", "local"], "providers": ["ollama"], "models": "all"},
                     "limits": {
-                        "llm_checks_per_day": 20,
+                        "credits_per_day": 1_000_000,
                         "max_llm_document_chars": 20000,
                         "concurrent_llm_runs": 3,
                     },
@@ -192,7 +192,7 @@ class TestTiersConfig:
                 "premium": {
                     "llm": {"tiers": "all", "providers": "all", "models": "all"},
                     "limits": {
-                        "llm_checks_per_day": 100,
+                        "credits_per_day": 1_000_000,
                         "max_llm_document_chars": 100000,
                         "concurrent_llm_runs": 5,
                     },
@@ -207,7 +207,7 @@ class TestTiersConfig:
         settings = Settings.model_validate({"tiers": {"basic": {
             "llm": {"tiers": [], "providers": []},
             "limits": {
-                "llm_checks_per_day": 100,
+                "credits_per_day": 1_000_000,
                 "max_llm_document_chars": 100000,
                 "concurrent_llm_runs": 5,
             },
@@ -226,7 +226,7 @@ class TestTiersConfig:
     # Generous, complete limits block: these tests exercise llm/features
     # validation and must not trip on the (now required) limits block.
     _LIMITS = {
-        "llm_checks_per_day": 100,
+        "credits_per_day": 1_000_000,
         "max_llm_document_chars": 100000,
         "concurrent_llm_runs": 5,
     }
@@ -281,13 +281,13 @@ class TestTiersConfig:
         # fail open once M5 enforces them). Since M5, the block itself is
         # also required (see test_tier_without_limits_block_is_rejected).
         complete = {
-            "llm_checks_per_day": 20,
+            "credits_per_day": 1_000_000,
             "max_llm_document_chars": 20000,
             "concurrent_llm_runs": 3,
         }
-        with pytest.raises(ValidationError, match="llm_checks_per_day"):
+        with pytest.raises(ValidationError, match="credits_per_day"):
             Settings.model_validate(
-                {"tiers": {"basic": {"limits": {**complete, "llm_checks_per_day": 0}}}}
+                {"tiers": {"basic": {"limits": {**complete, "credits_per_day": 0}}}}
             )
         with pytest.raises(ValidationError):  # empty block: members missing
             Settings.model_validate({"tiers": {"basic": {"limits": {}}}})
@@ -328,7 +328,7 @@ class TestLimitsSettings:
         assert settings.limits.max_concurrent_llm_runs == 20
         assert settings.limits.llm_run_max_age == 900
         assert settings.limits.concurrency_reject_delay == 0.25
-        assert settings.limits.admin.llm_checks_per_day == 500
+        assert settings.limits.admin.credits_per_day == 5_000_000
         assert settings.limits.admin.max_llm_document_chars == 200000
         assert settings.limits.admin.concurrent_llm_runs == 5
 
@@ -337,7 +337,7 @@ class TestLimitsSettings:
         # would fail open on the one account with a "not unlimited" guarantee.
         with pytest.raises(ValidationError, match="concurrent_llm_runs"):
             Settings.model_validate(
-                {"limits": {"admin": {"llm_checks_per_day": 100,
+                {"limits": {"admin": {"credits_per_day": 1_000_000,
                                       "max_llm_document_chars": 1000}}}
             )
 
@@ -375,12 +375,12 @@ class TestLimitsSettings:
             Settings.model_validate({
                 "limits": {
                     "max_concurrent_llm_runs": 4,
-                    "admin": {"llm_checks_per_day": 500,
+                    "admin": {"credits_per_day": 1_000_000,
                               "max_llm_document_chars": 200000,
                               "concurrent_llm_runs": 4},
                 },
                 "tiers": {"basic": {"limits": {
-                    "llm_checks_per_day": 20,
+                    "credits_per_day": 1_000_000,
                     "max_llm_document_chars": 20000,
                     "concurrent_llm_runs": 5,
                 }}},
@@ -391,7 +391,7 @@ class TestLimitsSettings:
             Settings.model_validate({
                 "limits": {
                     "max_concurrent_llm_runs": 4,
-                    "admin": {"llm_checks_per_day": 500,
+                    "admin": {"credits_per_day": 1_000_000,
                               "max_llm_document_chars": 200000,
                               "concurrent_llm_runs": 5},
                 },
@@ -470,7 +470,7 @@ class TestCreditCostConfig:
 
 class TestCreditWindows:
     COMPLETE = {
-        "llm_checks_per_day": 100, "max_llm_document_chars": 100000,
+        "credits_per_day": 1_000_000, "max_llm_document_chars": 100000,
         "concurrent_llm_runs": 5,
     }
 
@@ -479,8 +479,10 @@ class TestCreditWindows:
             **self.COMPLETE, "credits_per_month": 9, "credits_per_hour": 1,
         }}}})
         limits = settings.tiers["basic"].limits
-        assert limits.credit_windows() == {"hour": 1, "month": 9}
-        assert list(limits.credit_windows()) == ["hour", "month"]
+        assert limits.credit_windows() == {
+            "hour": 1, "day": 1_000_000, "month": 9,
+        }
+        assert list(limits.credit_windows()) == ["hour", "day", "month"]
 
     def test_zero_window_budget_fails(self):
         with pytest.raises(ValidationError, match="credits_per_day"):
@@ -490,3 +492,19 @@ class TestCreditWindows:
 
     def test_admin_defaults_include_a_day_budget(self):
         assert Settings().limits.admin.credits_per_day == 5_000_000
+
+    def test_stale_llm_checks_per_day_fails_loudly(self):
+        # The B6 replacement is hard (spec §1): a config still carrying the
+        # M5 counter must abort startup, not silently ignore it.
+        with pytest.raises(ValidationError, match="llm_checks_per_day"):
+            Settings.model_validate({"tiers": {"basic": {"limits": {
+                "llm_checks_per_day": 100, "credits_per_day": 1000,
+                "max_llm_document_chars": 100000, "concurrent_llm_runs": 5,
+            }}}})
+
+    def test_tier_without_any_window_fails(self):
+        # Fail-closed (spec §2.3): no budget at all would fail open.
+        with pytest.raises(ValidationError, match="at least one"):
+            Settings.model_validate({"tiers": {"basic": {"limits": {
+                "max_llm_document_chars": 100000, "concurrent_llm_runs": 5,
+            }}}})

@@ -308,12 +308,10 @@ class TierLimitsSettings(BaseModel):
     # tier block is a config error, not a silently-ignored extra.
     model_config = ConfigDict(extra="forbid")
 
-    llm_checks_per_day: int
     max_llm_document_chars: int
     concurrent_llm_runs: int
     # Credit budgets per calendar-aligned UTC window (B6 spec §2.3): each
-    # optional. Task-5 note: once llm_checks_per_day is removed, at least
-    # one window becomes mandatory.
+    # optional, but at least one is mandatory (see _at_least_one_window).
     credits_per_hour: int | None = None
     credits_per_day: int | None = None
     credits_per_week: int | None = None
@@ -329,7 +327,7 @@ class TierLimitsSettings(BaseModel):
         )
         return {name: budget for name, budget in pairs if budget is not None}
 
-    @field_validator("llm_checks_per_day", "max_llm_document_chars", "concurrent_llm_runs")
+    @field_validator("max_llm_document_chars", "concurrent_llm_runs")
     @classmethod
     def _positive(cls, value: int, info) -> int:
         if value <= 0:
@@ -346,11 +344,19 @@ class TierLimitsSettings(BaseModel):
             raise ValueError(f"{info.field_name} must be a positive integer")
         return value
 
+    @model_validator(mode="after")
+    def _at_least_one_window(self) -> "TierLimitsSettings":
+        if not self.credit_windows():
+            raise ValueError(
+                "at least one credits_per_{hour,day,week,month} is required"
+                " -- a tier without a budget would fail open"
+            )
+        return self
+
 
 def _default_admin_limits() -> TierLimitsSettings:
     # Deliberately generous: the inert-by-default numbers from spec §6.1.
     return TierLimitsSettings(
-        llm_checks_per_day=500,
         max_llm_document_chars=200000,
         concurrent_llm_runs=5,
         # Generous but not unlimited (B6 spec §2.3): ~500 checks of ~10k

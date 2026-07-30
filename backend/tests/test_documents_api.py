@@ -1,11 +1,20 @@
 import asyncio
+import time
 
 from fastapi.testclient import TestClient
 
-from app.core.config import LimitsSettings, Settings, TierLimitsSettings
+from app.core.config import CreditCostSettings, LimitsSettings, Settings, TierLimitsSettings
 from app.main import create_app
 from app.services._sqlite import connect as sqlite_connect
+from app.services.credits import estimate_cost
 from tests.conftest import auth_headers, second_user_headers
+
+
+def one_run_budget(text: str, source: str = "check") -> int:
+    """A credits_per_day that admits exactly one run of `text`: after run 1
+    the sum equals the budget (not >); run 2 pushes it over."""
+    return estimate_cost(source=source, provider="any", model="any",
+                         text_chars=len(text), config=CreditCostSettings())
 
 
 def make_doc(authed_client: TestClient, name: str = "Untitled", **extra) -> dict:
@@ -214,7 +223,7 @@ def test_generate_name_floor_user_falls_back_silently(tmp_path):
     # document with text: 200, name_source "fallback" (local naming), no
     # factory call, no error field anywhere.
     tiers = {"basic": {"llm": {"tiers": [], "providers": []}, "limits": {
-        "llm_checks_per_day": 100, "max_llm_document_chars": 100000, "concurrent_llm_runs": 5,
+        "credits_per_day": 1_000_000, "max_llm_document_chars": 100000, "concurrent_llm_runs": 5,
     }}}
     app, factory = _app_with_tiers(tmp_path, tiers)
     with TestClient(app) as client:
@@ -354,38 +363,53 @@ def test_generate_name_unusable_title_falls_back_and_marks_run_failed(authed_cli
     assert rows[0]["fail_detail"] == "title generation produced no usable title"
 
 
-def test_generate_name_quota_exhausted_falls_back_silently(tmp_path):
+def test_generate_name_is_free_until_the_budget_is_overshot(tmp_path):
+    # Naming runs cost 0 credits (spec B6 §2.1), so a naming run can no
+    # longer exhaust its own budget -- but the naming endpoint's
+    # quota_exhausted degradation path must keep endpoint-level coverage.
+    # Overshoot cannot be staged at ADMISSION (an over-budget insert is
+    # rejected and rolled back, leaving the ledger empty); it only arises
+    # at SETTLEMENT, so a "check" run is admitted at a budget it exactly
+    # fills, then settles far above it via reported actual usage.
+    check_text = "alpha beta gamma delta"
+    budget = one_run_budget(check_text)
     settings = Settings(
         db_path=tmp_path / "t.db",
         rules_dir=tmp_path / "rules",
         limits=LimitsSettings(
             admin=TierLimitsSettings(
-                llm_checks_per_day=1,
+                credits_per_day=budget,
                 max_llm_document_chars=200000,
                 concurrent_llm_runs=5,
             ),
         ),
     )
     app = create_app(settings)
+    # Large actual usage settles this run's credits far above the budget it
+    # was admitted under -- overshoot only arises at settlement.
     app.state.provider_factory = lambda name=None, model=None: FakeProvider(
-        response='"A Title."'
+        response="[]", usage=TokenUsage(input_tokens=10 * budget, output_tokens=0)
     )
     with TestClient(app) as client:
         headers = auth_headers(client)
-        # Burn the day's one allowance on a first, admitted naming run.
-        first = client.post(
-            "/api/documents",
-            json={
-                "name": "Untitled",
-                "language": "en",
-                "text": "alpha beta gamma delta",
-            },
+        check = client.post(
+            "/api/checks",
+            json={"text": check_text, "language": "en", "checkers": ["llm"]},
             headers=headers,
-        ).json()
-        burn = client.post(
-            f"/api/documents/{first['id']}/generate-name", headers=headers
         )
-        assert burn.json()["name_source"] == "llm"
+        assert check.status_code == 202
+
+        # The check's generation runs in a background task; wait for its
+        # ledger row to settle before relying on the (overshot) spend.
+        deadline = time.monotonic() + 5
+        rows = _read_usage_rows(settings.db_path)
+        while (
+            rows and rows[0]["status"] == "started" and time.monotonic() < deadline
+        ):
+            time.sleep(0.02)
+            rows = _read_usage_rows(settings.db_path)
+        assert rows and rows[0]["status"] == "completed"
+        assert rows[0]["credits"] == 10 * budget  # settled above the budget
 
         doc = client.post(
             "/api/documents",
@@ -405,9 +429,70 @@ def test_generate_name_quota_exhausted_falls_back_silently(tmp_path):
         assert body["name"] == "alpha beta gamma delta epsilon zeta"
         assert "error" not in body
 
-    # Only the first (admitted) naming run persisted a ledger row; the
-    # exhausted second attempt did not.
+    # Only the check's ledger row persisted; the exhausted naming attempt's
+    # reservation was rejected and rolled back at admission.
     assert len(_read_usage_rows(settings.db_path)) == 1
+
+
+def test_generate_name_proceeds_at_an_exactly_full_not_overshot_budget(tmp_path):
+    # Companion to the overshoot test above (and the unit-level twin of
+    # Task 3's test_zero_cost_run_admitted_at_a_full_budget): naming costs
+    # 0 credits, so at spend == budget (not > budget) it still fits.
+    check_text = "alpha beta gamma delta"
+    budget = one_run_budget(check_text)
+    settings = Settings(
+        db_path=tmp_path / "t.db",
+        rules_dir=tmp_path / "rules",
+        limits=LimitsSettings(
+            admin=TierLimitsSettings(
+                credits_per_day=budget,
+                max_llm_document_chars=200000,
+                concurrent_llm_runs=5,
+            ),
+        ),
+    )
+    app = create_app(settings)
+    app.state.provider_factory = lambda name=None, model=None: FakeProvider(
+        response="[]"
+    )
+    with TestClient(app) as client:
+        headers = auth_headers(client)
+        check = client.post(
+            "/api/checks",
+            json={"text": check_text, "language": "en", "checkers": ["llm"]},
+            headers=headers,
+        )
+        assert check.status_code == 202
+
+        deadline = time.monotonic() + 5
+        rows = _read_usage_rows(settings.db_path)
+        while (
+            rows and rows[0]["status"] == "started" and time.monotonic() < deadline
+        ):
+            time.sleep(0.02)
+            rows = _read_usage_rows(settings.db_path)
+        assert rows and rows[0]["status"] == "completed"
+        assert rows[0]["credits"] == budget  # exactly fills, does not overshoot
+
+        doc = client.post(
+            "/api/documents",
+            json={
+                "name": "Untitled",
+                "language": "en",
+                "text": "A long enough body about widget assembly.",
+            },
+            headers=headers,
+        ).json()
+        app.state.provider_factory = lambda name=None, model=None: FakeProvider(
+            response='"Widget Assembly Guide."'
+        )
+        response = client.post(
+            f"/api/documents/{doc['id']}/generate-name", headers=headers
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["name_source"] == "llm"
+        assert body["name"] == "Widget Assembly Guide"
 
 
 def test_generate_name_concurrency_429_propagates(tmp_path):
@@ -417,7 +502,7 @@ def test_generate_name_concurrency_429_propagates(tmp_path):
         limits=LimitsSettings(
             concurrency_reject_delay=0,
             admin=TierLimitsSettings(
-                llm_checks_per_day=500,
+                credits_per_day=1_000_000,
                 max_llm_document_chars=200000,
                 concurrent_llm_runs=1,
             ),

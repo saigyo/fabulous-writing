@@ -238,7 +238,7 @@ def test_no_admin_endpoint_can_raise_the_ceiling(client):
     headers = admin_headers(client)
     response = client.patch(
         "/api/admin/users/1",
-        json={"limits": {"llm_checks_per_day": 999999}},
+        json={"limits": {"credits_per_day": 999999999}},
         headers=headers,
     )
     assert response.status_code == 200
@@ -324,7 +324,7 @@ def test_configured_names_replace_defaults(tmp_path):
                 db_path=tmp_path / "test.db",
                 rules_dir=tmp_path / "rules",
                 tiers={"gold": {"llm": {}, "limits": {
-                    "llm_checks_per_day": 100, "max_llm_document_chars": 100000,
+                    "credits_per_day": 1_000_000, "max_llm_document_chars": 100000,
                     "concurrent_llm_runs": 5,
                 }}},
             )
@@ -361,7 +361,7 @@ class TestListTiers:
             db_path=tmp_path / "test.db",
             rules_dir=tmp_path / "rules",
             tiers={"gold": {"llm": {}, "limits": {
-                "llm_checks_per_day": 100, "max_llm_document_chars": 100000,
+                "credits_per_day": 1_000_000, "max_llm_document_chars": 100000,
                 "concurrent_llm_runs": 5,
             }}},
         )

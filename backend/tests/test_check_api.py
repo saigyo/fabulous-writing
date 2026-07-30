@@ -11,8 +11,15 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
 from app.checkers.llm.provider import FakeProvider, GenerationResult, LLMProvider, TokenUsage
-from app.core.config import LimitsSettings, NlpSettings, Settings, TierLimitsSettings
+from app.core.config import (
+    CreditCostSettings,
+    LimitsSettings,
+    NlpSettings,
+    Settings,
+    TierLimitsSettings,
+)
 from app.main import create_app
+from app.services.credits import estimate_cost
 from tests.conftest import auth_headers, second_user_headers
 
 RULES_DIR = Path(__file__).parent.parent / "rules"
@@ -28,6 +35,13 @@ LLM_RESPONSE = json.dumps(
         }
     ]
 )
+
+
+def one_run_budget(text: str, source: str = "check") -> int:
+    """A credits_per_day that admits exactly one run of `text`: after run 1
+    the sum equals the budget (not >); run 2 pushes it over."""
+    return estimate_cost(source=source, provider="any", model="any",
+                         text_chars=len(text), config=CreditCostSettings())
 
 
 def make_client(tmp_path: Path, provider: LLMProvider) -> TestClient:
@@ -331,7 +345,7 @@ def _read_sse_events(stream) -> list[tuple[str, dict]]:
 
 TIERS_CONFIG = {
     "basic": {"llm": {"tiers": ["local"], "providers": ["ollama"]}, "limits": {
-        "llm_checks_per_day": 100, "max_llm_document_chars": 100000, "concurrent_llm_runs": 5,
+        "credits_per_day": 1_000_000, "max_llm_document_chars": 100000, "concurrent_llm_runs": 5,
     }},
 }
 
@@ -505,7 +519,7 @@ class TestEffectiveLlm:
 
     def test_floor_user_gets_skipped_not_error(self, tmp_path: Path) -> None:
         tiers = {"basic": {"llm": {"tiers": [], "providers": []}, "limits": {
-            "llm_checks_per_day": 100, "max_llm_document_chars": 100000, "concurrent_llm_runs": 5,
+            "credits_per_day": 1_000_000, "max_llm_document_chars": 100000, "concurrent_llm_runs": 5,
         }}}
         app, factory = _app_with_tiers(tmp_path, tiers)
         with TestClient(app) as client:
@@ -981,11 +995,12 @@ class TestCheckMetering:
         assert row["fail_stage"] is None
 
     def test_quota_exhausted_degrades_with_skip_code(self, tmp_path: Path) -> None:
+        first_text = "a nice text"
         settings = Settings(
             db_path=tmp_path / "test.db", rules_dir=RULES_DIR,
             limits=LimitsSettings(admin=TierLimitsSettings(
-                llm_checks_per_day=1, max_llm_document_chars=200000,
-                concurrent_llm_runs=5,
+                credits_per_day=one_run_budget(first_text),
+                max_llm_document_chars=200000, concurrent_llm_runs=5,
             )),
         )
         app = create_app(settings)
@@ -994,7 +1009,7 @@ class TestCheckMetering:
             client.headers.update(auth_headers(client))
             first = client.post(
                 "/api/checks",
-                json={"text": "a nice text", "language": "en", "checkers": ["llm"]},
+                json={"text": first_text, "language": "en", "checkers": ["llm"]},
             )
             with client.stream(
                 "GET", f"/api/checks/{first.json()['check_id']}/events"
@@ -1043,7 +1058,7 @@ class TestCheckMetering:
         settings = Settings(
             db_path=tmp_path / "test.db", rules_dir=RULES_DIR,
             limits=LimitsSettings(admin=TierLimitsSettings(
-                llm_checks_per_day=500, max_llm_document_chars=10,
+                credits_per_day=1_000_000, max_llm_document_chars=10,
                 concurrent_llm_runs=5,
             )),
         )
@@ -1064,7 +1079,7 @@ class TestCheckMetering:
 
     def test_size_cap_is_decided_before_resolution(self, tmp_path: Path) -> None:
         tiers = {"basic": {"llm": {"tiers": [], "providers": []}, "limits": {
-            "llm_checks_per_day": 100, "max_llm_document_chars": 10,
+            "credits_per_day": 1_000_000, "max_llm_document_chars": 10,
             "concurrent_llm_runs": 5,
         }}}
         settings = Settings(db_path=tmp_path / "test.db", rules_dir=RULES_DIR, tiers=tiers)
@@ -1084,11 +1099,12 @@ class TestCheckMetering:
             assert body["effective_llm"]["skipped"] == "document_too_large"
 
     def test_skip_reason_reaches_the_sse_stream(self, tmp_path: Path) -> None:
+        first_text = "a nice text"
         settings = Settings(
             db_path=tmp_path / "test.db", rules_dir=RULES_DIR,
             limits=LimitsSettings(admin=TierLimitsSettings(
-                llm_checks_per_day=1, max_llm_document_chars=200000,
-                concurrent_llm_runs=5,
+                credits_per_day=one_run_budget(first_text),
+                max_llm_document_chars=200000, concurrent_llm_runs=5,
             )),
         )
         app = create_app(settings)
@@ -1097,7 +1113,7 @@ class TestCheckMetering:
             client.headers.update(auth_headers(client))
             first = client.post(
                 "/api/checks",
-                json={"text": "a nice text", "language": "en", "checkers": ["llm"]},
+                json={"text": first_text, "language": "en", "checkers": ["llm"]},
             )
             with client.stream(
                 "GET", f"/api/checks/{first.json()['check_id']}/events"
@@ -1123,7 +1139,7 @@ class TestCheckMetering:
             limits=LimitsSettings(
                 concurrency_reject_delay=0,
                 admin=TierLimitsSettings(
-                    llm_checks_per_day=500, max_llm_document_chars=200000,
+                    credits_per_day=1_000_000, max_llm_document_chars=200000,
                     concurrent_llm_runs=1,
                 ),
             ),
@@ -1164,7 +1180,7 @@ class TestCheckMetering:
                 max_concurrent_llm_runs=1,
                 concurrency_reject_delay=0,
                 admin=TierLimitsSettings(
-                    llm_checks_per_day=500, max_llm_document_chars=200000,
+                    credits_per_day=1_000_000, max_llm_document_chars=200000,
                     concurrent_llm_runs=1,
                 ),
             ),
@@ -1198,7 +1214,7 @@ class TestCheckMetering:
             limits=LimitsSettings(
                 concurrency_reject_delay=1.0,
                 admin=TierLimitsSettings(
-                    llm_checks_per_day=500, max_llm_document_chars=200000,
+                    credits_per_day=1_000_000, max_llm_document_chars=200000,
                     concurrent_llm_runs=1,
                 ),
             ),
@@ -1252,7 +1268,7 @@ class TestCheckMetering:
             limits=LimitsSettings(
                 concurrency_reject_delay=0.5,
                 admin=TierLimitsSettings(
-                    llm_checks_per_day=500, max_llm_document_chars=200000,
+                    credits_per_day=1_000_000, max_llm_document_chars=200000,
                     concurrent_llm_runs=1,
                 ),
             ),
@@ -1299,7 +1315,7 @@ class TestCheckMetering:
                 max_concurrent_llm_runs=1,
                 concurrency_reject_delay=1.0,
                 admin=TierLimitsSettings(
-                    llm_checks_per_day=500, max_llm_document_chars=200000,
+                    credits_per_day=1_000_000, max_llm_document_chars=200000,
                     concurrent_llm_runs=1,
                 ),
             ),
@@ -1342,7 +1358,7 @@ class TestCheckMetering:
             limits=LimitsSettings(
                 concurrency_reject_delay=1.0,
                 admin=TierLimitsSettings(
-                    llm_checks_per_day=500, max_llm_document_chars=200000,
+                    credits_per_day=1_000_000, max_llm_document_chars=200000,
                     concurrent_llm_runs=1,
                 ),
             ),
@@ -1398,7 +1414,7 @@ class TestCheckMetering:
         settings = Settings(
             db_path=tmp_path / "test.db", rules_dir=RULES_DIR,
             limits=LimitsSettings(admin=TierLimitsSettings(
-                llm_checks_per_day=500, max_llm_document_chars=200000,
+                credits_per_day=1_000_000, max_llm_document_chars=200000,
                 concurrent_llm_runs=1,
             )),
         )
@@ -1435,11 +1451,12 @@ class TestCheckMetering:
     def test_admin_is_metered_with_the_admin_ceiling(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
+        first_text = "a's job"
         settings = Settings(
             db_path=tmp_path / "test.db", rules_dir=RULES_DIR,
             limits=LimitsSettings(admin=TierLimitsSettings(
-                llm_checks_per_day=1, max_llm_document_chars=200000,
-                concurrent_llm_runs=5,
+                credits_per_day=one_run_budget(first_text),
+                max_llm_document_chars=200000, concurrent_llm_runs=5,
             )),
         )
         app = create_app(settings)
@@ -1449,7 +1466,7 @@ class TestCheckMetering:
             me = client.get("/api/auth/me").json()
             first = client.post(
                 "/api/checks",
-                json={"text": "a's job", "language": "en", "checkers": ["llm"]},
+                json={"text": first_text, "language": "en", "checkers": ["llm"]},
             )
             with client.stream(
                 "GET", f"/api/checks/{first.json()['check_id']}/events"

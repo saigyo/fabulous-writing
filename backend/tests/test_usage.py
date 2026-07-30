@@ -20,7 +20,7 @@ class FakeUser:
 
 
 LIMITS = TierLimitsSettings(
-    llm_checks_per_day=3, max_llm_document_chars=20000, concurrent_llm_runs=2
+    credits_per_day=1_000_000, max_llm_document_chars=20000, concurrent_llm_runs=2
 )
 SERVER = LimitsSettings(max_concurrent_llm_runs=4)
 
@@ -86,74 +86,39 @@ class TestReservationRow:
 
 
 class TestDailyQuota:
-    def test_admits_exactly_the_limit(self, store):
-        for i in range(3):
-            decision = reserve(store, run_id=f"r{i}")
-            assert decision.kind == "admitted"
-            store.finish_run(decision.reservation_id, "completed")
-        assert reserve(store, run_id="r3").kind == "quota_exhausted"
-
-    def test_denial_rolls_back_the_row(self, store):
-        for i in range(3):
-            d = reserve(store, run_id=f"r{i}")
-            store.finish_run(d.reservation_id, "failed")
-        reserve(store, run_id="r3")
-        assert len(rows(store)) == 3  # the denied insert did not survive
-
-    def test_all_statuses_count_toward_the_day(self, store):
-        # failed/cancelled/abandoned runs spent a reservation (spec §6.4):
-        # cancel-and-retry must not hit providers for free.
-        for status in ("failed", "cancelled", "abandoned"):
-            d = reserve(store, run_id=f"r-{status}")
-            store.finish_run(d.reservation_id, status)
-        assert reserve(store, run_id="r3").kind == "quota_exhausted"
-
-    def test_utc_day_rollover_resets_the_count(self, store):
-        day1 = datetime(2026, 7, 27, 23, 59, tzinfo=UTC)
-        for i in range(3):
-            d = reserve(store, run_id=f"r{i}", now=day1)
-            store.finish_run(d.reservation_id, "completed")
-        assert reserve(store, run_id="r3", now=day1).kind == "quota_exhausted"
-        day2 = day1 + timedelta(minutes=2)
-        assert reserve(store, run_id="r4", now=day2).kind == "admitted"
-
     def test_quota_outranks_concurrency(self, store):
         # Both limits exceeded at once -> quota_exhausted, never a 429: an
         # exhausted allowance is not retryable and must not tell the client
         # to retry (spec §6.4 — evaluation order is the contract).
-        limits = TierLimitsSettings(
-            llm_checks_per_day=2, max_llm_document_chars=20000,
-            concurrent_llm_runs=2,
-        )
+        limits = budget_limits(credits_per_day=2 * 49, concurrent_llm_runs=2)
         reserve(store, limits=limits, run_id="r0")  # started, never finished
         reserve(store, limits=limits, run_id="r1")  # started, never finished
-        # Third reservation: day_count 3 > 2 AND in-flight 3 > 2 — both
+        # Third reservation: day spend 147 > 98 AND in-flight 3 > 2 — both
         # conditions fail, and the quota verdict must win.
         denied = reserve(store, limits=limits, run_id="r2")
         assert denied.kind == "quota_exhausted"
 
     def test_admin_ceiling_denial_logs_warning(self, store, caplog):
-        limits = TierLimitsSettings(
-            llm_checks_per_day=1, max_llm_document_chars=200000,
-            concurrent_llm_runs=5,
-        )
+        # A budget the default reserve() text (100 chars -> estimate 49)
+        # exactly fills: first admitted, second rejected — any priming loop
+        # is dead weight at this budget.
+        limits = budget_limits(credits_per_day=49)
         admin = FakeUser(7, is_admin=True)
-        d = reserve(store, admin, limits=limits, run_id="a0")
-        store.finish_run(d.reservation_id, "completed")
+        assert reserve(store, admin, limits=limits, run_id="a0").kind == "admitted"
         with caplog.at_level(logging.WARNING, logger="app.services.usage"):
             denied = reserve(store, admin, limits=limits, run_id="a1")
         assert denied.kind == "quota_exhausted"
         assert any(
-            "admin" in r.message and "7" in r.message and "2" in r.message
+            "exhausted the day credit budget" in r.message and "7" in r.message
             for r in caplog.records
         )
 
     def test_normal_user_denial_does_not_warn(self, store, caplog):
-        for i in range(3):
-            d = reserve(store, run_id=f"r{i}")
-            store.finish_run(d.reservation_id, "completed")
+        limits = budget_limits(credits_per_day=49)
+        assert reserve(store, limits=limits, run_id="r0").kind == "admitted"
         with caplog.at_level(logging.WARNING, logger="app.services.usage"):
-            reserve(store, run_id="r3")
+            denied = reserve(store, limits=limits, run_id="r1")
+        assert denied.kind == "quota_exhausted"
         assert not caplog.records
 
 
@@ -198,19 +163,9 @@ class TestConcurrency:
     def test_two_simultaneous_reservations_admit_exactly_one(self, tmp_path):
         # TOCTOU (spec §6.4): insert-first serializes concurrent starts.
         store = UsageStore(tmp_path / "usage.db")
-        limits = TierLimitsSettings(
-            llm_checks_per_day=3, max_llm_document_chars=20000,
-            concurrent_llm_runs=2,
-        )
-        d = store.reserve_llm_run(
-            FakeUser(1), limits, SERVER, REQUESTED, EFFECTIVE, 1, "check", "r0"
-        )
-        store.finish_run(d.reservation_id, "completed")
-        d = store.reserve_llm_run(
-            FakeUser(1), limits, SERVER, REQUESTED, EFFECTIVE, 1, "check", "r1"
-        )
-        store.finish_run(d.reservation_id, "completed")
-        # 2 of 3 used; two racing reservations may admit only one.
+        limits = budget_limits(credits_per_day=1)
+        # Two racing reservations at 1 credit each: the first to insert sums
+        # to 1 (not > 1, admitted); the second sums to 2 (> 1, rejected).
         barrier = threading.Barrier(2)
         decisions = []
 
@@ -250,19 +205,17 @@ class TestSweeps:
         assert by_run["fresh"] == "started"
 
     def test_swept_rows_still_count_toward_the_day(self, store):
-        # concurrent_llm_runs=3, not the helper default of 2: all three
-        # stale reservations must be ADMITTED (an in-flight rejection on the
-        # third would roll its row back and leave only two to count).
-        wide = TierLimitsSettings(
-            llm_checks_per_day=3, max_llm_document_chars=20000,
-            concurrent_llm_runs=3,
-        )
-        for i in range(3):
-            assert reserve(
-                store, limits=wide, run_id=f"stale{i}", now=self.OLD
-            ).kind == "admitted"
-        denied = reserve(store, limits=wide, run_id="fresh", now=self.BASE)
-        assert denied.kind == "quota_exhausted"  # day_count 4 > 3
+        # Abandoned rows still count toward the day budget (spec §4): their
+        # admission estimate stands even after the staleness sweep flips
+        # their status. Budget 49 == one default-reserve() estimate.
+        limits = budget_limits(credits_per_day=49)
+        assert reserve(
+            store, limits=limits, run_id="stale", now=self.OLD
+        ).kind == "admitted"
+        # The sweep runs inside this reservation's own transaction (spec
+        # §6.6) and abandons "stale" first; its estimate still counts.
+        denied = reserve(store, limits=limits, run_id="fresh", now=self.BASE)
+        assert denied.kind == "quota_exhausted"
 
     def test_terminal_write_does_not_resurrect_a_swept_row(self, store, caplog):
         d = reserve(store, run_id="stale", now=self.OLD)
@@ -288,7 +241,7 @@ def test_startup_sweeps_started_ledger_rows(tmp_path: Path):
     settings = Settings(db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules")
     store = UsageStore(settings.db_path)
     store.reserve_llm_run(  # leaves a 'started' row
-        FakeUser(1), TierLimitsSettings(llm_checks_per_day=5,
+        FakeUser(1), TierLimitsSettings(credits_per_day=1_000_000,
         max_llm_document_chars=1000, concurrent_llm_runs=5),
         LimitsSettings(), RequestedLLM(tier="cheap"),
         EffectiveSelection(tier="cheap", provider="ollama", model="m",
@@ -501,10 +454,10 @@ class TestCreditSettlement:
         assert first["credits"] == self.ESTIMATE
 
 
-def budget_limits(**windows):
+def budget_limits(*, concurrent_llm_runs=10, **windows):
     return TierLimitsSettings(
-        llm_checks_per_day=500, max_llm_document_chars=20000,
-        concurrent_llm_runs=10, **windows,
+        max_llm_document_chars=20000, concurrent_llm_runs=concurrent_llm_runs,
+        **windows,
     )
 
 
@@ -602,15 +555,16 @@ class TestWindowEnforcement:
             store, limits=limits, run_id="r2", source="name", now=self.NOON
         ).kind == "admitted"
 
-    def test_no_windows_configured_means_no_budget_check(self, store):
-        # budget_limits() without window kwargs: counter 500, concurrency 10.
-        # The module LIMITS would trip its own counter (3) and concurrency
-        # cap (2) here -- do not use it.
-        limits = budget_limits()
-        for i in range(4):
-            assert reserve(
-                store, limits=limits, run_id=f"r{i}", now=self.NOON
-            ).kind == "admitted"
+    def test_many_cheap_runs_pass_without_a_run_counter(self, store):
+        # 20 tiny runs would have tripped any counter <= 20; only credits
+        # bind now. 5-char text -> est_input 2, est_output 0 -> 2 credits.
+        limits = budget_limits(credits_per_day=100)
+        noon = datetime(2026, 7, 29, 12, 30, tzinfo=UTC)
+        for i in range(20):
+            decision = reserve(store, limits=limits, run_id=f"r{i}",
+                               text_chars=5, now=noon)
+            assert decision.kind == "admitted"
+            store.finish_run(decision.reservation_id, "completed")  # frees the slot
 
 
 class TestCreditsUsed:

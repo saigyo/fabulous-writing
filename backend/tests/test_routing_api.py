@@ -11,7 +11,7 @@ from tests.conftest import auth_headers, second_user_headers
 TIERS_CONFIG = {
     "basic": {"llm": {"tiers": ["cheap", "local"], "providers": ["ollama"],
                       "models": {"ollama": ["llama3.1"]}}, "features": [],
-               "limits": {"llm_checks_per_day": 100, "max_llm_document_chars": 100000,
+               "limits": {"credits_per_day": 1_000_000, "max_llm_document_chars": 100000,
                           "concurrent_llm_runs": 5}},
 }
 
