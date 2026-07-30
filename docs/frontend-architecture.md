@@ -34,7 +34,7 @@ frontend/src/
 │   ├── policy.ts               # tierAllowed/providerAllowed/modelAllowed/hasFeature/llmDisabled
 │   ├── LoginGate.tsx          # renders LoginForm while anonymous, children once authStatus is ok
 │   ├── LoginForm.tsx          # email/password form, posts to login()
-│   └── AccountMenu.tsx        # signed-in email, password-change dialog, log out
+│   └── AccountMenu.tsx        # signed-in email, password-change dialog (B3), log out
 ├── editor/
 │   ├── Editor.tsx             # CodeMirror setup, update listener, click-to-select
 │   ├── findings.ts            # findingsField StateField: tracked findings + decorations
@@ -82,6 +82,9 @@ frontend/src/
 ├── hooks/
 │   ├── useCrudError.ts             # shared { error, run, fail, clear } mutation-error wrapper
 │   └── useDismissOnOutsideClick.ts # close a popover/menu on mousedown outside its ref
+├── ui/
+│   ├── Dialog.tsx              # accessible modal on native <dialog> (B3) — see Dialogs (B3)
+│   └── ConfirmDialog.tsx       # Dialog's Cancel/danger-confirm face
 ├── rules/                     # rule catalog view + per-profile toggles
 ├── terminology/               # domain/term management view; terms edit in place
 │                              # (row edit mode shares TermFieldCells with the add
@@ -880,6 +883,62 @@ remaining piece of document content in localStorage is the write-through buffer
 (`fabulous-writing-doc-buffer`, above) — a cache of the *currently open* document only,
 never a second source of truth for the list.
 
+## Dialogs (B3)
+
+`ui/Dialog.tsx` and `ui/ConfirmDialog.tsx` give the app one accessible modal
+primitive, replacing what used to be three different ad hoc idioms: a bespoke
+`.dialog-overlay` div (`FolderDefaultsDialog.tsx`), a second `view` state
+drawn inside an existing popover (`AccountMenu.tsx`'s password change), and
+the blocking `window.confirm` (`DocumentSidebar.tsx`'s delete confirmations).
+None of those three remain.
+
+- **`Dialog`** wraps the native `<dialog>` element. `showModal()`, called
+  once from a mount-only effect, makes the rest of the page inert — the
+  platform is the focus trap, not a hand-rolled one — and Escape arrives as
+  the `cancel` event, which the component `preventDefault()`s and turns into
+  a call to `onClose` rather than letting the element close itself: every
+  dismissal path (Escape, backdrop, a button inside) funnels through
+  `onClose` so the parent's mount/unmount stays the single source of truth
+  for whether the dialog is open. Backdrop dismissal fires on **mousedown**
+  (not `click`), checking both `event.target === dialog` (a click on the
+  dialog's own padding also targets the `<dialog>` element itself, not a
+  descendant) and the click coordinates against the panel's bounding rect —
+  mousedown rather than click so a drag that starts inside the panel and
+  releases outside doesn't dismiss it. Body scroll is locked for the
+  dialog's lifetime (`document.body.style.overflow`, saved and restored on
+  unmount), and focus returns on close to `returnFocusTo` if the caller
+  passed one, else whatever was `document.activeElement` when the dialog
+  mounted — `returnFocusTo` exists for callers whose opener is already
+  unmounted by the time the dialog appears (a popover menu item, gone once
+  its own popover closed). The `<h2>` title is wired to the element via
+  `aria-labelledby` (a `useId()`-generated id). Styling is one shared rule,
+  `dialog.app-dialog` plus `::backdrop` (`App.css`), that every dialog's own
+  class (`.confirm-dialog`, `.account-password-dialog`,
+  `.folder-defaults-dialog`) layers onto.
+- **`ConfirmDialog`** is `Dialog`'s confirm face: a message plus Cancel /
+  danger-styled confirm, using generic `dialogCancel`/`dialogConfirm` i18n
+  keys rather than per-caller strings. Cancel — not the destructive action —
+  carries `autoFocus`, so a stray Enter on a just-opened dialog can never
+  destroy anything; Escape and backdrop both cancel via `Dialog`'s `onClose`.
+  `DocumentSidebar.tsx` adopted it for both its document- and folder-delete
+  confirmations, each passing `returnFocusTo` as the ⋯ menu button that
+  opened the now-closed menu.
+- **Change-password** (`auth/AccountMenu.tsx`) used to be a second `view`
+  state (`'menu' | 'password'`) drawn inside the same account popover as a
+  drill-in. It is now its own `Dialog` (`account-password-dialog`), opened
+  by the popover's "Change password" button — which also closes the popover
+  — and given `returnFocusTo={badgeRef}`, since the button that opened it
+  belongs to a popover already gone by the time focus needs to return. All
+  of M2's completion guards (the `sessionGeneration()`-gated silent
+  re-login, abandon-on-turnover at both await points) are unchanged; B3
+  changed only the presentation, not the async lifecycle described under
+  [Authentication](#authentication) below.
+- **`FolderDefaultsDialog.tsx`** was refactored onto the same `Dialog`
+  primitive; its previous bespoke `.dialog-overlay` div (with its own
+  mousedown-on-self-only dismissal check) is gone, replaced by
+  `folder-defaults-dialog` layered on `dialog.app-dialog` the same way every
+  other dialog in the app is.
+
 ## Authentication
 
 M2 puts the whole app behind a login gate — every backend feature router now requires
@@ -1347,6 +1406,22 @@ write an audit row twice. The typed password clears only when `save`
 reports the change committed; a failed `PATCH` leaves it in the field
 under the error banner rather than silently discarding what the admin
 typed.
+
+**Own-row reset is text, not a control (B3).** The backend still lets an
+admin's own `PATCH` carry a `password` field — self-demotion and
+self-deactivation are the only self-edits the server 409s — but resetting
+your own password through this table also bumps your own `token_epoch`,
+revoking your own current session token immediately, with no re-login step
+the way `AccountMenu.tsx`'s change-password dialog has. That was the M6
+abrupt-self-logout gap; B3 resolves it on the client side by rendering the
+own-row (`isSelf`) reset cell as a plain `adminSelfResetHint` string
+("Use the account menu to change your own password.") instead of the
+password input and button, rather than disabling those controls — visible
+text that tells the admin what to do instead reads better for a
+screen-reader user than a disabled control with no explanation. The
+revocation semantics themselves are unchanged; only the self-service path
+to trigger them moved to the dialog described above, which already handles
+the resulting re-authentication.
 
 ## Internationalization
 
