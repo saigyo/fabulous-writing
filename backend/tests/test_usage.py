@@ -494,6 +494,18 @@ class TestWindowEnforcement:
         assert decision.kind == "quota_exhausted"
         assert decision.exhausted_window == "hour"
 
+    def test_day_window_resets_at_utc_midnight(self, store):
+        # Mirrors the deleted counter-era test_utc_day_rollover_resets_the_
+        # count: the enforcement query's day predicate (usage.py) is a
+        # separate string from credits_used()'s -- dropping it would still
+        # pass every other test in this file (none else spans two UTC
+        # days), silently turning the day budget into an all-time one.
+        limits = budget_limits(credits_per_day=self.EST)
+        day1 = datetime(2026, 7, 27, 23, 59, tzinfo=UTC)
+        assert reserve(store, limits=limits, run_id="r1", now=day1).kind == "admitted"
+        day2 = day1 + timedelta(minutes=2)
+        assert reserve(store, limits=limits, run_id="r2", now=day2).kind == "admitted"
+
     def test_hour_window_resets_on_the_hour(self, store):
         limits = budget_limits(credits_per_hour=self.EST)
         reserve(store, limits=limits, run_id="r1", now=self.NOON)
