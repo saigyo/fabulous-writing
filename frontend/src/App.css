@@ -1828,9 +1828,13 @@ dialog.app-dialog h2 {
   justify-content: flex-end;
   gap: 0.5rem;
 }
+/* Filled, not outline: the app's danger red (#e5484d) as TEXT on a light
+   button is ~3.9:1 — under WCAG's 4.5:1 for normal-size text. White on
+   this darker red clears it in both themes without theme-specific rules. */
 .confirm-dialog-danger {
-  color: #e5484d;
-  border-color: #e5484d;
+  background: #c22126;
+  border-color: #c22126;
+  color: #fff;
 }
 
 /* Folder-defaults dialog */
