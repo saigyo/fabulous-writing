@@ -1591,13 +1591,16 @@ hold the **admission estimate**: `ceil(source_weight × factor ×
 (estimated_input + output_weight × estimated_output))` where estimates come
 from `text_chars` divided by 4, then output = input / 4. When the run
 completes (`status = 'completed'`), credits are **settled** to the actual cost:
-`ceil(source_weight × factor × (input_tokens + output_weight × output_tokens))`.
-On `'failed'` status, credits are settled to actual if available, else the
-estimate stands. On `'cancelled'` and `'abandoned'`, the estimate stands
-unchanged. Pre-B6 rows are `NULL` and count as 0 in quota calculations. The
-factor/weight lookup chain (`services/credits.py#run_cost`) is: exact model in
-provider block → provider default factor → global default factor; output weight
-is similarly per-provider or global default.
+`ceil(source_weight × factor × (input_tokens + output_weight × output_tokens))`,
+or the estimate stands if no tokens were reported. On `'failed'` status,
+credits are settled to actual cost if any tokens were reported; if **both**
+`input_tokens` and `output_tokens` are `NULL` (request-stage failures never
+reached the provider), credits are settled to **0** (no actual cost). On
+`'cancelled'` and `'abandoned'`, the estimate stands unchanged. Pre-B6 rows are
+`NULL` and count as 0 in quota calculations. The factor/weight lookup chain
+(`services/credits.py#run_cost`) is: exact model in provider block → provider
+default factor → global default factor; output weight is similarly per-provider
+or global default.
 
 `fail_stage`/`fail_detail` are written only on the `'failed'` path — every
 other terminal status (`completed`, `cancelled`, `abandoned`) leaves both
@@ -1797,11 +1800,12 @@ M4 policy payload:
 
 - **`usage: UsagePayload` (B6)** — `label` (tier name from the `limits` block,
   or the global `label` field if there is one) and `windows: list[WindowUsage]`,
-  each with `window` (hour|day|week|month), `budget` (the limit for that window,
-  or `None` if unconfigured), and `used_percent` (ceil of
-  `used_credits * 100 / budget`, capped at 100). No absolute credit numbers are
-  reported — only the tightest window's label and used percent are shown in the
-  UI. Replaces M5's `used_today`/`limit` pair.
+  each with `window` (hour|day|week|month) and `used_percent` (ceil of
+  `used_credits * 100 / budget`, capped at 100, where `used_credits =
+  SUM(COALESCE(credits, 0))` over all rows in the window regardless of
+  status, and `budget` is the configured limit for that window). No absolute
+  credit numbers are reported — only the tightest window's label and used
+  percent are shown in the UI. Replaces M5's `used_today`/`limit` pair.
 - `limits: LimitsPayload` — `max_document_chars` (the server-wide byte-budget
   source), `max_llm_document_chars`, and `concurrent_llm_runs` (the latter
   two are the caller's own per-tier numbers from `limits_for`).

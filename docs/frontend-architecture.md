@@ -1135,12 +1135,17 @@ max_llm_document_chars, concurrent_llm_runs}` alongside the M4 `policy`
 payload. No absolute credit numbers are reported locally — the UI shows only
 the tightest window's percentage.
 
-- **The quota indicator** (`App.tsx`): `{label}` + `{used_percent}%` for
-  the tightest configured window (lowest remaining budget), rendered next to
-  the header's `LlmSelector` and hidden entirely (like the selector itself)
+- **The quota indicator** (`App.tsx`): displays `{label}` + `{used_percent}%`
+  for the tightest configured window (lowest remaining budget), rendered next
+  to the header's `LlmSelector` and hidden entirely (like the selector itself)
   when `llmDisabled(store.user)` — showing a quota percentage for an account
-  with no LLM access at all would be noise, not information. No label is
-  shown if all windows are unconfigured (inert mode).
+  with no LLM access at all would be noise, not information. No label is shown
+  if all windows are unconfigured (inert mode). The `title` attribute
+  (tooltip) and `aria-label` both list **every** configured window's percentage
+  as `{windowName}: {percent}%` (separated by `·` in the tooltip, by `, ` in
+  the aria-label) so screen readers and tooltips show the full per-window
+  breakdown. There is deliberately **no at-limit styling** — the visual
+  indicator is the percentage number, not a color change or warning icon.
 - **The char-count dual thresholds** (`sidebar/Sidebar.tsx`): `docChars`
   (live character count of the editor buffer) is compared against **two**
   independent caps — `overLlm = docChars > user.limits.max_llm_document_chars`
