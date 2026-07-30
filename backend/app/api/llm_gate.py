@@ -186,7 +186,7 @@ async def get_effective_provider(
     )
     if decision.kind == "quota_exhausted":
         # Degrade, never 429: an exhausted allowance is not retryable until
-        # tomorrow (spec §6.4).
+        # the binding window rolls over (spec §6.4).
         return replace(effective, skipped="quota_exhausted"), None, None
     if decision.kind == "concurrency_rejected":
         if not decision.server_wide:

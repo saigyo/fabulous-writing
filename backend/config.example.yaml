@@ -42,7 +42,7 @@ auth:
 #   llm_run_max_age: 900              # seconds before a 'started' row is swept
 #   concurrency_reject_delay: 0.25    # seconds, within [0, 2]
 #   admin:
-#     llm_checks_per_day: 500
+#     credits_per_day: 5000000
 #     max_llm_document_chars: 200000
 #     concurrent_llm_runs: 5
 
@@ -50,7 +50,8 @@ auth:
 # With no tiers block, every user is unrestricted. Admins always bypass
 # tier policy. `tiers` inside `llm:` are the quality tiers
 # (quality/balanced/cheap/local). `limits:` is required on every configured
-# tier since M5 -- a tier without one aborts startup.
+# tier since M5 -- a tier without one aborts startup -- and must configure
+# at least one credits_per_{hour,day,week,month} budget (B6).
 # tiers:
 #   basic:
 #     llm:
@@ -60,7 +61,7 @@ auth:
 #                               #   models:
 #                               #     ollama: [mistral-nemo:12b-instruct-2407-q6_K]
 #     limits:
-#       llm_checks_per_day: 20
+#       credits_per_day: 200000
 #       max_llm_document_chars: 20000
 #       concurrent_llm_runs: 3
 #     features: []
@@ -70,10 +71,27 @@ auth:
 #       providers: all
 #       models: all
 #     limits:
-#       llm_checks_per_day: 200
+#       credits_per_day: 2000000
 #       max_llm_document_chars: 100000
 #       concurrent_llm_runs: 5
 #     features: [custom_profiles, custom_domains]
+#
+# Credit pricing (B6): factors are INPUT-token prices per model, grouped by
+# provider; output_weight is the provider's input->output price ratio.
+# Absent block = factor 1.0 / output weight 4 for everything. Budgets are
+# credits per window: credits = ceil(weight * factor * (in + ow * out)).
+# credit_cost:
+#   default_factor: 1.0
+#   default_output_weight: 4
+#   source_weights: { check: 1.0, suggestion: 1.0, name: 0.0 }
+#   providers:
+#     claude:
+#       output_weight: 5
+#       default_factor: 3.0
+#       models:
+#         claude-haiku-4-5: 1.0
+#     ollama:
+#       default_factor: 0.1
 
 # CORS: browser origins permitted to call the API. Non-browser clients are
 # unaffected — CORS only constrains requests made from a web page.

@@ -28,7 +28,7 @@ from tests.conftest import (
 TIERS_CONFIG = {
     "basic": {"llm": {"tiers": ["cheap", "local"], "providers": ["ollama"],
                       "models": {"ollama": ["llama3.1"]}}, "features": [],
-               "limits": {"llm_checks_per_day": 100, "max_llm_document_chars": 100000,
+               "limits": {"credits_per_day": 1_000_000, "max_llm_document_chars": 100000,
                           "concurrent_llm_runs": 5}},
 }
 
@@ -413,7 +413,7 @@ class TestMeUsageAndLimits:
         body = client.get("/api/auth/me", headers=headers).json()
         assert body["tier"] == "basic"
         assert body["usage"]["label"] == "Basic"
-        assert body["usage"]["windows"] == []
+        assert body["usage"]["windows"] == [{"window": "day", "used_percent": 0}]
         assert body["limits"] == {
             "max_document_chars": settings.limits.max_document_chars,
             "max_llm_document_chars": 100000,
@@ -436,7 +436,6 @@ class TestMeUsageAndLimits:
         tiers_config = {
             "pro": {
                 "limits": {
-                    "llm_checks_per_day": 100,
                     "max_llm_document_chars": 100000,
                     "concurrent_llm_runs": 5,
                     "credits_per_day": 1000,

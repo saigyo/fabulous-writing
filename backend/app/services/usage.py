@@ -2,8 +2,9 @@
 §6.4, §6.6).
 
 Record richly, limit simply: every LLM-invoking endpoint writes one row per
-run; v1 enforces one daily quota plus two concurrency caps, but every future
-limit dimension is computable from this ledger without schema changes.
+run; v1 enforces per-tier credit-window budgets plus two concurrency caps,
+but every future limit dimension is computable from this ledger without
+schema changes.
 """
 
 import logging
@@ -231,23 +232,6 @@ class UsageStore:
                 ),
             )
             reservation_id = cursor.lastrowid
-            (day_count,) = conn.execute(
-                "SELECT COUNT(*) FROM llm_usage WHERE user_id = ? AND day = ?",
-                (user.id, day),
-            ).fetchone()
-            if day_count > limits.llm_checks_per_day:
-                conn.rollback()
-                if user.is_admin:
-                    # Routine for a normal user; for an admin at a generous
-                    # ceiling it means a runaway loop or a compromised
-                    # account (spec §6.4).
-                    logger.warning(
-                        "admin user %s hit the llm_checks_per_day ceiling"
-                        " (%s runs today)",
-                        user.id,
-                        day_count,
-                    )
-                return QuotaDecision(kind="quota_exhausted")
             for window, budget in limits.credit_windows().items():
                 if window == "day":
                     (spent,) = conn.execute(

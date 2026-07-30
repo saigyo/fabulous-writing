@@ -25,7 +25,7 @@ from app.core.permissions import (
 SETTINGS = Settings()  # default routing table + default providers
 
 _LIMITS = {
-    "llm_checks_per_day": 100, "max_llm_document_chars": 100000, "concurrent_llm_runs": 5,
+    "credits_per_day": 1_000_000, "max_llm_document_chars": 100000, "concurrent_llm_runs": 5,
 }
 
 TIERED = Settings.model_validate({
@@ -196,41 +196,43 @@ def test_default_model_for_covers_every_builtin_and_extras():
 class TestLimitsFor:
     def test_admin_gets_the_admin_ceiling(self):
         settings = Settings.model_validate({
-            "limits": {"admin": {"llm_checks_per_day": 100,
+            "limits": {"admin": {"credits_per_day": 100_000,
                                  "max_llm_document_chars": 50000,
                                  "concurrent_llm_runs": 2}},
             "tiers": {"premium": {"limits": {
-                "llm_checks_per_day": 200, "max_llm_document_chars": 100000,
+                "credits_per_day": 200_000, "max_llm_document_chars": 100000,
                 "concurrent_llm_runs": 5}}},
         })
         # The ceiling REPLACES the tier's block (spec §6.4), never raises it.
+        # Admin and tier budgets are kept distinct (100k vs 200k) so the
+        # assertion actually proves replacement, not coincidence.
         limits = limits_for(tier="premium", is_admin=True, settings=settings)
-        assert limits.llm_checks_per_day == 100
+        assert limits.credits_per_day == 100_000
 
     def test_configured_tier_gets_its_own_block(self):
         settings = Settings.model_validate({
             "tiers": {"basic": {"limits": {
-                "llm_checks_per_day": 20, "max_llm_document_chars": 20000,
+                "credits_per_day": 1_000_000, "max_llm_document_chars": 20000,
                 "concurrent_llm_runs": 3}}},
         })
         limits = limits_for(tier="basic", is_admin=False, settings=settings)
-        assert limits.llm_checks_per_day == 20
+        assert limits.credits_per_day == 1_000_000
 
     def test_no_tiers_configured_falls_back_to_admin_defaults(self):
         # Inert-by-default (roadmap M5 row): the generous admin numbers.
         limits = limits_for(tier="basic", is_admin=False, settings=Settings())
-        assert limits.llm_checks_per_day == 500
+        assert limits.credits_per_day == 5_000_000
 
     def test_unknown_tier_falls_back_to_admin_defaults(self):
         # Reachable only for display (/me): an unknown tier's policy is
         # NO_LLM_POLICY, so resolution floors out before any reservation.
         settings = Settings.model_validate({
             "tiers": {"basic": {"limits": {
-                "llm_checks_per_day": 20, "max_llm_document_chars": 20000,
+                "credits_per_day": 1_000_000, "max_llm_document_chars": 20000,
                 "concurrent_llm_runs": 3}}},
         })
         limits = limits_for(tier="ghost", is_admin=False, settings=settings)
-        assert limits.llm_checks_per_day == 500
+        assert limits.credits_per_day == 5_000_000
 
 
 class TestLabelFor:
@@ -240,7 +242,7 @@ class TestLabelFor:
     def test_configured_label_wins(self):
         settings = Settings.model_validate({"tiers": {"pro": {
             "label": "Pro Plan",
-            "limits": {"llm_checks_per_day": 100,
+            "limits": {"credits_per_day": 1_000_000,
                        "max_llm_document_chars": 100000,
                        "concurrent_llm_runs": 5},
         }}})
@@ -248,7 +250,7 @@ class TestLabelFor:
 
     def test_default_label_capitalizes_the_tier_name(self):
         settings = Settings.model_validate({"tiers": {"basic": {
-            "limits": {"llm_checks_per_day": 100,
+            "limits": {"credits_per_day": 1_000_000,
                        "max_llm_document_chars": 100000,
                        "concurrent_llm_runs": 5},
         }}})
@@ -256,7 +258,7 @@ class TestLabelFor:
 
     def test_unknown_tier_falls_back_to_its_name(self):
         settings = Settings.model_validate({"tiers": {"basic": {
-            "limits": {"llm_checks_per_day": 100,
+            "limits": {"credits_per_day": 1_000_000,
                        "max_llm_document_chars": 100000,
                        "concurrent_llm_runs": 5},
         }}})
