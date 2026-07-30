@@ -4,6 +4,7 @@ import { HttpError } from '../api/client'
 import { useDismissOnOutsideClick } from '../hooks/useDismissOnOutsideClick'
 import { useLocale, useMessages } from '../i18n'
 import { useStore } from '../state/store'
+import { ConfirmDialog } from '../ui/ConfirmDialog'
 import { absoluteTime, relativeTime } from './documentTime'
 import {
   createNewDocument,
@@ -187,7 +188,9 @@ function FolderGroup({
   const [renaming, setRenaming] = useState(false)
   const [conflict, setConflict] = useState(false)
   const [defaultsOpen, setDefaultsOpen] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const menuButtonRef = useRef<HTMLButtonElement>(null)
   const closeMenu = useCallback(() => setMenuOpen(false), [])
   useDismissOnOutsideClick(menuRef, menuOpen, closeMenu)
 
@@ -244,6 +247,7 @@ function FolderGroup({
         )}
         <div className="doc-actions" ref={menuRef}>
           <button
+            ref={menuButtonRef}
             className="doc-menu-button"
             aria-label={m.folderMenu}
             onClick={() => setMenuOpen((open) => !open)}
@@ -280,11 +284,7 @@ function FolderGroup({
                 className="doc-menu-delete"
                 onClick={() => {
                   setMenuOpen(false)
-                  if (window.confirm(m.folderDeleteConfirm(folder.name))) {
-                    removeFolder(folder.id).catch(() => {
-                      useStore.getState().setDocListError(true)
-                    })
-                  }
+                  setConfirmingDelete(true)
                 }}
               >
                 {m.folderDelete}
@@ -306,6 +306,20 @@ function FolderGroup({
           onClose={() => setDefaultsOpen(false)}
         />
       )}
+      {confirmingDelete && (
+        <ConfirmDialog
+          title={m.folderDelete}
+          message={m.folderDeleteConfirm(folder.name)}
+          returnFocusTo={menuButtonRef}
+          onConfirm={() => {
+            setConfirmingDelete(false)
+            removeFolder(folder.id).catch(() => {
+              useStore.getState().setDocListError(true)
+            })
+          }}
+          onCancel={() => setConfirmingDelete(false)}
+        />
+      )}
     </div>
   )
 }
@@ -318,7 +332,9 @@ function DocumentItem({ doc }: { doc: DocumentSummary }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [moving, setMoving] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const menuButtonRef = useRef<HTMLButtonElement>(null)
   const closeMenu = useCallback(() => {
     setMenuOpen(false)
     setMoving(false)
@@ -360,6 +376,7 @@ function DocumentItem({ doc }: { doc: DocumentSummary }) {
       )}
       <div className="doc-actions" ref={menuRef}>
         <button
+          ref={menuButtonRef}
           className="doc-menu-button"
           aria-label={m.docMenu}
           onClick={() => {
@@ -415,9 +432,7 @@ function DocumentItem({ doc }: { doc: DocumentSummary }) {
               onClick={() => {
                 setMenuOpen(false)
                 setMoving(false)
-                if (window.confirm(m.docDeleteConfirm(doc.name))) {
-                  void removeDocument(doc.id)
-                }
+                setConfirmingDelete(true)
               }}
             >
               {m.docDelete}
@@ -425,6 +440,18 @@ function DocumentItem({ doc }: { doc: DocumentSummary }) {
           </div>
         )}
       </div>
+      {confirmingDelete && (
+        <ConfirmDialog
+          title={m.docDelete}
+          message={m.docDeleteConfirm(doc.name)}
+          returnFocusTo={menuButtonRef}
+          onConfirm={() => {
+            setConfirmingDelete(false)
+            void removeDocument(doc.id)
+          }}
+          onCancel={() => setConfirmingDelete(false)}
+        />
+      )}
     </li>
   )
 }
