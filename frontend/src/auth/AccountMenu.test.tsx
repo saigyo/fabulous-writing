@@ -415,44 +415,99 @@ describe('AccountMenu', () => {
     expect(document.activeElement).toBe(screen.getByLabelText(en.passwordCurrent))
   })
 
-  it('an outside click dismisses the popover; reopening shows the menu, not the password form', async () => {
+  it('an outside mousedown leaves the password dialog open; a backdrop mousedown on it closes it', async () => {
+    // A modal dialog is intentionally NOT outside-click dismissible — the
+    // rest of the page is inert while it's open (the platform enforces
+    // this via showModal(), not this code). Only a genuine backdrop click —
+    // mousedown that lands on the <dialog> element itself, outside its own
+    // box — dismisses it.
     const u = userEvent.setup()
     render(<AccountMenu />)
     await openPasswordForm(u)
-    screen.getByLabelText(en.passwordCurrent)
+    const dialog = document.querySelector('dialog')!
 
     fireEvent.mouseDown(document.body)
-    expect(screen.queryByLabelText(en.passwordCurrent)).toBeNull()
+    screen.getByLabelText(en.passwordCurrent) // still open
 
-    await openMenu(u)
-    screen.getByRole('button', { name: en.accountChangePassword })
-    expect(screen.queryByLabelText(en.passwordCurrent)).toBeNull()
+    // happy-dom's rects are 0x0 at the origin, so default (0,0) coordinates
+    // land inside the box (see Dialog.test.tsx) — off-origin coordinates are
+    // needed to simulate a true backdrop click.
+    fireEvent.mouseDown(dialog, { clientX: -10, clientY: -10 })
+    expect(document.querySelector('dialog')).toBeNull()
   })
 
-  it('Escape dismisses the popover; reopening shows the menu, not the password form', async () => {
+  it('Escape (the native cancel event) dismisses the password dialog; reopening shows the menu', async () => {
+    // happy-dom does not synthesize `cancel` from an Escape keydown, so the
+    // native event the dialog actually handles is fired directly.
     const u = userEvent.setup()
     render(<AccountMenu />)
     await openPasswordForm(u)
-    await u.click(screen.getByLabelText(en.passwordCurrent)) // focus inside the popover
-    await u.keyboard('{Escape}')
-    expect(screen.queryByLabelText(en.passwordCurrent)).toBeNull()
+    const dialog = document.querySelector('dialog')!
+
+    fireEvent(dialog, new Event('cancel', { cancelable: true }))
+    expect(document.querySelector('dialog')).toBeNull()
 
     await openMenu(u)
     screen.getByRole('button', { name: en.accountChangePassword })
-    expect(screen.queryByLabelText(en.passwordCurrent)).toBeNull()
   })
 
-  it('Escape returns focus to the account badge, not <body>', async () => {
-    // closeMenu() unmounts the focused password input on this path; without
-    // returning focus explicitly it falls back to <body>, stranding
-    // keyboard/screen-reader users.
+  it('Escape (the native cancel event) returns focus to the account badge, not <body>', async () => {
+    // returnFocusTo restores focus explicitly; without it, focus would fall
+    // back to whatever was focused at mount, stranding keyboard/screen-reader
+    // users once the autoFocus'd password input unmounts.
     const u = userEvent.setup()
     render(<AccountMenu />)
     const badge = screen.getByRole('button', { name: en.accountMenu })
     await openPasswordForm(u)
-    await u.click(screen.getByLabelText(en.passwordCurrent))
-    await u.keyboard('{Escape}')
+    const dialog = document.querySelector('dialog')!
+
+    fireEvent(dialog, new Event('cancel', { cancelable: true }))
     expect(document.activeElement).toBe(badge)
+  })
+
+  it('opens the password form in a modal dialog and closes the popover', async () => {
+    const u = userEvent.setup()
+    render(<AccountMenu />)
+    await openMenu(u)
+    await u.click(screen.getByRole('button', { name: en.accountChangePassword }))
+
+    expect(document.querySelector('dialog')).not.toBeNull()
+    screen.getByLabelText(en.passwordCurrent)
+    expect(document.querySelector('.account-menu')).toBeNull()
+  })
+
+  it('returns focus to the badge when the password dialog closes', async () => {
+    const u = userEvent.setup()
+    render(<AccountMenu />)
+    const badge = screen.getByRole('button', { name: en.accountMenu })
+    await openPasswordForm(u)
+    const dialog = document.querySelector('dialog')!
+
+    fireEvent(dialog, new Event('cancel', { cancelable: true }))
+    expect(document.activeElement).toBe(badge)
+  })
+
+  it('closes the password dialog on session turnover', async () => {
+    // Mirrors "logging out resets the popover..." above (~L382): this
+    // component stays mounted across logout/expiry (rendering null), so a
+    // dangling `passwordOpen: true` — left by e.g. a mid-change 401 —
+    // would otherwise resurface unprompted the instant the user signs back
+    // in, springing the dialog open with no user action behind it.
+    const u = userEvent.setup()
+    render(<AccountMenu />)
+    await openPasswordForm(u)
+    expect(document.querySelector('dialog')).not.toBeNull()
+
+    act(() => {
+      useStore.setState({ token: null, user: null, authStatus: 'anonymous', sessionExpired: true })
+    })
+    expect(document.querySelector('dialog')).toBeNull()
+
+    // Simulate signing back in.
+    act(() => {
+      useStore.setState({ token: 'new-tok', user: user(), authStatus: 'authenticated' })
+    })
+    expect(document.querySelector('dialog')).toBeNull()
   })
 
   it('exposes aria-expanded on the account badge, tracking the popover', async () => {

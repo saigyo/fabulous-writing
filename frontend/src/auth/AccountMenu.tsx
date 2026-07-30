@@ -10,6 +10,7 @@ import { HttpError, MIN_PASSWORD_LENGTH, postPasswordChange } from '../api/clien
 import { useDismissOnOutsideClick } from '../hooks/useDismissOnOutsideClick'
 import { useMessages, type Messages } from '../i18n'
 import { useStore } from '../state/store'
+import { Dialog } from '../ui/Dialog'
 import { expireSession, login, logout, sessionGeneration } from './session'
 
 type Result = { kind: 'error' | 'success'; text: string } | null
@@ -30,49 +31,47 @@ function mapChangeError(err: unknown, m: Messages): string {
 
 /** The header's only entry point for changing a password and logging out
  * (Task 8). A circular badge (the account-menu-anchor's toggle) opens a
- * popover that starts on its menu view and can drill into a password form
- * in the same popover — see PasswordForm below for the completion guards. */
+ * popover; "Change password" closes the popover and opens the password form
+ * in its own modal dialog (B3) — see PasswordForm below for the completion
+ * guards. */
 export function AccountMenu() {
   const m = useMessages()
   const user = useStore((s) => s.user)
   const [open, setOpen] = useState(false)
-  const [view, setView] = useState<'menu' | 'password'>('menu')
+  const [passwordOpen, setPasswordOpen] = useState(false)
   const anchorRef = useRef<HTMLDivElement>(null)
   const badgeRef = useRef<HTMLButtonElement>(null)
 
-  // Every path that leaves the popover resets `view` alongside it — the
-  // same shape DocumentSidebar's closeMenu uses for its `moving` submenu —
-  // so no caller has to separately remember to clear the password view.
   const closeMenu = useCallback(() => {
     setOpen(false)
-    setView('menu')
   }, [])
 
   useDismissOnOutsideClick(anchorRef, open, closeMenu)
 
   // useDismissOnOutsideClick only handles mousedown-outside. A document-level
   // listener (rather than an onKeyDown prop scoped to this subtree) is used
-  // here for the same reason that hook listens on `document`: clicking
-  // "Change password" unmounts that button, and focus can fall back to
-  // <body> — outside this subtree — so a listener that only fires while
-  // focus is inside would miss Escape right after that click.
+  // here for the same reason that hook listens on `document`: focus inside
+  // this popover can move around before Escape is pressed, and a listener
+  // scoped to the subtree could miss it. The password dialog handles its own
+  // Escape and focus restore via returnFocusTo once it takes over.
   useEffect(() => {
     if (!open) return
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         closeMenu()
-        // The password form's input can hold focus here (it's autoFocus'd),
-        // and closeMenu() unmounts it — without this, focus falls back to
-        // <body>, stranding keyboard/screen-reader users. Dismissal via
-        // useDismissOnOutsideClick (a click elsewhere) already has a natural
-        // focus target from the click itself, so this return-focus step is
-        // specific to the keyboard-dismiss path.
         badgeRef.current?.focus()
       }
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [open, closeMenu])
+
+  // The dialog belongs to the session that opened it: the component stays
+  // mounted across logout/expiry (rendering null), so a password dialog
+  // left open by a mid-change 401 would otherwise reappear on re-login.
+  useEffect(() => {
+    if (!user) setPasswordOpen(false)
+  }, [user])
 
   if (!user) return null
 
@@ -86,39 +85,42 @@ export function AccountMenu() {
         className="account-badge"
         aria-label={m.accountMenu}
         aria-expanded={open}
-        onClick={() => {
-          // Toggling the trigger always resets to the menu view too, not
-          // just closing paths — so reopening after drilling into the
-          // password form (without an explicit dismissal) still shows the
-          // menu, mirroring DocumentSidebar's doc-menu-button handler.
-          setOpen((wasOpen) => !wasOpen)
-          setView('menu')
-        }}
+        onClick={() => setOpen((wasOpen) => !wasOpen)}
       >
         {initial}
       </button>
       {open && (
-        <div className={view === 'menu' ? 'account-menu' : 'account-menu account-password-panel'}>
-          {view === 'menu' ? (
-            <>
-              <div className="account-who">{user.email}</div>
-              <button type="button" onClick={() => setView('password')}>
-                {m.accountChangePassword}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  closeMenu()
-                  logout()
-                }}
-              >
-                {m.accountLogOut}
-              </button>
-            </>
-          ) : (
-            <PasswordForm email={user.email} onCancel={closeMenu} />
-          )}
+        <div className="account-menu">
+          <div className="account-who">{user.email}</div>
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false)
+              setPasswordOpen(true)
+            }}
+          >
+            {m.accountChangePassword}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false)
+              logout()
+            }}
+          >
+            {m.accountLogOut}
+          </button>
         </div>
+      )}
+      {passwordOpen && (
+        <Dialog
+          title={m.accountChangePassword}
+          onClose={() => setPasswordOpen(false)}
+          returnFocusTo={badgeRef}
+          className="account-password-dialog"
+        >
+          <PasswordForm email={user.email} onCancel={() => setPasswordOpen(false)} />
+        </Dialog>
       )}
     </div>
   )

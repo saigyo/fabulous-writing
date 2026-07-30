@@ -1992,27 +1992,26 @@ dialog.app-dialog h2 {
   background: var(--accent-soft);
 }
 
-/* The password form replaces the menu's contents in the same popover,
-   which widens to fit three labelled fields. */
-.account-password-panel {
-  min-width: 15rem;
-  padding: 0.6rem 0.7rem;
-  gap: 0.5rem;
+/* The password form is a modal dialog (B3) — it inherits the panel look
+   (background, border, padding) from dialog.app-dialog and only needs its
+   own width plus the form's internal layout. */
+.account-password-dialog {
+  width: 300px;
 }
 
-.account-password-panel form {
+.account-password-dialog form {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
 }
 
 /* .login-field is reused here for the same look as the login gate's fields,
-   but this panel lives inside .header-controls, whose own `label` rule
+   but this dialog lives inside .header-controls, whose own `label` rule
    (.header-controls label, one class + one element = higher specificity
    than .login-field alone) turns the labels into small-caps header
    captions instead. Two classes here outweighs that regardless of source
    order, restoring the login gate's own field styling. */
-.account-password-panel .login-field {
+.account-password-dialog .login-field {
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -2026,12 +2025,12 @@ dialog.app-dialog h2 {
   white-space: normal;
 }
 
-/* Both messages share the panel's own gap for spacing; .llm-error's own
+/* Both messages share the form's own gap for spacing; .llm-error's own
    margin-bottom (meant for looser contexts) would otherwise stack on top
    of that gap unevenly against .all-clear, which has no margin override of
    its own and falls back to the browser's default <p> margin. */
-.account-password-panel .llm-error,
-.account-password-panel .all-clear {
+.account-password-dialog .llm-error,
+.account-password-dialog .all-clear {
   margin: 0;
 }
 
