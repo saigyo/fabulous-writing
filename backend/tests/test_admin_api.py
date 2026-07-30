@@ -1,9 +1,11 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import Settings
+from app.core.permissions import EffectiveSelection, RequestedLLM, limits_for
 from app.main import create_app
 
 
@@ -248,6 +250,37 @@ def test_no_admin_endpoint_can_raise_the_ceiling(client):
     assert me["usage"]["windows"] == [{"window": "day", "used_percent": 0}]
     assert me["limits"]["max_llm_document_chars"] == admin_limits.max_llm_document_chars
     assert me["limits"]["concurrent_llm_runs"] == admin_limits.concurrent_llm_runs
+    # /me's percentages can't discriminate an ignored PATCH from an applied
+    # one on an empty ledger (0% either way) -- so probe the ENFORCED
+    # ceiling directly: it must still be the configured 5,000,000, not the
+    # 999,999,999 the PATCH tried to install. limits_for mirrors how the
+    # endpoints resolve the admin's effective limits.
+    settings = client.app.state.settings
+    enforced_limits = limits_for(tier="admin", is_admin=True, settings=settings)
+    store = client.app.state.usage_store
+    admin_user = SimpleNamespace(id=1, is_admin=True)
+    requested = RequestedLLM(tier="balanced")
+    effective = EffectiveSelection(
+        tier="cheap", provider="ollama", model="llama3.1", degraded=True
+    )
+    first = store.reserve_llm_run(
+        admin_user, enforced_limits, settings.limits, requested, effective,
+        100, "check", "ceiling-probe-0",
+    )
+    assert first.kind == "admitted"
+    # Settles at exactly the configured ceiling: 5,000,000 input tokens *
+    # default factor 1.0, weight 1.0, no output -> 5,000,000 credits.
+    store.finish_run(
+        first.reservation_id, "completed", input_tokens=5_000_000, output_tokens=0
+    )
+    second = store.reserve_llm_run(
+        admin_user, enforced_limits, settings.limits, requested, effective,
+        100, "check", "ceiling-probe-1",
+    )
+    # Admitted here would mean the ceiling was actually raised to
+    # 999,999,999 by the PATCH above -- this is the assertion that fails
+    # under mutation and passes only when the config-only ceiling held.
+    assert second.kind == "quota_exhausted"
 
 
 def test_patch_explicit_null_clears_a_field_and_writes_an_audit_row(client):
