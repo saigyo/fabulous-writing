@@ -471,6 +471,17 @@ class TestCreditSettlement:
         (row,) = rows(store)
         assert row["credits"] == self.ESTIMATE
 
+    def test_cancelled_with_partial_tokens_keeps_the_estimate(self, store):
+        # Mid-stream cancellation after some tokens have streamed: client
+        # initiated cancel, partial tokens reported, estimate stands.
+        decision = reserve(store)
+        store.finish_run(
+            decision.reservation_id, "cancelled",
+            output_tokens=10,
+        )
+        (row,) = rows(store)
+        assert row["credits"] == self.ESTIMATE
+
     def test_settlement_prices_by_the_rows_own_provider_and_source(self, store):
         # finish_run must read provider/model/source off the row, not assume
         # defaults: a claude row at factor 3 prices 3x.
