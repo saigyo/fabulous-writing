@@ -311,19 +311,25 @@ function UserRow({ user, isSelf, tiers, allowMoreAdmins, onSave, fail }: UserRow
         />
       </td>
       <td className="admin-reset">
-        <input
-          type="password"
-          value={newPassword}
-          placeholder={m.adminPassword}
-          aria-label={`${m.adminResetPassword}: ${user.email}`}
-          onChange={(e) => setNewPassword(e.target.value)}
-        />
-        <button
-          disabled={!newPassword || resetPending}
-          onClick={() => void resetPassword()}
-        >
-          {m.adminResetPassword}
-        </button>
+        {isSelf ? (
+          <span className="admin-self-reset-hint">{m.adminSelfResetHint}</span>
+        ) : (
+          <>
+            <input
+              type="password"
+              value={newPassword}
+              placeholder={m.adminPassword}
+              aria-label={`${m.adminResetPassword}: ${user.email}`}
+              onChange={(e) => setNewPassword(e.target.value)}
+            />
+            <button
+              disabled={!newPassword || resetPending}
+              onClick={() => void resetPassword()}
+            >
+              {m.adminResetPassword}
+            </button>
+          </>
+        )}
       </td>
     </tr>
   )

@@ -535,4 +535,25 @@ describe('AdminView', () => {
     expect(passwordInput.value).toBe('a-long-enough-password')
     expect(screen.getByText('bea@example.com')).toBeTruthy() // row still present, untouched
   })
+
+  it('replaces the own-row password reset with a hint', async () => {
+    // store user (me) = the id-1 admin fixture, per the file's existing setup;
+    // user list: self + one other row
+    vi.mocked(getAdminUsers).mockResolvedValue([
+      adminUser(),
+      adminUser({ id: 2, email: 'bea@example.com' }),
+    ])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+
+    render(<AdminView />)
+    // render AdminView and await the list (file's existing pattern)
+    expect(await screen.findByText(en.adminSelfResetHint)).toBeTruthy()
+    // no reset controls on the own row
+    expect(
+      screen.queryByLabelText(`${en.adminResetPassword}: ada@example.com`),
+    ).toBeNull()
+    // the other row keeps its enabled controls
+    const other = screen.getByLabelText(`${en.adminResetPassword}: bea@example.com`)
+    expect(other).toHaveProperty('disabled', false)
+  })
 })
