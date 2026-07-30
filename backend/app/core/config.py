@@ -425,6 +425,8 @@ class TierSettings(BaseModel):
     llm: TierLLMSettings = Field(default_factory=TierLLMSettings)
     limits: TierLimitsSettings
     features: list[str] = Field(default_factory=list)
+    # Display label for /me (B6 spec §5); None -> capitalized tier name.
+    label: str | None = None
 
     @field_validator("features")
     @classmethod

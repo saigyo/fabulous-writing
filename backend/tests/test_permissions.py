@@ -16,6 +16,7 @@ from app.core.permissions import (
     RequestedLLM,
     default_model_for,
     features_for,
+    label_for,
     limits_for,
     policy_for,
     resolve_llm_selection,
@@ -230,3 +231,33 @@ class TestLimitsFor:
         })
         limits = limits_for(tier="ghost", is_admin=False, settings=settings)
         assert limits.llm_checks_per_day == 500
+
+
+class TestLabelFor:
+    def test_admin_label(self):
+        assert label_for(tier="basic", is_admin=True, settings=Settings()) == "Admin"
+
+    def test_configured_label_wins(self):
+        settings = Settings.model_validate({"tiers": {"pro": {
+            "label": "Pro Plan",
+            "limits": {"llm_checks_per_day": 100,
+                       "max_llm_document_chars": 100000,
+                       "concurrent_llm_runs": 5},
+        }}})
+        assert label_for(tier="pro", is_admin=False, settings=settings) == "Pro Plan"
+
+    def test_default_label_capitalizes_the_tier_name(self):
+        settings = Settings.model_validate({"tiers": {"basic": {
+            "limits": {"llm_checks_per_day": 100,
+                       "max_llm_document_chars": 100000,
+                       "concurrent_llm_runs": 5},
+        }}})
+        assert label_for(tier="basic", is_admin=False, settings=settings) == "Basic"
+
+    def test_unknown_tier_falls_back_to_its_name(self):
+        settings = Settings.model_validate({"tiers": {"basic": {
+            "limits": {"llm_checks_per_day": 100,
+                       "max_llm_document_chars": 100000,
+                       "concurrent_llm_runs": 5},
+        }}})
+        assert label_for(tier="ghost", is_admin=False, settings=settings) == "Ghost"

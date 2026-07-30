@@ -158,8 +158,7 @@ class UsageStore:
         would fight. The caller closes in a finally. Every other method
         uses _sqlite.connect, which commits AND closes — sqlite3's own
         context manager only ends the transaction, so `with
-        sqlite3.connect(...)` would leak a connection per call (used_today
-        runs on every /api/auth/me)."""
+        sqlite3.connect(...)` would leak a connection per call."""
         conn = (
             sqlite3.connect(self.db_path)
             if self.timeout is None
@@ -377,24 +376,11 @@ class UsageStore:
             config=self.credit_cost,
         )
 
-    def used_today(self, user_id: int, *, now: datetime | None = None) -> int:
-        """Spec §7.1: all of the user's rows for the UTC day regardless of
-        status — defined identically to reserve_llm_run's count, so the UI
-        and the enforcement can never drift."""
-        day = (now or _utc_now()).strftime("%Y-%m-%d")
-        with connect(self.db_path, timeout=self.timeout) as conn:
-            (count,) = conn.execute(
-                "SELECT COUNT(*) FROM llm_usage WHERE user_id = ? AND day = ?",
-                (user_id, day),
-            ).fetchone()
-            return count
-
     def credits_used(
         self, user_id: int, windows: list[str], *, now: datetime | None = None
     ) -> dict[str, int]:
         """Per-window credit sums over ALL the user's rows in the window,
-        regardless of status -- the same all-rows-count rule as used_today
-        (B6 spec §3). /me's data source."""
+        regardless of status (B6 spec §3). /me's data source."""
         moment = now or _utc_now()
         used: dict[str, int] = {}
         with connect(self.db_path, timeout=self.timeout) as conn:

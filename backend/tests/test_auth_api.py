@@ -380,44 +380,16 @@ class TestMeUsageAndLimits:
         )
         client = TestClient(create_app(settings))
         body = client.get("/api/auth/me", headers=auth_headers(client)).json()
-        admin_limits = settings.limits.admin
         assert body["usage"] == {
-            "used_today": 0,
-            "limit": admin_limits.llm_checks_per_day,
+            "label": "Admin",
+            "windows": [{"window": "day", "used_percent": 0}],
         }
         assert body["limits"] == {
             "max_document_chars": settings.limits.max_document_chars,
-            "max_llm_document_chars": admin_limits.max_llm_document_chars,
-            "concurrent_llm_runs": admin_limits.concurrent_llm_runs,
+            "max_llm_document_chars": settings.limits.admin.max_llm_document_chars,
+            "concurrent_llm_runs": settings.limits.admin.concurrent_llm_runs,
         }
         assert body["allow_additional_admins"] is allow_additional_admins
-
-    def test_used_today_counts_every_status(self, app_client):
-        # spec §7.1: used_today is defined identically to reserve_llm_run's
-        # count — completed, failed, and still-started rows all count.
-        app = app_client.app
-        store = app.state.usage_store
-        settings = app.state.settings
-        admin = app.state.user_store.get_by_email(TEST_ADMIN_EMAIL)
-        limits = settings.limits.admin
-        requested = RequestedLLM(tier="cheap")
-        effective = EffectiveSelection(
-            tier="cheap", provider="ollama", model="m", degraded=False
-        )
-        now = datetime.now(UTC)
-        for i, status in enumerate(("completed", "failed")):
-            decision = store.reserve_llm_run(
-                admin, limits, settings.limits, requested, effective,
-                10, "check", f"r{i}", now=now,
-            )
-            store.finish_run(decision.reservation_id, status)
-        store.reserve_llm_run(  # left 'started' on purpose
-            admin, limits, settings.limits, requested, effective,
-            10, "check", "r-started", now=now,
-        )
-        headers = auth_headers(app_client)
-        body = app_client.get("/api/auth/me", headers=headers).json()
-        assert body["usage"]["used_today"] == 3
 
     def test_admin_sees_the_admin_ceiling(self, tmp_path: Path):
         settings = Settings(
@@ -427,7 +399,8 @@ class TestMeUsageAndLimits:
         body = client.get("/api/auth/me", headers=auth_headers(client)).json()
         admin_limits = settings.limits.admin
         assert body["is_admin"] is True
-        assert body["usage"]["limit"] == admin_limits.llm_checks_per_day
+        assert body["usage"]["label"] == "Admin"
+        assert body["usage"]["windows"] == [{"window": "day", "used_percent": 0}]
         assert body["limits"]["max_llm_document_chars"] == admin_limits.max_llm_document_chars
         assert body["limits"]["concurrent_llm_runs"] == admin_limits.concurrent_llm_runs
 
@@ -439,7 +412,8 @@ class TestMeUsageAndLimits:
         headers = second_user_headers(client)  # non-admin, tier 'basic'
         body = client.get("/api/auth/me", headers=headers).json()
         assert body["tier"] == "basic"
-        assert body["usage"]["limit"] == 100
+        assert body["usage"]["label"] == "Basic"
+        assert body["usage"]["windows"] == []
         assert body["limits"] == {
             "max_document_chars": settings.limits.max_document_chars,
             "max_llm_document_chars": 100000,
@@ -451,11 +425,73 @@ class TestMeUsageAndLimits:
         assert response.status_code == 200
         user = response.json()["user"]
         assert user["usage"] == {
-            "used_today": 0,
-            "limit": app_client.app.state.settings.limits.admin.llm_checks_per_day,
+            "label": "Admin",
+            "windows": [{"window": "day", "used_percent": 0}],
         }
         assert "limits" in user
         assert "allow_additional_admins" in user
+
+    def test_me_reports_ceil_percent(self, tmp_path: Path):
+        # Non-admin fixtures; tier budget 1000
+        tiers_config = {
+            "pro": {
+                "limits": {
+                    "llm_checks_per_day": 100,
+                    "max_llm_document_chars": 100000,
+                    "concurrent_llm_runs": 5,
+                    "credits_per_day": 1000,
+                }
+            }
+        }
+        settings = Settings(
+            db_path=tmp_path / "test.db",
+            rules_dir=tmp_path / "rules",
+            tiers=tiers_config,
+        )
+        app = create_app(settings)
+        client = TestClient(app)
+
+        # Create a non-admin user with tier 'pro'
+        admin_token = login(client, TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD).json()["token"]
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+        client.post(
+            "/api/admin/users",
+            json={"email": "prouser@example.com", "password": "prouser password", "tier": "pro"},
+            headers=admin_headers,
+        )
+        user_token = login(client, "prouser@example.com", "prouser password").json()["token"]
+        user_headers = {"Authorization": f"Bearer {user_token}"}
+
+        # Settle spend directly on the store
+        store = app.state.usage_store
+        pro_user = app.state.user_store.get_by_email("prouser@example.com")
+        limits = settings.tiers["pro"].limits
+        requested = RequestedLLM(tier="cheap")
+        effective = EffectiveSelection(
+            tier="cheap", provider="ollama", model="m", degraded=False
+        )
+
+        # First run: 49 credits of 1000 = 4.9% -> ceil to 5%
+        decision = store.reserve_llm_run(
+            pro_user, limits, settings.limits, requested, effective,
+            100, "check", "run-pct",
+        )
+        store.finish_run(decision.reservation_id, "completed",
+                         input_tokens=49, output_tokens=0)  # 49 of 1000
+        me = client.get("/api/auth/me", headers=user_headers).json()
+        (day,) = [w for w in me["usage"]["windows"] if w["window"] == "day"]
+        assert day["used_percent"] == 5  # ceil(4.9); floor would read 4
+
+        # Overshoot the budget: total 2049 of 1000 = 204.9% -> capped at 100%
+        decision = store.reserve_llm_run(
+            pro_user, limits, settings.limits, requested, effective,
+            100, "check", "run-cap",
+        )
+        store.finish_run(decision.reservation_id, "completed",
+                         input_tokens=2000, output_tokens=0)  # total 2049 of 1000
+        me = client.get("/api/auth/me", headers=user_headers).json()
+        (day,) = [w for w in me["usage"]["windows"] if w["window"] == "day"]
+        assert day["used_percent"] == 100  # capped; uncapped ceil would be 205
 
 
 def test_password_change_requires_the_current_password(app_client):
