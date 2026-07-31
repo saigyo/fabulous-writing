@@ -52,9 +52,10 @@ Create `frontend/src/state/prefsStorage.test.ts`:
 
 ```typescript
 // @vitest-environment happy-dom
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   clearToken,
+  deleteLegacyBlob,
   prefsKey,
   readPrefs,
   readToken,
@@ -159,6 +160,36 @@ describe('readPrefs / writePrefs', () => {
       }),
     )
     expect(readPrefs(1)).toEqual({ uiLocale: 'de' })
+  })
+})
+
+describe('storage failures (quota, privacy mode)', () => {
+  // If spying on Storage.prototype does not intercept happy-dom's
+  // localStorage, fall back to vi.stubGlobal('localStorage', throwingStub)
+  // — the assertions stay the same.
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('reads fall back to null when getItem throws', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('SecurityError')
+    })
+    expect(readToken()).toBeNull()
+    expect(readPrefs(1)).toBeNull()
+  })
+
+  it('writes and removals never throw when the underlying storage throws', () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('QuotaExceededError')
+    })
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+      throw new Error('SecurityError')
+    })
+    expect(() => writeToken('tok')).not.toThrow()
+    expect(() => writePrefs(1, prefs)).not.toThrow()
+    expect(() => clearToken()).not.toThrow()
+    expect(() => deleteLegacyBlob()).not.toThrow()
   })
 })
 ```
@@ -325,14 +356,16 @@ export function writePrefs(userId: number, prefs: Prefs): void {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `npm test -- --run src/state/prefsStorage.test.ts`
-Expected: PASS (10 tests).
+Expected: PASS (12 tests).
 
 - [ ] **Step 5: Mutation-verify the guards**
 
 1. In `readPrefs`, change `envelope.version !== PREFS_VERSION` to `false` → the wrong-version test must fail. Restore.
 2. In `readPrefs`, replace the `PREF_KEYS` filter loop with `return state as Partial<Prefs>` → the unknown-keys test must fail. Restore.
 3. In `readPrefs`, change the loop condition to `if (key in state)` (drop the `VALIDATORS[key](...)` call) → both malformed-value tests must fail. Restore.
-4. Re-run: `npm test -- --run src/state/prefsStorage.test.ts` → PASS.
+4. In `readToken`, drop the try/catch (`return localStorage.getItem(TOKEN_KEY)` directly) → the reads-fall-back test must fail. Restore.
+5. In `writePrefs`, drop the try/catch → the writes-never-throw test must fail. Restore.
+6. Re-run: `npm test -- --run src/state/prefsStorage.test.ts` → PASS.
 
 - [ ] **Step 6: Commit**
 
@@ -699,6 +732,25 @@ In `frontend/src/state/store.ts`:
      useStore.setState(INITIAL_DATA) // shallow merge: the actions survive
    }
    ```
+5. Update `INITIAL_DATA`'s own comment block (currently starting `// Every
+   AppStateData field except the six auth fields...`) — its claim that the
+   auth fields are set by every caller "right afterwards" contradicts the
+   new ordering (callers now null them *before* the reset). Replace the
+   first half of the comment with:
+   ```typescript
+   // Every AppStateData field except the six auth fields (token, user,
+   // authStatus, sessionExpired, restoreFailed, authGeneration) — those are
+   // managed explicitly by resetSessionState()'s callers via setAuth(),
+   // never through this object. Since B1 (#34), callers null the auth
+   // fields BEFORE the reset (the ordering invariant in session.ts: the
+   // prefs write subscriber must see user === null while pref fields are
+   // bulk-reset) and set the new session's values after it. authGeneration
+   // specifically must survive a reset untouched: it is bumped only by
+   // login()'s own commit, which runs after the reset on a cross-user
+   // login — keeping it out of this object makes that explicit instead of
+   // coincidental.
+   ```
+   (the trailing "Exported (rather than enumerated again…" sentence stays.)
 
 - [ ] **Step 4: `session.ts` — invariant ordering and token wiring**
 
@@ -849,7 +901,11 @@ createRoot(document.getElementById('root')!).render(
    `'clears token, user, the persisted settings blob and the document buffer, resets checkPhase, and sets anonymous'`
    → `'clears token, user, in-memory settings and the document buffer, resets checkPhase, and sets anonymous'`;
    `'clears the settings blob but keeps the document buffer'`
-   → `'clears in-memory settings but keeps the document buffer'`.
+   → `'clears in-memory settings but keeps the document buffer'`;
+   and a third: `'purges persisted settings and runtime-only state when signing in as a different user'`
+   → `'resets in-memory state to defaults when signing in as a different user with no stored preferences'`
+   (nothing is "purged" from storage anymore — the departing namespace
+   survives and the incoming user simply has no blob in this test).
 
 - [ ] **Step 7: Run the full frontend suite and build**
 
