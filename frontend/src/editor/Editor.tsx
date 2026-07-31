@@ -9,6 +9,7 @@ import { codePoints, wordCount } from '../scoring/score'
 import { useStore } from '../state/store'
 import { findingIdAt, findingsField, selectFindingEffect } from './findings'
 import { setEditorView } from './editorRef'
+import { editorTheme, watchTheme } from './theme'
 
 export function Editor() {
   const container = useRef<HTMLDivElement>(null)
@@ -29,6 +30,7 @@ export function Editor() {
         basicSetup,
         markdown(),
         EditorView.lineWrapping,
+        editorTheme(),
         findingsField,
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
@@ -58,6 +60,7 @@ export function Editor() {
       ],
     })
     setEditorView(view)
+    const stopThemeWatch = watchTheme(view)
     const initialText = view.state.doc.toString()
     useStore.getState().setDocWords(wordCount(initialText))
     useStore.getState().setDocChars(codePoints(initialText))
@@ -68,6 +71,7 @@ export function Editor() {
     return () => {
       window.removeEventListener('beforeunload', onBeforeUnload)
       scheduler.dispose()
+      stopThemeWatch()
       setEditorView(null)
       view.destroy()
     }
