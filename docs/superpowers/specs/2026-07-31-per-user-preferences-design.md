@@ -138,9 +138,11 @@ the logout-survival test below).
   login form only renders while anonymous, so `user` is already null — the
   branch still starts with `setAuth(null, null)` so the invariant holds for
   any future caller): `setAuth(null, null)` → `resetSessionState()` →
-  `discardForeignBuffer(user.id)` → `loadUserPrefs(user.id)` →
-  `writeToken(token)` → then today's tail unchanged (`sessionExpired`/
-  `restoreFailed` clearing, `setAuth(token, user)`, `bumpAuthGeneration()`).
+  `loadUserPrefs(user.id)`, then today's tail unchanged —
+  `discardForeignBuffer(user.id)` (which stays *outside* the branch,
+  unconditional on every login, exactly as today), `writeToken(token)`,
+  `sessionExpired`/`restoreFailed` clearing, `setAuth(token, user)`,
+  `bumpAuthGeneration()`.
 - **`login()` — same user** (silent re-login after password change): exactly
   today's path plus `writeToken(token)`. No reset, no prefs reload — the
   user's live preferences stay as they are.

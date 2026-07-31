@@ -463,11 +463,15 @@ import { INITIAL_DATA, useStore } from './store'
  * load. */
 export const PREFS_DEFAULTS: Prefs = {
   uiLocale: INITIAL_DATA.uiLocale,
-  lastProfileByLanguage: INITIAL_DATA.lastProfileByLanguage,
-  rulesCollapsed: INITIAL_DATA.rulesCollapsed,
+  // Collection fields are copied, not aliased: INITIAL_DATA is the baseline
+  // every resetSessionState() restores from, and sharing its object
+  // identities here would let one future in-place mutation corrupt that
+  // baseline for every user.
+  lastProfileByLanguage: { ...INITIAL_DATA.lastProfileByLanguage },
+  rulesCollapsed: [...INITIAL_DATA.rulesCollapsed],
   currentDocId: INITIAL_DATA.currentDocId,
   docSidebarCollapsed: INITIAL_DATA.docSidebarCollapsed,
-  docFoldersCollapsed: INITIAL_DATA.docFoldersCollapsed,
+  docFoldersCollapsed: [...INITIAL_DATA.docFoldersCollapsed],
 }
 
 const pick = (state: Prefs): Prefs => ({
@@ -521,7 +525,7 @@ Expected: PASS (7 tests).
 - [ ] **Step 5: Mutation-verify the guards**
 
 1. In `loadUserPrefs`, change the setState to `useStore.setState({ ...readPrefs(userId) })` (drop the defaults spread) → the #34-leak test must fail. Restore.
-2. In the subscriber, delete the `if (!state.user) return` line → the does-not-write-while-logged-out test must fail. Restore.
+2. In the subscriber, delete the `if (!state.user) return` line → the does-not-write-while-logged-out test must fail. (It fails with a `TypeError` on `state.user.id`, and the cascade takes most of the file with it — that satisfies this gate, but note the *behavioral* consequence the guard exists for, a teardown reset landing in the departing user's namespace, is only genuinely pinned by Task 4's logout-survival test.) Restore.
 3. In the subscriber, delete the `PREF_KEYS.every(...)` early return → the non-persisted-fields test must fail. Restore.
 4. Re-run: `npm test -- --run src/state/prefsPersistence.test.ts` → PASS.
 
@@ -641,7 +645,10 @@ In `frontend/src/state/store.ts`:
 
 - [ ] **Step 4: `session.ts` — invariant ordering and token wiring**
 
-In `frontend/src/auth/session.ts`:
+In `frontend/src/auth/session.ts` (note: the before/after snippets below sit
+at markdown list-nesting depth — the file's real indentation is 4 spaces
+inside function bodies; match the file, not the snippet, when doing
+literal-string edits):
 
 1. Add imports:
    ```typescript
@@ -791,6 +798,13 @@ createRoot(document.getElementById('root')!).render(
 
 Run (from `frontend/`): `npm test -- --run` then `npm run build`
 Expected: everything PASSES (including Step 1's two new tests and the untouched `session.integration.test.ts`, `LoginGate.test.tsx`, `AccountMenu.test.tsx`, `App*.test.tsx`); build clean. If an unrelated test trips on the removed middleware, fix the test's storage seeding to use the new keys — never re-add the middleware.
+
+Then verify the boot wiring is actually in place — no test covers `main.tsx`
+(it is outside the test tree), so a skipped Step 5 would leave all tests
+green while the app silently persists nothing:
+
+Run: `grep -q "initPrefsPersistence()" src/main.tsx && echo WIRED`
+Expected: `WIRED`.
 
 - [ ] **Step 8: Commit**
 
@@ -957,11 +971,15 @@ Expected: PASS. If any acceptance test fails, the bug is in Task 3's ordering �
 1. In `logout()`, move `useStore.getState().setAuth(null, null)` to AFTER
    `resetSessionState()` → the logout-survival test and the A→B→A test must
    fail (blob overwritten with defaults). Restore.
-2. In `login()`'s user-change branch, move `loadUserPrefs(user.id)` to AFTER
-   `useStore.getState().setAuth(token, user)` → the
-   already-loaded-when-user-becomes-visible test must fail (`seenAtUserVisible`
-   captures `null` instead of `'fr'`); the restores-on-login test still
-   passes — that is the fail-safe direction and expected. Restore.
+2. In `login()`, move the load after `setAuth` while keeping its guard —
+   i.e. delete `loadUserPrefs(user.id)` from the user-change branch and add
+   `if (previousUserId !== user.id) loadUserPrefs(user.id)` directly after
+   `useStore.getState().setAuth(token, user)` (re-guarding isolates the
+   ordering; an unguarded move would also fail the same-user re-login test
+   for an unrelated reason) → the already-loaded-when-user-becomes-visible
+   test must fail (`seenAtUserVisible` captures `null` instead of `'fr'`);
+   the restores-on-login test still passes — that is the fail-safe
+   direction and expected. Restore.
 3. In `expireSession()`, delete `clearToken()` → the expireSession
    removes-the-token-key test (Task 3) must fail. Restore.
 4. Re-run: `npm test -- --run src/auth/session.test.ts` → PASS.
@@ -1021,14 +1039,24 @@ In `docs/frontend-architecture.md`:
 4. Update the auth-field line (~101): `token` is "persisted in its own key
    (`prefsStorage.ts`), read once at store creation" rather than "persisted,
    see below".
-5. Search the document for remaining references to `persistConfig`,
-   `partialize`, or the persist middleware and update each (the grep hits
-   around lines 118–136, 366–369 are the known cluster; verify none are
-   left).
+5. Two further stale sites that name-based greps miss (found by plan
+   review):
+   - line ~879: "what persist v2 keeps globally" — rewrite as "what the
+     per-user preference blob keeps" and add the missing
+     `docFoldersCollapsed` to the field list;
+   - lines ~1062–1067: the paragraph claiming `resetSessionState()` "clears
+     the persisted zustand blob … then lets the caller's own `setAuth()`
+     write the new session's values back in" — both halves are now false
+     (the blob survives; `setAuth(null, null)` runs *before* the reset).
+     Rewrite it to describe the ordering invariant.
+6. Search the document for remaining references to `persistConfig`,
+   `partialize`, or the persist middleware and update each (the cluster
+   around former lines 118–136 plus the two sites above are the known
+   hits; verify none are left).
 
 - [ ] **Step 2: Verify no stale references remain**
 
-Run: `grep -n "persistConfig\|persist middleware\|partialize" docs/frontend-architecture.md`
+Run: `grep -nE "persistConfig|persist middleware|partialize|persist v2|persisted zustand blob|clearStorage" docs/frontend-architecture.md`
 Expected: no hits (or only the sentence explaining the middleware was
 replaced).
 
