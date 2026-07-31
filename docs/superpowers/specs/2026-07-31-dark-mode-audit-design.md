@@ -47,7 +47,21 @@ verification matrix includes the open account menu in dark mode; if the
 white rendering survives fix 1, that becomes a dedicated diagnosis loop in
 the implementation — it must not be hand-waved or closed on hypothesis.
 
-## The four fixes
+## The three fixes (plus the sweep)
+
+**Amendment (owner decision, 2026-07-31, from plan review):** the originally
+specified fix 2 — a global `button { color: inherit }` reset — is DROPPED.
+UA system colors resolve against the *used* `color-scheme` (CSS Color
+Adjust): once fix 1 declares `color-scheme: dark`, `ButtonText` resolves to
+a light color by itself, curing every diagnosed button symptom with zero
+light-mode delta. The reset would have (a) shifted every colorless button
+`#000`→`#1c1c1f` in light mode, breaking the pixel-identity gate on ~8
+pairs; (b) overridden the UA's disabled-button greying by cascade origin
+(author beats UA regardless of specificity), visibly degrading the admin
+create/reset buttons and not-on-plan tier chips in both themes; (c) turned
+the terminology Add button dim-grey in light mode via its table's
+`--text-dim`. The dark screenshot matrix now carries the burden of proof
+that ButtonText-dependent buttons are readable in dark mode.
 
 ### 1. `color-scheme` (frontend/src/index.css)
 
@@ -56,24 +70,12 @@ the implementation — it must not be hand-waved or closed on hypothesis.
   `@media (prefers-color-scheme: dark)` block alongside the dark tokens.
 - No `data-theme` layer, no toggle plumbing (scope decision above).
 
-### 2. `button { color: inherit }` (frontend/src/index.css)
+### 2. (dropped — see the amendment above)
 
-Joins the existing global reset block (`input, select, button { font:
-inherit }` gains a sibling `button { color: inherit }` or the property is
-added for buttons — exact shape is plan detail; the *behavior* is: buttons
-inherit text color instead of UA `ButtonText`).
-
-- Safety precondition, re-verified during the sweep: every intentional
-  button color (danger reds `.doc-menu-delete`, `.confirm-dialog-danger`,
-  `.icon-button`'s dim + hover red, `.login-submit`'s white-on-accent,
-  `.view-switch` dim, filter buttons, etc.) lives on class selectors
-  (specificity ≥ 0,1,0), which beat the bare element rule. The sweep greps
-  every selector that styles a `<button>` and confirms each either sets
-  its own `color` or *wants* inheritance.
-- `input`/`select`/`textarea` deliberately do NOT get `color: inherit`
-  here: the existing `input { color: var(--text) }` rule already handles
-  inputs, and fix 1 corrects UA-rendered internals; widening the reset
-  beyond the diagnosed bug is out of scope.
+Button readability in dark mode is delivered by fix 1's `color-scheme`
+(ButtonText follows the scheme) and verified empirically by the dark
+screenshot matrix (doc menu, account menu, dialog Cancels, chips). No
+author-level button color reset lands.
 
 ### 3. Define `--bg-raised` (frontend/src/index.css)
 
@@ -91,7 +93,11 @@ inherit text color instead of UA `ButtonText`).
 Every hex color in `App.css` (~63 occurrences) is classified into exactly
 one of:
 
-- **(a) semantic — keep:** colors that mean something in both themes:
+- **(a) semantic — keep:** (one recorded exception inside this class: the
+  held-back amber text `#b45309` measures **3.30:1** on dark `--panel` —
+  fails WCAG AA; it stays KEEP in this item, and a follow-up contrast
+  ticket is filed during implementation rather than fixed as a drive-by.)
+  Otherwise: colors that mean something in both themes:
   the danger/error red family (`#e5484d`), the WCAG-picked filled danger
   `#c22126`, white text on accent/danger fills (`#fff` as `color`),
   severity/category colors (e.g. `#e93d82`), and any others the sweep
@@ -107,8 +113,7 @@ one of:
   dialog backdrop are theme-agnostic by design; listed, not changed.
 
 The classification table lives in the plan (every occurrence, file:line,
-verdict, replacement) — no occurrence may be silently skipped. The same
-sweep re-verifies fix 2's safety precondition (button `color` inventory).
+verdict, replacement) — no occurrence may be silently skipped.
 
 ## Out of scope
 

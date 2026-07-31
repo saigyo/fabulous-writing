@@ -28,7 +28,7 @@
 - Modify `docs/frontend-architecture.md` (Task 5).
 - Harness artifacts (outside repo): `<scratchpad>/b18-screens/` where `<scratchpad>` = `/private/tmp/claude-501/-Users-markus-IdeaProjects-fabulous-writing/65c7f188-db68-4195-b05b-1819120fc3cc/scratchpad` — `server.py` (copied verbatim from `<scratchpad>/b11b4-screens/server.py`), new `shoot-themes.mjs`, `before/` and `after/` PNG sets, `COMPARISON.md`.
 
-## The classification table (all 63 hex occurrences in App.css)
+## The classification table (all 63 hex-bearing lines — 66 occurrences — in App.css)
 
 Verdicts: **KEEP** (semantic, works in both themes), **TOKENIZE** (light-chrome → token), **BG-RAISED** (fix 3), **COMMENT** (not code). Line numbers from the planning snapshot (branch `b18-dark-mode-plan` @ 5f5197e) — locate by quoted text.
 
@@ -38,7 +38,7 @@ Verdicts: **KEEP** (semantic, works in both themes), **TOKENIZE** (light-chrome 
 | 335–341 | `.category-dot.fw-*` backgrounds (same 7) | KEEP — category palette |
 | 382, 528(`#f76b15`), 532, 537, 636–637, 690, 868, 1056, 1103, 1332, 1455, 1697, 1709, 1910, 2155 | error/warning text colors (`#e5484d`/`#f76b15`) on `.llm-error`, severity labels, crud/doc/profiles/admin errors, `.doc-menu-delete`, `.icon-button:hover` | KEEP — semantic danger/warning |
 | 538 | `border: 1px solid #e5484d55` | KEEP — danger border w/ alpha |
-| 726, 731, 738 | held-back amber: `border: 1px dashed #d97706`; `color: #b45309` ×2 | KEEP — semantic warning family; **Task 4 must eyeball dark readability of `#b45309` text in the sidebar shots and report contrast** (fix only if unreadable, as its own decision, not silently) |
+| 726, 731, 738 | held-back amber: `border: 1px dashed #d97706`; `color: #b45309` ×2 | KEEP — semantic warning family; measured now: `#b45309` on dark `--panel` = **3.30:1**, fails AA. Stays KEEP here (no drive-by fixes); Task 5 files the follow-up contrast ticket |
 | 745 | `.advice-note { color: #6b7280 }` | TOKENIZE → `var(--text-dim)` (light micro-shift `#6b7280`→`#6f6f78`, imperceptible; dark becomes readable `#9d9da8`) |
 | 775–777 | `.score-high/mid/low` (`#12a594 #ffb224 #e5484d`) | KEEP — score palette |
 | 1088 | `.rules-count { background: var(--bg-raised, #eee) }` | BG-RAISED — drop fallback |
@@ -50,7 +50,7 @@ Verdicts: **KEEP** (semantic, works in both themes), **TOKENIZE** (light-chrome 
 | 1514 | `.tier-option { background: #fff }` | TOKENIZE → `var(--bg)` (light identical) |
 | 1519–1521 | `.tier-option.selected { background/border #5b5bd6; color: #fff }` | KEEP — saturated selected fill with white text, theme-agnostic like the danger fill |
 | 1531 | `.pinned-note { color: #667 }` | TOKENIZE → `var(--text-dim)` (light micro-shift `#666677`→`#6f6f78`) |
-| 1775, 1778 | rename-conflict `border-color: #e5484d` | KEEP — danger |
+| 1775, 1778 | conflict borders (`#e5484d`): 1775 `.new-folder-input.conflict`, 1778 rename-input conflict | KEEP — danger |
 | 1835 | comment text mentioning `#e5484d` | COMMENT — untouched |
 | 1839–1841 | `.confirm-dialog-danger { #c22126 ×2; color: #fff }` | KEEP — WCAG-picked fill (B3) |
 | 2015 | `.login-submit { color: #fff }` | KEEP — white on accent |
@@ -59,7 +59,7 @@ Verdicts: **KEEP** (semantic, works in both themes), **TOKENIZE** (light-chrome 
 
 Non-hex, listed for completeness (KEEP, theme-agnostic): all `rgba(0,0,0,…)` box-shadows and the dialog `::backdrop`; `rgba(217,119,6,…)` held-back washes (amber family, see 726 row).
 
-Tally: 63 hex occurrences = 55 KEEP + 5 TOKENIZE + 2 BG-RAISED + 1 COMMENT. Task 3 verifies this tally against a fresh grep before editing — a mismatch means the snapshot drifted: reclassify the new/changed occurrences by the same rules and record the delta in the report, don't guess.
+Tally: 63 hex-bearing lines (66 occurrences; 1205–1207 carry color+border pairs) = 55 KEEP + 5 TOKENIZE + 2 BG-RAISED + 1 COMMENT lines. Task 3 verifies this tally against a fresh grep before editing — a mismatch means the snapshot drifted: reclassify the new/changed occurrences by the same rules and record the delta in the report, don't guess.
 
 ---
 
@@ -122,6 +122,13 @@ for (const theme of ['light', 'dark']) {
   for (const [i, name] of [[2, 'rules'], [3, 'terminology'], [4, 'profiles'], [5, 'admin']]) {
     await p.click(`.view-switch button:nth-child(${i})`)
     await p.waitForTimeout(600)
+    if (name === 'rules') {
+      // Open the first rule-pattern <details> so .rule-pattern pre (a
+      // --bg-raised consumer) is actually visible in the shot — closed by
+      // default, it would make that edit matrix-invisible.
+      await p.click('.rule-pattern summary')
+      await p.waitForTimeout(200)
+    }
     await p.screenshot({ path: `${OUT}/${name}-${theme}.png` })
   }
   await p.click('.view-switch button:nth-child(1)')
@@ -129,7 +136,9 @@ for (const theme of ['light', 'dark']) {
   await p.click('.account-badge')
   await p.waitForSelector('.account-menu')
   await p.screenshot({ path: `${OUT}/account-menu-${theme}.png` })
-  // password dialog (first account-menu item), then Escape both layers
+  // password dialog (first account-menu item). ONE Escape suffices: the
+  // menu already closed itself before opening the dialog (AccountMenu
+  // setOpen(false) precedes setPasswordOpen(true)).
   await p.click('.account-menu > button')
   await p.waitForSelector('dialog.app-dialog')
   await p.waitForTimeout(300)
@@ -137,7 +146,7 @@ for (const theme of ['light', 'dark']) {
   await p.keyboard.press('Escape')
   // folder for menu/dialog surfaces
   await p.click('.doc-sidebar-head .doc-sidebar-toggle')
-  await p.fill('.doc-sidebar input', 'Sweep')
+  await p.fill('.doc-sidebar input', `Sweep-${theme}`)
   await p.keyboard.press('Enter')
   await p.waitForSelector('.folder-head')
   await p.hover('.folder-head') // .doc-menu-button is visibility:hidden until hover
@@ -161,7 +170,7 @@ for (const theme of ['light', 'dark']) {
 await browser.close()
 ```
 
-Note the second theme's run reuses the same scratch DB — the 'Sweep' folder already exists on the second pass. `addFolder` returns 409 on a duplicate name and the input stays open; avoid the conflict by naming the folder per theme: change the `p.fill('.doc-sidebar input', 'Sweep')` line to use `` `Sweep-${theme}` ``.
+(The folder name is per-theme — `` `Sweep-${theme}` `` — because both theme passes share one scratch DB per run and `addFolder` 409s on duplicates, leaving the input open.)
 
 - [ ] **Step 3: Capture the baseline**
 
@@ -174,7 +183,7 @@ Kill recorded PIDs; verify :8001/:4199 free; plain `npm run build` from `fronten
 
 ---
 
-### Task 2: Mechanism fixes — `color-scheme`, button color reset, `--bg-raised`
+### Task 2: Mechanism fixes — `color-scheme` and `--bg-raised`
 
 **Files:**
 - Modify: `frontend/src/index.css`
@@ -218,34 +227,20 @@ In the `@media (prefers-color-scheme: dark)` block, mirror both:
 
 Contrast check for the one pinned value (spec's WCAG requirement): `--bg-raised: #26262e` is a background; the text on it is `--text #ededf0` (≈13.5:1) or `--text-dim #9d9da8` (≈5.6:1) — both clear 4.5:1. No other new color values are introduced by this plan.
 
-- [ ] **Step 2: Button color reset**
-
-In `index.css`, directly after the existing `input, select, button { font: inherit; }` block, add:
-
-```css
-/* Buttons inherit text color instead of UA ButtonText (black regardless
-   of theme — unreadable on dark surfaces, B18 #63). Bare element rule
-   (0,0,1): every intentional button color lives on a class selector and
-   keeps winning (inventory re-verified in the B18 sweep). */
-button {
-  color: inherit;
-}
-```
-
-- [ ] **Step 3: Drop the two `--bg-raised` fallbacks in `App.css`**
+- [ ] **Step 2: Drop the two `--bg-raised` fallbacks in `App.css`**
 
 - `.rules-count`: `background: var(--bg-raised, #eee);` → `background: var(--bg-raised);`
 - `.rule-pattern pre`: `background: var(--bg-raised, #f6f6f6);` → `background: var(--bg-raised);`
 
-- [ ] **Step 4: Gates**
+- [ ] **Step 3: Gates**
 
 From `frontend/`: `npm test -- --run` (all green — nothing asserts colors) and `npm run build` (clean).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add frontend/src/index.css frontend/src/App.css
-git commit -m "fix(ui): dark-mode mechanisms — color-scheme, button color inherit, --bg-raised token (B18, #63)"
+git commit -m "fix(ui): dark-mode mechanisms — color-scheme and --bg-raised token (B18, #63)"
 ```
 (with the two mandatory trailer lines)
 
@@ -272,15 +267,11 @@ Run `grep -cn "#[0-9a-fA-F]\{3,8\}\b" frontend/src/App.css` — expect 63 (post-
 
 Everything else in the table is KEEP/COMMENT — touch nothing else.
 
-- [ ] **Step 3: Button-color inventory (fix-2 safety, spec requirement)**
-
-Run `grep -n "color:" frontend/src/App.css` filtered to selectors that style buttons (cross-check with `grep -n "button" frontend/src/App.css`), and confirm in the report: every button selector either (a) sets its own `color` on a class selector (≥ 0,1,0 — beats the new bare reset), or (b) sets none and *wants* inheritance. List each selector with its verdict. Any button relying on UA ButtonText for a *deliberate* look would be a spec conflict — report it, don't paper over it (none is expected).
-
-- [ ] **Step 4: Gates**
+- [ ] **Step 3: Gates**
 
 From `frontend/`: `npm test -- --run` green; `npm run build` clean.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add frontend/src/App.css
@@ -305,22 +296,22 @@ Task 1's Step 1 bring-up (same commands; build now contains Tasks 2–3), then `
 
 Write `<scratchpad>/b18-screens/COMPARISON.md`, one line per pair (24): `identical` / `intended diff: <what>` / `UNINTENDED: <what>`.
 
-**Light pairs (12) — pixel-identical expected, EXCEPT these enumerated intended micro-diffs:**
-- `rules-light.png`: `.rule-pattern pre` background `#f6f6f6`→`#eee`; `.rules-count` unchanged visually (`#eee`→`#eee`).
-- `editor-light.png` (sidebar): `.advice-note` `#6b7280`→`#6f6f78` (near-invisible) — only if an advice note is on screen (with an empty document none is; then identical).
-- `profiles-light.png`: tier-chip border `#d8d8e0`→`#e4e4e7`, `.pinned-note` `#667`→`#6f6f78` (both near-invisible).
+**Light pairs (12) — pixel-identical (`cmp -s`) expected for 9 of 12; the other 3 read `identical OR the listed micro-diff` (a missing micro-diff is fine, an extra one is not):**
+- `rules-light.png`: `.rule-pattern pre` background `#f6f6f6`→`#eee` (the first `<details>` is opened by the driver in both runs, so the pre is on screen); `.rules-count` visually unchanged (`#eee`→`#eee`).
+- `profiles-light.png`: tier-chip border `#d8d8e0`→`#e4e4e7` (near-invisible; chip background `#fff`→`var(--bg)` is byte-identical in light).
 - `admin-light.png`: table border `#ddd`→`#e4e4e7` (near-invisible).
+- Matrix-invisible by design, code-review-only edits (record as such in COMPARISON.md, do not chase them in pixels): `.advice-note` (needs LLM advice on screen) and `.pinned-note` (needs a pinned-provider profile) — neither state exists on the scratch stack.
 - Any UA-chrome rendering shift from `color-scheme: light` now being explicit (expected: none; classify if seen).
 
 **Dark pairs (12) — each must show its fix:**
-- `doc-menu-dark.png`, `account-menu-dark.png`: menu items readable (light text, not black).
+- `doc-menu-dark.png`, `account-menu-dark.png`: menu items readable (light text, not black) — this is the empirical proof that `color-scheme: dark` makes UA `ButtonText` follow the theme (the spec's dropped-fix-2 amendment relies on exactly this shot).
 - **`account-menu-dark.png` — the hypothesis arbiter:** record an explicit verdict line `account-menu dark composite: DARK` or `: WHITE`. If WHITE survives, STOP: report it as an open diagnosis (per the spec, it becomes a dedicated loop — do not proceed to Task 5).
 - `password-dialog-dark.png`: Cancel readable; input key icons light-scheme-correct.
 - `profiles-dark.png`: listboxes/textareas dark-chrome; tier chips dark with `--border`; selected chip unchanged (`#5b5bd6`).
 - `rules-dark.png`: `.rules-count` pill and `.rule-pattern pre` on `--bg-raised #26262e`, readable.
 - `admin-dark.png`: table borders visible (`#33333c`), create/reset buttons dark-chrome.
 - `editor-dark.png`, `terminology-dark.png`, `folder-defaults-dark.png`, `confirm-dialog-dark.png`, `gate-dark-*`: theme-correct, no black-on-dark text anywhere.
-- Held-back amber check (spec): if a held-back suggestion is visible in any dark shot, eyeball `#b45309` readability and report; with an empty scratch document none will be — then record `amber contrast: not exercised in matrix; code-level assessment only` and give that assessment (amber-700 on `--panel`).
+- Held-back amber: not exercisable on the scratch stack; record `amber contrast: 3.30:1 on dark --panel (fails AA), measured at plan time; follow-up ticket filed in Task 5`.
 
 Any `UNINTENDED`: STOP, report — never adjust CSS to make a pair pass.
 
@@ -337,18 +328,26 @@ Kill own PIDs, verify ports free, plain `npm run build`, report the full compari
 
 **Interfaces:** consumes the shipped state; nothing consumes it. (LOGBOOK entry happens at PR time, outside this plan.)
 
-- [ ] **Step 1: Update the theming description**
+- [ ] **Step 1: Add the theming section**
 
-Wherever `index.css` / the theme tokens are described (grep `index.css`, `--bg`, `prefers-color-scheme` in the doc): document that `index.css` now declares `color-scheme` per theme (UA form-control chrome follows the app theme), defines `--bg-raised` in both themes, and that the global button reset covers `font` AND `color` (class selectors carry every intentional button color). One or two paragraphs in the doc's existing style; correct any prose contradicted by the sweep (e.g. claims that hard-coded chip colors exist).
+`docs/frontend-architecture.md` currently has NO prose describing the theme tokens or `prefers-color-scheme` (verified at plan time — only the B11 button-font paragraph exists). Write a NEW short section (placed near the B11 button-reset paragraph, matching the doc's style) describing the theme root: `index.css` declares `color-scheme` per theme (UA form-control chrome, scrollbars, and canvas follow the app theme; system colors like ButtonText resolve per scheme — the reason buttons need no author color reset), defines the tokens including `--bg-raised` (both themes), and the classification rule from B18: semantic colors (danger/severity/category palettes) stay literal, surface chrome uses tokens.
 
-- [ ] **Step 2: Verify and gates**
+- [ ] **Step 2: File the amber-contrast follow-up ticket**
+
+```bash
+gh issue create --repo saigyo/fabulous-writing \
+  --title "Held-back amber text fails contrast in dark mode (#b45309, 3.30:1)" \
+  --body "Found during B18 (#63): .suggestion-button.held-back:hover and .held-back-reason use color: #b45309 (amber-700), which measures 3.30:1 on dark --panel (#1e1e24) — below WCAG AA 4.5:1. Kept out of B18 per its no-drive-by rule (semantic warning family). Fix idea: a theme-aware amber (e.g. lighter amber for dark via a token or media query), keeping light mode as is. Verify with the B18 both-themes harness; needs a document with held-back suggestions on screen to exercise."
+```
+
+- [ ] **Step 3: Verify and gates**
 
 `grep -nE "bg-raised|color-scheme" docs/frontend-architecture.md` → the new prose appears; from `frontend/`: `npm test -- --run` and `npm run build` (unchanged code — clean-tree confirmation).
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add docs/frontend-architecture.md
-git commit -m "docs(frontend): theme root — color-scheme, --bg-raised, button color reset (B18, #63)"
+git commit -m "docs(frontend): theme-root section — color-scheme, tokens, B18 color classification (#63)"
 ```
 (with the two mandatory trailer lines)
