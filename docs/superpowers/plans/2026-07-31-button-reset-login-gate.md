@@ -117,6 +117,11 @@ for (const [name, opts] of [
   ['gate-dark-narrow', { colorScheme: 'dark', viewport: { width: 640, height: 900 } }],
 ]) {
   const g = await page(opts)
+  // goto only waits for the load event, but LoginGate renders null until
+  // its mount effect resolves the (absent) stored token to 'anonymous' —
+  // an immediate screenshot can catch the blank restore state. .login-card
+  // exists in both the current and the split layout: stable readiness signal.
+  await g.waitForSelector('.login-card')
   await g.screenshot({ path: `${OUT}/${name}.png` })
 }
 
@@ -296,7 +301,7 @@ git commit -m "style(ui): consolidate global button font reset; size ConfirmDial
 ### Task 3: B4 — split login gate with tagline
 
 **Files:**
-- Modify: `frontend/src/auth/LoginGate.tsx`, `frontend/src/auth/LoginForm.tsx`
+- Modify: `frontend/src/auth/LoginGate.tsx`, `frontend/src/auth/LoginForm.tsx`, `frontend/src/Wordmark.tsx` (stale header comment)
 - Modify: `frontend/src/App.css` (login-gate section, currently ~1917-1967)
 - Modify: `frontend/src/i18n/en.ts`, `de.ts`, `fr.ts`, `es.ts`, `it.ts`, `ja.ts`, `zh.ts`
 - Test: `frontend/src/auth/LoginGate.test.tsx`
@@ -501,7 +506,7 @@ From `frontend/`: `npm test -- --run` all green (the existing gate tests query b
 - [ ] **Step 8: Commit**
 
 ```bash
-git add frontend/src/auth/LoginGate.tsx frontend/src/auth/LoginForm.tsx frontend/src/App.css frontend/src/i18n frontend/src/auth/LoginGate.test.tsx
+git add frontend/src/auth/LoginGate.tsx frontend/src/auth/LoginForm.tsx frontend/src/Wordmark.tsx frontend/src/App.css frontend/src/i18n frontend/src/auth/LoginGate.test.tsx
 git commit -m "feat(auth): split login gate — brand pane with localized tagline (B4, #37)"
 ```
 (with the two mandatory trailer lines)
