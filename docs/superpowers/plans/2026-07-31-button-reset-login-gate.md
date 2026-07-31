@@ -14,7 +14,7 @@
 
 - Frontend gates before every commit: `npm test -- --run` green and `npm run build` clean, from `frontend/`.
 - NEVER touch ports **5173/8000** (owner's dev servers) or `backend/data/fabulous.db`. The sweep uses **:8001/:4199** with a tempfile DB and kills only its own PIDs.
-- Tagline register: **impersonal** (de/fr/es/it formal-impersonal; the informal pass is B2's scope, #35).
+- Tagline strings are **owner-final** (spec lists all seven verbatim — transcribe exactly, no re-translation). de/es are deliberately imperative/informal, an intentional early adoption of B2's (#35) register.
 - No specificity changes in the sweep: `.doc-menu-delete` and `.confirm-dialog-danger` colors must render identically (new rules set no `color`).
 - No visual change outside the four intended ones (reset relocation is behavior-neutral; ConfirmDialog buttons 1rem → 0.85rem; login gate redesign; nothing else).
 - Every commit message ends with exactly:
@@ -343,15 +343,17 @@ Expected: the two new tests FAIL (`loginTagline` key does not exist / text not r
 
 - [ ] **Step 3: Add the tagline key to all 7 catalogs**
 
-Place alphabetically-adjacent to the existing `signIn*` keys in each file, matching each catalog's quoting style. Translations are in the current impersonal register (B2 revisits); they are drafts for Markus's review at PR time:
+Place alphabetically-adjacent to the existing `signIn*` keys in each file, matching each catalog's quoting style. The strings are **owner-final** (reviewed by Markus 2026-07-31) — transcribe them exactly as written, do not re-translate or "improve":
 
 - `en.ts`: `loginTagline: 'Write clearly. Get checked, not judged.',`
-- `de.ts`: `loginTagline: 'Klar schreiben. Geprüft, nicht verurteilt.',`
+- `de.ts`: `loginTagline: 'Schreib klar. Geprüft, nicht bewertet.',`
 - `fr.ts`: `loginTagline: 'Écrire clairement. Être relu, pas jugé.',`
-- `es.ts`: `loginTagline: 'Escribir con claridad. Revisión, no juicio.',`
-- `it.ts`: `loginTagline: 'Scrivere in modo chiaro. Revisione, non giudizio.',`
-- `ja.ts`: `loginTagline: '明快に書く。裁くのではなく、確かめる。',`
-- `zh.ts`: `loginTagline: '写得清晰。只检查，不评判。',`
+- `es.ts`: `loginTagline: 'Escribe claro. Te revisamos, no te juzgamos.',`
+- `it.ts`: `loginTagline: 'Scrivi chiaro. Revisione, non giudizio.',`
+- `ja.ts`: `loginTagline: '明快に書く。評価ではなく、確認を。',`
+- `zh.ts`: `loginTagline: '写得清楚。只检查，不评判。',`
+
+(de/es are deliberately imperative/informal — B2's register, adopted early for this one string by owner decision.)
 
 Add the key to the `Messages` interface in `frontend/src/i18n/messages.ts` wherever the `signIn*` members live (same neighborhood). The catalog-parity test (`i18n.test.ts`) enforces completeness — do not touch it.
 

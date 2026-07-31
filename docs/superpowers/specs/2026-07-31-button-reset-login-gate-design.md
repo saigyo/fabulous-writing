@@ -128,11 +128,22 @@ in `LoginGate.tsx` is unchanged.
 
 ### Tagline & i18n
 
-- New key `loginTagline` in all 7 catalogs. EN: `Write clearly. Get
-  checked, not judged.` Translations in the **current impersonal
-  register** (de/fr/es/it formal; the informal pass remains B2's scope).
-  The catalog-parity test (`i18n.test.ts`) already enforces key
-  completeness across all seven.
+- New key `loginTagline` in all 7 catalogs, with these exact strings
+  (owner-reviewed and final, 2026-07-31 — supersedes the earlier
+  impersonal-register drafts):
+  - en: `Write clearly. Get checked, not judged.`
+  - de: `Schreib klar. Geprüft, nicht bewertet.`
+  - fr: `Écrire clairement. Être relu, pas jugé.`
+  - es: `Escribe claro. Te revisamos, no te juzgamos.`
+  - it: `Scrivi chiaro. Revisione, non giudizio.`
+  - ja: `明快に書く。評価ではなく、確認を。`
+  - zh: `写得清楚。只检查，不评判。`
+
+  The de/es lines are deliberately imperative/informal — an intentional
+  early adoption of the register B2 (#35) will roll out app-wide. B2's
+  sweep must treat the tagline as already converted, not as an
+  inconsistency to normalize back. The catalog-parity test
+  (`i18n.test.ts`) already enforces key completeness across all seven.
 - No other new copy. The feature-strip idea (mockup option C) is out of
   scope.
 
