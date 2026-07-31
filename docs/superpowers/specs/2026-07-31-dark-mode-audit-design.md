@@ -140,7 +140,9 @@ verdict, replacement) — no occurrence may be silently skipped.
   (`cmp -s`) except (i) UA scrollbar/chrome rendering differences caused
   by the `color-scheme` declaration where the UA chooses to render
   differently even in light (expected: none, but classified if seen) and
-  (ii) the single `.rule-pattern pre` `#f6f6f6`→`#eee` micro-diff.
+  (ii) the tokenize micro-diffs enumerated in the plan's comparison
+  contract (`.rule-pattern pre` `#f6f6f6`→`#eee`, tier-chip border
+  `#d8d8e0`→`--border`, admin-table border `#ddd`→`--border`).
   Dark-mode pairs must show: readable menu items (doc menu, account
   menu), dark form-control chrome in profiles (listboxes, textareas) and
   the password dialog, themed chips (`.tier-option`, rule packs,

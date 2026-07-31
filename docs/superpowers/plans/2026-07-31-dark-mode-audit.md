@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make every surface follow the dark theme via four mechanism fixes (`color-scheme`, `button { color: inherit }`, defined `--bg-raised`, classified hex sweep), verified by a both-themes before/after screenshot matrix.
+**Goal:** Make every surface follow the dark theme via three mechanism fixes (`color-scheme`, defined `--bg-raised`, classified hex sweep), verified by a both-themes before/after screenshot matrix.
 
 **Architecture:** CSS-only. Systemic fixes land in `index.css` (theme root); the sweep edits `App.css` per a complete classification table (this plan carries every hex occurrence with a verdict — no silent skips). Verification is the extended B11+B4 Playwright harness shooting ~24 surfaces per side in both themes.
 
@@ -23,7 +23,7 @@
 
 ## File Structure
 
-- Modify `frontend/src/index.css` — `color-scheme` in both theme blocks, `--bg-raised` in both, `button { color: inherit }` beside the existing reset.
+- Modify `frontend/src/index.css` — `color-scheme` in both theme blocks, `--bg-raised` in both. (No button color reset — see the spec's dropped-fix-2 amendment.)
 - Modify `frontend/src/App.css` — two `--bg-raised` fallback drops + five tokenize edits (classification table below).
 - Modify `docs/frontend-architecture.md` (Task 5).
 - Harness artifacts (outside repo): `<scratchpad>/b18-screens/` where `<scratchpad>` = `/private/tmp/claude-501/-Users-markus-IdeaProjects-fabulous-writing/65c7f188-db68-4195-b05b-1819120fc3cc/scratchpad` — `server.py` (copied verbatim from `<scratchpad>/b11b4-screens/server.py`), new `shoot-themes.mjs`, `before/` and `after/` PNG sets, `COMPARISON.md`.
@@ -255,7 +255,7 @@ git commit -m "fix(ui): dark-mode mechanisms — color-scheme and --bg-raised to
 
 - [ ] **Step 1: Verify the classification tally**
 
-Run `grep -cn "#[0-9a-fA-F]\{3,8\}\b" frontend/src/App.css` — expect 63 (post-Task-2: the two `--bg-raised` fallback hexes are gone, so expect **61**; the table's other 61 rows must all still match). On mismatch: reclassify the delta by the table's rules and record it in the report.
+Run `grep -cn "#[0-9a-fA-F]\{3,8\}\b" frontend/src/App.css` — expect 63 hex-bearing lines pre-Task-2 (post-Task-2: the two `--bg-raised` fallback lines are gone, so expect **61**; every remaining line must still map to its table row). On mismatch: reclassify the delta by the table's rules and record it in the report.
 
 - [ ] **Step 2: Apply the five TOKENIZE edits**
 
@@ -304,7 +304,7 @@ Write `<scratchpad>/b18-screens/COMPARISON.md`, one line per pair (24): `identic
 - Any UA-chrome rendering shift from `color-scheme: light` now being explicit (expected: none; classify if seen).
 
 **Dark pairs (12) — each must show its fix:**
-- `doc-menu-dark.png`, `account-menu-dark.png`: menu items readable (light text, not black) — this is the empirical proof that `color-scheme: dark` makes UA `ButtonText` follow the theme (the spec's dropped-fix-2 amendment relies on exactly this shot).
+- `doc-menu-dark.png`, `account-menu-dark.png`: menu items readable (light text, not black) — this is the empirical proof that `color-scheme: dark` makes UA `ButtonText` follow the theme (the spec's dropped-fix-2 amendment relies on exactly this shot). If the items still render black, the amendment is falsified — STOP and report; the pre-agreed remedy is reinstating fix 2 as `button:where(:enabled) { color: inherit }` (specificity (0,0,1): preserves `.doc-menu-delete` etc. and the UA disabled greying), not an ad-hoc rule.
 - **`account-menu-dark.png` — the hypothesis arbiter:** record an explicit verdict line `account-menu dark composite: DARK` or `: WHITE`. If WHITE survives, STOP: report it as an open diagnosis (per the spec, it becomes a dedicated loop — do not proceed to Task 5).
 - `password-dialog-dark.png`: Cancel readable; input key icons light-scheme-correct.
 - `profiles-dark.png`: listboxes/textareas dark-chrome; tier chips dark with `--border`; selected chip unchanged (`#5b5bd6`).
