@@ -3618,3 +3618,37 @@ editor's pre-existing light CodeMirror gutter in dark mode had gone
 un-ticketed (now #66; amber-contrast follow-up is #65). The white
 account-menu compositing artifact from the original report reproduced in
 neither run — hypothesis recorded as unfalsified, not confirmed.
+
+## 2026-07-31 — B18 follow-ups: held-back amber + CodeMirror dark theme (PRs #68, #69)
+
+**What.** The two defects B18 parked as tickets are fixed. #65: the
+held-back-suggestion amber (`#b45309`, 3.30:1 on dark `--panel`) became
+the theme-aware `--held-back` token — light byte-unchanged, dark
+`#f59e0b` at 7.7:1 (6.3:1 on the hover wash). #66: the editor follows
+dark mode via `src/editor/theme.ts` — a compartment empty in light and
+holding, in dark, a `dark: true` theme (CM's built-in dark chrome plus
+token-aligned gutter) and a `themeType: 'dark'` highlight style built
+from `defaultHighlightStyle.specs` with exactly two color substitutions;
+`watchTheme` follows live OS flips via `matchMedia`.
+
+**The trap the review caught.** The spec'd two-rule dark highlight style
+would have silently stripped bold/italic/heading/link decorations in
+dark mode: `basicSetup` registers the default style as a *fallback*, and
+any main highlighter replaces it wholesale rather than layering.
+Plan review proved it empirically (probed `highlightingFor` → null for
+`strong`/`heading1`); the shipped style spreads the default's specs so
+every non-color decoration survives, and a regression-guard test pins
+both substitutions against future `@codemirror/language` reshuffles.
+Two more review saves: the repo's vitest default env is node (tests
+opt into happy-dom per file), and login auto-creates a document — the
+driver's doc-count barrier had to capture-then-grow, not hardcode.
+
+**Verification.** 28-shot both-themes matrix: all 14 light-rendering
+pairs byte-identical (`cmp -s`, no declared exceptions — stricter than
+B18); dark editor shots show dark gutter, visible caret/selection,
+readable marks, accent link URL, decorations intact; the live-flip shot
+is byte-identical to a fresh dark load. #65 verified by computed-style
+probe (held-back states are LLM-gated, unreachable on the keyless
+scratch stack). Final Opus review reproduced every contrast figure and
+CM claim independently: APPROVED, 6 Minors — 5 fixed in a hardening
+wave, 1 parked (doc-section nesting inherited from B18).
