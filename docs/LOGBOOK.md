@@ -3590,7 +3590,7 @@ Zero per-task fix rounds across all five tasks.
 
 ## 2026-07-31 — B18: dark-mode audit (PRs #64, #67)
 
-**What.** Dark mode now reaches every surface via three mechanisms:
+**What.** Dark mode now reaches every audited app-chrome surface via three mechanisms:
 `color-scheme` declared per theme in `index.css` (UA form-control chrome,
 scrollbars, and the default canvas follow the app theme; system colors
 like ButtonText resolve per scheme — menus and dialog buttons became
