@@ -130,4 +130,11 @@ describe('boot wiring', () => {
     fresh.initPrefsPersistence()
     expect(localStorage.getItem('fabulous-writing-settings')).toBeNull()
   })
+
+  it('the store boots with the token from the token key', async () => {
+    vi.resetModules()
+    localStorage.setItem('fabulous-writing-token', 'boot-tok')
+    const { useStore: freshStore } = await import('./store')
+    expect(freshStore.getState().token).toBe('boot-tok')
+  })
 })
