@@ -101,8 +101,9 @@ existing mount effect. Shape:
     (`#404740` — markdown formatting marks via `processingInstruction`'s
     tag-parent fallback) → `var(--text-dim)` (6.7:1 on `--bg`), and the
     array entry carrying `tags.url`/`tags.contentSeparator` (`#219` —
-    link destinations, thematic breaks) → `var(--accent)` (5.7:1 on
-    `--bg`). All other specs pass through verbatim, so every non-color
+    link destinations, thematic breaks; the entry also carries
+    `atom`/`bool`/`labelName`, none produced by markdown) →
+    `var(--accent)` (5.7:1 on `--bg`). All other specs pass through verbatim, so every non-color
     decoration survives identically. `HighlightStyle` compiles to CSS
     classes, so `var()` values are legal.
 - **Live follow:** the compartment initializes from

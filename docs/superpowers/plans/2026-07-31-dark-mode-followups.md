@@ -54,7 +54,12 @@ All commits in Tasks 2, 3 and 5 land on this branch — never on `main`.
 
 - [ ] **Step 1: Write the scratch backend**
 
-Write `$SCRATCH/server.py` exactly:
+Create the workspace first, then write `$SCRATCH/server.py` exactly:
+
+```bash
+SCRATCH=/private/tmp/claude-501/-Users-markus-IdeaProjects-fabulous-writing/65c7f188-db68-4195-b05b-1819120fc3cc/scratchpad/df-screens
+mkdir -p $SCRATCH/before $SCRATCH/after
+```
 
 ```python
 import os
@@ -179,7 +184,12 @@ for (const theme of ['light', 'dark']) {
   // auto-title threshold so no title-generation API call fires. The link
   // uses [text](url) form deliberately: markdown() is CommonMark (no GFM
   // autolink), so only a link destination ever gets tags.url.
-  const docCount = theme === 'light' ? 1 : 2 // dark pass sees light's doc too
+  // Login auto-creates a document when the list is empty (runInit), so
+  // the pass starts with docs already present (1 light pass / 2 dark
+  // pass). Capture the count and wait for it to GROW — a hardcoded
+  // equality wait would either resolve before the create lands (no
+  // barrier) or never (timeout).
+  const docsBefore = await p.locator('.doc-item').count()
   await p.click('.doc-new')
   // .cm-content exists the whole session (the editor is permanently
   // mounted), so it is no barrier. The real barrier is the new document
@@ -187,8 +197,8 @@ for (const theme of ['light', 'dark']) {
   // full-document hydration replace lands BEFORE typing starts — it
   // would otherwise wipe typed text mid-stream, nondeterministically.
   await p.waitForFunction(
-    (n) => document.querySelectorAll('.doc-item').length === n,
-    docCount,
+    (n) => document.querySelectorAll('.doc-item').length >= n,
+    docsBefore + 1,
   )
   await p.waitForTimeout(600)
   await p.click('.editor .cm-content')
@@ -481,7 +491,8 @@ const darkChrome = EditorView.theme(
 // The two: the tags.meta entry (#404740 — markdown formatting marks via
 // processingInstruction's tag-parent fallback) and the array entry
 // carrying tags.url/tags.contentSeparator (#219 — link destinations and
-// thematic breaks), both unreadable on the dark canvas.
+// thematic breaks; the entry also carries atom/bool/labelName, none
+// produced by markdown), both unreadable on the dark canvas.
 const darkSpecs = defaultHighlightStyle.specs.map((spec) =>
   spec.tag === tags.meta
     ? { ...spec, color: 'var(--text-dim)' }
@@ -619,7 +630,23 @@ EOF
 
 - [ ] **Step 1: Fresh stack, rebuilt frontend**
 
-Same commands as Task 1 Step 3 including the leading `SCRATCH=` line (fresh tempfile DB by construction; skip the `mkdir`). The rebuild with `VITE_API_URL=http://127.0.0.1:8001 npm run build` puts the fixes in the served bundle.
+Fresh tempfile DB by construction; the rebuild puts the fixes in the served bundle:
+
+```bash
+SCRATCH=/private/tmp/claude-501/-Users-markus-IdeaProjects-fabulous-writing/65c7f188-db68-4195-b05b-1819120fc3cc/scratchpad/df-screens
+cd /Users/markus/IdeaProjects/fabulous-writing/backend
+nohup uv run python $SCRATCH/server.py > $SCRATCH/backend.log 2>&1 &
+echo $! > $SCRATCH/backend.pid
+cd /Users/markus/IdeaProjects/fabulous-writing/frontend
+VITE_API_URL=http://127.0.0.1:8001 npm run build
+nohup npx vite preview --port 4199 --strictPort > $SCRATCH/preview.log 2>&1 &
+echo $! > $SCRATCH/preview.pid
+sleep 2
+curl -s -o /dev/null -w 'backend %{http_code}\n' http://127.0.0.1:8001/api/health
+curl -s -o /dev/null -w 'preview %{http_code}\n' http://localhost:4199/
+```
+
+Expected: `backend 200`, `preview 200`. If :4199 or :8001 is already in use, STOP and report — never touch other ports.
 
 - [ ] **Step 2: Run the after matrix**
 
@@ -656,7 +683,7 @@ Read `after/editor-md-dark.png` and `after/editor-md-flip-to-dark.png` and verif
 - `---` (thematic break) readable (accent purple)
 - **default decorations survive**: `# Dark title` still bold + underlined, `**bold**` still bold — the guard against the fallback-replacement trap; if these render plain, the dark highlight style replaced the default without inheriting its specs
 - `editor-md-flip-to-dark.png`: dark editor chrome WITHOUT a reload (the shot follows `emulateMedia` only)
-- the remaining dark pairs (`*-dark.png`) differ from `before/` **only** in the editor region if at all — the other surfaces were fixed in B18 and must not regress
+- the remaining dark pairs (`*-dark.png`) differ from `before/` **only** in the editor region if at all (modulo the sidebar's minute-granular time labels, which may flip on wall-clock drift between runs) — the other surfaces were fixed in B18 and must not regress
 
 - [ ] **Step 5: #65 computed-style probe**
 
@@ -712,7 +739,7 @@ npm run build
 
 - [ ] **Step 7: Write `$SCRATCH/COMPARISON.md`**
 
-Record: the light set result (byte-identical, 14 pairs), the dark checklist verdicts with one line of evidence each, the probe output verbatim, and any anomaly with its classification. No commit (scratch artifacts only) — the task report carries the verdict.
+Record: the light set result (byte-identical, 14 pairs), the dark checklist verdicts with one line of evidence each, the probe output verbatim, and any anomaly with its classification. Note that the `editor-md-*` and flip shots are element-scoped to `.editor-area` (no app chrome in frame) — the live-flip evidence is the editor's own restyle, not the surrounding chrome. No commit (scratch artifacts only) — the task report carries the verdict.
 
 ---
 
