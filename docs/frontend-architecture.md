@@ -981,8 +981,7 @@ from: `--bg`, `--panel`, `--border`, `--text`, `--text-dim`, `--accent`,
 `--accent-soft`, `--bg-raised` (a "lifted" surface for pills and code blocks,
 given a real value in both themes rather than a light-only fallback), and
 `--held-back` (amber for held-back suggestions, #65: light uses amber-700,
-dark uses amber-500 for WCAG AA contrast on both `--panel` and hover wash).
-B18's
+dark uses amber-500 for WCAG AA contrast on both `--panel` and hover wash). B18's
 classification rule for anything touching color: surface chrome — borders, panel and
 raised backgrounds — uses these tokens; semantic colors (danger, severity, category
 palettes) stay literal — though a semantic hue may still need a per-theme contrast variant where a literal fails WCAG on one theme's surfaces (see the held-back amber, #65) — since their meaning is independent of theme and re-deriving

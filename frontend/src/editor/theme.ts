@@ -41,7 +41,7 @@ const darkChrome = EditorView.theme(
 // atom/bool are unreachable under CommonMark; labelName covers CodeInfo
 // and LinkLabel, which want the same treatment), both unreadable on the
 // dark canvas.
-const darkSpecs = defaultHighlightStyle.specs.map((spec) =>
+export const darkSpecs = defaultHighlightStyle.specs.map((spec) =>
   spec.tag === tags.meta
     ? { ...spec, color: 'var(--text-dim)' }
     : Array.isArray(spec.tag) && spec.tag.includes(tags.url)
