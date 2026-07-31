@@ -4,35 +4,33 @@
 
 **Goal:** Fix the two B18-parked dark-mode defects — held-back amber text failing WCAG AA (#65) and the CodeMirror editor ignoring dark mode entirely (#66) — with zero light-mode change.
 
-**Architecture:** #65 is a token swap: a new `--held-back` custom property (light keeps today's `#b45309`, dark gets AA-passing `#f59e0b`) replaces the two hard-coded declarations. #66 adds `frontend/src/editor/theme.ts`: a CodeMirror `Compartment` that is empty in light mode and, in dark mode, holds a `dark: true` theme (flips CM's built-in dark chrome, token-aligns the gutter) plus a `themeType: 'dark'` highlight style recoloring markdown's fixed light-mode tag colors; a `matchMedia` listener follows live OS theme changes.
+**Architecture:** #65 is a token swap: a new `--held-back` custom property (light keeps today's `#b45309`, dark gets AA-passing `#f59e0b`) replaces the two hard-coded declarations. #66 adds `frontend/src/editor/theme.ts`: a CodeMirror `Compartment` that is empty in light mode and, in dark mode, holds a `dark: true` theme (flips CM's built-in dark chrome, token-aligns the gutter) plus a `themeType: 'dark'` highlight style — built from `defaultHighlightStyle.specs` with exactly two color substitutions, because a main highlighter *replaces* the fallback default rather than layering on it; a `matchMedia` listener follows live OS theme changes.
 
-**Tech Stack:** React 19 + TS + Vite frontend; CodeMirror 6 (`@codemirror/view` 6.43.6, `@codemirror/state` 6.7.1; `@codemirror/language` 6.12.4 and `@lezer/highlight` 1.2.3 newly promoted to direct deps); Vitest; the B18 screenshot harness (playwright-core, scratch stack :8001/:4199).
+**Tech Stack:** React 19 + TS + Vite frontend; CodeMirror 6 (`@codemirror/view` 6.43.6, `@codemirror/state` 6.7.1; `@codemirror/language` 6.12.4 and `@lezer/highlight` 1.2.3 newly promoted to direct deps); Vitest (default environment `node` — DOM tests opt in per file with `// @vitest-environment happy-dom`); the B18 screenshot harness (playwright-core, scratch stack :8001/:4199).
 
 **Spec:** `docs/superpowers/specs/2026-07-31-dark-mode-followups-design.md`. The spec governs on any conflict.
 
 ## Global Constraints
 
-- Light mode is **byte-identical** across the whole screenshot matrix — this item declares NO intended light-mode diffs (`cmp -s` on every light-rendering pair).
-- Exact values: `--held-back` light `#b45309`, dark `#f59e0b`; dark markdown marks (`tags.meta`) `var(--text-dim)`; dark URLs/thematic breaks (`tags.url`, `tags.contentSeparator`) `var(--accent)`; gutter alignment `var(--panel)` / `var(--text-dim)` / `var(--border)`; active line gutter `var(--bg-raised)`.
+- Light mode is **byte-identical** across the whole screenshot matrix — this item declares NO intended light-mode diffs (`cmp -s` on every light-rendering pair). Editor-content shots are element-scoped to `.editor-area` so the sidebar's minute-granular time label cannot race the gate.
+- Exact values: `--held-back` light `#b45309`, dark `#f59e0b`; the dark highlight style is `defaultHighlightStyle.specs` with exactly two color substitutions — the `tags.meta` entry → `var(--text-dim)`, the array entry carrying `tags.url` → `var(--accent)`; gutter alignment `var(--panel)` / `var(--text-dim)`, active-line gutter `var(--bg-raised)`. No gutter border is declared (CM's dark base draws none — a color alone would be dead config).
 - OS-follow only — no manual theme toggle, no `data-theme` plumbing; the editor must follow a mid-session OS theme change live (no reload).
-- Caret, selection, and active line in dark keep CM's built-in base-dark values — no custom overrides for them.
+- Caret, selection, and active line in dark keep CM's built-in base-dark values — no custom overrides.
 - New direct dependencies pinned to the versions already resolved in the lockfile: `@codemirror/language@6.12.4`, `@lezer/highlight@1.2.3`. No other dependency changes.
-- Never kill, restart, or start anything on ports **5173** or **8000**. Scratch stack uses **:8001** (backend, tempfile DB) and **:4199** (vite preview); kill only PIDs you started; run a plain `npm run build` after the last screenshot run to restore production `dist/`.
+- Never kill, restart, or start anything on ports **5173** or **8000**. Scratch stack uses **:8001** (backend, tempfile DB) and **:4199** (vite preview); kill only PIDs you recorded; run a plain `npm run build` after the last screenshot run to restore production `dist/`.
 - Gates before every commit: `npm test -- --run` green and `npm run build` clean (run from `frontend/`). Backend untouched by this plan.
 - Mutation-verify every guard test: temporarily break the guarded line, watch the test fail, restore.
-- Every commit message ends with exactly these two trailer lines:
-  `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
-  `Claude-Session: https://claude.ai/code/session_01QG5RSDiRACnzQgN89FceuQ`
-- Implementation PR closes both issues with separate keywords: `Closes #65. Closes #66.` (a shared keyword only binds its first ref).
+- Commit trailers: every commit command below embeds the two mandatory trailer lines verbatim — do not strip them.
+- The session controller opens the implementation PR (finishing-a-development-branch) with separate closing keywords `Closes #65. Closes #66.` (a shared keyword only binds its first ref) — no task below creates the PR.
 - LOGBOOK: the entry is appended by the session controller once the implementation PR number exists (repo convention, entries keyed by PR number) — it is not part of any task below.
 
-**Scratch workspace for the harness:** `SCRATCH=/private/tmp/claude-501/-Users-markus-IdeaProjects-fabulous-writing/65c7f188-db68-4195-b05b-1819120fc3cc/scratchpad/df-screens` (create it; screenshots in `$SCRATCH/before/` and `$SCRATCH/after/`).
+**Scratch workspace for the harness:** `/private/tmp/claude-501/-Users-markus-IdeaProjects-fabulous-writing/65c7f188-db68-4195-b05b-1819120fc3cc/scratchpad/df-screens`. Shell state does NOT persist between tool calls, so **every** command block below re-declares `SCRATCH=` on its first line — keep that line when executing.
 
 ---
 
 ### Task 1: Harness + baseline matrix (`before/`)
 
-Extends the proven B18 driver with an editor-markdown segment (typed content, selection, caret, live theme flip) and captures the pre-change matrix. Runs before any code change — the branch is still at its base.
+Extends the proven B18 driver with an editor-markdown segment (typed content, selection, caret, live theme flip) and captures the pre-change matrix. Runs before any code change.
 
 **Files:**
 - Create: `$SCRATCH/server.py` (scratch artifact, not committed)
@@ -42,6 +40,17 @@ Extends the proven B18 driver with an editor-markdown segment (typed content, se
 **Interfaces:**
 - Consumes: nothing from other tasks.
 - Produces: `$SCRATCH/before/` shots and a working, re-runnable harness; Task 4 re-runs `shoot-themes.mjs` **unchanged** against `$SCRATCH/after`.
+
+- [ ] **Step 0: Feature branch**
+
+If the SDE controller has not already created one, create the implementation branch off the current base:
+
+```bash
+cd /Users/markus/IdeaProjects/fabulous-writing
+git switch -c dark-mode-followups-impl
+```
+
+All commits in Tasks 2, 3 and 5 land on this branch — never on `main`.
 
 - [ ] **Step 1: Write the scratch backend**
 
@@ -167,24 +176,45 @@ for (const theme of ['light', 'dark']) {
   // ---- NEW (#65/#66): editor with markdown content, selection, caret,
   // live theme flip. Last segment of the pass, so every earlier shot
   // predates the created document. Content stays under the 20-word
-  // auto-title threshold so no title-generation API call fires.
+  // auto-title threshold so no title-generation API call fires. The link
+  // uses [text](url) form deliberately: markdown() is CommonMark (no GFM
+  // autolink), so only a link destination ever gets tags.url.
+  const docCount = theme === 'light' ? 1 : 2 // dark pass sees light's doc too
   await p.click('.doc-new')
-  await p.waitForSelector('.editor .cm-content')
+  // .cm-content exists the whole session (the editor is permanently
+  // mounted), so it is no barrier. The real barrier is the new document
+  // appearing in the sidebar, plus a settle so createNewDocument()'s
+  // full-document hydration replace lands BEFORE typing starts — it
+  // would otherwise wipe typed text mid-stream, nondeterministically.
+  await p.waitForFunction(
+    (n) => document.querySelectorAll('.doc-item').length === n,
+    docCount,
+  )
+  await p.waitForTimeout(600)
   await p.click('.editor .cm-content')
   await p.keyboard.type(
-    '# Dark title\n\nSome **bold** text and https://example.com/docs\n\n---\n\nPlain closing line.',
+    '# Dark title\n\nSome **bold** text and [docs](https://example.com/docs)\n\n---\n\nPlain closing line.',
   )
   // Autosave debounce (1500ms) + fast check (1000ms) settle.
   await p.waitForTimeout(1800)
   await p.keyboard.press('ControlOrMeta+a')
-  // animations: 'disabled' cancels the infinite caret-blink animation to
-  // its initial (visible) state — deterministic bytes across runs.
-  await p.screenshot({ path: `${OUT}/editor-md-${theme}.png`, animations: 'disabled' })
+  // Element shot of the editor pane only: excludes the sidebar's
+  // minute-granular .doc-time label, whose whole-minute rounding would
+  // race the byte-identity gate on wall-clock drift between the before
+  // and after runs. animations: 'disabled' cancels the infinite
+  // caret-blink animation to its initial (visible) state.
+  await p.locator('.editor-area').screenshot({
+    path: `${OUT}/editor-md-${theme}.png`,
+    animations: 'disabled',
+  })
   // Live OS-theme flip must restyle the editor without a reload (#66).
   const flipTo = theme === 'dark' ? 'light' : 'dark'
   await p.emulateMedia({ colorScheme: flipTo })
   await p.waitForTimeout(300)
-  await p.screenshot({ path: `${OUT}/editor-md-flip-to-${flipTo}.png`, animations: 'disabled' })
+  await p.locator('.editor-area').screenshot({
+    path: `${OUT}/editor-md-flip-to-${flipTo}.png`,
+    animations: 'disabled',
+  })
   await p.context().close()
 }
 await browser.close()
@@ -193,31 +223,40 @@ await browser.close()
 - [ ] **Step 3: Build the frontend against the scratch backend and start the stack**
 
 ```bash
+SCRATCH=/private/tmp/claude-501/-Users-markus-IdeaProjects-fabulous-writing/65c7f188-db68-4195-b05b-1819120fc3cc/scratchpad/df-screens
 mkdir -p $SCRATCH/before $SCRATCH/after
 cd /Users/markus/IdeaProjects/fabulous-writing/backend
 nohup uv run python $SCRATCH/server.py > $SCRATCH/backend.log 2>&1 &
-# record the PID
+echo $! > $SCRATCH/backend.pid
 cd /Users/markus/IdeaProjects/fabulous-writing/frontend
 VITE_API_URL=http://127.0.0.1:8001 npm run build
 nohup npx vite preview --port 4199 --strictPort > $SCRATCH/preview.log 2>&1 &
-# record the PID
-curl -s http://127.0.0.1:8001/api/health || curl -s http://127.0.0.1:8001/docs -o /dev/null -w '%{http_code}\n'
+echo $! > $SCRATCH/preview.pid
+sleep 2
+curl -s -o /dev/null -w 'backend %{http_code}\n' http://127.0.0.1:8001/api/health
+curl -s -o /dev/null -w 'preview %{http_code}\n' http://localhost:4199/
 ```
 
-Expected: backend responds; preview.log shows :4199. If :4199 or :8001 is already in use, STOP and report — never touch other ports.
+Expected: `backend 200`, `preview 200`. If :4199 or :8001 is already in use, STOP and report — never touch other ports.
 
 - [ ] **Step 4: Run the baseline**
 
 ```bash
+SCRATCH=/private/tmp/claude-501/-Users-markus-IdeaProjects-fabulous-writing/65c7f188-db68-4195-b05b-1819120fc3cc/scratchpad/df-screens
 node $SCRATCH/shoot-themes.mjs $SCRATCH/before
 ls $SCRATCH/before | wc -l
 ```
 
-Expected: 28 files (4 gate + 12 per theme). Eyeball `editor-md-dark.png`: it must show the BUG — light gutter, markdown marks nearly invisible. `editor-md-flip-to-dark.png` must show dark app chrome around a still-light editor.
+Expected: 28 files (4 gate + 12 per theme). Eyeball `editor-md-dark.png`: it must show the BUG — light gutter, markdown marks nearly invisible. `editor-md-flip-to-dark.png` must show a still-light editor (the flip reaches the app CSS but not CM).
 
 - [ ] **Step 5: Tear down the stack**
 
-Kill both recorded PIDs (and only them). Leave `$SCRATCH` in place — Task 4 reuses the harness with a fresh stack.
+```bash
+SCRATCH=/private/tmp/claude-501/-Users-markus-IdeaProjects-fabulous-writing/65c7f188-db68-4195-b05b-1819120fc3cc/scratchpad/df-screens
+kill $(cat $SCRATCH/backend.pid) $(cat $SCRATCH/preview.pid)
+```
+
+Leave `$SCRATCH` in place — Task 4 reuses the harness with a fresh stack.
 
 - [ ] **Step 6: Report**
 
@@ -228,8 +267,8 @@ No commit (nothing in the repo changed). Report shot count and the confirmed bas
 ### Task 2: `--held-back` token (#65)
 
 **Files:**
-- Modify: `frontend/src/index.css` (token blocks, lines ~10–32)
-- Modify: `frontend/src/App.css` (lines ~730–739)
+- Modify: `frontend/src/index.css` (anchors: `--bg-raised: #eee;` at line 14, `--bg-raised: #26262e;` at line 31)
+- Modify: `frontend/src/App.css` (`:hover` color at line 731, `.held-back-reason` color at line 738)
 
 **Interfaces:**
 - Consumes: nothing.
@@ -237,17 +276,17 @@ No commit (nothing in the repo changed). Report shot count and the confirmed bas
 
 - [ ] **Step 1: Define the token in both theme blocks**
 
-In `frontend/src/index.css`, add to the `:root` block, directly after the `--bg-raised: #eee;` line:
+In `frontend/src/index.css`, add to the `:root` block, directly after the `--bg-raised: #eee;` line (line 14):
 
 ```css
   /* Held-back-suggestion amber (#65): light keeps the original amber-700;
-     dark uses amber-500 — 7.9:1 on --panel, 6.4:1 on the held-back hover
+     dark uses amber-500 — 7.7:1 on --panel, 6.3:1 on the held-back hover
      wash, both clear WCAG AA (amber-700 measured only 3.30:1 on dark
      --panel). */
   --held-back: #b45309;
 ```
 
-In the `@media (prefers-color-scheme: dark)` block, directly after `--bg-raised: #26262e;`:
+In the `@media (prefers-color-scheme: dark)` block, directly after `--bg-raised: #26262e;` (line 31):
 
 ```css
     --held-back: #f59e0b;
@@ -283,11 +322,16 @@ Expected: all tests pass, build clean.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add src/index.css src/App.css
-git commit -m "fix(ui): theme-aware held-back amber for dark-mode AA contrast (#65)"
-```
+cd /Users/markus/IdeaProjects/fabulous-writing
+git add frontend/src/index.css frontend/src/App.css
+git commit -m "$(cat <<'EOF'
+fix(ui): theme-aware held-back amber for dark-mode AA contrast (#65)
 
-(with the mandatory trailers from Global Constraints)
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01QG5RSDiRACnzQgN89FceuQ
+EOF
+)"
+```
 
 ---
 
@@ -307,40 +351,60 @@ git commit -m "fix(ui): theme-aware held-back amber for dark-mode AA contrast (#
 
 ```bash
 cd /Users/markus/IdeaProjects/fabulous-writing/frontend
-npm install --save-exact=false @codemirror/language@6.12.4 @lezer/highlight@1.2.3
+npm install @codemirror/language@6.12.4 @lezer/highlight@1.2.3
 git diff package-lock.json --stat
 ```
 
-Expected: `package.json` gains the two deps with `^`-ranges matching the already-resolved versions; the lockfile diff is minimal (no version bumps of existing packages — if versions move, STOP and report).
+Expected: `package.json` gains the two deps with `^`-ranges at exactly those versions; the lockfile diff is minimal (no version bumps of existing packages — if versions move, STOP and report).
 
 - [ ] **Step 2: Write the failing test**
 
-Create `frontend/src/editor/theme.test.ts`:
+Create `frontend/src/editor/theme.test.ts`. The `@vitest-environment` docblock is REQUIRED: the repo's vitest default environment is `node` (no `test.environment` in `vite.config.ts`); DOM-touching test files opt in per file.
 
 ```ts
-import type { EditorView } from '@codemirror/view'
+// @vitest-environment happy-dom
+import { EditorState } from '@codemirror/state'
+import { EditorView } from '@codemirror/view'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { watchTheme } from './theme'
+import { editorTheme, watchTheme } from './theme'
 
 type Listener = (event: { matches: boolean }) => void
 
-/** jsdom has no matchMedia; a controllable stand-in. */
-function stubMatchMedia() {
+/**
+ * happy-dom does implement matchMedia, but not a controllable one. The
+ * stub reaches window.matchMedia because window === globalThis under
+ * vitest's happy-dom environment.
+ */
+function stubMatchMedia(matches = false) {
   const listeners = new Set<Listener>()
   vi.stubGlobal('matchMedia', () => ({
-    matches: false,
+    matches,
     addEventListener: (_: 'change', fn: Listener) => listeners.add(fn),
     removeEventListener: (_: 'change', fn: Listener) => listeners.delete(fn),
   }))
   return {
-    fire(matches: boolean) {
-      for (const fn of [...listeners]) fn({ matches })
+    fire(m: boolean) {
+      for (const fn of [...listeners]) fn({ matches: m })
     },
   }
 }
 
 afterEach(() => {
   vi.unstubAllGlobals()
+})
+
+describe('editorTheme', () => {
+  it('pre-loads the dark scheme at creation', () => {
+    stubMatchMedia(true)
+    const state = EditorState.create({ extensions: [editorTheme()] })
+    expect(state.facet(EditorView.darkTheme)).toBe(true)
+  })
+
+  it('contributes nothing in light', () => {
+    stubMatchMedia(false)
+    const state = EditorState.create({ extensions: [editorTheme()] })
+    expect(state.facet(EditorView.darkTheme)).toBe(false)
+  })
 })
 
 describe('watchTheme', () => {
@@ -367,6 +431,7 @@ describe('watchTheme', () => {
 - [ ] **Step 3: Run it to make sure it fails**
 
 ```bash
+cd /Users/markus/IdeaProjects/fabulous-writing/frontend
 npm test -- --run src/editor/theme.test.ts
 ```
 
@@ -377,7 +442,11 @@ Expected: FAIL — `./theme` does not exist.
 Create `frontend/src/editor/theme.ts`:
 
 ```ts
-import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
+import {
+  defaultHighlightStyle,
+  HighlightStyle,
+  syntaxHighlighting,
+} from '@codemirror/language'
 import { Compartment, type Extension } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { tags } from '@lezer/highlight'
@@ -387,13 +456,14 @@ const QUERY = '(prefers-color-scheme: dark)'
 // dark: true flips CM's darkTheme facet, activating the complete built-in
 // dark chrome (caret #ddd, focused selection #233, dark active line,
 // panels, tooltips). The body token-aligns only the gutter family;
-// caret/selection/active line keep the proven base-dark values (#66).
+// caret/selection/active line keep the proven base-dark values. No gutter
+// border: CM's dark base draws none (width/style exist only under its
+// &light rules), so a color alone would be dead config (#66).
 const darkChrome = EditorView.theme(
   {
     '.cm-gutters': {
       backgroundColor: 'var(--panel)',
       color: 'var(--text-dim)',
-      borderRightColor: 'var(--border)',
     },
     '.cm-activeLineGutter': {
       backgroundColor: 'var(--bg-raised)',
@@ -402,21 +472,30 @@ const darkChrome = EditorView.theme(
   { dark: true },
 )
 
-// basicSetup's defaultHighlightStyle paints fixed light-mode colors the
-// dark facet never switches. For markdown that is the formatting marks
-// (tags.processingInstruction falls back to parent tags.meta, #404740)
-// and URLs/thematic breaks (#219) — unreadable on the dark canvas.
-// themeType: 'dark' scopes this style to the dark facet.
-const darkMarkdownColors = syntaxHighlighting(
-  HighlightStyle.define(
-    [
-      { tag: tags.meta, color: 'var(--text-dim)' },
-      { tag: [tags.url, tags.contentSeparator], color: 'var(--accent)' },
-    ],
-    { themeType: 'dark' },
-  ),
+// basicSetup registers defaultHighlightStyle as a FALLBACK highlighter;
+// a main highlighter — which a themeType:'dark' style is while the dark
+// facet is on — replaces the fallback wholesale rather than layering on
+// it. So the dark style is the default's own specs with exactly two
+// color substitutions; every non-color decoration (heading
+// bold+underline, strong, emphasis, link underline) survives verbatim.
+// The two: the tags.meta entry (#404740 — markdown formatting marks via
+// processingInstruction's tag-parent fallback) and the array entry
+// carrying tags.url/tags.contentSeparator (#219 — link destinations and
+// thematic breaks), both unreadable on the dark canvas.
+const darkSpecs = defaultHighlightStyle.specs.map((spec) =>
+  spec.tag === tags.meta
+    ? { ...spec, color: 'var(--text-dim)' }
+    : Array.isArray(spec.tag) && spec.tag.includes(tags.url)
+      ? { ...spec, color: 'var(--accent)' }
+      : spec,
 )
 
+const darkMarkdownColors = syntaxHighlighting(
+  HighlightStyle.define(darkSpecs, { themeType: 'dark' }),
+)
+
+// Module-level singleton shared across editor remounts — a Compartment
+// is just a reconfiguration key, safe to reuse.
 const compartment = new Compartment()
 
 function forScheme(dark: boolean): Extension {
@@ -452,19 +531,20 @@ export function watchTheme(view: EditorView): () => void {
 npm test -- --run src/editor/theme.test.ts
 ```
 
-Expected: both tests PASS.
+Expected: all four tests PASS.
 
-- [ ] **Step 6: Mutation-verify both guards**
+- [ ] **Step 6: Mutation-verify the guards**
 
-1. Comment out the `media.addEventListener('change', onChange)` line → test 1 must FAIL. Restore.
-2. Change the cleanup to a no-op (`return () => {}`) → test 2 must FAIL. Restore.
-3. Re-run: both PASS again.
+1. In `watchTheme`, comment out `media.addEventListener('change', onChange)` → "reconfigures the view…" must FAIL. Restore.
+2. In `watchTheme`, replace the returned cleanup with `() => {}` → "stops following after cleanup" must FAIL. Restore.
+3. In `forScheme`, return `[]` unconditionally → "pre-loads the dark scheme at creation" must FAIL. Restore.
+4. Re-run: all four PASS again.
 
 - [ ] **Step 7: Wire into the editor**
 
 In `frontend/src/editor/Editor.tsx`:
 
-Add the import:
+Add the import directly after the `import { setEditorView } from './editorRef'` line:
 
 ```ts
 import { editorTheme, watchTheme } from './theme'
@@ -481,12 +561,14 @@ Add `editorTheme(),` to the extensions array, directly after `EditorView.lineWra
         findingsField,
 ```
 
-After `setEditorView(view)`, register the watcher, and run its cleanup in the teardown before `view.destroy()`:
+After `setEditorView(view)`, register the watcher:
 
 ```ts
     setEditorView(view)
     const stopThemeWatch = watchTheme(view)
 ```
+
+And run its cleanup in the teardown, before `view.destroy()`:
 
 ```ts
     return () => {
@@ -501,6 +583,7 @@ After `setEditorView(view)`, register the watcher, and run its cleanup in the te
 - [ ] **Step 8: Gates**
 
 ```bash
+cd /Users/markus/IdeaProjects/fabulous-writing/frontend
 npm test -- --run
 npm run build
 ```
@@ -510,11 +593,16 @@ Expected: full suite green, build clean.
 - [ ] **Step 9: Commit**
 
 ```bash
-git add package.json package-lock.json src/editor/theme.ts src/editor/theme.test.ts src/editor/Editor.tsx
-git commit -m "fix(editor): dark-mode chrome and markdown colors via darkTheme compartment (#66)"
-```
+cd /Users/markus/IdeaProjects/fabulous-writing
+git add frontend/package.json frontend/package-lock.json frontend/src/editor/theme.ts frontend/src/editor/theme.test.ts frontend/src/editor/Editor.tsx
+git commit -m "$(cat <<'EOF'
+fix(editor): dark-mode chrome and markdown colors via darkTheme compartment (#66)
 
-(with the mandatory trailers)
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01QG5RSDiRACnzQgN89FceuQ
+EOF
+)"
+```
 
 ---
 
@@ -526,16 +614,17 @@ git commit -m "fix(editor): dark-mode chrome and markdown colors via darkTheme c
 - Create: `$SCRATCH/COMPARISON.md` (scratch artifact)
 
 **Interfaces:**
-- Consumes: Task 1's harness (`server.py`, `shoot-themes.mjs` — re-run **unchanged**); Tasks 2–3 merged into the branch.
+- Consumes: Task 1's harness (`server.py`, `shoot-themes.mjs` — re-run **unchanged**); Tasks 2–3 committed on the branch.
 - Produces: the verification verdict — the branch's acceptance evidence.
 
 - [ ] **Step 1: Fresh stack, rebuilt frontend**
 
-Same commands as Task 1 Step 3 (fresh tempfile DB by construction), rebuilding with `VITE_API_URL=http://127.0.0.1:8001 npm run build` so the fixes are in the served bundle.
+Same commands as Task 1 Step 3 including the leading `SCRATCH=` line (fresh tempfile DB by construction; skip the `mkdir`). The rebuild with `VITE_API_URL=http://127.0.0.1:8001 npm run build` puts the fixes in the served bundle.
 
 - [ ] **Step 2: Run the after matrix**
 
 ```bash
+SCRATCH=/private/tmp/claude-501/-Users-markus-IdeaProjects-fabulous-writing/65c7f188-db68-4195-b05b-1819120fc3cc/scratchpad/df-screens
 node $SCRATCH/shoot-themes.mjs $SCRATCH/after
 ls $SCRATCH/after | wc -l
 ```
@@ -545,6 +634,7 @@ Expected: 28 files.
 - [ ] **Step 3: Light byte-identity — the whole light set, no exceptions**
 
 ```bash
+SCRATCH=/private/tmp/claude-501/-Users-markus-IdeaProjects-fabulous-writing/65c7f188-db68-4195-b05b-1819120fc3cc/scratchpad/df-screens
 cd $SCRATCH
 LIGHT="gate-light-wide gate-light-narrow editor-light rules-light terminology-light profiles-light admin-light account-menu-light password-dialog-light doc-menu-light folder-defaults-light confirm-dialog-light editor-md-light editor-md-flip-to-light"
 for name in $LIGHT; do
@@ -561,9 +651,11 @@ Read `after/editor-md-dark.png` and `after/editor-md-flip-to-dark.png` and verif
 - gutter renders in the `--panel` family (dark), line numbers readable (`--text-dim`)
 - caret visible (light bar, not black)
 - selection visible on the dark canvas
-- markdown marks (`#`, `**`, `---`) readable (dim grey, not near-black)
-- URL readable (accent purple, not navy)
-- `editor-md-flip-to-dark.png`: the flip happened live — dark editor chrome WITHOUT a reload (the shot follows `emulateMedia` only)
+- markdown marks (`#`, `**`, `[`/`]`) readable (dim grey, not near-black)
+- the link destination `https://example.com/docs` readable (accent purple, not navy)
+- `---` (thematic break) readable (accent purple)
+- **default decorations survive**: `# Dark title` still bold + underlined, `**bold**` still bold — the guard against the fallback-replacement trap; if these render plain, the dark highlight style replaced the default without inheriting its specs
+- `editor-md-flip-to-dark.png`: dark editor chrome WITHOUT a reload (the shot follows `emulateMedia` only)
 - the remaining dark pairs (`*-dark.png`) differ from `before/` **only** in the editor region if at all — the other surfaces were fixed in B18 and must not regress
 
 - [ ] **Step 5: #65 computed-style probe**
@@ -600,7 +692,7 @@ for (const theme of ['light', 'dark']) {
 await browser.close()
 ```
 
-Expected output, exactly:
+Run: `node $SCRATCH/probe.mjs` (with the `SCRATCH=` line first). Expected output, exactly:
 
 ```
 light {"reason":"rgb(180, 83, 9)","token":"#b45309"}
@@ -611,15 +703,16 @@ Both `.held-back-reason` and `.suggestion-button.held-back:hover` reference the 
 
 - [ ] **Step 6: Tear down and restore production dist**
 
-Kill both recorded PIDs (only them), then:
-
 ```bash
-cd /Users/markus/IdeaProjects/fabulous-writing/frontend && npm run build
+SCRATCH=/private/tmp/claude-501/-Users-markus-IdeaProjects-fabulous-writing/65c7f188-db68-4195-b05b-1819120fc3cc/scratchpad/df-screens
+kill $(cat $SCRATCH/backend.pid) $(cat $SCRATCH/preview.pid)
+cd /Users/markus/IdeaProjects/fabulous-writing/frontend
+npm run build
 ```
 
 - [ ] **Step 7: Write `$SCRATCH/COMPARISON.md`**
 
-Record: the light set result (byte-identical, N pairs), the dark checklist verdicts with one line of evidence each, the probe output verbatim, and any anomaly with its classification. No commit (scratch artifacts only) — the task report carries the verdict.
+Record: the light set result (byte-identical, 14 pairs), the dark checklist verdicts with one line of evidence each, the probe output verbatim, and any anomaly with its classification. No commit (scratch artifacts only) — the task report carries the verdict.
 
 ---
 
@@ -642,17 +735,21 @@ In `docs/frontend-architecture.md`, in the "Theme root (B18, #63)" section: add 
 CodeMirror does not follow `color-scheme`: its chrome is selected by the
 `EditorView.darkTheme` facet, which `basicSetup` leaves false.
 `src/editor/theme.ts` owns the fix: a `Compartment` that is empty in
-light mode (light editor pixels are untouched) and in dark mode holds a
-`dark: true` theme — flipping the facet activates CM's built-in dark
-chrome (caret, selection, active line stay on those built-in values) and
-token-aligns the gutter (`--panel`/`--text-dim`/`--border`,
-active-line gutter `--bg-raised`) — plus a `themeType: 'dark'` highlight
-style recoloring the markdown tag colors `basicSetup`'s static default
-style pins to light values (marks/`tags.meta` → `--text-dim`,
-`tags.url`/`tags.contentSeparator` → `--accent`). `watchTheme` follows
-live OS scheme changes via `matchMedia`; `Editor.tsx` runs its cleanup on
-unmount. `HighlightStyle`/`syntaxHighlighting` and `tags` made
-`@codemirror/language` and `@lezer/highlight` direct dependencies.
+light mode (light editor pixels are untouched) and in dark mode holds
+two extensions. First, a `dark: true` theme — flipping the facet
+activates CM's built-in dark chrome (caret, selection, active line stay
+on those built-in values) and token-aligns the gutter
+(`--panel`/`--text-dim`, active-line gutter `--bg-raised`; no border —
+CM's dark base draws none). Second, a `themeType: 'dark'` highlight
+style built from `defaultHighlightStyle.specs` with exactly two color
+substitutions (`tags.meta` → `--text-dim`, the `tags.url` entry →
+`--accent`): `basicSetup` registers the default style as a *fallback*,
+which any main highlighter replaces wholesale — spreading the specs is
+what keeps bold/italic/heading/link decorations alive in dark mode.
+`watchTheme` follows live OS scheme changes via `matchMedia`;
+`Editor.tsx` runs its cleanup on unmount. `@codemirror/language` and
+`@lezer/highlight` became direct dependencies for
+`HighlightStyle`/`syntaxHighlighting` and `tags`.
 ```
 
 Adjust wording to fit the section's surrounding style; keep all technical claims exactly as above.
@@ -660,8 +757,13 @@ Adjust wording to fit the section's surrounding style; keep all technical claims
 - [ ] **Step 2: Commit**
 
 ```bash
+cd /Users/markus/IdeaProjects/fabulous-writing
 git add docs/frontend-architecture.md
-git commit -m "docs(architecture): editor dark theming and --held-back token (#65, #66)"
-```
+git commit -m "$(cat <<'EOF'
+docs(architecture): editor dark theming and --held-back token (#65, #66)
 
-(with the mandatory trailers)
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01QG5RSDiRACnzQgN89FceuQ
+EOF
+)"
+```

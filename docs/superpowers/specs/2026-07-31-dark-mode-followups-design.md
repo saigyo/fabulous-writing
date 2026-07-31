@@ -28,7 +28,7 @@ Exactly two declarations carry the failing color, both in `App.css`:
 **3.30:1** on dark `--panel` (`#1e1e24`) — below WCAG AA 4.5:1.
 
 The neighboring amber family is fine and stays: the `#d97706` dashed
-border computes ~5.3:1 on dark `--panel` (above even the 4.5:1 text
+border computes ~5.2:1 on dark `--panel` (above even the 4.5:1 text
 threshold, far above the 3:1 non-text requirement), and the
 `rgba(217, 119, 6, …)` washes are backgrounds, not text.
 
@@ -64,7 +64,7 @@ same facet when they declare `themeType`, so a small dark-variant
   comment noting the AA rationale —
   light `--held-back: #b45309` (today's value, light mode unchanged),
   dark `--held-back: #f59e0b`.
-- Contrast for the dark value: **7.9:1** on `--panel`, **6.4:1** on the
+- Contrast for the dark value: **7.7:1** on `--panel`, **6.3:1** on the
   hover state's composite background (`rgba(217,119,6,0.15)` over
   `--panel`) — both clear AA.
 - `App.css`: the two declarations become `color: var(--held-back)`.
@@ -82,18 +82,29 @@ existing mount effect. Shape:
     `dark: true` flag flips the facet, activating CM's built-in dark
     chrome. The theme body token-aligns only the gutter family to app
     tokens (`.cm-gutters`: background `var(--panel)`, color
-    `var(--text-dim)`, border-color `var(--border)`;
-    `.cm-activeLineGutter`: background `var(--bg-raised)`). Caret,
-    selection, and active line stay on CM's proven base-dark values —
-    no custom overrides.
+    `var(--text-dim)`; `.cm-activeLineGutter`: background
+    `var(--bg-raised)`). No gutter border is declared: CM's dark base
+    draws none (border width/style exist only under its `&light` rules),
+    so a color alone would be dead config. Caret, selection, and active
+    line stay on CM's proven base-dark values — no custom overrides.
   - `darkMarkdownColors = syntaxHighlighting(HighlightStyle.define(...,
-    { themeType: 'dark' }))` — recolors `tags.meta` (covers the
-    formatting marks via tag-parent fallback) to `var(--text-dim)`
-    (6.7:1 on `--bg`) and `tags.url` + `tags.contentSeparator` to
-    `var(--accent)` (5.7:1 on `--bg`). `HighlightStyle` compiles to CSS
-    classes, so `var()` values are legal. No other tags — markdown's
-    remaining tags (heading, emphasis, strong, monospace) carry no
-    colors in `defaultHighlightStyle`.
+    { themeType: 'dark' }))`. **Replacement semantics (plan-review
+    correction, 2026-07-31):** `basicSetup` registers
+    `defaultHighlightStyle` as a *fallback* highlighter, and any main
+    highlighter — which a `themeType: 'dark'` style is while the facet
+    is on — replaces the fallback wholesale rather than layering on it.
+    A two-rule dark style would therefore silently drop every default
+    decoration (heading bold+underline, strong, emphasis, link
+    underline) in dark mode. The dark style is instead built from
+    `defaultHighlightStyle.specs` (public API) with exactly two color
+    substitutions, matched by tag identity: the `tags.meta` entry
+    (`#404740` — markdown formatting marks via `processingInstruction`'s
+    tag-parent fallback) → `var(--text-dim)` (6.7:1 on `--bg`), and the
+    array entry carrying `tags.url`/`tags.contentSeparator` (`#219` —
+    link destinations, thematic breaks) → `var(--accent)` (5.7:1 on
+    `--bg`). All other specs pass through verbatim, so every non-color
+    decoration survives identically. `HighlightStyle` compiles to CSS
+    classes, so `var()` values are legal.
 - **Live follow:** the compartment initializes from
   `matchMedia('(prefers-color-scheme: dark)')` at view creation; a
   `change` listener dispatches a compartment reconfigure. Exported
@@ -125,14 +136,21 @@ existing mount effect. Shape:
   (scratch stack :8001/:4199, `b18-screens/shoot-themes.mjs` driver
   re-run unchanged between before and after), with two additions:
   - an editor shot with markdown-rich content (heading, bold, `---`, a
-    URL) plus an active text selection and focused caret, both themes;
+    `[text](url)` link — deliberately link-form: `markdown()` is
+    CommonMark without GFM, so bare URLs are never tagged `tags.url`)
+    plus an active text selection and focused caret, both themes. The
+    editor shots are element-scoped to `.editor-area`: the document
+    sidebar's minute-granular time label would otherwise race the
+    byte-identity gate on wall-clock drift between runs;
   - a live-flip check: `page.emulateMedia({ colorScheme })` toggled
     mid-session must switch the editor chrome without a reload.
 - **Comparison contract:** light-mode pairs are pixel-identical
   (`cmp -s`) across the whole matrix, **no declared exceptions**.
   Dark editor pairs must show: dark gutter in the `--panel` family,
-  visible caret, visible selection, readable markdown marks and URL.
-  Any unexplained diff: STOP, report.
+  visible caret, visible selection, readable markdown marks and link
+  URL, **and surviving default decorations** — the heading still
+  bold+underlined, `**bold**` still bold (the guard against the
+  replacement-semantics trap above). Any unexplained diff: STOP, report.
 - **#65 verification:** held-back suggestions are produced only by the
   LLM suggestion-vetting path (`held_back` in the suggest response), so
   the keyless scratch stack cannot reach them organically. Verify by
