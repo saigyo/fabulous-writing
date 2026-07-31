@@ -1056,12 +1056,6 @@ span.score-badge {
   color: #e5484d;
 }
 
-input,
-select,
-button {
-  font: inherit;
-}
-
 input {
   padding: 0.3rem 0.5rem;
   border: 1px solid var(--border);
@@ -1132,7 +1126,6 @@ input {
   background: none;
   border: none;
   color: inherit;
-  font: inherit;
   letter-spacing: inherit;
   text-transform: inherit;
   cursor: pointer;
@@ -1691,11 +1684,10 @@ input {
   background: none;
   border: none;
   cursor: pointer;
-  /* No global button reset exists, so without this the items render in
-     the UA's default button font — larger and off-family. No `color`
-     here: .doc-menu-delete's danger red has lower specificity and must
-     keep winning. */
-  font: inherit;
+  /* The global reset (index.css) makes buttons inherit the app font;
+     this pins the menu's 0.85rem size (unsized buttons would inherit
+     the root 1rem here). No `color`: .doc-menu-delete's danger red has
+     lower specificity and must keep winning. */
   font-size: 0.85rem;
 }
 .doc-menu button:hover {
@@ -1833,6 +1825,12 @@ dialog.app-dialog h2 {
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
+}
+/* Unsized buttons inherit the root 1rem here (no sized ancestor inside
+   dialog.app-dialog); match the dialog's 0.85rem body text. No `color`
+   or other properties: .confirm-dialog-danger must win unchanged. */
+.confirm-dialog-buttons button {
+  font-size: 0.85rem;
 }
 /* Filled, not outline: the app's danger red (#e5484d) as TEXT on a light
    button is ~3.9:1 — under WCAG's 4.5:1 for normal-size text. White on
@@ -2021,9 +2019,8 @@ dialog.app-dialog h2 {
   background: none;
   border: none;
   cursor: pointer;
-  /* Same UA-default-font fix as .doc-menu button (the recipe this was
+  /* Same 0.85rem size pin as .doc-menu button (the recipe this was
      copied from). */
-  font: inherit;
   font-size: 0.85rem;
 }
 
