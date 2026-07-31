@@ -243,6 +243,7 @@ export const it: Messages = {
   folderDefaultsError: 'Salvataggio delle impostazioni predefinite della cartella non riuscito.',
 
   // Autenticazione
+  loginTagline: 'Scrivi chiaro. Revisione, non giudizio.',
   signInEmail: 'E-mail',
   signInPassword: 'Password',
   signInSubmit: 'Accedi',

@@ -234,6 +234,7 @@ export const ja: Messages = {
   folderDefaultsError: 'フォルダーの既定値の保存に失敗しました。',
 
   // 認証
+  loginTagline: '明快に書く。評価ではなく、確認を。',
   signInEmail: 'メールアドレス',
   signInPassword: 'パスワード',
   signInSubmit: 'ログイン',

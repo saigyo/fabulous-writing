@@ -151,6 +151,31 @@ describe('LoginGate', () => {
     expect(screen.queryByTestId('app-sentinel')).toBeNull()
   })
 
+  it('renders the brand tagline on the anonymous gate (B4)', () => {
+    useStore.setState({ authStatus: 'anonymous' })
+    render(
+      <LoginGate>
+        <Sentinel />
+      </LoginGate>,
+    )
+    screen.getByText(en.loginTagline)
+  })
+
+  it('renders the brand tagline on the connection-failed gate (B4)', async () => {
+    // A stored token whose restore rejects with a network error (not a
+    // 401) sets restoreFailed via runRestore()'s non-401 branch — the
+    // gate then renders the connection-failed card inside the shell.
+    useStore.setState({ token: 'tok', authStatus: 'unknown' })
+    vi.mocked(getMe).mockRejectedValue(new TypeError('offline'))
+    render(
+      <LoginGate>
+        <Sentinel />
+      </LoginGate>,
+    )
+    await waitFor(() => screen.getByText(en.connectionFailed))
+    screen.getByText(en.loginTagline)
+  })
+
   it('renders the children and not the form while authenticated', async () => {
     useStore.setState({ token: 'tok', user: user(), authStatus: 'authenticated' })
     vi.mocked(getMe).mockResolvedValue(user())

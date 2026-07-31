@@ -233,6 +233,7 @@ export const zh: Messages = {
   folderDefaultsError: '保存文件夹默认设置失败。',
 
   // 身份验证
+  loginTagline: '写得清楚。只检查，不评判。',
   signInEmail: '邮箱',
   signInPassword: '密码',
   signInSubmit: '登录',

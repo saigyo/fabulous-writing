@@ -228,6 +228,7 @@ export const en: Messages = {
   folderDefaultsError: 'Saving folder defaults failed.',
 
   // Authentication
+  loginTagline: 'Write clearly. Get checked, not judged.',
   signInEmail: 'Email',
   signInPassword: 'Password',
   signInSubmit: 'Sign in',
