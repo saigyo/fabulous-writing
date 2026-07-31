@@ -433,7 +433,7 @@ The anonymous branch becomes:
 
 - [ ] **Step 5: Rebuild the login-gate CSS section**
 
-In `frontend/src/App.css`, in the `/* ---- login gate ---- */` section: keep `.login-gate` as-is, **delete** the `.login-card .wordmark` rule (the card no longer contains the wordmark), keep `.login-card`, `.login-field`, `.login-field input`, `.login-submit` untouched (`.login-field` is shared with the change-password dialog), and add after `.login-gate`:
+In `frontend/src/App.css`, in the `/* ---- login gate ---- */` section: in `.login-gate`, change `height: 100vh;` to `min-height: 100vh;` (identical rendering while content fits the viewport, but the stacked shell — already ~330px before an expiry/error notice — scrolls instead of clipping on short mobile/landscape viewports; the 640×900 screenshot cannot catch clipping, so this is a code-level guard, not a sweep-verified one); **delete** the `.login-card .wordmark` rule (the card no longer contains the wordmark); keep `.login-card`, `.login-field`, `.login-field input`, `.login-submit` untouched (`.login-field` is shared with the change-password dialog); and add after `.login-gate`:
 
 ```css
 /* B4 (#37) split shell: brand pane beside the form pane at >=720px,
@@ -483,9 +483,11 @@ In `frontend/src/App.css`, in the `/* ---- login gate ---- */` section: keep `.l
   .login-brand {
     align-items: center;
     text-align: center;
-    padding: 1.5rem 1.5rem 0.5rem;
-    background: none;
-    border-radius: 0;
+    padding: 1.5rem 1.5rem 0.75rem;
+    /* The spec's accent wash stays in the stacked layout too — only the
+       gradient's corner rounding adapts to the pane now sitting on top. */
+    background: linear-gradient(180deg, var(--accent-soft), transparent 85%);
+    border-radius: 12px 12px 0 0;
   }
   .login-brand .wordmark {
     font-size: 1.5rem;
@@ -523,7 +525,7 @@ git commit -m "feat(auth): split login gate — brand pane with localized taglin
 
 - [ ] **Step 1: Re-run the stack and capture**
 
-Repeat Task 1's Steps 1-2 (same commands; the frontend build now contains Tasks 2-3), then `mkdir -p <scratchpad>/b11b4-screens/after && node <scratchpad>/b11b4-screens/shoot.mjs <scratchpad>/b11b4-screens/after`. The three gate shots will differ by design — the driver needs no changes (it targets `input[type=email]`/`.login-submit`, which survive the redesign).
+Repeat Task 1's Steps 1-2 (same commands; the frontend build now contains Tasks 2-3), then `mkdir -p <scratchpad>/b11b4-screens/after && node <scratchpad>/b11b4-screens/shoot.mjs <scratchpad>/b11b4-screens/after`. The four gate shots will differ by design — the driver needs no changes (it targets `input[type=email]`/`.login-submit`, which survive the redesign).
 
 - [ ] **Step 2: Compare, shot by shot**
 

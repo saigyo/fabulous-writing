@@ -1,6 +1,8 @@
 # Button Font Consolidation (B11, #52) + Split Login Gate (B4, #37) — Design
 
-One branch, one PR, closes both issues. Combined because both re-touch many
+One *implementation* branch and PR closes both issues (this spec and its
+plan travel on a separate planning-only PR first, per the repo convention —
+no code lands on the planning branch). Combined because both re-touch many
 surfaces and B11's verification sweep covers B4's new gate for free.
 
 **Corrected premise (supersedes #52's text; the issue gets rewritten):**
@@ -154,14 +156,20 @@ in `LoginGate.tsx` is unchanged.
   work with no new color definitions.
 - New breakpoint (the gate currently has none): below **720px** the panes
   stack — the brand pane becomes a compact wordmark + tagline header
-  above the card, the split's side-by-side geometry applies at ≥ 720px.
-  Exact paddings/gaps are plan-level detail.
+  above the card (keeping an accent wash, like the wide layout), the
+  split's side-by-side geometry applies at ≥ 720px. The gate scrolls
+  rather than clips when the stacked shell exceeds a short viewport
+  (`min-height`, not a fixed `height`). Exact paddings/gaps are
+  plan-level detail.
 
 ### Out of scope
 
 - No public/marketing landing page, no feature strip, no screenshots.
 - No changes to auth logic, session handling, or the password dialog.
-- No informal-register copy (B2).
+- No informal-register copy *beyond the tagline* — the tagline's de/es
+  lines are the one deliberate, owner-approved exception (see Tagline &
+  i18n above); every other string keeps today's impersonal register until
+  B2's app-wide pass.
 
 ## Housekeeping (this branch)
 
