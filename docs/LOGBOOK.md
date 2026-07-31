@@ -3554,3 +3554,36 @@ leaking `vi.stubGlobal` throwing-localStorage that `restoreAllMocks`
 doesn't undo — canary-verified) fixed in one wave, scoped re-review
 PASS. 535 → 551 frontend tests, every guard mutation-verified; no
 backend changes.
+
+## 2026-07-31 — B11+B4: button font consolidation + split login gate (PRs #61, #62)
+
+**The corrected premise.** #52 claimed the app lacks a global button
+reset; design-phase exploration found `input, select, button { font:
+inherit }` live since the first frontend commit (2026-07-03). The real
+B3-era bug class was *font-size* — unsized buttons inherit the root 1rem
+inside smaller-text surfaces — and `b9afdfe` had baked the false premise
+into two comments. B11 became consolidation: the reset moved to
+`index.css` (cascade-neutrality proven — App.css holds no other
+element-level font rule), three dead duplicates and both false comments
+removed, and an inheritance-model audit of every unsized-button candidate
+found exactly one true violation: ConfirmDialog's buttons at 1rem beside
+0.85rem body text, fixed color-free to preserve
+`.confirm-dialog-danger`. Issue #52 rewritten with the diagnosis.
+
+**The gate.** B4 rebuilt the login gate as a split shell (`GateShell`
+wrapping all visible pre-auth states): accent-washed brand pane with the
+relocated wordmark and a new `loginTagline` (7 locales, owner-final;
+de/es deliberately adopt B2's informal register early — recorded so the
+B2 sweep treats them as converted), form pane hosting the unchanged
+card. Stacks under 720px with the wash kept; `min-height: 100vh` so
+short viewports scroll — review measured the old fixed height clipping
+content off-screen at 420×360. Roles/names untouched; 551 → 553 tests.
+
+**Verification.** Scripted before/after Playwright sweep, 13 surfaces on
+a scratch stack (:8001 tempfile DB + :4199 preview; CORS override and
+hover-before-click traps caught by plan review before they cost an
+implementer): 8 unchanged surfaces byte-identical via `cmp -s`, exactly
+the 5 intended diffs. Final Opus review ran gates itself, compared all
+seven tagline strings codepoint-for-codepoint, measured the 720–800px
+wordmark band, and shipped with one Minor (stale doc line citation).
+Zero per-task fix rounds across all five tasks.
