@@ -131,6 +131,35 @@ describe('readPrefs / writePrefs', () => {
     )
     expect(readPrefs(1)).toEqual({ uiLocale: 'de' })
   })
+
+  it('drops malformed field values instead of loading them (storage is user-editable)', () => {
+    localStorage.setItem(
+      prefsKey(1),
+      JSON.stringify({
+        state: {
+          uiLocale: 'xx',
+          lastProfileByLanguage: { en: 'three' },
+          rulesCollapsed: 'style',
+          currentDocId: '7',
+          docSidebarCollapsed: 1,
+          docFoldersCollapsed: [1, null],
+        },
+        version: 2,
+      }),
+    )
+    expect(readPrefs(1)).toEqual({})
+  })
+
+  it('keeps valid fields while dropping invalid siblings', () => {
+    localStorage.setItem(
+      prefsKey(1),
+      JSON.stringify({
+        state: { uiLocale: 'de', docFoldersCollapsed: null },
+        version: 2,
+      }),
+    )
+    expect(readPrefs(1)).toEqual({ uiLocale: 'de' })
+  })
 })
 ```
 
@@ -144,7 +173,7 @@ Expected: FAIL — module `./prefsStorage` does not exist.
 Create `frontend/src/state/prefsStorage.ts`:
 
 ```typescript
-import type { Locale } from '../i18n/messages'
+import { LOCALES, type Locale } from '../i18n/messages'
 
 /** The persisted-preferences schema (B1, #34). Deliberately declared
  * standalone rather than derived from the store type: this is a storage
@@ -218,11 +247,38 @@ export function deleteLegacyBlob(): void {
   }
 }
 
+const isStringArray = (v: unknown): v is string[] =>
+  Array.isArray(v) && v.every((item) => typeof item === 'string')
+
+const isNumberArray = (v: unknown): v is number[] =>
+  Array.isArray(v) && v.every((item) => typeof item === 'number')
+
+const isProfileRecord = (v: unknown): v is Record<string, number> =>
+  typeof v === 'object' &&
+  v !== null &&
+  !Array.isArray(v) &&
+  Object.values(v).every((item) => typeof item === 'number')
+
+/** Per-field runtime validators: localStorage is user-editable, so a
+ * current-version blob can still hold anything (e.g. docFoldersCollapsed:
+ * null would crash `.includes` consumers). An invalid value is treated as
+ * absent — its default applies. */
+const VALIDATORS: { [K in keyof Prefs]: (v: unknown) => v is Prefs[K] } = {
+  uiLocale: (v): v is Locale | null =>
+    v === null ||
+    (typeof v === 'string' && (LOCALES as readonly string[]).includes(v)),
+  lastProfileByLanguage: isProfileRecord,
+  rulesCollapsed: isStringArray,
+  currentDocId: (v): v is number | null => v === null || typeof v === 'number',
+  docSidebarCollapsed: (v): v is boolean => typeof v === 'boolean',
+  docFoldersCollapsed: isNumberArray,
+}
+
 /** Returns the stored preference fields for the user, or null when absent,
  * unparseable, or not the current schema version — callers treat all three
  * identically (defaults apply; the next write replaces the blob). Unknown
- * keys are dropped so a blob can never smuggle extra fields into the
- * store. */
+ * keys and invalid values are dropped so a blob can never smuggle bad data
+ * into the store. */
 export function readPrefs(userId: number): Partial<Prefs> | null {
   let raw: string | null
   try {
@@ -244,7 +300,7 @@ export function readPrefs(userId: number): Partial<Prefs> | null {
   const state = envelope.state as Record<string, unknown>
   const prefs: Partial<Prefs> = {}
   for (const key of PREF_KEYS) {
-    if (key in state) {
+    if (key in state && VALIDATORS[key](state[key])) {
       ;(prefs as Record<string, unknown>)[key] = state[key]
     }
   }
@@ -269,13 +325,14 @@ export function writePrefs(userId: number, prefs: Prefs): void {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `npm test -- --run src/state/prefsStorage.test.ts`
-Expected: PASS (8 tests).
+Expected: PASS (10 tests).
 
 - [ ] **Step 5: Mutation-verify the guards**
 
 1. In `readPrefs`, change `envelope.version !== PREFS_VERSION` to `false` → the wrong-version test must fail. Restore.
 2. In `readPrefs`, replace the `PREF_KEYS` filter loop with `return state as Partial<Prefs>` → the unknown-keys test must fail. Restore.
-3. Re-run: `npm test -- --run src/state/prefsStorage.test.ts` → PASS.
+3. In `readPrefs`, change the loop condition to `if (key in state)` (drop the `VALIDATORS[key](...)` call) → both malformed-value tests must fail. Restore.
+4. Re-run: `npm test -- --run src/state/prefsStorage.test.ts` → PASS.
 
 - [ ] **Step 6: Commit**
 
@@ -936,15 +993,19 @@ describe('per-user preference survival (B1, #34)', () => {
     expect(useStore.getState().uiLocale).toBe('de')
   })
 
-  it('restoreSession authenticates from the token key value present at boot', async () => {
-    // The store field is seeded here directly; the boot-time read itself
+  it('restoreSession authenticates from the token key and retains it', async () => {
+    // Seed the KEY (not just the store field) and initialise state from
+    // readToken(), mirroring the real boot path — the boot-time read itself
     // (token: readToken() at store creation) is covered in
-    // prefsPersistence.test.ts via a fresh module import.
-    useStore.setState({ token: 'tok', authStatus: 'unknown' })
+    // prefsPersistence.test.ts via a fresh module import. Asserting the key
+    // still holds the token afterwards pins that a successful restore
+    // neither rewrites nor accidentally clears it.
+    localStorage.setItem('fabulous-writing-token', 'tok')
+    useStore.setState({ token: readToken(), authStatus: 'unknown' })
     vi.mocked(getMe).mockResolvedValue(user(1))
     await restoreSession()
     expect(useStore.getState().authStatus).toBe('authenticated')
-    expect(readToken()).toBeNull() // restore does not re-write the key
+    expect(readToken()).toBe('tok')
   })
 })
 ```

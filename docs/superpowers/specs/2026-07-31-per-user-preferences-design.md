@@ -31,7 +31,7 @@ Two further decisions from the same session:
 
 | Key | Content | Lifecycle |
 | --- | --- | --- |
-| `fabulous-writing-token` | Raw session token string | Written by login and session restore; removed by logout and expiry |
+| `fabulous-writing-token` | Raw session token string | Written by login; read at boot and retained (not rewritten) during session restore; removed by logout and expiry |
 | `fabulous-writing-settings:<user.id>` | One preference blob per user | Written by the subscriber while that user is signed in; never deleted by the app |
 | `fabulous-writing-settings` (legacy) | Old mixed blob | Deleted once at module init; never read |
 
@@ -47,9 +47,17 @@ defaults apply.
 `uiLocale`, `lastProfileByLanguage`, `rulesCollapsed`, `currentDocId`,
 `docSidebarCollapsed`, `docFoldersCollapsed`.
 
-## The persistence module — `frontend/src/state/prefsPersistence.ts`
+## The persistence layer — `prefsStorage.ts` + `prefsPersistence.ts`
 
-One module owns every localStorage access for the store. Three operations:
+Two modules under `frontend/src/state/` own every localStorage access for
+the store. `prefsStorage.ts` is pure I/O with no runtime store dependency —
+token accessors, `readPrefs`/`writePrefs` (envelope handling plus per-field
+runtime validation, since localStorage is user-editable), legacy-key
+deletion. It exists as a separate module so `store.ts` can read the boot
+token without an import cycle. `prefsPersistence.ts` is the store-aware
+layer: `PREFS_DEFAULTS`, `loadUserPrefs`, the write subscriber, and
+`initPrefsPersistence()` (called once from `main.tsx` at boot). Three
+operations:
 
 ### 1. `loadUserPrefs(userId: number): void`
 
@@ -73,8 +81,8 @@ share one definition.
 
 ### 2. The write subscriber
 
-Registered once at module init via `useStore.subscribe`. On each state change
-it:
+Registered once by `initPrefsPersistence()` (main.tsx, boot) via
+`useStore.subscribe`. On each state change it:
 
 - returns immediately unless at least one of the six persisted fields changed
   identity (all six only change via their setters, so reference comparison is
@@ -155,8 +163,10 @@ the logout-survival test below).
   guard passes: `loadUserPrefs(user.id)` → `setAuth(token, user)`.
   `refreshUser()` is unchanged — it only re-fetches `/me` for quota display
   and must not reload prefs.
-- **Boot sequence:** module init deletes the legacy key and reads the token
-  key → `LoginGate`'s mount effect calls `restoreSession()` as today.
+- **Boot sequence:** `main.tsx` calls `initPrefsPersistence()` (deletes the
+  legacy key, registers the subscriber); store creation reads the token key
+  → `LoginGate`'s mount effect calls `restoreSession()` as today, which
+  retains the stored token without rewriting it.
 
 Not in scope, unchanged by design: `discardForeignBuffer` and the document
 snapshot buffer (already per-owner), `documents.ts`'s stale-`currentDocId`
@@ -167,6 +177,11 @@ synchronization (not provided today either), and the backend (no API changes).
 
 - Unparseable or wrong-version blob → treated as absent; defaults apply; the
   next preference change overwrites it with a valid blob.
+- Malformed field *values* inside a current-version blob (localStorage is
+  user-editable — e.g. `docFoldersCollapsed: null` would crash `.includes`
+  consumers): each field is runtime-validated (locale membership against
+  `LOCALES`, scalar types, record value types, array element types); an
+  invalid field is treated as absent and its default applies.
 - localStorage unavailable/full → app runs with in-memory preferences only,
   as it does today under the middleware.
 - A restore that fails (network, non-401) keeps today's behavior; prefs load
@@ -178,11 +193,13 @@ Frontend only (`npm test -- --run`, plus `npm run build`), following the
 existing store/session test patterns. Every guard below is mutation-verified
 (delete the guard, watch the test fail, restore):
 
-**Module unit tests** (`prefsPersistence.test.ts`):
+**Module unit tests** (`prefsStorage.test.ts`, `prefsPersistence.test.ts`):
 - load with an existing blob applies stored values over defaults;
 - load with no blob resets all six fields to `PREFS_DEFAULTS` even when the
   in-memory state holds another user's values (the #34 leak, pinned);
 - load with corrupt JSON / wrong version falls back to defaults;
+- malformed field values (wrong runtime types, unknown locale) are dropped
+  individually while valid sibling fields load;
 - subscriber writes to the signed-in user's key, envelope format
   `{state, version: 2}`;
 - subscriber does not write while `user` is null;
@@ -200,9 +217,11 @@ existing store/session test patterns. Every guard below is mutation-verified
 - session expiry likewise;
 - same-user silent re-login preserves live in-memory preferences and does not
   re-read the blob;
-- ordering invariant: after `login()`, the incoming user's stored blob — not
-  defaults — is what sits in their namespace (fails if `setAuth` ever runs
-  before `loadUserPrefs`);
+- ordering invariant (load-before-`setAuth` direction): a test subscriber
+  captures the preference fields at the exact transition where `user` first
+  becomes non-null and asserts the stored values are already in place —
+  end-state assertions cannot pin this (a reversed order produces the same
+  final blob), only the transition capture fails on reordering;
 - boot deletes the legacy `fabulous-writing-settings` key and restores the
   session from the token key.
 
