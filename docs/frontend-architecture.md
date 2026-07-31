@@ -982,10 +982,10 @@ from: `--bg`, `--panel`, `--border`, `--text`, `--text-dim`, `--accent`,
 given a real value in both themes rather than a light-only fallback). B18's
 classification rule for anything touching color: surface chrome — borders, panel and
 raised backgrounds — uses these tokens; semantic colors (danger, severity, category
-palettes) stay literal, since their meaning is independent of theme and re-deriving
+palettes) stay literal — though a semantic hue may still need a per-theme contrast variant where a literal fails WCAG on one theme's surfaces (see the held-back amber, #65) — since their meaning is independent of theme and re-deriving
 them per `color-scheme` would blur it. `.advice-note` and `.pinned-note` (dim text),
 `.tier-option` (border and background), and `.admin-users` (row borders) were the five
-sites in `App.css` migrated onto tokens under this rule; `.tier-option.selected`'s
+declarations in `App.css` migrated onto tokens under this rule; `.tier-option.selected`'s
 accent color stays literal as a saturated selected-state fill carrying white text — the same exemption the danger fill takes.
 
 ## Authentication
