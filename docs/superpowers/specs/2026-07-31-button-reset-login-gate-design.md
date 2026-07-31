@@ -45,16 +45,28 @@ B4 layout = split pane (option A of three mockups); tagline copy (EN):
 surface whose text is smaller. Every button either inherits a correct
 ancestor size or declares its surface's established size.
 
-Known violations to fix (from the design-phase inventory; each gets the
-size of its surface's neighboring text, exact rem pinned in the plan by
-reading the adjacent rules):
+Candidates audited (plan phase, by reading each candidate's ancestor
+chain and sibling rules — `font: inherit` inherits from the *parent*, so
+a candidate only violates the rule when its ancestors are unsized while
+its visual siblings are smaller):
 
-- Admin view: create-user and reset-password buttons (class-less, inside
-  `.admin-create` which sets no font-size).
-- Terminology view: add-domain and add-term buttons (class-less).
-- ConfirmDialog: the class-less Cancel button (confirm buttons are
-  styled; Cancel must visually pair with them).
-- Document sidebar: the doc-list retry button (class-less).
+- **ConfirmDialog Cancel + danger confirm — the one true violation.**
+  Ancestors (`.confirm-dialog-buttons` → `dialog.app-dialog`) set no
+  size → both buttons render 1rem beside the dialog's 0.85rem body text
+  (`.confirm-dialog p`). Fix: `.confirm-dialog-buttons button
+  { font-size: 0.85rem; }` — sets no `color`, so
+  `.confirm-dialog-danger` keeps winning unchanged.
+- Admin create-user/reset-password buttons: the admin view is a 1rem
+  surface (table cells and inputs all inherit root); the buttons match
+  their surface — **no change**.
+- Terminology add-domain button: the domains aside is likewise an
+  unsized 1rem surface — **no change**. Add-term button: sits inside
+  `.term-table table` (0.85rem) and inherits it — **no change**.
+- Doc-list retry button: inherits 0.78rem from its parent
+  `p.doc-list-error` — **no change**.
+
+The screenshot sweep still covers all audited surfaces to confirm the
+measurements visually.
 
 Explicitly *not* changed (deliberate sizes, verified during design):
 `.view-switch button`, `.icon-button`, `.login-submit`, `.check-button` /
