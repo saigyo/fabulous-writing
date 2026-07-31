@@ -28,6 +28,17 @@
   box-sizing: border-box;
 }
 
+/* Form controls inherit the app font instead of UA defaults. Global home
+   for the reset (B11, #52): index.css loads first, independent of
+   App.css's import timing. Surfaces that need a size other than their
+   parent's set font-size on their own class — never a second element-
+   level rule. */
+input,
+select,
+button {
+  font: inherit;
+}
+
 body {
   margin: 0;
   background: var(--bg);
