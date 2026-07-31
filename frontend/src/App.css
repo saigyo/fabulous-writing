@@ -742,7 +742,7 @@
   margin: 0.4rem 0 0;
   font-size: 0.78rem;
   font-style: italic;
-  color: #6b7280;
+  color: var(--text-dim);
 }
 
 /* ---- quality score ---- */
@@ -1509,9 +1509,9 @@ input {
 .tier-option {
   font-size: 0.78rem;
   padding: 3px 8px;
-  border: 1px solid #d8d8e0;
+  border: 1px solid var(--border);
   border-radius: 999px;
-  background: #fff;
+  background: var(--bg);
   cursor: pointer;
 }
 
@@ -1528,7 +1528,7 @@ input {
 
 .pinned-note {
   font-size: 0.75rem;
-  color: #667;
+  color: var(--text-dim);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -2151,7 +2151,7 @@ dialog.app-dialog h2 {
 .admin-view { padding: 1rem 1.5rem; overflow-y: auto; }
 .admin-create { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
 .admin-users { border-collapse: collapse; }
-.admin-users th, .admin-users td { padding: 0.3rem 0.75rem; text-align: left; border-bottom: 1px solid #ddd; }
+.admin-users th, .admin-users td { padding: 0.3rem 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
 .admin-error { color: #e5484d; }
 .admin-self { opacity: 0.6; }
 .admin-inactive td { opacity: 0.55; }
