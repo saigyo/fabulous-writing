@@ -3514,3 +3514,43 @@ repo has no prettier config — hand-dedent only), final Opus review found
 (FolderDefaults lacked `returnFocusTo`; popover Escape guard shipped
 uncovered) — one fix wave, scoped re-review clean. 507 → 523 frontend
 tests, every guard mutation-verified; build + oxlint clean.
+
+## 2026-07-31 — B1: per-user UI preference survival (PRs #59, #60)
+
+**What.** Persisted preferences (`uiLocale`, `lastProfileByLanguage`,
+`rulesCollapsed`, `currentDocId`, `docSidebarCollapsed`,
+`docFoldersCollapsed`) moved from purge-on-user-change to per-user
+localStorage namespaces (`fabulous-writing-settings:<user.id>`) that
+survive logout, expiry, and user switches. The zustand `persist`
+middleware came off the store — it writes storage on *every* `setState`,
+which made four distinct cross-user clobber traps ordering-dependent —
+replaced by an explicit layer: `prefsStorage.ts` (pure I/O, envelope
+`{"state":…,"version":2}` kept zustand-compatible, per-field runtime
+validation so a hand-edited blob can't crash `.includes` consumers,
+token accessors) and `prefsPersistence.ts` (atomic defaults+blob
+`loadUserPrefs` — the #34 leak impossible by construction — plus a write
+subscriber gated on pref-field identity change AND signed-in user). The
+token lives in its own key (`fabulous-writing-token`, readable at boot
+before the user is known); the legacy mixed blob is deleted once at boot
+(clean break, decided with the owner: nobody migrates, everyone signs in
+once).
+
+**The invariant.** One rule governs session transitions: pref fields are
+bulk-reset/loaded only while `user` is null — `setAuth(null, null)`
+*before* `resetSessionState()` on the way out (the old order would write
+reset defaults into the departing user's namespace), `loadUserPrefs`
+*before* `setAuth(token, user)` on the way in. The in-direction is
+unobservable end-state-wise, so it's pinned by a subscriber capturing
+`uiLocale` at the user null→non-null transition — both Opus plan review
+and Copilot independently flagged that end-state assertions can't catch
+it.
+
+**Process.** Spec/plan PR #59 (Opus plan review *executed* the plan
+end-to-end pre-merge, 8 findings; two Copilot rounds, 5 comments + 3
+suppressed findings all fixed). Implementation PR #60 via SDD (5 tasks,
+haiku/sonnet implementers, per-task reviews all clean on first pass),
+final Opus whole-branch review: no Critical/Important, 4 minors (incl. a
+leaking `vi.stubGlobal` throwing-localStorage that `restoreAllMocks`
+doesn't undo — canary-verified) fixed in one wave, scoped re-review
+PASS. 535 → 551 frontend tests, every guard mutation-verified; no
+backend changes.
