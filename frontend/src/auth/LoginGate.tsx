@@ -5,6 +5,24 @@ import { Wordmark } from '../Wordmark'
 import { LoginForm } from './LoginForm'
 import { restoreSession } from './session'
 
+/** Split shell shared by every visible pre-auth state (B4, #37): brand
+ * pane (wordmark + tagline) beside the pane content. The gate's state
+ * branching stays in LoginGate — this is layout only. */
+function GateShell({ children }: { children: ReactNode }) {
+  const m = useMessages()
+  return (
+    <div className="login-gate">
+      <div className="login-split">
+        <div className="login-brand">
+          <Wordmark />
+          <p className="login-tagline">{m.loginTagline}</p>
+        </div>
+        <div className="login-pane">{children}</div>
+      </div>
+    </div>
+  )
+}
+
 /** Sits above the whole app shell. Renders `children` only once authStatus
  * reaches 'authenticated' — never mounted-but-hidden — so App's mount
  * effects (initDocuments, Header's provider/domain/language/routing
@@ -23,9 +41,8 @@ export function LoginGate({ children }: { children: ReactNode }) {
 
   if (restoreFailed) {
     return (
-      <div className="login-gate">
+      <GateShell>
         <div className="login-card">
-          <Wordmark />
           {/* role="alert": this text replaces the whole gate asynchronously
               (after the mount effect's restoreSession() fails), so without a
               live-region role assistive technology may never announce that
@@ -41,16 +58,16 @@ export function LoginGate({ children }: { children: ReactNode }) {
             {m.connectionRetry}
           </button>
         </div>
-      </div>
+      </GateShell>
     )
   }
 
   if (authStatus === 'authenticated') return <>{children}</>
   if (authStatus === 'anonymous') {
     return (
-      <div className="login-gate">
+      <GateShell>
         <LoginForm />
-      </div>
+      </GateShell>
     )
   }
   // 'unknown': the initial restore is still in flight. Render nothing —

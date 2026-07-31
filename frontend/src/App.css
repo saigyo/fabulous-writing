@@ -20,9 +20,9 @@
   background: var(--panel);
 }
 
-/* Shared by Header() and LoginForm/LoginGate's card (see Wordmark.tsx) —
-   kept on the component's own class rather than duplicated per container,
-   so the two cannot silently drift apart the way two copies of the inline
+/* Shared by Header() and LoginGate's brand pane (see Wordmark.tsx) — kept
+   on the component's own class rather than duplicated per container, so
+   the two cannot silently drift apart the way two copies of the inline
    JSX already had. Each container still sets its own font-size below. */
 .wordmark {
   margin: 0;
@@ -1915,7 +1915,7 @@ dialog.app-dialog h2 {
 /* ---- login gate ---- */
 
 .login-gate {
-  height: 100vh;
+  min-height: 100vh;
   width: 100vw;
   display: flex;
   align-items: center;
@@ -1935,9 +1935,62 @@ dialog.app-dialog h2 {
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
 }
 
-.login-card .wordmark {
-  font-size: 1.25rem;
+/* B4 (#37) split shell: brand pane beside the form pane at >=720px,
+   stacked below. Existing tokens only — light and dark both work with
+   no theme-specific rules. */
+.login-split {
+  display: flex;
+  align-items: stretch;
+  width: min(52rem, 100%);
+}
+
+.login-brand {
+  flex: 1.2;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: 2.5rem;
+  background: linear-gradient(135deg, var(--accent-soft), transparent 70%);
+  border-radius: 12px 0 0 12px;
+}
+
+.login-brand .wordmark {
+  font-size: 2rem;
   font-weight: 700;
+}
+
+.login-tagline {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.login-pane {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1.5rem;
+}
+
+@media (max-width: 719px) {
+  .login-split {
+    flex-direction: column;
+    align-items: center;
+  }
+  .login-brand {
+    align-items: center;
+    text-align: center;
+    padding: 1.5rem 1.5rem 0.75rem;
+    /* The spec's accent wash stays in the stacked layout too — only the
+       gradient's corner rounding adapts to the pane now sitting on top. */
+    background: linear-gradient(180deg, var(--accent-soft), transparent 85%);
+    border-radius: 12px 12px 0 0;
+  }
+  .login-brand .wordmark {
+    font-size: 1.5rem;
+  }
 }
 
 .login-field {

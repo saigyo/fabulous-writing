@@ -2,7 +2,6 @@ import { useState, type FormEvent } from 'react'
 import { HttpError } from '../api/client'
 import { useMessages } from '../i18n'
 import { useStore } from '../state/store'
-import { Wordmark } from '../Wordmark'
 import { login } from './session'
 
 /** The card shown while authStatus is 'anonymous'. login()'s own boolean
@@ -40,7 +39,6 @@ export function LoginForm() {
 
   return (
     <form className="login-card" onSubmit={handleSubmit}>
-      <Wordmark />
       <label className="login-field">
         {m.signInEmail}
         <input

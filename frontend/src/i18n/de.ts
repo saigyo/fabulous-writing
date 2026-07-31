@@ -243,6 +243,7 @@ export const de: Messages = {
   folderDefaultsError: 'Speichern der Ordner-Standardwerte fehlgeschlagen.',
 
   // Authentifizierung
+  loginTagline: 'Schreib klar. Geprüft, nicht bewertet.',
   signInEmail: 'E-Mail',
   signInPassword: 'Passwort',
   signInSubmit: 'Anmelden',
