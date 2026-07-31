@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { readToken } from './prefsStorage'
 import type {
   DocumentSummary,
   Folder,
@@ -228,45 +228,17 @@ function migrateByFinding<T>(
   )
 }
 
-// Persist options shared with tests: zustand v5 gives tests no handle on the
-// inline options, so the SAME object is exported (never a copy — a copy can
-// silently drift from what the store actually runs).
-//
-// token was added to the allowlist without a version bump: an older blob
-// simply lacks the key, and token: null is the correct initial value, so
-// there is nothing for a migrate branch to do. user is deliberately never
-// persisted — see the field's own comment.
-export const persistConfig = {
-  name: 'fabulous-writing-settings',
-  version: 2,
-  // v0 predates tiers: those users had explicitly chosen provider/model,
-  // so they stay pinned rather than silently switching models.
-  // v1 -> v2: header settings moved into per-document storage; stale keys
-  // in old blobs are harmless extras and rehydrate transiently (the
-  // legacy-document migration in documents.ts still reads them once).
-  migrate: (persisted: unknown, version: number): unknown =>
-    version === 0
-      ? { ...(persisted as object), tier: null }
-      : (persisted as object),
-  partialize: (state: AppState) => ({
-    uiLocale: state.uiLocale,
-    lastProfileByLanguage: state.lastProfileByLanguage,
-    rulesCollapsed: state.rulesCollapsed,
-    currentDocId: state.currentDocId,
-    docSidebarCollapsed: state.docSidebarCollapsed,
-    docFoldersCollapsed: state.docFoldersCollapsed,
-    token: state.token,
-  }),
-}
-
 // Every AppStateData field except the six auth fields (token, user,
-// authStatus, sessionExpired, restoreFailed, authGeneration) — those are set
-// explicitly by every resetSessionState() caller right afterwards (see
-// session.ts), never through this object. authGeneration specifically must
-// survive a reset untouched: it is bumped only by login()'s own commit, and
-// resetSessionState() runs before that bump on a cross-user login, so
-// resetting it here would just be overwritten a line later anyway — keeping
-// it out of this object makes that explicit instead of coincidental.
+// authStatus, sessionExpired, restoreFailed, authGeneration) — those are
+// managed explicitly by resetSessionState()'s callers via setAuth(),
+// never through this object. Since B1 (#34), callers null the auth
+// fields BEFORE the reset (the ordering invariant in session.ts: the
+// prefs write subscriber must see user === null while pref fields are
+// bulk-reset) and set the new session's values after it. authGeneration
+// specifically must survive a reset untouched: it is bumped only by
+// login()'s own commit, which runs after the reset on a cross-user
+// login — keeping it out of this object makes that explicit instead of
+// coincidental.
 // Exported (rather than enumerated again inside resetSessionState()) so a
 // field added here is reset automatically instead of silently leaking from
 // one account's session into the next.
@@ -322,174 +294,161 @@ export const INITIAL_DATA: Omit<
   docFoldersCollapsed: [],
 }
 
-/** Resets the whole data half of the store — not just the persisted blob.
- * Most of the store (tracked findings, documents, folders, scorecard, ...)
- * is never persisted and so is invisible to `persist.clearStorage()` alone;
- * left alone it would survive a gate swap and render the previous account's
- * data until async initialisation replaces it (or forever, if that
- * initialisation fails). Called on logout, on session expiry, and on a
- * login that changes the user — see session.ts for which. */
+/** Resets the whole data half of the store — not just the formerly
+ * persisted slice. Most of the store (tracked findings, documents,
+ * folders, scorecard, ...) is invisible to storage; left alone it would
+ * survive a gate swap and render the previous account's data. Called on
+ * logout, on session expiry, and on a login that changes the user — see
+ * session.ts for which. Storage is untouched: per-user preference blobs
+ * survive every session transition by design (B1, #34), and the write
+ * subscriber (prefsPersistence.ts) ignores this reset because every
+ * caller nulls the user first — the ordering invariant documented in
+ * session.ts. */
 export function resetSessionState(): void {
-  useStore.persist.clearStorage()
-  // Order matters, but not the way it looks: clearStorage() removes the
-  // localStorage key, then setState() immediately triggers the persist
-  // middleware to write it straight back — with token still holding
-  // whatever it was before this call, since every caller (login/logout/
-  // expireSession) sets auth via setAuth() right after this returns. So the
-  // key ends up *recreated with INITIAL_DATA's values plus the old token*,
-  // not removed, for the instant between this line and that setAuth() call.
-  // All three callers still end up correct because they all call setAuth()
-  // immediately afterwards, but do not reorder this to setState() then
-  // clearStorage() — that would instead leave the *reset* state (not the
-  // old one) sitting in storage during that same instant, which is a
-  // smaller window but the same class of bug the moment a caller is added
-  // that doesn't immediately call setAuth().
   useStore.setState(INITIAL_DATA) // shallow merge: the actions survive
 }
 
-export const useStore = create<AppState>()(
-  persist(
-    (set) => ({
-      ...INITIAL_DATA,
-      token: null,
-      user: null,
-      authStatus: 'unknown',
-      sessionExpired: false,
-      restoreFailed: false,
-      authGeneration: 0,
+export const useStore = create<AppState>()((set) => ({
+  ...INITIAL_DATA,
+  // The only field initialised from storage: the token must be readable
+  // before we know who the user is, so it lives in its own key
+  // (prefsStorage.ts) rather than any per-user preference blob.
+  token: readToken(),
+  user: null,
+  authStatus: 'unknown',
+  sessionExpired: false,
+  restoreFailed: false,
+  authGeneration: 0,
 
-      setLanguage: (language) => set({ language }),
-      setUiLocale: (uiLocale) => set({ uiLocale }),
-      setDomainIds: (domainIds) => set({ domainIds }),
-      setProvider: (provider) => set({ provider, model: null, tier: null }),
-      setModel: (model) => set({ model, tier: null }),
-      setTier: (tier) => set({ tier }),
-      setPinned: (provider, model) => set({ provider, model, tier: null }),
-      setRouting: (routing) => set({ routing }),
-      setLlmAuto: (llmAuto) => set({ llmAuto }),
-      setActiveView: (activeView) => set({ activeView }),
-      setTracked: (tracked, selectedId) =>
-        set((state) => {
-          const idMap = mapEquivalentIds(state.tracked, tracked)
-          return {
-            tracked,
-            selectedId,
-            extraSuggestions: migrateByFinding(state.extraSuggestions, idMap),
-            suggestErrors: migrateByFinding(state.suggestErrors, idMap),
-            suggestHeldBack: migrateByFinding(state.suggestHeldBack, idMap),
-            suggestAdvice: migrateByFinding(state.suggestAdvice, idMap),
-            rewrites: migrateByFinding(state.rewrites, idMap),
-            rewriteErrors: migrateByFinding(state.rewriteErrors, idMap),
-            rewriteHeldBack: migrateByFinding(state.rewriteHeldBack, idMap),
-            rewriteAdvice: migrateByFinding(state.rewriteAdvice, idMap),
-          }
-        }),
-      setSeverityFilter: (severityFilter) => set({ severityFilter }),
-      setSourceFilter: (sourceFilter) => set({ sourceFilter }),
-      setCheckPhase: (checkPhase) => set({ checkPhase }),
-      setLlmError: (llmError) => set({ llmError }),
-      setProviders: (providers) => set({ providers }),
-      setDomains: (domains) => set({ domains }),
-      setLanguages: (languages) => set({ languages }),
-      setProfiles: (profiles) => set({ profiles }),
-      // apply=true copies the profile's values into the header selectors.
-      selectProfile: (profile, apply) =>
-        set((state) => ({
-          profileId: profile.id,
-          lastProfileByLanguage: {
-            ...state.lastProfileByLanguage,
-            [profile.language]: profile.id,
-          },
-          ...(apply ? applyProfileToHeader(profile) : {}),
-        })),
-      toggleRuleSection: (key) =>
-        set((state) => ({
-          rulesCollapsed: state.rulesCollapsed.includes(key)
-            ? state.rulesCollapsed.filter((k) => k !== key)
-            : [...state.rulesCollapsed, key],
-        })),
-      setRulesCollapsed: (rulesCollapsed) => set({ rulesCollapsed }),
-      setScorecard: (scorecard) => set({ scorecard, scorecardStale: false }),
-      clearScorecard: () => set({ scorecard: null, scorecardStale: false }),
-      markScorecardStale: () =>
-        set((state) => (state.scorecard ? { scorecardStale: true } : {})),
-      setDocWords: (docWords) => set({ docWords }),
-      setDocChars: (docChars) => set({ docChars }),
-      setSuggestPending: (suggestPendingId) => set({ suggestPendingId }),
-      setExtraSuggestions: (findingId, suggestions) =>
-        set((state) => ({
-          extraSuggestions: { ...state.extraSuggestions, [findingId]: suggestions },
-        })),
-      setSuggestError: (findingId, error) =>
-        set((state) => ({
-          suggestErrors: withEntry(state.suggestErrors, findingId, error),
-        })),
-      setSuggestHeldBack: (findingId, candidates) =>
-        set((state) => ({
-          suggestHeldBack: withEntry(state.suggestHeldBack, findingId, candidates),
-        })),
-      setSuggestAdvice: (findingId, advice) =>
-        set((state) => ({
-          suggestAdvice: withEntry(state.suggestAdvice, findingId, advice),
-        })),
-      setRewritePending: (rewritePendingId) => set({ rewritePendingId }),
-      setRewrite: (findingId, rewrite) =>
-        set((state) => ({
-          rewrites: withEntry(state.rewrites, findingId, rewrite),
-        })),
-      setRewriteError: (findingId, error) =>
-        set((state) => ({
-          rewriteErrors: withEntry(state.rewriteErrors, findingId, error),
-        })),
-      setRewriteHeldBack: (findingId, heldBack) =>
-        set((state) => ({
-          rewriteHeldBack: withEntry(state.rewriteHeldBack, findingId, heldBack),
-        })),
-      setRewriteAdvice: (findingId, advice) =>
-        set((state) => ({
-          rewriteAdvice: withEntry(state.rewriteAdvice, findingId, advice),
-        })),
-      setDocuments: (documents) => set({ documents }),
-      setDocMeta: (docMeta) =>
-        set({ docMeta, currentDocId: docMeta ? docMeta.id : null }),
-      patchDocMeta: (patch) =>
-        set((state) =>
-          state.docMeta ? { docMeta: { ...state.docMeta, ...patch } } : {},
-        ),
-      // Merge server-returned fields into one summary and re-sort. Entries
-      // only move when the server bumped edited_at — the client never fakes
-      // recency locally.
-      patchDocumentSummary: (id, patch) =>
-        set((state) => {
-          if (!state.documents.some((d) => d.id === id)) return {}
-          const documents = state.documents
-            .map((d) => (d.id === id ? { ...d, ...patch } : d))
-            .sort(
-              (a, b) =>
-                b.edited_at.localeCompare(a.edited_at) || b.id - a.id,
-            )
-          return { documents }
-        }),
-      toggleDocSidebar: () =>
-        set((state) => ({ docSidebarCollapsed: !state.docSidebarCollapsed })),
-      setDocListError: (docListError) => set({ docListError }),
-      setFolders: (folders) => set({ folders }),
-      toggleFolderCollapsed: (id) =>
-        set((state) => ({
-          docFoldersCollapsed: state.docFoldersCollapsed.includes(id)
-            ? state.docFoldersCollapsed.filter((f) => f !== id)
-            : [...state.docFoldersCollapsed, id],
-        })),
-      setAuth: (token, user) =>
-        set({
-          token,
-          user,
-          authStatus: token && user ? 'authenticated' : 'anonymous',
-          restoreFailed: false,
-        }),
-      bumpAuthGeneration: () =>
-        set((state) => ({ authGeneration: state.authGeneration + 1 })),
+  setLanguage: (language) => set({ language }),
+  setUiLocale: (uiLocale) => set({ uiLocale }),
+  setDomainIds: (domainIds) => set({ domainIds }),
+  setProvider: (provider) => set({ provider, model: null, tier: null }),
+  setModel: (model) => set({ model, tier: null }),
+  setTier: (tier) => set({ tier }),
+  setPinned: (provider, model) => set({ provider, model, tier: null }),
+  setRouting: (routing) => set({ routing }),
+  setLlmAuto: (llmAuto) => set({ llmAuto }),
+  setActiveView: (activeView) => set({ activeView }),
+  setTracked: (tracked, selectedId) =>
+    set((state) => {
+      const idMap = mapEquivalentIds(state.tracked, tracked)
+      return {
+        tracked,
+        selectedId,
+        extraSuggestions: migrateByFinding(state.extraSuggestions, idMap),
+        suggestErrors: migrateByFinding(state.suggestErrors, idMap),
+        suggestHeldBack: migrateByFinding(state.suggestHeldBack, idMap),
+        suggestAdvice: migrateByFinding(state.suggestAdvice, idMap),
+        rewrites: migrateByFinding(state.rewrites, idMap),
+        rewriteErrors: migrateByFinding(state.rewriteErrors, idMap),
+        rewriteHeldBack: migrateByFinding(state.rewriteHeldBack, idMap),
+        rewriteAdvice: migrateByFinding(state.rewriteAdvice, idMap),
+      }
     }),
-    persistConfig,
-  ),
-)
+  setSeverityFilter: (severityFilter) => set({ severityFilter }),
+  setSourceFilter: (sourceFilter) => set({ sourceFilter }),
+  setCheckPhase: (checkPhase) => set({ checkPhase }),
+  setLlmError: (llmError) => set({ llmError }),
+  setProviders: (providers) => set({ providers }),
+  setDomains: (domains) => set({ domains }),
+  setLanguages: (languages) => set({ languages }),
+  setProfiles: (profiles) => set({ profiles }),
+  // apply=true copies the profile's values into the header selectors.
+  selectProfile: (profile, apply) =>
+    set((state) => ({
+      profileId: profile.id,
+      lastProfileByLanguage: {
+        ...state.lastProfileByLanguage,
+        [profile.language]: profile.id,
+      },
+      ...(apply ? applyProfileToHeader(profile) : {}),
+    })),
+  toggleRuleSection: (key) =>
+    set((state) => ({
+      rulesCollapsed: state.rulesCollapsed.includes(key)
+        ? state.rulesCollapsed.filter((k) => k !== key)
+        : [...state.rulesCollapsed, key],
+    })),
+  setRulesCollapsed: (rulesCollapsed) => set({ rulesCollapsed }),
+  setScorecard: (scorecard) => set({ scorecard, scorecardStale: false }),
+  clearScorecard: () => set({ scorecard: null, scorecardStale: false }),
+  markScorecardStale: () =>
+    set((state) => (state.scorecard ? { scorecardStale: true } : {})),
+  setDocWords: (docWords) => set({ docWords }),
+  setDocChars: (docChars) => set({ docChars }),
+  setSuggestPending: (suggestPendingId) => set({ suggestPendingId }),
+  setExtraSuggestions: (findingId, suggestions) =>
+    set((state) => ({
+      extraSuggestions: { ...state.extraSuggestions, [findingId]: suggestions },
+    })),
+  setSuggestError: (findingId, error) =>
+    set((state) => ({
+      suggestErrors: withEntry(state.suggestErrors, findingId, error),
+    })),
+  setSuggestHeldBack: (findingId, candidates) =>
+    set((state) => ({
+      suggestHeldBack: withEntry(state.suggestHeldBack, findingId, candidates),
+    })),
+  setSuggestAdvice: (findingId, advice) =>
+    set((state) => ({
+      suggestAdvice: withEntry(state.suggestAdvice, findingId, advice),
+    })),
+  setRewritePending: (rewritePendingId) => set({ rewritePendingId }),
+  setRewrite: (findingId, rewrite) =>
+    set((state) => ({
+      rewrites: withEntry(state.rewrites, findingId, rewrite),
+    })),
+  setRewriteError: (findingId, error) =>
+    set((state) => ({
+      rewriteErrors: withEntry(state.rewriteErrors, findingId, error),
+    })),
+  setRewriteHeldBack: (findingId, heldBack) =>
+    set((state) => ({
+      rewriteHeldBack: withEntry(state.rewriteHeldBack, findingId, heldBack),
+    })),
+  setRewriteAdvice: (findingId, advice) =>
+    set((state) => ({
+      rewriteAdvice: withEntry(state.rewriteAdvice, findingId, advice),
+    })),
+  setDocuments: (documents) => set({ documents }),
+  setDocMeta: (docMeta) =>
+    set({ docMeta, currentDocId: docMeta ? docMeta.id : null }),
+  patchDocMeta: (patch) =>
+    set((state) =>
+      state.docMeta ? { docMeta: { ...state.docMeta, ...patch } } : {},
+    ),
+  // Merge server-returned fields into one summary and re-sort. Entries
+  // only move when the server bumped edited_at — the client never fakes
+  // recency locally.
+  patchDocumentSummary: (id, patch) =>
+    set((state) => {
+      if (!state.documents.some((d) => d.id === id)) return {}
+      const documents = state.documents
+        .map((d) => (d.id === id ? { ...d, ...patch } : d))
+        .sort(
+          (a, b) =>
+            b.edited_at.localeCompare(a.edited_at) || b.id - a.id,
+        )
+      return { documents }
+    }),
+  toggleDocSidebar: () =>
+    set((state) => ({ docSidebarCollapsed: !state.docSidebarCollapsed })),
+  setDocListError: (docListError) => set({ docListError }),
+  setFolders: (folders) => set({ folders }),
+  toggleFolderCollapsed: (id) =>
+    set((state) => ({
+      docFoldersCollapsed: state.docFoldersCollapsed.includes(id)
+        ? state.docFoldersCollapsed.filter((f) => f !== id)
+        : [...state.docFoldersCollapsed, id],
+    })),
+  setAuth: (token, user) =>
+    set({
+      token,
+      user,
+      authStatus: token && user ? 'authenticated' : 'anonymous',
+      restoreFailed: false,
+    }),
+  bumpAuthGeneration: () =>
+    set((state) => ({ authGeneration: state.authGeneration + 1 })),
+}))

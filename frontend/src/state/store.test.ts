@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { HeldBackSuggestion } from '../api/client'
 import type { TrackedFinding } from '../editor/findings'
 import type { Finding } from '../types'
-import { persistConfig, resetSessionState, useStore } from './store'
+import { resetSessionState, useStore } from './store'
 
 function tracked(id: string, from: number, to: number, text: string): TrackedFinding {
   const finding: Finding = {
@@ -199,26 +199,6 @@ describe('document state', () => {
     expect(useStore.getState().documents.map((d) => d.id)).toEqual([3, 1])
   })
 
-  it('persist v1 -> v2 migration keeps old blobs loadable', () => {
-    // The migrate function must accept a v1 blob (which still contains the
-    // now-transient settings keys) without throwing.
-    const migrated = persistConfig.migrate(
-      { language: 'de', provider: 'ollama', uiLocale: 'de', rulesCollapsed: [] },
-      1,
-    )
-    expect((migrated as any).uiLocale).toBe('de')
-    expect(persistConfig.version).toBe(2)
-  })
-
-  it('persists the token but never the user object', () => {
-    const persisted = persistConfig.partialize({
-      ...useStore.getState(),
-      token: 'a-token',
-      user: { id: 1, email: 'ada@example.com', tier: 'basic', is_admin: false },
-    } as never) as Record<string, unknown>
-    expect(persisted.token).toBe('a-token')
-    expect(persisted.user).toBeUndefined()
-  })
 })
 
 describe('ActiveView', () => {

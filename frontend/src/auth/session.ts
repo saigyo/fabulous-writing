@@ -2,6 +2,8 @@ import { getMe, HttpError, postLogin, setUnauthorizedHandler } from '../api/clie
 import { cancelInFlightCheck } from '../checking/cancelSlot'
 import { clearLegacyText, invalidateDocumentWork } from '../documents/documents'
 import { clearSnapshot, readSnapshot } from '../documents/buffer'
+import { loadUserPrefs } from '../state/prefsPersistence'
+import { clearToken, writeToken } from '../state/prefsStorage'
 import { resetSessionState, useStore } from '../state/store'
 import { setRefreshUserHandler } from './refreshSlot'
 
@@ -29,11 +31,23 @@ export async function login(email: string, password: string): Promise<boolean> {
   // rather than signing a deliberately logged-out user back in.
   if (startedAt !== generation) return false
   generation++
-  // Purge is for a *user change*, per Decision 1. Re-authenticating as the
-  // same person — which Task 8 does silently after a password change — must
-  // not wipe their locale, current document and collapse states.
-  if (previousUserId !== user.id) resetSessionState()
+  // A *user change* purges in-memory state and swaps preference
+  // namespaces; a same-user re-login (the silent re-auth after a
+  // password change, auth/AccountMenu.tsx) must not touch the user's
+  // live preferences at all.
+  if (previousUserId !== user.id) {
+    // Ordering invariant (B1, #34): bulk pref resets/loads happen only
+    // while the store's user is null, so the write subscriber
+    // (prefsPersistence.ts) cannot commit them to any namespace. In
+    // practice user is already null here — the login form only renders
+    // while anonymous — but the explicit setAuth keeps the invariant
+    // caller-proof.
+    useStore.getState().setAuth(null, null)
+    resetSessionState()
+    loadUserPrefs(user.id)
+  }
   discardForeignBuffer(user.id)   // keeps this user's own unsaved work
+  writeToken(token)
   useStore.setState({ sessionExpired: false, restoreFailed: false })
   useStore.getState().setAuth(token, user)
   // Reactive counterpart to the generation++ above (see authGeneration's own
@@ -46,27 +60,38 @@ export async function login(email: string, password: string): Promise<boolean> {
   return true
 }
 
-/** Deliberate exit. The machine may be handed over, so nothing survives. */
+/** Deliberate exit. The session dies — token and all in-memory state —
+ * but the user's preference blob survives by design (B1, #34): it holds
+ * no document content and no credentials, and is restored on their next
+ * login. */
 export function logout(): void {
   generation++
   invalidateDocumentWork()   // first: pending saves must not write the buffer back
   cancelInFlightCheck()
+  clearToken()
+  // Ordering invariant (B1, #34): null the user BEFORE
+  // resetSessionState(), or the write subscriber would commit the reset
+  // defaults into the departing user's namespace — destroying the
+  // preferences that must survive this logout.
+  useStore.getState().setAuth(null, null)
   resetSessionState()
   clearSnapshot()
   clearLegacyText()
-  useStore.getState().setAuth(null, null)
 }
 
-/** The token stopped working. The same user is almost certainly coming back,
- *  so the document buffer is deliberately left alone — it is the only copy of
- *  their unsaved text, and Task 6's notice promises it in seven languages. */
+/** The token stopped working. The same user is almost certainly coming
+ *  back, so the document buffer is deliberately left alone — it is the
+ *  only copy of their unsaved text. Their preference blob survives too
+ *  (B1, #34). */
 export function expireSession(): void {
   generation++
   invalidateDocumentWork()   // the buffer survives; the work that rewrites it must not
   cancelInFlightCheck()
+  clearToken()
+  // Same ordering invariant as logout(): user null before the reset.
+  useStore.getState().setAuth(null, null)
   resetSessionState()
   useStore.setState({ sessionExpired: true })
-  useStore.getState().setAuth(null, null)
 }
 
 let restoreInFlight: Promise<void> | null = null
@@ -101,6 +126,11 @@ async function runRestore(): Promise<void> {
   try {
     const user = await getMe()
     if (startedAt !== generation) return
+    // Ordering invariant (B1, #34): load the restored user's preferences
+    // before setAuth makes them visible — while user is still null the
+    // write subscriber stays silent, and once setAuth lands the loaded
+    // values are already in place, so no write fires.
+    loadUserPrefs(user.id)
     useStore.getState().setAuth(token, user)
   } catch (error) {
     // Not the live path for a 401 as of Task 4: getMe()'s own request()
