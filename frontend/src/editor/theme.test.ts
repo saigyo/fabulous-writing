@@ -1,8 +1,10 @@
 // @vitest-environment happy-dom
-import { EditorState } from '@codemirror/state'
+import { defaultHighlightStyle } from '@codemirror/language'
+import { EditorState, type TransactionSpec } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
+import { tags } from '@lezer/highlight'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { editorTheme, watchTheme } from './theme'
+import { darkSpecs, editorTheme, watchTheme } from './theme'
 
 type Listener = (event: { matches: boolean }) => void
 
@@ -36,21 +38,42 @@ describe('editorTheme', () => {
     expect(state.facet(EditorView.darkTheme)).toBe(true)
   })
 
-  it('contributes nothing in light', () => {
+  it('does not flip the dark facet in light', () => {
     stubMatchMedia(false)
     const state = EditorState.create({ extensions: [editorTheme()] })
     expect(state.facet(EditorView.darkTheme)).toBe(false)
   })
 })
 
+describe('darkSpecs', () => {
+  it('substitutes exactly the meta and url specs with dark colors', () => {
+    const metaSpecs = defaultHighlightStyle.specs.filter((spec) => spec.tag === tags.meta)
+    const urlSpecs = defaultHighlightStyle.specs.filter(
+      (spec) => Array.isArray(spec.tag) && spec.tag.includes(tags.url),
+    )
+    expect(metaSpecs).toHaveLength(1)
+    expect(urlSpecs).toHaveLength(1)
+
+    const metaIndex = defaultHighlightStyle.specs.indexOf(metaSpecs[0])
+    const urlIndex = defaultHighlightStyle.specs.indexOf(urlSpecs[0])
+    expect(darkSpecs[metaIndex].color).toBe('var(--text-dim)')
+    expect(darkSpecs[urlIndex].color).toBe('var(--accent)')
+  })
+})
+
 describe('watchTheme', () => {
   it('reconfigures the view when the OS scheme changes', () => {
-    const media = stubMatchMedia()
+    const media = stubMatchMedia(false)
+    const state = EditorState.create({ extensions: [editorTheme()] })
+    expect(state.facet(EditorView.darkTheme)).toBe(false)
+
     const dispatch = vi.fn()
     watchTheme({ dispatch } as unknown as EditorView)
     media.fire(true)
+
     expect(dispatch).toHaveBeenCalledTimes(1)
-    expect(dispatch.mock.calls[0][0]).toHaveProperty('effects')
+    const newState = state.update(dispatch.mock.calls[0][0] as TransactionSpec).state
+    expect(newState.facet(EditorView.darkTheme)).toBe(true)
   })
 
   it('stops following after cleanup', () => {
