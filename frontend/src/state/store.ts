@@ -106,9 +106,10 @@ interface AppStateData {
   // Collapsed folder groups in the document sidebar (folder ids).
   docFoldersCollapsed: number[]
 
-  // Auth. token is the only one of these five persisted (see partialize
-  // below); user is re-fetched from /api/auth/me on every load rather than
-  // cached, so it can never go stale (stale tier/is_admin flags).
+  // Auth. token is the only one of these six persisted — in its own
+  // localStorage key (prefsStorage.ts), read once at store creation; user is
+  // re-fetched from /api/auth/me on every load rather than cached, so it can
+  // never go stale (stale tier/is_admin flags).
   token: string | null
   user: MeResponse | null
   authStatus: 'unknown' | 'anonymous' | 'authenticated'

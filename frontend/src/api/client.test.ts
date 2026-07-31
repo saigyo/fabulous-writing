@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
-// happy-dom (not the default "node" environment) so useStore.persist and
-// localStorage-backed document buffer both work — matching session.test.ts.
+// Store needs real localStorage at import time to read the session token key
+// via prefsStorage.ts's readToken() at store creation.
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { expireSession } from '../auth/session'
 import { clearSnapshot, readSnapshot, writeSnapshot } from '../documents/buffer'

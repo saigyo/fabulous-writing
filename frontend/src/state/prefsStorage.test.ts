@@ -115,6 +115,7 @@ describe('storage failures (quota, privacy mode)', () => {
   // localStorage, fall back to vi.stubGlobal('localStorage', throwingStub)
   // — the assertions stay the same.
   afterEach(() => {
+    vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
 
