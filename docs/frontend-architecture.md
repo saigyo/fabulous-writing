@@ -994,7 +994,7 @@ render something.
 
 **The gate** (`auth/LoginGate.tsx`) renders `LoginForm` only while `authStatus` is
 `'anonymous'`, and the app (children) only once it is `'authenticated'`. While
-`'unknown'` it renders **nothing** (`LoginGate.tsx:59`) — deliberately, and this is the
+`'unknown'` it renders **nothing** (`LoginGate.tsx:76`) — deliberately, and this is the
 reason that state exists: showing the login form during the restore round-trip would
 flash it at an already-authenticated user on every reload, and mounting the app would
 fire its mount effects unauthenticated. `authStatus` starts `'unknown'`;
