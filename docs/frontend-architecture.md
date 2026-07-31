@@ -986,7 +986,7 @@ palettes) stay literal, since their meaning is independent of theme and re-deriv
 them per `color-scheme` would blur it. `.advice-note` and `.pinned-note` (dim text),
 `.tier-option` (border and background), and `.admin-users` (row borders) were the five
 sites in `App.css` migrated onto tokens under this rule; `.tier-option.selected`'s
-accent color stays literal by the same distinction.
+accent color stays literal as a saturated selected-state fill carrying white text — the same exemption the danger fill takes.
 
 ## Authentication
 
