@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
-// happy-dom so useStore.persist works, matching client.test.ts.
+// Store needs real localStorage at import time to read the session token key
+// via prefsStorage.ts's readToken() call during store creation.
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { expireSession } from '../auth/session'
 import { clearSnapshot } from '../documents/buffer'

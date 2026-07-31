@@ -211,7 +211,7 @@ describe('ActiveView', () => {
 })
 
 describe('resetSessionState', () => {
-  it('resets the whole data half of the store, not just the persisted blob', () => {
+  it('resets the whole data half of the store, not just the persisted slice', () => {
     useStore.setState({
       tracked: [tracked('dirty', 0, 4, 'very')],
       documents: [summary(9, 'Dirty doc', '2026-07-11T00:00:00+00:00')],
