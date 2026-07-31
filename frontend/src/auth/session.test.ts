@@ -1,9 +1,7 @@
 // @vitest-environment happy-dom
-// resetSessionState() (called via logout/expireSession/login) calls
-// useStore.persist.clearStorage(): zustand's persist middleware resolves
-// its default storage via window.localStorage, which the default "node"
-// test environment has no `window` for, so `.persist` would silently never
-// be attached without this pragma.
+// The session flow reads and writes real localStorage keys — the token
+// key and the per-user preference blobs (prefsStorage.ts) — which the
+// default "node" test environment has no window/localStorage for.
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { HttpError, type MeResponse } from '../api/client'
 import type { DocSnapshot } from '../documents/buffer'
@@ -144,7 +142,7 @@ describe('login', () => {
     expect(useStore.getState().currentDocId).toBe(42)
   })
 
-  it('purges persisted settings and runtime-only state when signing in as a different user', async () => {
+  it('resets in-memory state to defaults when signing in as a different user with no stored preferences', async () => {
     useStore.setState({
       user: user(1),
       uiLocale: 'de',
@@ -172,6 +170,14 @@ describe('login', () => {
     expect(clearLegacyText).toHaveBeenCalled()
   })
 
+  it('persists the token under the token key; logout removes it', async () => {
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', user: user(1) })
+    await login('a@example.com', 'pw')
+    expect(localStorage.getItem('fabulous-writing-token')).toBe('tok')
+    logout()
+    expect(localStorage.getItem('fabulous-writing-token')).toBeNull()
+  })
+
   it('returns false and commits nothing when logout() runs while postLogin is in flight', async () => {
     let resolvePostLogin!: (v: { token: string; user: MeResponse }) => void
     vi.mocked(postLogin).mockImplementationOnce(
@@ -197,7 +203,7 @@ describe('login', () => {
 })
 
 describe('logout', () => {
-  it('clears token, user, the persisted settings blob and the document buffer, resets checkPhase, and sets anonymous', () => {
+  it('clears token, user, in-memory settings and the document buffer, resets checkPhase, and sets anonymous', () => {
     useStore.setState({
       token: 'tok',
       user: user(1),
@@ -233,7 +239,7 @@ describe('logout', () => {
 })
 
 describe('expireSession', () => {
-  it('clears the settings blob but keeps the document buffer', () => {
+  it('clears in-memory settings but keeps the document buffer', () => {
     useStore.setState({ token: 'tok', user: user(1), authStatus: 'authenticated', uiLocale: 'de' })
     writeSnapshot(snapshotFor(1))
 
@@ -258,6 +264,13 @@ describe('expireSession', () => {
     setCancelCheckHandler(spy)
     expireSession()
     expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  it('removes the token key', () => {
+    localStorage.setItem('fabulous-writing-token', 'tok')
+    useStore.setState({ token: 'tok', user: user(1), authStatus: 'authenticated' })
+    expireSession()
+    expect(localStorage.getItem('fabulous-writing-token')).toBeNull()
   })
 })
 
