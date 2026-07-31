@@ -3587,3 +3587,34 @@ the 5 intended diffs. Final Opus review ran gates itself, compared all
 seven tagline strings codepoint-for-codepoint, measured the 720–800px
 wordmark band, and shipped with one Minor (stale doc line citation).
 Zero per-task fix rounds across all five tasks.
+
+## 2026-07-31 — B18: dark-mode audit (PRs #64, #67)
+
+**What.** Dark mode now reaches every surface via three mechanisms:
+`color-scheme` declared per theme in `index.css` (UA form-control chrome,
+scrollbars, and the default canvas follow the app theme; system colors
+like ButtonText resolve per scheme — menus and dialog buttons became
+readable with NO author button-color reset), `--bg-raised` defined in
+both themes (was referenced-but-undefined; light fallbacks won
+everywhere), and a fully classified hex sweep: all 63 hex-bearing
+`App.css` lines got per-line verdicts, exactly five tokenized, semantic
+palettes deliberately literal.
+
+**The dropped fix.** The plan originally included `button { color:
+inherit }`; plan review proved it harmful (light-mode `#000`→`#1c1c1f`
+on ~8 surfaces, UA disabled-greying destroyed by cascade origin,
+terminology Add button going dim) and unnecessary (ButtonText follows
+color-scheme). Owner dropped it; a falsification clause named the
+`:where(:enabled)` fallback — never needed, the dark matrix confirmed
+readable menus empirically.
+
+**Verification.** 24-surface both-themes before/after matrix: 9/12 light
+pairs byte-identical, 3 exactly their enumerated token micro-diffs, all
+12 dark pairs fixed. The final Opus review decoded the PNGs and
+overturned two artifact claims: a "harness noise" diff was actually the
+ConfirmDialog's UA outset bevel lightening under explicit
+`color-scheme: light` (contract-permitted, reclassified), and the
+editor's pre-existing light CodeMirror gutter in dark mode had gone
+un-ticketed (now #66; amber-contrast follow-up is #65). The white
+account-menu compositing artifact from the original report reproduced in
+neither run — hypothesis recorded as unfalsified, not confirmed.
