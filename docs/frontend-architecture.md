@@ -961,6 +961,15 @@ None of those three remain.
   `folder-defaults-dialog` layered on `dialog.app-dialog` the same way every
   other dialog in the app is.
 
+**Button font sizing (B11, #52).** `index.css` is the single global home for the
+form-control font reset — `input, select, button { font: inherit }`, loading before
+`App.css` so nothing needs to repeat it — meaning an unsized button always inherits
+its parent's font-size, not a UA default. Surfaces that need a different size set it
+on their own class rather than adding a second element-level rule. `ConfirmDialog`'s
+Cancel/confirm row is the one surface that does: `.confirm-dialog-buttons button`
+sets `font-size: 0.85rem`, since the dialog body's smaller text would otherwise leave
+those buttons inheriting the root's 1rem.
+
 ## Authentication
 
 M2 puts the whole app behind a login gate — every backend feature router now requires
@@ -972,6 +981,16 @@ created it** — see [`is_global` affordances and the domains-fetch
 guard](#is_global-affordances-and-the-domains-fetch-guard) above and
 `docs/backend-architecture.md`'s [Ownership](backend-architecture.md#ownership) section
 for the full model.
+
+**The shell** (`GateShell`, `auth/LoginGate.tsx`) wraps every visible pre-auth state —
+the login form and the connection-failed retry card; `'unknown'` renders nothing, so
+there is no third state to wrap — in a split layout (B4, #37): `.login-brand` (the
+wordmark plus `loginTagline`, an i18n string) beside `.login-pane`, which hosts the
+unchanged `.login-card` content. At >=720px the two sit side by side; at <=719px
+`.login-split` stacks them, brand pane on top with the gradient's rounded corner
+flipped to match. `LoginGate` keeps the `authStatus` branching — which state renders
+at all — while `GateShell` is pure layout, applied identically to both branches that
+render something.
 
 **The gate** (`auth/LoginGate.tsx`) renders `LoginForm` only while `authStatus` is
 `'anonymous'`, and the app (children) only once it is `'authenticated'`. While
