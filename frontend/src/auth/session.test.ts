@@ -24,6 +24,8 @@ import { getMe, postLogin } from '../api/client'
 import { setCancelCheckHandler } from '../checking/cancelSlot'
 import { clearLegacyText, invalidateDocumentWork } from '../documents/documents'
 import { clearSnapshot, readSnapshot, writeSnapshot } from '../documents/buffer'
+import { initPrefsPersistence, PREFS_DEFAULTS } from '../state/prefsPersistence'
+import { readPrefs, readToken, writePrefs } from '../state/prefsStorage'
 import {
   expireSession,
   login,
@@ -32,6 +34,8 @@ import {
   restoreSession,
   sessionGeneration,
 } from './session'
+
+initPrefsPersistence()
 
 function user(id: number, overrides: Partial<MeResponse> = {}): MeResponse {
   return {
@@ -469,5 +473,113 @@ describe('refreshUser', () => {
     expect(useStore.getState().user).toEqual(
       user(1, { usage: { label: 'Basic', windows: [{ window: 'day', used_percent: 4 }] } }),
     )
+  })
+})
+
+describe('per-user preference survival (B1, #34)', () => {
+  it("restores the incoming user's stored preferences on login (load runs before setAuth)", async () => {
+    writePrefs(2, { ...PREFS_DEFAULTS, uiLocale: 'fr', currentDocId: 9 })
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', user: user(2) })
+    await login('b@example.com', 'pw')
+    expect(useStore.getState().uiLocale).toBe('fr')
+    expect(useStore.getState().currentDocId).toBe(9)
+  })
+
+  it("restoreSession loads the restored user's preferences", async () => {
+    writePrefs(1, { ...PREFS_DEFAULTS, uiLocale: 'fr' })
+    useStore.setState({ token: 'tok', authStatus: 'unknown' })
+    vi.mocked(getMe).mockResolvedValue(user(1))
+    await restoreSession()
+    expect(useStore.getState().uiLocale).toBe('fr')
+  })
+
+  it("keeps the departing user's blob values across logout and restores them on re-login", async () => {
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', user: user(1) })
+    await login('a@example.com', 'pw')
+    useStore.getState().setUiLocale('de')   // subscriber writes user 1's blob
+    logout()
+    // The blob still holds the pre-logout values — a reset that ran while
+    // the user was still visible would have overwritten it with defaults.
+    expect(readPrefs(1)?.uiLocale).toBe('de')
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok2', user: user(1) })
+    await login('a@example.com', 'pw')
+    expect(useStore.getState().uiLocale).toBe('de')
+  })
+
+  it('preferences survive session expiry', async () => {
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', user: user(1) })
+    await login('a@example.com', 'pw')
+    useStore.getState().setUiLocale('de')
+    expireSession()
+    expect(readPrefs(1)?.uiLocale).toBe('de')
+  })
+
+  it("A→B→A: A's preferences survive B's session and B never sees A's values", async () => {
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tokA', user: user(1) })
+    await login('a@example.com', 'pw')
+    useStore.getState().setUiLocale('de')
+    useStore.getState().toggleDocSidebar()   // docSidebarCollapsed: true
+    logout()
+
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tokB', user: user(2) })
+    await login('b@example.com', 'pw')
+    // The #34 leak, end to end: B has no blob and must see pure defaults.
+    expect(useStore.getState().uiLocale).toBeNull()
+    expect(useStore.getState().docSidebarCollapsed).toBe(false)
+    useStore.getState().setUiLocale('es')
+    logout()
+
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tokA2', user: user(1) })
+    await login('a@example.com', 'pw')
+    const state = useStore.getState()
+    expect(state.uiLocale).toBe('de')
+    expect(state.docSidebarCollapsed).toBe(true)
+    // B's own choices ended up in B's namespace, not A's.
+    expect(readPrefs(2)?.uiLocale).toBe('es')
+  })
+
+  it("the incoming user's preferences are already loaded when the user becomes visible", async () => {
+    // Pins the load-before-setAuth direction of the ordering invariant
+    // directly: it is defense-in-depth (no in-process code path observes
+    // the gap today), so no behavioral test can catch a reordering — this
+    // subscriber can. If user becomes visible while prefs still hold
+    // defaults, the invariant is broken even though login()'s end state
+    // looks correct.
+    writePrefs(2, { ...PREFS_DEFAULTS, uiLocale: 'fr', currentDocId: 9 })
+    const seenAtUserVisible: (string | null)[] = []
+    const unsub = useStore.subscribe((state, prev) => {
+      if (state.user && !prev.user) seenAtUserVisible.push(state.uiLocale)
+    })
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', user: user(2) })
+    await login('b@example.com', 'pw')
+    unsub()
+    expect(seenAtUserVisible).toEqual(['fr'])
+  })
+
+  it('same-user silent re-login neither resets nor re-reads the blob', async () => {
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', user: user(1) })
+    await login('a@example.com', 'pw')
+    useStore.getState().setUiLocale('de')
+    // Stale blob on purpose: if the re-login re-read storage, uiLocale
+    // would flip to 'it'; if it reset, uiLocale would flip to null.
+    writePrefs(1, { ...PREFS_DEFAULTS, uiLocale: 'it' })
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok2', user: user(1) })
+    await login('a@example.com', 'pw')
+    expect(useStore.getState().uiLocale).toBe('de')
+  })
+
+  it('restoreSession authenticates from the token key and retains it', async () => {
+    // Seed the KEY (not just the store field) and initialise state from
+    // readToken(), mirroring the real boot path — the boot-time read itself
+    // (token: readToken() at store creation) is covered in
+    // prefsPersistence.test.ts via a fresh module import. Asserting the key
+    // still holds the token afterwards pins that a successful restore
+    // neither rewrites nor accidentally clears it.
+    localStorage.setItem('fabulous-writing-token', 'tok')
+    useStore.setState({ token: readToken(), authStatus: 'unknown' })
+    vi.mocked(getMe).mockResolvedValue(user(1))
+    await restoreSession()
+    expect(useStore.getState().authStatus).toBe('authenticated')
+    expect(readToken()).toBe('tok')
   })
 })
