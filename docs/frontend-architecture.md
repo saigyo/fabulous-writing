@@ -978,8 +978,11 @@ get no author color reset here: system colors like `ButtonText` resolve per
 `color-scheme`, so native button text stays readable in both themes without any CSS
 from this app. The same two blocks define the token set the rest of the app draws
 from: `--bg`, `--panel`, `--border`, `--text`, `--text-dim`, `--accent`,
-`--accent-soft`, and `--bg-raised` (a "lifted" surface for pills and code blocks,
-given a real value in both themes rather than a light-only fallback). B18's
+`--accent-soft`, `--bg-raised` (a "lifted" surface for pills and code blocks,
+given a real value in both themes rather than a light-only fallback), and
+`--held-back` (amber for held-back suggestions, #65: light uses amber-700,
+dark uses amber-500 for WCAG AA contrast on both `--panel` and hover wash).
+B18's
 classification rule for anything touching color: surface chrome — borders, panel and
 raised backgrounds — uses these tokens; semantic colors (danger, severity, category
 palettes) stay literal — though a semantic hue may still need a per-theme contrast variant where a literal fails WCAG on one theme's surfaces (see the held-back amber, #65) — since their meaning is independent of theme and re-deriving
@@ -987,6 +990,26 @@ them per `color-scheme` would blur it. `.advice-note` and `.pinned-note` (dim te
 `.tier-option` (border and background), and `.admin-users` (row borders) were the five
 declarations in `App.css` migrated onto tokens under this rule; `.tier-option.selected`'s
 accent color stays literal as a saturated selected-state fill carrying white text — the same exemption the danger fill takes.
+
+### Editor theming (#66)
+
+CodeMirror does not follow `color-scheme`: its chrome is selected by the
+`EditorView.darkTheme` facet, which `basicSetup` leaves false.
+`src/editor/theme.ts` owns the fix: a `Compartment` that is empty in
+light mode (light editor pixels are untouched) and in dark mode holds
+two extensions. First, a `dark: true` theme — flipping the facet
+activates CM's built-in dark chrome (caret, selection, active line stay
+on CM's proven base-dark values) and token-aligns only the gutter
+(`--panel`/`--text-dim`, active-line gutter `--bg-raised`; no border — CM's
+dark base draws none). Second, a `themeType: 'dark'` highlight style built
+from `defaultHighlightStyle.specs` with exactly two color substitutions
+(`tags.meta` → `--text-dim`, the `tags.url` entry → `--accent`): `basicSetup`
+registers the default style as a *fallback*, which any main highlighter
+replaces wholesale — spreading the specs is what keeps bold/italic/heading/link
+decorations alive in dark mode. `watchTheme` follows live OS scheme changes
+via `matchMedia`; `Editor.tsx` runs its cleanup on unmount. `@codemirror/language`
+and `@lezer/highlight` became direct dependencies for `HighlightStyle`/
+`syntaxHighlighting` and `tags`.
 
 ## Authentication
 
