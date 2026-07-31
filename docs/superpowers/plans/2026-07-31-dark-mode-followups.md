@@ -491,8 +491,10 @@ const darkChrome = EditorView.theme(
 // The two: the tags.meta entry (#404740 — markdown formatting marks via
 // processingInstruction's tag-parent fallback) and the array entry
 // carrying tags.url/tags.contentSeparator (#219 — link destinations and
-// thematic breaks; the entry also carries atom/bool/labelName, none
-// produced by markdown), both unreadable on the dark canvas.
+// thematic breaks; the entry also carries atom/bool/labelName —
+// atom/bool are unreachable under CommonMark; labelName covers CodeInfo
+// and LinkLabel, which want the same treatment), both unreadable on the
+// dark canvas.
 const darkSpecs = defaultHighlightStyle.specs.map((spec) =>
   spec.tag === tags.meta
     ? { ...spec, color: 'var(--text-dim)' }
