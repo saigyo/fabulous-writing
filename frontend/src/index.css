@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light;
   --bg: #ffffff;
   --panel: #fafafa;
   --border: #e4e4e7;
@@ -6,6 +7,11 @@
   --text-dim: #6f6f78;
   --accent: #6e56cf;
   --accent-soft: #6e56cf1e;
+  /* Raised surface (pills, code blocks) — must read as "lifted" against
+     --panel in both themes. Referenced by .rules-count and
+     .rule-pattern pre (B18, #63 — was undefined, light fallbacks won in
+     both themes). */
+  --bg-raised: #eee;
 
   font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
   color: var(--text);
@@ -14,6 +20,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
+    color-scheme: dark;
     --bg: #17171b;
     --panel: #1e1e24;
     --border: #33333c;
@@ -21,6 +28,7 @@
     --text-dim: #9d9da8;
     --accent: #9b7ef7;
     --accent-soft: #9b7ef72a;
+    --bg-raised: #26262e;
   }
 }
 

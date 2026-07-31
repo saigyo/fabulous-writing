@@ -1085,7 +1085,7 @@ input {
 .rules-count {
   font-size: 0.8rem;
   font-weight: 600;
-  background: var(--bg-raised, #eee);
+  background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 0.1rem 0.6rem;
@@ -1226,7 +1226,7 @@ input {
 
 .rule-pattern pre {
   font-size: 0.75rem;
-  background: var(--bg-raised, #f6f6f6);
+  background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 0.5rem;
