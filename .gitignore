@@ -24,3 +24,4 @@ coverage/
 # Local backend config
 backend/config.yaml
 backend/api-keys.sh
+.superpowers/

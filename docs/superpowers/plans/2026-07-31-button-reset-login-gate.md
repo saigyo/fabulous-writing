@@ -255,7 +255,7 @@ In `frontend/src/App.css`, extend the `.confirm-dialog-buttons` group (after the
 
 - [ ] **Step 4: `.gitignore`**
 
-Add a line `.superpowers/` (with a trailing newline) to the repo-root `.gitignore`.
+Verify the line `.superpowers/` is present in the repo-root `.gitignore` (it was added on the planning branch after brainstorm scratch got swept into a `git add -A`); add it only if missing.
 
 - [ ] **Step 5: Gates**
 
