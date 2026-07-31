@@ -59,11 +59,16 @@ from app.core.config import Settings
 from app.main import create_app
 
 db = pathlib.Path(tempfile.mkdtemp(prefix="b11b4-")) / "scratch.db"
-app = create_app(Settings(db_path=db))
+# cors override is REQUIRED: the default origins list is
+# ["http://localhost:5173"], which would reject every browser fetch from
+# the :4199 preview — the login just looks like a generic failure (curl
+# can't catch this; it isn't subject to CORS). Same trap documented in
+# docs/superpowers/plans/2026-07-25-multi-user-m2-enforcement.md.
+app = create_app(Settings(db_path=db, cors={"origins": ["http://localhost:4199"]}))
 uvicorn.run(app, host="127.0.0.1", port=8001)
 ```
 
-Launch from `backend/`: `PYTHONPATH=/Users/markus/IdeaProjects/fabulous-writing/backend uv run python <scratchpad>/b11b4-screens/server.py` (background; record the PID). If the admin bootstrap needs more than the three env vars above, read `backend/app/main.py:85-200` and `backend/app/core/auth.py` and adapt `server.py` — the acceptance criterion is that `curl -s http://127.0.0.1:8001/api/auth/login -H 'Content-Type: application/json' -d '{"email":"admin@scratch.local","password":"scratch-admin-pw-1"}'` returns a token.
+Launch from `backend/`: `PYTHONPATH=/Users/markus/IdeaProjects/fabulous-writing/backend uv run python <scratchpad>/b11b4-screens/server.py` (background; record the PID). If the admin bootstrap needs more than the three env vars above, read `backend/app/main.py:85-200` and `backend/app/core/auth.py` and adapt `server.py`. Acceptance is two-level: (1) `curl -s http://127.0.0.1:8001/api/auth/login -H 'Content-Type: application/json' -d '{"email":"admin@scratch.local","password":"scratch-admin-pw-1"}'` returns a token, AND (2) the driver's own browser login reaches `.header` (Step 4 — this is what actually proves CORS).
 
 - [ ] **Step 2: Frontend preview on :4199**
 
@@ -78,9 +83,13 @@ import { chromium } from '/Users/markus/IdeaProjects/fabulous-writing/frontend/n
 import { globSync } from 'node:fs'
 
 const OUT = process.argv[2]   // .../before or .../after
+// Highest installed revision, not an arbitrary glob hit (1223 and 1228 are
+// both installed; playwright-core pins a newer one). Better yet: reuse
+// chromiumExecutable() from frontend/scripts/capture-screenshots.mjs:43-66,
+// the repo's existing harness, which also fast-paths chromium.executablePath().
 const exe = globSync(
   `${process.env.HOME}/Library/Caches/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-mac-arm64/chrome-headless-shell`,
-)[0]
+).sort().reverse()[0]
 const browser = await chromium.launch({ executablePath: exe })
 
 async function page(opts = {}) {
@@ -111,14 +120,20 @@ for (const [name, opts] of [
   await g.screenshot({ path: `${OUT}/${name}.png` })
 }
 
-// 4+: signed-in surfaces (class selectors only — UI locale varies)
-p = await page()
+// 5+: signed-in surfaces (class selectors only — UI locale varies)
+const p = await page()
 await login(p)
+// Settle: .header appears while initDocuments and the provider/domain/
+// language/routing/profile fetches are still in flight — pixel-stable
+// before/after pairs need the async population to finish (the repo's
+// capture-screenshots.mjs uses the same 600ms idiom).
+await p.waitForSelector('.doc-list')
+await p.waitForTimeout(600)
 await p.screenshot({ path: `${OUT}/editor.png` })
 // view switch: buttons in DOM order editor/rules/terminology/profiles(/admin)
 for (const [i, name] of [[2, 'rules'], [3, 'terminology'], [4, 'profiles'], [5, 'admin']]) {
   await p.click(`.view-switch button:nth-child(${i})`)
-  await p.waitForTimeout(400)
+  await p.waitForTimeout(600)
   await p.screenshot({ path: `${OUT}/${name}.png` })
 }
 // ...menus and dialogs: see instruction below
@@ -141,16 +156,23 @@ await p.click('.doc-sidebar-head .doc-sidebar-toggle')
 await p.fill('.doc-sidebar input', 'Sweep')
 await p.keyboard.press('Enter')
 await p.waitForSelector('.folder-head')
-// folder ... menu open (popover class .doc-menu, same idiom as doc rows)
+// folder ... menu open (popover class .doc-menu, same idiom as doc rows).
+// HOVER FIRST, both times: .folder-head .doc-menu-button is
+// visibility: hidden until .folder-head:hover (App.css ~1766), and
+// Playwright's actionability check refuses hidden targets before it
+// ever moves the mouse (same idiom in capture-screenshots.mjs:300-301).
+await p.hover('.folder-head')
 await p.click('.folder-head .doc-menu-button')
 await p.waitForSelector('.doc-menu')
 await p.screenshot({ path: `${OUT}/doc-menu.png` })
 // folder menu item order: new-document(1), defaults(2), rename(3), delete(4)
 await p.click('.doc-menu button:nth-child(2)')
 await p.waitForSelector('.folder-defaults-dialog')
+await p.waitForTimeout(600)   // profile-list fetch settles the selects
 await p.screenshot({ path: `${OUT}/folder-defaults.png` })
 await p.keyboard.press('Escape')
 // confirm dialog via the folder's delete item (Cancel it afterwards)
+await p.hover('.folder-head')
 await p.click('.folder-head .doc-menu-button')
 await p.click('.doc-menu-delete')
 await p.waitForSelector('.confirm-dialog')
@@ -299,10 +321,9 @@ In `frontend/src/auth/LoginGate.test.tsx`, add two tests inside the file's exist
   })
 
   it('renders the brand tagline on the connection-failed gate (B4)', async () => {
-    // Same seeding as the existing connection-failed test: a stored token
-    // whose restore fails with a network error (not a 401) leaves
-    // restoreFailed set — seeding the flag directly would race the mount
-    // effect's restoreSession(), which clears it via setAuth.
+    // A stored token whose restore rejects with a network error (not a
+    // 401) sets restoreFailed via runRestore()'s non-401 branch — the
+    // gate then renders the connection-failed card inside the shell.
     useStore.setState({ token: 'tok', authStatus: 'unknown' })
     vi.mocked(getMe).mockRejectedValue(new TypeError('offline'))
     render(
@@ -464,6 +485,8 @@ In `frontend/src/App.css`, in the `/* ---- login gate ---- */` section: keep `.l
   }
 }
 ```
+
+Two comments elsewhere describe the wordmark living in the login *card* and go stale with this relocation — update both: (a) `App.css` ~23-26 ("Shared by Header() and LoginForm/LoginGate's card…") → say the sharing is now between the header and the gate's brand pane; (b) `frontend/src/Wordmark.tsx`'s header comment ("…so LoginForm's card can use the exact same markup") → same correction (the gate's brand pane, not the card).
 
 - [ ] **Step 6: Run tests to verify they pass**
 
