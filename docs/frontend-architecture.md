@@ -970,6 +970,24 @@ Cancel/confirm row is the one surface that does: `.confirm-dialog-buttons button
 sets `font-size: 0.85rem`, since the dialog body's smaller text would otherwise leave
 those buttons inheriting the root's 1rem.
 
+**Theme root (B18, #63).** `index.css` sets `color-scheme: light` on `:root`, then
+flips it to `color-scheme: dark` inside the `prefers-color-scheme: dark` media query
+alongside the rest of the dark palette. `color-scheme` is what makes UA form-control
+chrome, scrollbars, and the page canvas follow the app's theme — and it's why buttons
+get no author color reset here: system colors like `ButtonText` resolve per
+`color-scheme`, so native button text stays readable in both themes without any CSS
+from this app. The same two blocks define the token set the rest of the app draws
+from: `--bg`, `--panel`, `--border`, `--text`, `--text-dim`, `--accent`,
+`--accent-soft`, and `--bg-raised` (a "lifted" surface for pills and code blocks,
+given a real value in both themes rather than a light-only fallback). B18's
+classification rule for anything touching color: surface chrome — borders, panel and
+raised backgrounds — uses these tokens; semantic colors (danger, severity, category
+palettes) stay literal, since their meaning is independent of theme and re-deriving
+them per `color-scheme` would blur it. `.advice-note` and `.pinned-note` (dim text),
+`.tier-option` (border and background), and `.admin-users` (row borders) were the five
+sites in `App.css` migrated onto tokens under this rule; `.tier-option.selected`'s
+accent color stays literal by the same distinction.
+
 ## Authentication
 
 M2 puts the whole app behind a login gate — every backend feature router now requires
