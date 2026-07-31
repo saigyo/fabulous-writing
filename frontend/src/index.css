@@ -13,6 +13,12 @@
      both themes). */
   --bg-raised: #eee;
 
+  /* Held-back-suggestion amber (#65): light keeps the original amber-700;
+     dark uses amber-500 — 7.7:1 on --panel, 6.3:1 on the held-back hover
+     wash, both clear WCAG AA (amber-700 measured only 3.30:1 on dark
+     --panel). */
+  --held-back: #b45309;
+
   font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
   color: var(--text);
   background: var(--bg);
@@ -29,6 +35,8 @@
     --accent: #9b7ef7;
     --accent-soft: #9b7ef72a;
     --bg-raised: #26262e;
+
+    --held-back: #f59e0b;
   }
 }
 
