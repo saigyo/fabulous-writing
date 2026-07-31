@@ -6,7 +6,8 @@ main ingredients:
 - **CodeMirror 6** for the editor — and, less obviously, as the *source of truth for
   finding positions* (a CodeMirror `StateField` keeps spans correct while the user
   keeps typing);
-- **zustand** for application state (one store, a small persisted slice);
+- **zustand** for application state (one store; a small per-user preference slice is
+  persisted by an explicit layer, not the persist middleware);
 - a thin typed **API client** over `fetch`, including its own hand-rolled SSE reader
   for the check stream (`VITE_API_URL`, default `http://localhost:8000`).
 
@@ -28,7 +29,10 @@ frontend/src/
 ├── main.tsx / App.tsx        # bootstrap; header, view switch, data-loading effects
 ├── types.ts                  # shared API types (Finding, Profile, ...) — mirrors backend models
 ├── api/client.ts             # typed fetch wrappers, Bearer attachment, fetch-based SSE reader
-├── state/store.ts            # the zustand store (single source of app state)
+├── state/
+│   ├── store.ts               # the zustand store (single source of app state)
+│   ├── prefsStorage.ts        # localStorage I/O: per-user pref blobs, token key, legacy-key cleanup
+│   └── prefsPersistence.ts    # PREFS_DEFAULTS, loadUserPrefs, write subscriber (initPrefsPersistence)
 ├── auth/
 │   ├── session.ts             # login/logout/expireSession/restoreSession, generation counter
 │   ├── policy.ts               # tierAllowed/providerAllowed/modelAllowed/hasFeature/llmDisabled
@@ -98,7 +102,8 @@ frontend/src/
 
 `state/store.ts` defines one zustand store. Four kinds of state live there:
 
-- **Auth** — `token` (persisted, see below), `user` (never persisted — re-fetched via
+- **Auth** — `token` (persisted in its own key (`prefsStorage.ts`), read once at store
+  creation), `user` (never persisted — re-fetched via
   `GET /api/auth/me` on every fresh page load instead, so a stale cached profile can
   never diverge from what the server currently thinks is true), `authStatus`
   (`'unknown' | 'anonymous' | 'authenticated'`, what `LoginGate` renders off),
@@ -118,26 +123,42 @@ authoritative. `routing: RoutingTable | null` holds the `GET /api/routing` respo
 (fetched at startup alongside providers) and is **ephemeral** — never persisted, since
 availability is only meaningful for the current process.
 
-The `persist` middleware is configured from one exported object, `persistConfig`
-(`name`, `version`, `migrate`, `partialize`) — the store passes this same object (not a
-copy) to `persist(...)`, and tests import the identical `persistConfig` rather than
-re-declaring their own literal, so the persisted-shape contract used by the running
-store and the one exercised by tests can never silently drift apart. `persistConfig`
-(v2) saves a small cross-document slice to localStorage:
-`uiLocale`, `lastProfileByLanguage`, `rulesCollapsed`, `currentDocId`,
-`docSidebarCollapsed`, `docFoldersCollapsed` (the sidebar's per-folder collapsed
-state, added additively to v2 — a `number[]` of collapsed folder ids, no version bump
-needed since it's a new key on an existing persisted shape rather than a change to an
-existing one), and `token` (added without a version bump too — an older blob simply
-lacks the key, and `token: null` is the correct initial value regardless). Everything that used to live here in v1 — `language`,
-`domainIds`, `provider`, `model`, `tier`, `llmAuto` — moved into per-document storage
-(the backend's `settings` columns; see [Documents](#documents)) once multiple documents
-each needed their own header configuration. Results, caches, and `routing` stay
-ephemeral as before. A `migrate` step still handles the pre-tier persisted shape
-(version 0): those users had explicitly chosen a provider/model, so they land in pinned
-mode (`tier: null`) rather than silently switching to tier mode; version 1 passes
-through unchanged into v2 (its now-stale header fields are harmless extras that the
-legacy-document migration in `documents.ts` reads once, then ignores).
+Persistence is no longer a `persist` middleware wrapping the whole store; it's an
+explicit layer (`state/prefsStorage.ts`, `state/prefsPersistence.ts`, B1, #34) built
+around three localStorage keys. The token lives alone in `fabulous-writing-token`,
+read once at store creation (see Auth above). Each signed-in user gets their own
+preference blob, `fabulous-writing-settings:<user.id>`, written in the
+zustand-persist-compatible envelope `{"state": {...}, "version": 2}` — chosen so a
+future return to the middleware wouldn't need a storage-format migration, though
+nothing today migrates an old-format blob; a version mismatch is just treated as
+absent and defaults apply. The pre-B1 single blob that mixed one shared token with
+the last user's preferences, `fabulous-writing-settings`, is deleted once at boot and
+never read again. A blob holds exactly six fields — `uiLocale`,
+`lastProfileByLanguage`, `rulesCollapsed`, `currentDocId`, `docSidebarCollapsed`,
+`docFoldersCollapsed` — and nothing else: `token` and `user` are never part of it,
+`user` being re-fetched via `GET /api/auth/me` on every load rather than cached (see
+Auth above).
+
+`loadUserPrefs(userId)` applies the signed-in user's stored fields over
+`PREFS_DEFAULTS` (the same six-field slice of `INITIAL_DATA`) in one atomic
+`setState`. Landing defaults and blob together in a single step is what closes the
+#34 leak: a user with no blob of their own gets exactly the defaults, never a value
+left behind in memory by whoever was signed in before. A write subscriber
+(`initPrefsPersistence()`, registered once from `main.tsx`) replaces the old
+`partialize`: it runs on every store change but writes only past two guards — the six
+pref fields must actually have changed by reference (an identity check, safe because
+their setters always produce new values, and cheap enough to skip high-frequency
+fields like `docWords`/`docChars` on every keystroke) and `user` must be non-null.
+That second guard is why an ordering invariant runs through `auth/session.ts`: every
+site that bulk-resets or bulk-loads preference fields must null `user` first, or the
+subscriber would see the reset/loaded values with a still-live `user` and commit them
+into the wrong namespace. `login()`'s user-change branch, `logout()`,
+`expireSession()`, and `runRestore()` all carry it — the first three null `user`
+*before* `resetSessionState()`, and `runRestore()` calls `loadUserPrefs()` before
+`setAuth()` makes the restored user live. One consequence is by design, not omission:
+preference blobs survive `logout()`, `expireSession()`, and a user-switching login
+untouched — only the token dies with the session, so a returning user finds their
+locale, current document, and collapse state exactly as they left them.
 
 Two store behaviors deserve a note:
 
@@ -876,9 +897,10 @@ Each document carries its own `language`, `domain_ids`, `llm_provider`/`llm_mode
 `llm_tier`/`llm_auto`, and `profile_id` — the entire header configuration travels with
 the document rather than being global, so switching documents can switch language and
 LLM setup without a separate "per-document settings" UI. See [State
-management](#state-management) above for what persist v2 keeps globally
+management](#state-management) above for what the per-user preference blob keeps
 (`uiLocale`, `lastProfileByLanguage`, `rulesCollapsed`, `currentDocId`,
-`docSidebarCollapsed`) versus what now lives per-document on the backend. The one
+`docSidebarCollapsed`, `docFoldersCollapsed`) versus what now lives per-document on the
+backend. The one
 remaining piece of document content in localStorage is the write-through buffer
 (`fabulous-writing-doc-buffer`, above) — a cache of the *currently open* document only,
 never a second source of truth for the list.
@@ -1060,12 +1082,21 @@ at boot.
 
 `resetSessionState()` (called
 by `logout()`, `expireSession()`, and by `login()` **only when the signing-in user's
-id differs from the previous one**) clears the persisted zustand blob and every
-non-persisted data field (tracked findings, documents, folders, scorecard, …), then
-lets the caller's own `setAuth()` write the new session's values back in. The `only
-when the user differs` qualifier is deliberate: Task 8's silent re-authentication
-after a password change signs the *same* person back in, and must not discard their
-locale, current document, or collapse state just because the token changed.
+id differs from the previous one**) shallow-merges `INITIAL_DATA` back over the store
+— every data field, including the six preference fields, returns to its default *in
+memory*. It never touches localStorage: a per-user preference blob is untouched by a
+reset, and the write subscriber never commits the reset defaults over it, because
+every caller runs `setAuth(null, null)` before calling it (the ordering invariant, see
+[State management](#state-management) above) — the subscriber is silent while `user`
+is null. Only `login()`'s user-change branch has anything to do next: it calls
+`loadUserPrefs(user.id)` immediately after the reset, replacing the freshly-defaulted
+in-memory fields with the incoming user's own stored blob, all still before
+`setAuth(token, user)` makes `user` non-null again. `logout()` and `expireSession()`
+have no next user to load for, so the reset defaults are simply what the anonymous
+state shows until the next sign-in. The `only when the user differs` qualifier is
+deliberate: Task 8's silent re-authentication after a password change signs the *same*
+person back in, and must not discard their locale, current document, or collapse
+state just because the token changed.
 `discardForeignBuffer()` applies the same rule to the write-through document buffer
 (`documents/buffer.ts`) — a buffer with no `ownerId`, or one belonging to a different
 user, is discarded on login; a buffer belonging to the incoming user's own unsaved
