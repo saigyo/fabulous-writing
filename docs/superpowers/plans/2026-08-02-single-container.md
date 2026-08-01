@@ -655,6 +655,43 @@ class TestValidation:
         )
 
 
+    def test_over_bcrypt_limit_password_rejected(self, tmp_path, template):
+        # seed_admin() enforces bcrypt's 72-byte cap at container startup;
+        # the wizard must reject the same passwords, not defer the failure.
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        rc = run_first(
+            config_dir,
+            template,
+            answers=["admin@example.com", "1"],
+            secrets_answers=["x" * 80, "fits-in-bcrypt", "sk-ant-abc123"],
+        )
+        assert rc == 0
+        assert parse_env_file(config_dir / "fabulous.env")["FW_ADMIN_PASSWORD"] == "fits-in-bcrypt"
+
+    def test_trailing_space_password_survives_rerun(self, tmp_path, template):
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        run_first(
+            config_dir,
+            template,
+            answers=["admin@example.com", "1"],
+            secrets_answers=["password-with-space ", "sk-ant-abc123"],
+        )
+        # keep-everything re-run: the stored value must round-trip untouched
+        run_wizard(
+            config_dir,
+            template,
+            input_fn=scripted(["", "", "n"]),
+            getpass_fn=scripted(["", ""]),
+            probe=probe_ok,
+        )
+        assert (
+            parse_env_file(config_dir / "fabulous.env")["FW_ADMIN_PASSWORD"]
+            == "password-with-space "
+        )
+
+
 class TestImageContract:
     def test_default_paths_match_the_dockerfile_layout(self):
         # Task 4's Dockerfile copies the template to /app/config.container.yaml
@@ -703,9 +740,9 @@ from typing import Callable
 import httpx
 import yaml
 
+from app.core.auth import ADMIN_SET_MIN_PASSWORD_LENGTH, validate_password
 from app.core.config import BUILTIN_ENV_KEYS
 
-MIN_PASSWORD_LENGTH = 12  # mirrors ADMIN_SET_MIN_PASSWORD_LENGTH (app.core.auth)
 MIN_SECRET_LENGTH = 32
 DEFAULT_OLLAMA_URL = "http://host.docker.internal:11434"
 # The Dockerfile's layout contract (Task 4 copies the template to exactly
@@ -729,7 +766,12 @@ ProbeFn = Callable[[str, str], tuple[bool, str]]
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
-    """Parse KEY=VALUE lines; blank lines and #-comments are skipped."""
+    """Parse KEY=VALUE lines; blank lines and #-comments are skipped.
+
+    The stripped copy is used only to DETECT blanks/comments; the value is
+    partitioned from the original line, so a password with deliberate
+    leading/trailing spaces survives a re-run byte-for-byte.
+    """
     result: dict[str, str] = {}
     if not path.is_file():
         return result
@@ -737,20 +779,25 @@ def parse_env_file(path: Path) -> dict[str, str]:
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        key, sep, value = stripped.partition("=")
+        key, sep, value = line.partition("=")
         if sep:
             result[key.strip()] = value
     return result
 
 
 def check_ollama(base_url: str, model: str) -> tuple[bool, str]:
-    """Probe /api/tags from inside the container — the app's own vantage."""
+    """Probe /api/tags from inside the container — the app's own vantage.
+
+    Probe failures are warnings by contract, so the parse of the payload
+    lives inside the same exception boundary as the request: a reachable
+    endpoint returning malformed JSON must not abort the wizard.
+    """
     try:
         response = httpx.get(f"{base_url.rstrip('/')}/api/tags", timeout=5.0)
         response.raise_for_status()
+        names = [m.get("name", "") for m in response.json().get("models", [])]
     except Exception as exc:  # noqa: BLE001 - any failure is the same advice
         return False, str(exc)
-    names = [m.get("name", "") for m in response.json().get("models", [])]
     if any(n == model or n.split(":")[0] == model for n in names):
         return True, "ok"
     return False, f"model '{model}' not in Ollama's list: {', '.join(names) or '(empty)'}"
@@ -798,7 +845,7 @@ def _ask_password(getpass_fn: InputFn, existing: str | None) -> str:
     prompt = (
         "Admin password (Enter = keep current): "
         if existing
-        else f"Admin password (min {MIN_PASSWORD_LENGTH} chars): "
+        else f"Admin password (min {ADMIN_SET_MIN_PASSWORD_LENGTH} chars): "
     )
     while True:
         value = getpass_fn(prompt)
@@ -807,9 +854,13 @@ def _ask_password(getpass_fn: InputFn, existing: str | None) -> str:
         if "\n" in value or "\r" in value:
             print("The password must not contain line breaks.")
             continue
-        if len(value) >= MIN_PASSWORD_LENGTH:
-            return value
-        print(f"Too short — at least {MIN_PASSWORD_LENGTH} characters.")
+        try:
+            # The exact validator seed_admin() runs at container startup —
+            # same character minimum AND bcrypt's byte maximum, so the
+            # wizard can never write a password bootstrap will reject.
+            return validate_password(value, min_length=ADMIN_SET_MIN_PASSWORD_LENGTH)
+        except ValueError as exc:
+            print(str(exc))
 
 
 def _ask_provider(input_fn: InputFn, current: str | None) -> str:
@@ -1010,78 +1061,117 @@ git commit -m "feat(backend): re-runnable containerized setup wizard (B17, #58)"
 ### Task 3: License collection — `THIRD-PARTY-NOTICES.md` generator
 
 **Files:**
+- Modify: `backend/pyproject.toml` (`[dependency-groups]`: new `models` group; `dev` includes it) + `backend/uv.lock` (relock)
 - Create: `scripts/collect-licenses.py` (repo-root `scripts/`, new directory)
 - Create: `scripts/curated-licenses.yaml`
+- Create: `scripts/curated-license-texts/<lang>.txt` (5 files, fetched dictionary license texts)
 - Create: `THIRD-PARTY-NOTICES.md` (generated, committed)
 
 **Interfaces:**
-- Consumes: `backend/uv.lock` via `uv export --no-dev`, installed backend venv metadata, `frontend/node_modules` via `npx license-checker-rseidelsohn`.
-- Produces: `THIRD-PARTY-NOTICES.md` at repo root (Task 4 copies it into the image; Task 5's drift check runs this script and diffs). Run as `uv run --project backend python scripts/collect-licenses.py` from the repo root.
+- Consumes: `backend/uv.lock` via `uv export --no-dev --group models`, installed backend venv metadata, `frontend/node_modules` via `npx license-checker-rseidelsohn`.
+- Produces: `THIRD-PARTY-NOTICES.md` at repo root (Task 4 copies it into the image; Task 5's drift check runs this script and diffs); the `models` dependency group (Task 4's image installs it via `uv sync --locked --no-dev --group models`). Run as `uv run --project backend python scripts/collect-licenses.py` from the repo root.
 
-- [ ] **Step 1: Write the curated data**
+- [ ] **Step 0: Move the model packages into a locked `models` group**
 
-Create `scripts/curated-licenses.yaml`. The versions below are the pinned ones (spaCy models 3.8.0; ginza 5.2.0). **The implementer must verify each `license` value against the named upstream before committing** — for the wooorm dictionaries, read the per-dictionary `license` file in https://github.com/wooorm/dictionaries (e.g. `dictionaries/de/license`); for spaCy models, the model page on https://spacy.io/models or the package's `meta.json`. If a verified value differs from the value below, correct it here — this file is the source of truth for what we relied on.
+The image must install the spaCy/ginza models from the lockfile — a loose
+`uv pip install` would let ginza's transitives (`sudachipy`,
+`sudachidict-core`, `plac` — all distributed in the image) drift between
+builds AND keep them out of the license inventory. In
+`backend/pyproject.toml`, restructure `[dependency-groups]`:
 
-```yaml
-# Hand-curated entries for distributed components no package manager tracks
-# (spaCy model wheels are installed straight from URLs; Hunspell
-# dictionaries are downloaded as raw files). license values verified
-# against upstream at implementation time.
-- name: en_core_web_sm
-  version: 3.8.0
-  license: MIT
-  source: https://github.com/explosion/spacy-models
-- name: de_core_news_sm
-  version: 3.8.0
-  license: MIT
-  source: https://github.com/explosion/spacy-models
-- name: fr_core_news_sm
-  version: 3.8.0
-  license: LGPL-3.0 (model); trained on Sequoia/WikiNER (see source)
-  source: https://github.com/explosion/spacy-models
-- name: es_core_news_sm
-  version: 3.8.0
-  license: GPL-3.0 (model; AnCora corpus)
-  source: https://github.com/explosion/spacy-models
-- name: it_core_news_sm
-  version: 3.8.0
-  license: CC BY-NC-SA 3.0 (model; ISDT/WikiNER)
-  source: https://github.com/explosion/spacy-models
-- name: zh_core_web_sm
-  version: 3.8.0
-  license: MIT (model; OntoNotes 5 terms apply to the corpus)
-  source: https://github.com/explosion/spacy-models
-- name: ginza
-  version: 5.2.0
-  license: MIT
-  source: https://github.com/megagonlabs/ginza
-- name: ja_ginza
-  version: 5.2.0
-  license: MIT
-  source: https://github.com/megagonlabs/ginza
-- name: hunspell-dictionary-en
-  version: wooorm/dictionaries (en)
-  license: (verify upstream dictionaries/en/license)
-  source: https://github.com/wooorm/dictionaries
-- name: hunspell-dictionary-de
-  version: wooorm/dictionaries (de, igerman98)
-  license: GPL-2.0 OR GPL-3.0
-  source: https://github.com/wooorm/dictionaries
-- name: hunspell-dictionary-fr
-  version: wooorm/dictionaries (fr)
-  license: MPL-2.0
-  source: https://github.com/wooorm/dictionaries
-- name: hunspell-dictionary-es
-  version: wooorm/dictionaries (es)
-  license: GPL-3.0 OR LGPL-3.0 OR MPL-1.1
-  source: https://github.com/wooorm/dictionaries
-- name: hunspell-dictionary-it
-  version: wooorm/dictionaries (it)
-  license: GPL-3.0
-  source: https://github.com/wooorm/dictionaries
+```toml
+[dependency-groups]
+models = [
+    "de-core-news-sm",
+    "en-core-web-sm",
+    "es-core-news-sm>=3.8.0",
+    "fr-core-news-sm>=3.8.0",
+    "ginza>=5.2.0",
+    "it-core-news-sm>=3.8.0",
+    "ja-ginza>=5.2.0",
+    "zh-core-web-sm>=3.8.0",
+]
+dev = [
+    { include-group = "models" },
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "pytest-xdist>=3.8.0",
+]
 ```
 
-(The `(verify upstream)` placeholder for `en` MUST be replaced with the verified value during this task — the generator refuses to run while any `license` value contains `verify upstream`.)
+(The `[tool.uv.sources]` wheel-URL pins stay exactly as they are.) Then,
+from `backend/`: `uv lock` (the resolution must not change any pinned
+version — inspect the `uv.lock` diff: only group membership moves) and
+`uv sync --locked` (dev environment: no-op — dev still includes models via
+`include-group`). Run `uv run pytest -q` — green, zero warnings, proving
+the dev environment is unchanged.
+
+- [ ] **Step 1: Write the curated data (dictionaries only) and fetch their license texts**
+
+The spaCy models and ginza are now in the locked `models` group (Step 0),
+so the generator inventories them like any other Python package — full
+texts from their installed wheel metadata. Curated entries remain only
+for the five Hunspell dictionaries, which no package manager tracks.
+
+First pin the upstream revision and fetch the license texts. Resolve the
+current commit of https://github.com/wooorm/dictionaries `main`
+(`git ls-remote https://github.com/wooorm/dictionaries.git main`), call it
+`$DICT_REV`, and fetch each dictionary's license file:
+
+```bash
+mkdir -p scripts/curated-license-texts
+for lang in en de fr es it; do
+  curl -fsSL -o "scripts/curated-license-texts/$lang.txt" \
+    "https://raw.githubusercontent.com/wooorm/dictionaries/$DICT_REV/dictionaries/$lang/license"
+  head -3 "scripts/curated-license-texts/$lang.txt"   # eyeball: a real license text
+done
+```
+
+**Read each fetched file and set the `license` identifier below to what it
+actually says** (the values below are prior expectations, not truth —
+e.g. de is igerman98, historically GPL-2.0/GPL-3.0; fr MPL-2.0; en is a
+BSD-style/SPELL notice). Then create `scripts/curated-licenses.yaml`:
+
+```yaml
+# Hand-curated entries for distributed components no package manager
+# tracks: the Hunspell dictionaries, downloaded as raw files by
+# backend/scripts/install-dictionaries.sh at the revision below.
+# license values verified against the fetched texts at implementation
+# time; text_file holds the full license text (committed, from that
+# same revision) — the generator hard-fails on a missing/empty file.
+revision: <DICT_REV — the 40-char commit this data was verified against>
+entries:
+  - name: hunspell-dictionary-en
+    version: wooorm/dictionaries@<DICT_REV first 12 chars> (en)
+    license: <from scripts/curated-license-texts/en.txt>
+    source: https://github.com/wooorm/dictionaries
+    text_file: scripts/curated-license-texts/en.txt
+  - name: hunspell-dictionary-de
+    version: wooorm/dictionaries@<DICT_REV first 12 chars> (de, igerman98)
+    license: <from scripts/curated-license-texts/de.txt>
+    source: https://github.com/wooorm/dictionaries
+    text_file: scripts/curated-license-texts/de.txt
+  - name: hunspell-dictionary-fr
+    version: wooorm/dictionaries@<DICT_REV first 12 chars> (fr)
+    license: <from scripts/curated-license-texts/fr.txt>
+    source: https://github.com/wooorm/dictionaries
+    text_file: scripts/curated-license-texts/fr.txt
+  - name: hunspell-dictionary-es
+    version: wooorm/dictionaries@<DICT_REV first 12 chars> (es)
+    license: <from scripts/curated-license-texts/es.txt>
+    source: https://github.com/wooorm/dictionaries
+    text_file: scripts/curated-license-texts/es.txt
+  - name: hunspell-dictionary-it
+    version: wooorm/dictionaries@<DICT_REV first 12 chars> (it)
+    license: <from scripts/curated-license-texts/it.txt>
+    source: https://github.com/wooorm/dictionaries
+    text_file: scripts/curated-license-texts/it.txt
+```
+
+Every `<...>` placeholder MUST be replaced with the real value during this
+step — the generator refuses to run while any `license` or `revision`
+value contains `<`.
 
 - [ ] **Step 2: Write the generator**
 
@@ -1092,13 +1182,16 @@ Create `scripts/collect-licenses.py`:
 """Generate THIRD-PARTY-NOTICES.md (B17, #58).
 
 Collects, with full license texts:
-  1. Python runtime dependencies — the ``uv export --no-dev`` set, license
-     text read from the installed distribution's metadata (run via
-     ``uv run --project backend`` so the venv is importable).
+  1. Python packages the image ships — the ``uv export --no-dev
+     --group models`` set (runtime deps + spaCy/ginza models and their
+     transitives), license text read from the installed distribution's
+     metadata (run via ``uv run --project backend`` so the venv is
+     importable).
   2. Frontend production dependencies — ``license-checker-rseidelsohn``
      over frontend/ (the set that reaches dist/).
-  3. Curated entries (scripts/curated-licenses.yaml) — spaCy models,
-     ginza, Hunspell dictionaries.
+  3. Curated entries (scripts/curated-licenses.yaml) — the Hunspell
+     dictionaries, texts from committed files fetched at a pinned
+     upstream revision.
 
 Debian base-image packages are attributed by the /usr/share/doc/*/copyright
 files that remain in the image (stated in the output header).
@@ -1159,9 +1252,18 @@ is out of date. Do not edit by hand.
 
 
 def python_requirements() -> list[tuple[str, str]]:
-    """Pinned (name, version) pairs for the image — marker-filtered."""
+    """Pinned (name, version) pairs for the image — marker-filtered.
+
+    --group models pulls in exactly what the image's
+    `uv sync --locked --no-dev --group models` installs: the spaCy/ginza
+    model wheels (exported as `name @ https://...` URL lines) and their
+    transitives (sudachipy, sudachidict-core, plac, ...).
+    """
     out = subprocess.run(
-        ["uv", "export", "--no-dev", "--no-hashes", "--format", "requirements-txt"],
+        [
+            "uv", "export", "--no-dev", "--group", "models",
+            "--no-hashes", "--format", "requirements-txt",
+        ],
         cwd=REPO / "backend",
         capture_output=True,
         text=True,
@@ -1171,14 +1273,23 @@ def python_requirements() -> list[tuple[str, str]]:
     for line in out.splitlines():
         line = line.strip()
         match = re.match(r"^([A-Za-z0-9._-]+)==([^ ;]+)\s*(?:;\s*(.+))?$", line)
-        if not match:
-            continue
-        name, version, marker = match.group(1), match.group(2), match.group(3)
+        if match:
+            name, version, marker = match.group(1), match.group(2), match.group(3)
+        else:
+            # URL-pinned wheels from [tool.uv.sources], e.g.
+            # `en-core-web-sm @ https://.../en_core_web_sm-3.8.0-py3-none-any.whl`
+            url_match = re.match(r"^([A-Za-z0-9._-]+) @ \S+\s*(?:;\s*(.+))?$", line)
+            if not url_match:
+                continue
+            name, marker = url_match.group(1), url_match.group(2)
+            version = ""  # resolved from installed metadata below
         # The export is universal (all platforms). Keep only what the
         # linux/CPython image actually ships — e.g. colorama (win32-only)
         # is exported but never installed in the image.
         if marker and not Marker(marker).evaluate(IMAGE_ENV):
             continue
+        if not version:
+            version = metadata.version(name)
         pins.append((name, version))
     if not pins:
         raise SystemExit("uv export produced no pinned requirements")
@@ -1248,10 +1359,20 @@ def render(sections: list[tuple[str, list[tuple[str, str, str, str]]]]) -> str:
 
 
 def main() -> int:
-    curated = yaml.safe_load(CURATED.read_text(encoding="utf-8"))
+    curated_doc = yaml.safe_load(CURATED.read_text(encoding="utf-8"))
+    if "<" in str(curated_doc.get("revision", "<")):
+        raise SystemExit("curated-licenses.yaml: revision still unverified")
+    curated = curated_doc["entries"]
     for entry in curated:
-        if "verify upstream" in entry["license"]:
+        if "<" in entry["license"]:
             raise SystemExit(f"curated entry '{entry['name']}' still unverified")
+        text_path = REPO / entry["text_file"]
+        if not text_path.is_file() or not text_path.read_text(encoding="utf-8").strip():
+            raise SystemExit(
+                f"curated entry '{entry['name']}': text_file"
+                f" '{entry['text_file']}' is missing or empty — full license"
+                " texts are required"
+            )
 
     python_entries = []
     for name, version in python_requirements():
@@ -1277,7 +1398,8 @@ def main() -> int:
             entry["name"],
             str(entry["version"]),
             entry["license"],
-            f"Source: {entry['source']}\nLicense terms: see the source's license file for this component.",
+            f"Source: {entry['source']}\n\n"
+            + (REPO / entry["text_file"]).read_text(encoding="utf-8", errors="replace"),
         )
         for entry in curated
     ]
@@ -1285,9 +1407,9 @@ def main() -> int:
     OUTPUT.write_text(
         render(
             [
-                ("Python (backend runtime)", python_entries),
+                ("Python (backend runtime + language models)", python_entries),
                 ("JavaScript (bundled frontend)", npm_entries),
-                ("Language models and dictionaries", curated_entries),
+                ("Hunspell dictionaries", curated_entries),
             ]
         ),
         encoding="utf-8",
@@ -1302,16 +1424,20 @@ if __name__ == "__main__":
 
 Note: `numpy`'s `.dist-info/licenses/` contains ~15 vendored license files; concatenating them all is correct behavior, just verbose.
 
-- [ ] **Step 3: Verify the curated licenses against upstream**
+- [ ] **Step 3: Verify no placeholders remain**
 
-For each `(verify upstream)` or doubtful entry, fetch the upstream license file (e.g. `curl -s https://raw.githubusercontent.com/wooorm/dictionaries/main/dictionaries/en/license | head -5`) and correct `scripts/curated-licenses.yaml`. Every entry must end up with a concrete license identifier.
+`grep -n '<' scripts/curated-licenses.yaml` must return nothing: every
+`license`, `version`, and the `revision` value is concrete, verified
+against the fetched text files. Each `text_file` exists, is non-empty,
+and its content matches the claimed `license` identifier (read them —
+this is the one place a human-judgment check is the deliverable).
 
 - [ ] **Step 4: Generate and sanity-check**
 
 ```bash
 cd /Users/markus/IdeaProjects/fabulous-writing
 uv run --project backend python scripts/collect-licenses.py
-grep -c "^### " THIRD-PARTY-NOTICES.md   # expect ~110-130 (71 Python after marker filtering + ~30 npm + 13 curated)
+grep -c "^### " THIRD-PARTY-NOTICES.md   # expect ~115-135 (≈82 Python incl. models+transitives + ~30 npm + 5 curated)
 grep -n "UNKNOWN" THIRD-PARTY-NOTICES.md # investigate every hit before committing
 python3 - <<'PY'
 import pathlib
@@ -1329,8 +1455,8 @@ Every `UNKNOWN` license must be resolved (usually by fixing the metadata read) o
 - [ ] **Step 5: Commit** (before mutation-verification — the drift check below needs the files tracked, and commit-then-mutate is exactly what CI does)
 
 ```bash
-git add scripts/collect-licenses.py scripts/curated-licenses.yaml THIRD-PARTY-NOTICES.md
-git commit -m "feat(licenses): collect third-party notices with full texts (B17, #58)"
+git add backend/pyproject.toml backend/uv.lock scripts/collect-licenses.py scripts/curated-licenses.yaml scripts/curated-license-texts THIRD-PARTY-NOTICES.md
+git commit -m "feat(licenses): locked models group + third-party notices with full texts (B17, #58)"
 ```
 
 - [ ] **Step 6: Mutation-verify the drift mechanism**
@@ -1344,11 +1470,18 @@ uv run --project backend python scripts/collect-licenses.py \
 git checkout -- scripts/curated-licenses.yaml
 
 # 2. A content change must show up as drift:
-sed -i '' 's/version: 3.8.0/version: 9.9.9/' scripts/curated-licenses.yaml
+sed -i '' 's/^    license: /    license: MUTATED /' scripts/curated-licenses.yaml
 uv run --project backend python scripts/collect-licenses.py
 git diff --exit-code THIRD-PARTY-NOTICES.md \
   && echo "DRIFT NOT DETECTED — BUG" \
   || echo "drift detected OK"
+
+# 2b. A missing text file must be a hard error:
+mv scripts/curated-license-texts/de.txt /tmp/de.txt.hold
+uv run --project backend python scripts/collect-licenses.py \
+  && echo "GENERATOR ACCEPTED MISSING TEXT FILE — BUG" \
+  || echo "missing text file rejected OK"
+mv /tmp/de.txt.hold scripts/curated-license-texts/de.txt
 
 # 3. Restore and confirm clean:
 git checkout -- scripts/curated-licenses.yaml THIRD-PARTY-NOTICES.md
@@ -1356,7 +1489,7 @@ uv run --project backend python scripts/collect-licenses.py
 git diff --exit-code THIRD-PARTY-NOTICES.md && echo "clean OK"
 ```
 
-Expected output lines: "generator rejected the malformed entry OK", "drift detected OK", "clean OK". Anything else is a bug in the collector or this verification — stop and fix before proceeding. (The malformed-entry rejection comes from the KeyError on `entry["license"]` — acceptable as long as it is a hard, nonzero exit.)
+Expected output lines: "generator rejected the malformed entry OK", "drift detected OK", "missing text file rejected OK", "clean OK". Anything else is a bug in the collector or this verification — stop and fix before proceeding. (Mutation 1's appended list item makes the YAML document structurally invalid — the top level is now a mapping — so the rejection is a parse error; any hard, nonzero exit counts.)
 
 ---
 
@@ -1364,10 +1497,31 @@ Expected output lines: "generator rejected the malformed entry OK", "drift detec
 
 **Files:**
 - Create: `Dockerfile`, `.dockerignore`, `docker/entrypoint.sh`, `docker/config.container.yaml`, `fabulous.sh`
+- Modify: `backend/scripts/install-dictionaries.sh` (pin the wooorm/dictionaries revision)
 
 **Interfaces:**
-- Consumes: Task 1 (`FW_CONFIG_FILE`, `frontend.dist_dir`, health version), Task 2 (`python -m app.setup_wizard`, `FW_SETUP_CONFIG_DIR`/`FW_CONFIG_TEMPLATE` defaults `/config` and `/app/config.container.yaml`), Task 3 (`THIRD-PARTY-NOTICES.md`).
+- Consumes: Task 1 (`FW_CONFIG_FILE`, `frontend.dist_dir`, health version), Task 2 (`python -m app.setup_wizard`, `FW_SETUP_CONFIG_DIR`/`FW_CONFIG_TEMPLATE` defaults `/config` and `/app/config.container.yaml`), Task 3 (`THIRD-PARTY-NOTICES.md`, the locked `models` dependency group, and the `revision:` value in `scripts/curated-licenses.yaml`).
 - Produces: image buildable as `docker build -t fabulous-writing:dev .`; Task 5's workflows build exactly this Dockerfile with build-arg `APP_VERSION`.
+
+- [ ] **Step 0: Pin the dictionary revision in `backend/scripts/install-dictionaries.sh`**
+
+The script currently fetches from the mutable `main` branch — a rebuild of
+the same release tag could ship different dictionary content (or license
+terms) than the committed notices describe. Read the `revision:` value
+from `scripts/curated-licenses.yaml` (recorded in Task 3) and hardcode it
+in the script's `BASE=` line (no runtime lookup — the script must stay
+standalone):
+
+```sh
+# Pinned revision — matches scripts/curated-licenses.yaml (license notices
+# were verified against exactly this tree). Bump both together.
+BASE=https://raw.githubusercontent.com/wooorm/dictionaries/<DICT_REV>/dictionaries
+```
+
+Replace `<DICT_REV>` with the actual 40-char commit. Verify the script
+still works: `cd backend && ./scripts/install-dictionaries.sh en` (writes
+`dictionaries/en.aff`/`.dic` — the `backend/dictionaries/` dir is
+gitignored, so this leaves no tracked changes).
 
 - [ ] **Step 1: Create `.dockerignore`**
 
@@ -1391,7 +1545,14 @@ backend/htmlcov
 **/.pytest_cache
 **/.DS_Store
 **/*.bak
+**/.env
+**/.env.*
 ```
+
+(The two `.env` patterns matter even though no layer copies such files: the
+build CONTEXT itself is transmitted — to a remote BuildKit builder too —
+so a developer's gitignored env file with provider/admin secrets must
+never leave the machine.)
 
 (`backend/config.yaml` and `api-keys.sh` are the owner's local dev config/secrets — never in the build context. `backend/data` is the live DB.)
 
@@ -1474,13 +1635,16 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Pinned deliberately: a floating :latest resolves to a new digest on every
-# uv release, and a changed COPY source invalidates every layer below it —
-# including the ~1.5 GB model layer. (Implementer: check the current uv
-# release at https://github.com/astral-sh/uv/releases and pin that.)
-COPY --from=ghcr.io/astral-sh/uv:0.9 /uv /usr/local/bin/uv
+# Pinned to a FULL version deliberately: a floating tag (:latest, or even
+# a minor line like :0.9) resolves to a new digest on releases, and a
+# changed COPY source invalidates every layer below it — including the
+# ~1.5 GB model layer. (Implementer: check the current uv release at
+# https://github.com/astral-sh/uv/releases and pin that exact x.y.z.)
+COPY --from=ghcr.io/astral-sh/uv:0.9.9 /uv /usr/local/bin/uv
 
-# 2. Hunspell dictionaries (own layer: network fetch, changes ~never)
+# 2. Hunspell dictionaries (own layer: network fetch, changes ~never).
+#    The script fetches at the SAME pinned revision the curated license
+#    data (scripts/curated-licenses.yaml) was verified against.
 COPY backend/scripts/install-dictionaries.sh scripts/
 RUN ./scripts/install-dictionaries.sh en de fr es it
 
@@ -1490,22 +1654,15 @@ ENV UV_PROJECT_ENVIRONMENT=/app/.venv \
     VIRTUAL_ENV=/app/.venv
 RUN uv sync --locked --no-dev
 
-# 4. spaCy pipelines + GiNZA (largest, most stable layer; pins match
-#    backend/scripts/install-models.sh VER=3.8.0 and the curated notices).
-#    This layer sits below the lockfile COPY even though it changes less
-#    often, because `uv pip install` needs the venv from layer 3 to exist —
-#    a dependency bump therefore rebuilds it; the registry cache absorbs
-#    that for unchanged-lockfile builds. ginza/ja-ginza resolve their own
-#    deps against the already-synced venv (VIRTUAL_ENV above makes the
-#    target venv explicit rather than cwd-derived).
-RUN uv pip install \
-    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" \
-    "de-core-news-sm @ https://github.com/explosion/spacy-models/releases/download/de_core_news_sm-3.8.0/de_core_news_sm-3.8.0-py3-none-any.whl" \
-    "fr-core-news-sm @ https://github.com/explosion/spacy-models/releases/download/fr_core_news_sm-3.8.0/fr_core_news_sm-3.8.0-py3-none-any.whl" \
-    "es-core-news-sm @ https://github.com/explosion/spacy-models/releases/download/es_core_news_sm-3.8.0/es_core_news_sm-3.8.0-py3-none-any.whl" \
-    "it-core-news-sm @ https://github.com/explosion/spacy-models/releases/download/it_core_news_sm-3.8.0/it_core_news_sm-3.8.0-py3-none-any.whl" \
-    "zh-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/zh_core_web_sm-3.8.0/zh_core_web_sm-3.8.0-py3-none-any.whl" \
-    "ginza==5.2.0" "ja-ginza==5.2.0"
+# 4. spaCy pipelines + GiNZA from the SAME lockfile (largest, most stable
+#    layer). Locked via the `models` dependency group, so ginza's
+#    transitives (sudachipy, sudachidict-core, plac) cannot drift between
+#    builds and the license inventory covers exactly what ships. This
+#    layer sits below the lockfile COPY even though it changes less often,
+#    because sync needs the project files from layer 3 — a dependency bump
+#    therefore rebuilds it; the registry cache absorbs that for
+#    unchanged-lockfile builds.
+RUN uv sync --locked --no-dev --group models
 
 # 5. Application
 COPY backend/app ./app
@@ -1646,7 +1803,7 @@ Every step's expected outcome is in its comment; a deviation is a bug in the ima
 - [ ] **Step 8: Commit** (the exec bits must be in git — the image gets the entrypoint's via `--chmod`, but `fabulous.sh` is run from a checkout/download)
 
 ```bash
-git add Dockerfile .dockerignore docker/ fabulous.sh
+git add Dockerfile .dockerignore docker/ fabulous.sh backend/scripts/install-dictionaries.sh
 git update-index --chmod=+x fabulous.sh docker/entrypoint.sh
 git ls-files -s fabulous.sh docker/entrypoint.sh   # both must show mode 100755
 git commit -m "feat(deploy): single-container image, entrypoint, setup wrapper (B17, #58)"
@@ -1679,10 +1836,18 @@ on:
       - "docker/**"
       - "fabulous.sh"
       - "scripts/**"
+      - "backend/app/**"
+      - "backend/rules/**"
+      - "backend/demos/**"
       - "backend/scripts/**"
       - "THIRD-PARTY-NOTICES.md"
+      - "LICENSE"
       - "backend/pyproject.toml"
       - "backend/uv.lock"
+      - "frontend/src/**"
+      - "frontend/index.html"
+      - "frontend/vite.config.ts"
+      - "frontend/tsconfig*.json"
       - "frontend/package.json"
       - "frontend/package-lock.json"
       - ".github/workflows/docker.yml"
@@ -1693,10 +1858,18 @@ on:
       - "docker/**"
       - "fabulous.sh"
       - "scripts/**"
+      - "backend/app/**"
+      - "backend/rules/**"
+      - "backend/demos/**"
       - "backend/scripts/**"
       - "THIRD-PARTY-NOTICES.md"
+      - "LICENSE"
       - "backend/pyproject.toml"
       - "backend/uv.lock"
+      - "frontend/src/**"
+      - "frontend/index.html"
+      - "frontend/vite.config.ts"
+      - "frontend/tsconfig*.json"
       - "frontend/package.json"
       - "frontend/package-lock.json"
       - ".github/workflows/docker.yml"
@@ -1789,9 +1962,14 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Version from tag
+      - name: Validate and extract version
         id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag '$GITHUB_REF_NAME' is not vX.Y.Z — refusing to release" >&2
+            exit 1
+          fi
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
       - name: Build and push (amd64 + arm64)
         uses: docker/build-push-action@v6
         with:
