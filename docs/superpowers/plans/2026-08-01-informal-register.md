@@ -41,7 +41,7 @@ Precondition: the planning PR (spec + this plan) is **merged** — verify the pl
 ```bash
 cd /Users/markus/IdeaProjects/fabulous-writing
 git checkout main && git pull
-test -f docs/superpowers/plans/2026-08-01-informal-register.md || echo "STOP: planning PR not merged"
+test -f docs/superpowers/plans/2026-08-01-informal-register.md || { echo "STOP: planning PR not merged"; exit 1; }
 git checkout -b informal-register-impl
 ```
 
@@ -105,6 +105,7 @@ const REQUIRED: Record<string, string[]> = {
     'clique pour les détails',
     'réessaie dans un instant',
     'Réessaie.',
+    'réécris-la.',
     'lance une vérification',
     'tes dernières modifications',
     'Ta session a pris fin',
@@ -253,7 +254,7 @@ frontend/src/i18n/it.ts
 
 ```bash
 git add frontend/src/i18n/register.test.ts frontend/src/i18n/de.ts frontend/src/i18n/fr.ts frontend/src/i18n/es.ts frontend/src/i18n/it.ts
-git commit -m "$(cat <<EOF
+git commit -m "$(cat <<'EOF'
 feat(i18n): informal register for de/fr/es/it direct address (B2, #35)
 
 Du/tu/tú for the 22 strings that address the user; buttons, control
@@ -272,7 +273,7 @@ EOF
 ### Task 2: Architecture doc
 
 **Files:**
-- Modify: `docs/frontend-architecture.md` — append to the existing `## Internationalization` section (around line 1516), immediately before the next `##` heading.
+- Modify: `docs/frontend-architecture.md` — append to the existing `## Internationalization` section, immediately before the next `##` heading.
 
 **Interfaces:**
 - Consumes: the convention established in Task 1 (guard test path `frontend/src/i18n/register.test.ts`).
@@ -315,7 +316,7 @@ Expected: clean / green / clean.
 
 ```bash
 git add docs/frontend-architecture.md
-git commit -m "$(cat <<EOF
+git commit -m "$(cat <<'EOF'
 docs(architecture): record UI copy register convention (B2, #35)
 
 <TRAILERS-FROM-DISPATCH>

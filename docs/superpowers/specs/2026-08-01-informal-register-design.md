@@ -58,12 +58,11 @@ string:
 1. **Direct address** (instructs the user, asks them to act, or speaks
    to them: click-hints, retry prompts, "please" sentences, second-person
    possessives) → informal second person:
-   - de: Du-imperative, lowercase "du/dein" per current orthography
-     ("Klick, um…", "Bitte versuch es gleich noch einmal.").
+   - de: Du-imperative with imperative-e, lowercase "du/dein" per
+     current orthography ("Klicke, um…", "Bitte versuche es erneut.").
    - fr: tu ("réessaie", "Reconnecte-toi", "tes dernières
      modifications"); tagline joins de/es in register
-     ("Écris clairement. Relu, pas jugé." — exact wording finalized in
-     the plan).
+     ("Écris clair. Relu, pas jugé.").
    - es: tú ("Vuelve a intentarlo.", "Inicia sesión de nuevo…").
    - it: tu ("riprova tra poco").
 2. **Button/menu/toggle labels** → unchanged (conventional infinitive
@@ -95,8 +94,9 @@ not direct address — it stays impersonal in all four locales.
 
 ## Verification
 
-- Frontend gates: `npm test -- --run` green (existing `i18n.test.ts`
-  parity tests included), `npm run build` clean.
+- Frontend gates: `npm run lint` clean, `npm test -- --run` green
+  (existing `i18n.test.ts` parity tests included), `npm run build`
+  clean.
 - **Register guard test** (new, sibling `register.test.ts`), pinning
   both directions:
   - no formal markers — fr `veuillez`/`\bvous\b`/`\bvotre\b`/`\bvos\b`
