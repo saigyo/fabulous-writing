@@ -75,7 +75,7 @@ export const es: Messages = {
     `La verificación LLM se ejecutó con ${effective} — ${requested} no está disponible en el plan actual.`,
   llmNotIncluded: 'La verificación LLM no está incluida en el plan actual.',
   llmSkippedServer: 'Verificación LLM omitida: no disponible en el servidor.',
-  serverBusy: 'Servidor ocupado; vuelva a intentarlo en unos instantes.',
+  serverBusy: 'Servidor ocupado; vuelve a intentarlo en unos instantes.',
   llmQuotaExhausted:
     'Presupuesto LLM agotado. La capacidad se libera al finalizar el período actual.',
   llmDocumentTooLarge: (limit) =>
@@ -253,9 +253,9 @@ export const es: Messages = {
   signInSubmit: 'Iniciar sesión',
   signInPending: 'Iniciando sesión…',
   signInInvalid: 'Correo electrónico o contraseña incorrectos.',
-  signInFailed: 'No se pudo iniciar sesión. Vuelva a intentarlo.',
+  signInFailed: 'No se pudo iniciar sesión. Vuelve a intentarlo.',
   sessionExpired:
-    'La sesión ha finalizado. Inicie sesión de nuevo: los cambios sin guardar se han conservado.',
+    'La sesión ha finalizado. Inicia sesión de nuevo: los cambios sin guardar se han conservado.',
   accountMenu: 'Cuenta',
   accountChangePassword: 'Cambiar contraseña',
   accountLogOut: 'Cerrar sesión',

@@ -71,7 +71,7 @@ export const de: Messages = {
     `LLM-Prüfung lief mit ${effective} — ${requested} ist im aktuellen Tarif nicht verfügbar.`,
   llmNotIncluded: 'Die LLM-Prüfung ist im aktuellen Tarif nicht enthalten.',
   llmSkippedServer: 'LLM-Prüfung übersprungen: auf dem Server nicht verfügbar.',
-  serverBusy: 'Server ausgelastet — bitte gleich erneut versuchen.',
+  serverBusy: 'Server ausgelastet — bitte versuche es gleich erneut.',
   llmQuotaExhausted:
     'LLM-Budget aufgebraucht. Kapazität wird mit Ablauf des aktuellen Zeitraums wieder frei.',
   llmDocumentTooLarge: (limit) =>
@@ -94,7 +94,7 @@ export const de: Messages = {
   severityName: (s) => sev[s],
   severityCount: (s, n) => (n === 1 ? `1 ${sev[s]}` : `${n} ${sevPlural[s]}`),
   showOnlySeverity: (s) => `Nur ${sevPlural[s]} anzeigen`,
-  showAllFindings: 'Klicken, um wieder alle Ergebnisse anzuzeigen',
+  showAllFindings: 'Klicke, um wieder alle Ergebnisse anzuzeigen',
   sourceGroupCount: (g, n) => (g === 'llm' ? `${n} LLM` : `${n} regelbasiert`),
   showOnlySource: (g) =>
     g === 'llm' ? 'Nur LLM-Ergebnisse anzeigen' : 'Nur regelbasierte Ergebnisse anzeigen',
@@ -113,7 +113,7 @@ export const de: Messages = {
   rewriteSentence: 'Satz umformulieren',
   retryRewrite: 'Umformulierung wiederholen',
   applyRewriteTitle: 'Satz durch diese Umformulierung ersetzen',
-  sentenceChangedRewriteAgain: 'Der Satz hat sich geändert — bitte erneut umformulieren.',
+  sentenceChangedRewriteAgain: 'Der Satz hat sich geändert — bitte formuliere ihn erneut um.',
   noReliableSuggestion: (rejected) =>
     `Kein verlässlicher Vorschlag — ${
       rejected === 1 ? '1 Kandidat ist' : `${rejected} Kandidaten sind`
@@ -124,9 +124,9 @@ export const de: Messages = {
       : `${count} zurückgehaltene Vorschläge anzeigen`,
   heldBackRules: (rules) => `Würde weiterhin auslösen: ${rules}`,
   heldBackSpelling: (words) => `Nicht erkannt: ${words}`,
-  scoreBadgeTitle: 'Gesamtqualität — klicken für Details',
+  scoreBadgeTitle: 'Gesamtqualität — klicke für Details',
   scoreTooShort: 'Zu kurz für eine Bewertung (mindestens 40 Wörter)',
-  scoreMechanicsOnly: 'Nur Mechanik — LLM-Prüfung für die vollständige Bewertung ausführen',
+  scoreMechanicsOnly: 'Nur Mechanik — führe für die vollständige Bewertung eine LLM-Prüfung aus',
   scoreOutdated: 'Die Handwerks-Bewertung ist älter als der aktuelle Text',
   scoreMechanics: 'Mechanik',
   scoreCraft: 'Handwerk',
@@ -154,7 +154,7 @@ export const de: Messages = {
   preferredHeader: 'Bevorzugt',
   doNotUseHeader: 'Nicht verwenden',
   definitionHeader: 'Definition',
-  sortHeaderTitle: 'Klicken zum Sortieren: aufsteigend → absteigend → aus',
+  sortHeaderTitle: 'Klicke zum Sortieren: aufsteigend → absteigend → aus',
   languageFilterTitle: 'Nur Begriffe einer Sprache anzeigen',
   noTermsMatch: 'Keine Begriffe entsprechen dem aktuellen Filter.',
   preferredPlaceholder: 'bevorzugter Begriff',
@@ -249,9 +249,9 @@ export const de: Messages = {
   signInSubmit: 'Anmelden',
   signInPending: 'Meldet an…',
   signInInvalid: 'E-Mail oder Passwort ist falsch.',
-  signInFailed: 'Anmeldung fehlgeschlagen. Bitte erneut versuchen.',
+  signInFailed: 'Anmeldung fehlgeschlagen. Bitte versuche es erneut.',
   sessionExpired:
-    'Die Sitzung ist beendet. Bitte erneut anmelden — ungespeicherte Änderungen bleiben erhalten.',
+    'Die Sitzung ist beendet. Bitte melde dich erneut an — ungespeicherte Änderungen bleiben erhalten.',
   accountMenu: 'Konto',
   accountChangePassword: 'Passwort ändern',
   accountLogOut: 'Abmelden',

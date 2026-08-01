@@ -75,7 +75,7 @@ export const fr: Messages = {
     `Vérification LLM effectuée avec ${effective} — ${requested} n’est pas disponible dans l’offre actuelle.`,
   llmNotIncluded: 'La vérification LLM n’est pas incluse dans l’offre actuelle.',
   llmSkippedServer: 'Vérification LLM ignorée : non disponible sur le serveur.',
-  serverBusy: 'Serveur occupé — veuillez réessayer dans un instant.',
+  serverBusy: 'Serveur occupé — réessaie dans un instant.',
   llmQuotaExhausted:
     'Budget LLM épuisé. La capacité se libère à la fin de la période en cours.',
   llmDocumentTooLarge: (limit) =>
@@ -98,7 +98,7 @@ export const fr: Messages = {
   severityName: (s) => sev[s],
   severityCount: (s, n) => (n === 1 ? `1 ${sev[s]}` : `${n} ${sevPlural[s]}`),
   showOnlySeverity: (s) => `Afficher uniquement les ${sevPlural[s]}`,
-  showAllFindings: 'Cliquer pour afficher à nouveau tous les résultats',
+  showAllFindings: 'Clique pour afficher à nouveau tous les résultats',
   sourceGroupCount: (g, n) => (g === 'llm' ? `${n} LLM` : `${n} par règles`),
   showOnlySource: (g) =>
     g === 'llm'
@@ -119,7 +119,7 @@ export const fr: Messages = {
   rewriteSentence: 'Réécrire la phrase',
   retryRewrite: 'Réessayer la réécriture',
   applyRewriteTitle: 'Remplacer la phrase par cette réécriture',
-  sentenceChangedRewriteAgain: 'La phrase a changé — réécrivez à nouveau.',
+  sentenceChangedRewriteAgain: 'La phrase a changé — réécris-la.',
   noReliableSuggestion: (rejected) =>
     `Aucune suggestion fiable — ${
       rejected === 1 ? '1 candidat a' : `${rejected} candidats ont`
@@ -128,10 +128,10 @@ export const fr: Messages = {
     count === 1 ? 'Afficher 1 suggestion retenue' : `Afficher ${count} suggestions retenues`,
   heldBackRules: (rules) => `Déclencherait encore : ${rules}`,
   heldBackSpelling: (words) => `Non reconnu : ${words}`,
-  scoreBadgeTitle: 'Qualité globale — cliquer pour les détails',
+  scoreBadgeTitle: 'Qualité globale — clique pour les détails',
   scoreTooShort: 'Texte trop court pour une note (minimum 40 mots)',
-  scoreMechanicsOnly: 'Mécanique seule — lancez une vérification LLM pour la note complète',
-  scoreOutdated: 'L’évaluation du métier précède vos dernières modifications',
+  scoreMechanicsOnly: 'Mécanique seule — lance une vérification LLM pour la note complète',
+  scoreOutdated: 'L.évaluation du métier précède tes dernières modifications',
   scoreMechanics: 'Mécanique',
   scoreCraft: 'Métier',
   dimensionName: (d) =>
@@ -158,7 +158,7 @@ export const fr: Messages = {
   preferredHeader: 'Préféré',
   doNotUseHeader: 'À éviter',
   definitionHeader: 'Définition',
-  sortHeaderTitle: 'Cliquer pour trier : croissant → décroissant → désactivé',
+  sortHeaderTitle: 'Clique pour trier : croissant → décroissant → désactivé',
   languageFilterTitle: "Afficher les termes d'une seule langue",
   noTermsMatch: 'Aucun terme ne correspond au filtre actuel.',
   preferredPlaceholder: 'terme préféré',
@@ -247,15 +247,15 @@ export const fr: Messages = {
   folderDefaultsError: "Échec de l'enregistrement des valeurs par défaut du dossier.",
 
   // Authentification
-  loginTagline: 'Écrire clairement. Être relu, pas jugé.',
+  loginTagline: 'Écris clair. Relu, pas jugé.',
   signInEmail: 'E-mail',
   signInPassword: 'Mot de passe',
   signInSubmit: 'Se connecter',
   signInPending: 'Connexion…',
   signInInvalid: 'E-mail ou mot de passe incorrect.',
-  signInFailed: 'Échec de la connexion. Veuillez réessayer.',
+  signInFailed: 'Échec de la connexion. Réessaie.',
   sessionExpired:
-    'Votre session a pris fin. Veuillez vous reconnecter — les modifications non enregistrées ont été conservées.',
+    'Ta session a pris fin. Reconnecte-toi — les modifications non enregistrées ont été conservées.',
   accountMenu: 'Compte',
   accountChangePassword: 'Changer le mot de passe',
   accountLogOut: 'Se déconnecter',
