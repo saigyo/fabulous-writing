@@ -1523,6 +1523,21 @@ Catalog entries are plain strings or functions (for counts/parameters);
 `interpolate()` splices React nodes into translated templates. A vitest test asserts
 key equality across all catalogs, so a missing translation fails CI.
 
+### UI copy register (B2)
+
+de/fr/es/it address the user informally (*Du*, *tu*, *tú*) in sentences
+that instruct or speak to them: click-hints, retry prompts, session
+notices, second-person possessives. Button/menu labels and
+control-description tooltips keep their conventional forms (de/fr/es
+infinitives, it imperatives), and neutral statements of fact stay
+impersonal — deliberately including the `adminSelfResetHint` family. en
+carries no register, ja stays polite です/ます, zh has no second person:
+all three are untouched by register work. `i18n/register.test.ts` pins
+both directions — formal markers must not reappear (de Sie/Ihnen/Ihr…/
+klicken; fr veuillez/vous/votre/vos and -ez imperatives; es
+vuelva/inicie/usted; it riprovare/Lei) and the converted informal
+strings must stay present.
+
 ## API client
 
 `api/client.ts` is the only module that talks to the network: small typed wrappers
