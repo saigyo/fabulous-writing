@@ -59,7 +59,7 @@ const REQUIRED: Record<string, string[]> = {
     'Réessaie.',
     'réécris-la.',
     'lance une vérification',
-    'tes dernières modifications',
+    `L’évaluation du métier précède tes dernières modifications`,
     'Ta session a pris fin',
     'Reconnecte-toi',
     'Écris clair.',

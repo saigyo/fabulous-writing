@@ -131,7 +131,7 @@ export const fr: Messages = {
   scoreBadgeTitle: 'Qualité globale — clique pour les détails',
   scoreTooShort: 'Texte trop court pour une note (minimum 40 mots)',
   scoreMechanicsOnly: 'Mécanique seule — lance une vérification LLM pour la note complète',
-  scoreOutdated: 'L.évaluation du métier précède tes dernières modifications',
+  scoreOutdated: 'L’évaluation du métier précède tes dernières modifications',
   scoreMechanics: 'Mécanique',
   scoreCraft: 'Métier',
   dimensionName: (d) =>
