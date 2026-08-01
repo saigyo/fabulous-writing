@@ -64,7 +64,11 @@ import { describe, expect, test } from 'vitest'
  * Case-sensitive where the formal form is capitalized (de Sie/Ihr…, it Lei).
  * Deliberately absent: es "su" (too ambiguous — his/her/its) and de
  * "versuchen" (docRetry/connectionRetry keep the infinitive button label
- * "Erneut versuchen").
+ * "Erneut versuchen"). de "klicken" IS guarded: bare "klicken" in these
+ * catalogs is always a click-hint — direct address per the register
+ * policy — never a control description, which names the control's
+ * action rather than instructing a click. Compound forms
+ * ("Doppelklicken") do not match the \b-bounded marker.
  *
  * REQUIRED pins the converted strings themselves, so a wholesale revert to
  * the impersonal wording fails even where no formal marker would appear.
@@ -328,7 +332,7 @@ EOF
 
 ### Post-PR step (controller, not a subagent task): LOGBOOK
 
-The LOGBOOK convention references PR numbers, and the implementation PR number does not exist until `gh pr create` runs — so this step happens **after** the final whole-branch review, when the controller pushes the branch and opens the PR (body ends with the repo's PR trailer; closing keyword `Closes #35.`). Then, with the real numbers in hand, append to `docs/LOGBOOK.md` on the PR branch (match the existing entry format):
+The LOGBOOK convention references PR numbers, and the implementation PR number does not exist until `gh pr create` runs — so this step happens **after** the final whole-branch review, when the controller pushes the branch and opens the PR. (Deliberate ordering: guessing "latest + 1" risks committing a wrong permanent reference; the trade-off is safe because the LOGBOOK commit is docs-only and lands on the open PR branch, where the implementation PR's Copilot review covers it.) The PR body ends with the repo's PR trailer and carries the closing keyword `Closes #35.`. Then, with the real numbers in hand, append to `docs/LOGBOOK.md` on the PR branch (match the existing entry format):
 
 ```markdown
 ## 2026-08-01 — B2: informal UI register (PRs #<planning>, #<impl>)
