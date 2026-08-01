@@ -71,7 +71,7 @@ export const it: Messages = {
     `Verifica LLM eseguita con ${effective} — ${requested} non è disponibile nel piano attuale.`,
   llmNotIncluded: 'La verifica LLM non è inclusa nel piano attuale.',
   llmSkippedServer: 'Verifica LLM saltata: non disponibile sul server.',
-  serverBusy: 'Server occupato: riprovare tra poco.',
+  serverBusy: 'Server occupato: riprova tra poco.',
   llmQuotaExhausted:
     'Budget LLM esaurito. La capacità si libera al termine del periodo corrente.',
   llmDocumentTooLarge: (limit) =>
