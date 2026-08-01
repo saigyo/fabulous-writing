@@ -3652,3 +3652,17 @@ probe (held-back states are LLM-gated, unreachable on the keyless
 scratch stack). Final Opus review reproduced every contrast figure and
 CM claim independently: APPROVED, 6 Minors — 5 fixed in a hardening
 wave, 1 parked (doc-section nesting inherited from B18).
+
+## 2026-08-01 — B2: informal UI register (PRs #72, #73)
+
+de/fr/es/it moved to informal address (Du/tu/tú) for the 22 strings that
+speak to the user (8 de, 10 fr, 3 es, 1 it — incl. the fr tagline
+"Écris clair. Relu, pas jugé."); buttons, control descriptions, and
+neutral statements untouched (adminSelfResetHint stays impersonal by
+explicit ruling); en/ja/zh byte-identical. `i18n/register.test.ts` pins
+the register in both directions (formal markers absent + informal
+strings present; both sides mutation-verified). The task review caught a
+live curly-apostrophe→period corruption in fr `scoreOutdated` that
+tsc/vitest could not see — fixed and pinned full-string. Final review
+APPROVED-WITH-MINORS (0C/0I/4M, all parked with rulings).
+Spec: docs/superpowers/specs/2026-08-01-informal-register-design.md.
