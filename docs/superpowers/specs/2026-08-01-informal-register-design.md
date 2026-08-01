@@ -78,27 +78,41 @@ From the design-phase audit; the plan carries the authoritative per-key
 before/after table, and the planning audit may add strings the greps
 could not see. The policy above, not this list, is the contract.
 
-- **de** (~6): `showAllFindings`, `sortHeaderTitle`, `serverBusy`,
-  `sentenceChangedRewriteAgain`, `signInFailed`, `sessionExpired`.
-- **fr** (~9): the vous/veuillez set (`serverBusy`,
+- **de** (8): `showAllFindings`, `sortHeaderTitle`, `scoreBadgeTitle`,
+  `scoreMechanicsOnly`, `serverBusy`, `sentenceChangedRewriteAgain`,
+  `signInFailed`, `sessionExpired`.
+- **fr** (10): the vous/veuillez set (`serverBusy`,
   `sentenceChangedRewriteAgain`, `scoreMechanicsOnly`, `scoreOutdated`,
-  `signInFailed`, `sessionExpired`) plus click-hint sentences and the
+  `signInFailed`, `sessionExpired`) plus the click-hint sentences
+  (`showAllFindings`, `sortHeaderTitle`, `scoreBadgeTitle`) and the
   tagline.
 - **es** (3): `serverBusy`, `signInFailed`, `sessionExpired`.
 - **it** (1): `serverBusy`.
+
+The audit also considered `adminSelfResetHint` (the spec's own
+marker-blind example above) and ruled it a neutral mechanism statement,
+not direct address — it stays impersonal in all four locales.
 
 ## Verification
 
 - Frontend gates: `npm test -- --run` green (existing `i18n.test.ts`
   parity tests included), `npm run build` clean.
-- **Register guard test** (new, in `i18n.test.ts` or a sibling):
-  asserts the four converted catalogs contain none of the formal
-  markers — fr `veuillez`/`\bvous\b`/`\bvotre\b`/`\bvos\b`,
-  de `\bSie\b`/`\bIhnen\b`/`\bIhre?[mnrs]?\b` (as standalone address),
-  es `\b[Vv]uelva\b`/`\b[Ii]nicie\b`/`usted`,
-  it `\briprovare\b`. Markers are checked against the catalog string
-  values. Mutation-verified: reintroduce one formal string, watch the
-  test fail, restore.
+- **Register guard test** (new, sibling `register.test.ts`), pinning
+  both directions:
+  - no formal markers — fr `veuillez`/`\bvous\b`/`\bvotre\b`/`\bvos\b`
+    plus the bare 2pl imperatives (`cliquez`, `réessayez`, `lancez`, …),
+    de `\bSie\b`/`\bIhnen\b`/`\bIhr(e[mnrs]?)?\b`/`klicken`,
+    es `\b[Vv]uelva\b`/`\b[Ii]nicie\b`/`usted`,
+    it `\briprovare\b`/`\bLei\b`;
+  - the converted informal strings are **present** (a wholesale revert
+    to impersonal wording fails even where no formal marker appears).
+
+  Markers are checked against the catalog **source files as raw text**
+  (a deliberate deviation from checking evaluated values: it also covers
+  template literals inside function values; the cost is that key names
+  and comments are scanned too, which is acceptable). Both directions
+  are mutation-verified: break the guarded property, watch the test
+  fail, restore.
 - **Byte-identity gate:** `git diff` for the branch shows zero changes
   to `en.ts`, `ja.ts`, `zh.ts`, `messages.ts`, and any file outside
   `frontend/src/i18n/` + docs.
