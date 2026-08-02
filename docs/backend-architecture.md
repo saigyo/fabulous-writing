@@ -1968,10 +1968,14 @@ about the other.
 built Vite assets at `/assets` and registers a `GET /{full_path:path}` catch-all that
 serves `index.html` for any unmatched path (the SPA's client-side router takes it from
 there), except paths starting with `api` — those stay a JSON 404 instead of falling
-back to HTML — and it resolves each candidate path against `dist_dir` to reject
-traversal outside it. This route is registered last, after every `/api` router, so
-FastAPI's registration-order route matching always gives real API routes priority over
-the catch-all.
+back to HTML. Rather than resolving the requested path against `dist_dir` at request
+time, the catch-all is structurally taint-free: at mount time it walks `dist_dir` once
+into a `{relative_path: absolute_path}` map, and the route body only ever does a dict
+lookup against that map (falling back to `index.html` on a miss) — no request-derived
+path is joined onto the filesystem, so there is no path for a traversal segment to
+escape through. This route is registered last, after every `/api` router, so FastAPI's
+registration-order route matching always gives real API routes priority over the
+catch-all.
 
 **The wizard.** `app/setup_wizard.py` owns the `/config` directory end to end: each
 run regenerates both `fabulous.env` (secrets, written with `0o600` permissions) and

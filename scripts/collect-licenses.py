@@ -173,7 +173,10 @@ def python_license(name: str) -> tuple[str, str]:
                 " or empty — full license texts are required"
             )
         return spdx, text_path.read_text(encoding="utf-8", errors="replace")
-    return spdx, "(license text not shipped in wheel; see project page)"
+    raise SystemExit(
+        f"'{name}' ships no license text and has no SUPPLEMENTAL_TEXTS"
+        " entry — add one (see ja-ginza/sudachipy pattern)"
+    )
 
 
 def npm_packages() -> dict[str, dict]:
@@ -242,11 +245,25 @@ def main() -> int:
     for key, info in sorted(npm_packages().items()):
         name, _, version = key.rpartition("@")
         license_file = info.get("licenseFile")
-        text = (
-            Path(license_file).read_text(encoding="utf-8", errors="replace")
-            if license_file and Path(license_file).is_file()
-            else "(license text not shipped; see repository)"
-        )
+        if license_file and Path(license_file).is_file():
+            text = Path(license_file).read_text(encoding="utf-8", errors="replace")
+        else:
+            normalized = name.lower().replace("_", "-")
+            supplemental = next(
+                (
+                    REPO / rel_path
+                    for supp_name, rel_path in SUPPLEMENTAL_TEXTS.items()
+                    if supp_name.lower().replace("_", "-") == normalized
+                ),
+                None,
+            )
+            if supplemental is None or not supplemental.is_file() or not supplemental.read_text(encoding="utf-8").strip():
+                raise SystemExit(
+                    f"'{name}' ships no license text and has no"
+                    " SUPPLEMENTAL_TEXTS entry — add one (see"
+                    " ja-ginza/sudachipy pattern)"
+                )
+            text = supplemental.read_text(encoding="utf-8", errors="replace")
         licenses = info.get("licenses", "UNKNOWN")
         if isinstance(licenses, list):
             licenses = " OR ".join(licenses)

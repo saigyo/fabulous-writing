@@ -14,6 +14,17 @@ COPY frontend/ ./
 ENV VITE_API_URL=""
 RUN npm run build
 
+# Pinned to a FULL version deliberately: a floating tag (:latest, or even
+# a minor line like :0.9) resolves to a new digest on releases, and a
+# changed source invalidates every layer below it that mounts it —
+# including the ~1.5 GB model layer. (Implementer: check the current uv
+# release at https://github.com/astral-sh/uv/releases and pin that exact
+# x.y.z.) Kept as its own stage — never COPYed into the runtime image — so
+# the uv binary ships only as a build-time bind-mount and never ends up in
+# a runtime layer, keeping the license inventory scoped to what actually
+# runs.
+FROM ghcr.io/astral-sh/uv:0.12.1 AS uv
+
 FROM python:3.13-slim AS runtime
 WORKDIR /app
 
@@ -21,13 +32,6 @@ WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
-
-# Pinned to a FULL version deliberately: a floating tag (:latest, or even
-# a minor line like :0.9) resolves to a new digest on releases, and a
-# changed COPY source invalidates every layer below it — including the
-# ~1.5 GB model layer. (Implementer: check the current uv release at
-# https://github.com/astral-sh/uv/releases and pin that exact x.y.z.)
-COPY --from=ghcr.io/astral-sh/uv:0.12.1 /uv /usr/local/bin/uv
 
 # 2. Hunspell dictionaries (own layer: network fetch, changes ~never).
 #    The script fetches at the SAME pinned revision the curated license
@@ -39,7 +43,7 @@ RUN ./scripts/install-dictionaries.sh en de fr es it
 COPY backend/pyproject.toml backend/uv.lock ./
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv \
     VIRTUAL_ENV=/app/.venv
-RUN uv sync --locked --no-dev
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv uv sync --locked --no-dev
 
 # 4. spaCy pipelines + GiNZA from the SAME lockfile (largest, most stable
 #    layer). Locked via the `models` dependency group, so ginza's
@@ -49,7 +53,7 @@ RUN uv sync --locked --no-dev
 #    because sync needs the project files from layer 3 — a dependency bump
 #    therefore rebuilds it; the registry cache absorbs that for
 #    unchanged-lockfile builds.
-RUN uv sync --locked --no-dev --group models
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv uv sync --locked --no-dev --group models
 
 # 5. Application
 COPY backend/app ./app
