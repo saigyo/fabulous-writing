@@ -1,0 +1,12 @@
+# Base configuration for the container image. The setup wizard copies and
+# extends this into /config/config.yaml — do not point FW_CONFIG_FILE here.
+environment: production
+db_path: /data/fabulous.db
+frontend:
+  dist_dir: /app/dist
+# Single-origin serving: no cross-origin callers exist, so no origin is
+# allowed. Dev keeps its own defaults (this file is container-only).
+cors:
+  origins: []
+providers:
+  default_provider: ollama
