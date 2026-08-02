@@ -215,7 +215,9 @@ docker run --rm -v fabulous-config:/config -v fabulous-data:/data -p 8080:8000 \
   `docker0` gateway IP (usually `http://172.17.0.1:11434`). On all platforms,
   Ollama must listen beyond `127.0.0.1` for the container to reach it:
   start Ollama with `OLLAMA_HOST=0.0.0.0` (or an interface-specific bind)
-  before running the `setup` command. On commercial-provider configs, the
+  before running the `setup` command. Note: Ollama's API has no authentication,
+  so prefer binding to a Docker-reachable interface only, or firewall port 11434
+  from untrusted networks when using the wildcard bind. On commercial-provider configs, the
   Ollama URL has no setup prompt; to correct a stale hand-edited value
   in `config.yaml`, edit it directly (or switch to the Ollama provider,
   which re-prompts the URL).
