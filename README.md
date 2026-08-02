@@ -212,12 +212,14 @@ docker run --rm -v fabulous-config:/config -v fabulous-data:/data -p 8080:8000 \
   to BOTH the `setup` and `serve` `docker run` lines — the wizard's
   model-list fetch also runs inside the `setup` container (edit both
   lines in `fabulous.sh` or use plain `docker run`), or use your
-  `docker0` gateway IP (usually `http://172.17.0.1:11434`). On all platforms,
-  Ollama must listen beyond `127.0.0.1` for the container to reach it:
-  start Ollama with `OLLAMA_HOST=0.0.0.0` (or an interface-specific bind)
-  before running the `setup` command. Note: Ollama's API has no authentication,
-  so prefer binding to a Docker-reachable interface only, or firewall port 11434
-  from untrusted networks when using the wildcard bind. On commercial-provider configs, the
+  `docker0` gateway IP (usually `http://172.17.0.1:11434`). On macOS/Windows
+  (Docker Desktop, colima/lima), Ollama's default `127.0.0.1` bind is reachable
+  via the host-side proxy — no `OLLAMA_HOST` change needed, and none should be
+  made (it's the safest setup). On native Linux Docker, the bridge IP cannot
+  reach a loopback-only bind — bind Ollama to the docker bridge specifically
+  (e.g. `OLLAMA_HOST=172.17.0.1`) or firewall port 11434. Since Ollama's API
+  has no authentication, a wildcard bind (0.0.0.0) exposes it to the whole local
+  network and should be avoided. On commercial-provider configs, the
   Ollama URL has no setup prompt; to correct a stale hand-edited value
   in `config.yaml`, edit it directly (or switch to the Ollama provider,
   which re-prompts the URL).
