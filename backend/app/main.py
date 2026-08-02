@@ -183,7 +183,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # design). Registered last: FastAPI matches routes in registration
     # order, so every /api route above wins over the catch-all. Known,
     # accepted quirk: with dist_dir set, a POST to an unknown path returns
-    # 405 (the catch-all matches by path, GET-only) instead of 404.
+    # 405 (the catch-all matches by path, GET-only) instead of 404. The
+    # catch-all serves only files enumerated from dist_dir at startup (an
+    # immutable image layer in the container) — no request-derived path is
+    # ever joined onto a filesystem path, so there is nothing for a
+    # traversal segment to escape into.
     dist_dir = settings.frontend.dist_dir
     if dist_dir is not None:
         dist = Path(dist_dir).resolve()
@@ -198,20 +202,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             name="assets",
         )
 
+        spa_files = {
+            (Path(root) / name).relative_to(dist).as_posix(): Path(root) / name
+            for root, _dirs, names in os.walk(dist)
+            for name in names
+        }
+
         @app.get("/{full_path:path}", include_in_schema=False)
         def spa(full_path: str) -> FileResponse:
             # /api/* never falls back to HTML: a missing API route must
             # stay a JSON 404, not a 200 page.
             if full_path == "api" or full_path.startswith("api/"):
                 raise HTTPException(status_code=404)
-            candidate = (dist / full_path).resolve()
-            if (
-                full_path
-                and candidate.is_relative_to(dist)
-                and candidate.is_file()
-            ):
-                return FileResponse(candidate)
-            return FileResponse(dist / "index.html")
+            return FileResponse(spa_files.get(full_path) or dist / "index.html")
 
     return app
 
