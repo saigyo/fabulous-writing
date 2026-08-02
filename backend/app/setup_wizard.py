@@ -420,8 +420,9 @@ def run_wizard(
     else:
         # Commercial provider: still point Ollama at the host so the
         # local tier's availability ping probes the right place — the
-        # tier lights up once host Ollama is reachable (B25, #84; needs
-        # OLLAMA_HOST beyond 127.0.0.1 — see README troubleshooting).
+        # tier lights up once host Ollama is reachable (B25, #84; on
+        # native Linux Docker the bind/firewall caveats in the README
+        # troubleshooting apply).
         # The prefill-style read preserves a hand-edited custom URL
         # across re-runs and the last prompted URL across a provider
         # switch; `or` (not a .get default) so an explicit null cannot

@@ -17,12 +17,14 @@ prefill-style read (not the bare constant) so a hand-edited custom URL
 (LAN Ollama host) survives re-runs, and the last prompted URL survives
 an Ollama→commercial provider switch. `GET /api/routing`'s Ollama ping
 then probes the host, and the local tier lights up once host Ollama is
-*reachable from the container* — which, in addition to the Linux
-`--add-host` mapping, requires Ollama to listen beyond its default
-`127.0.0.1` bind (`OLLAMA_HOST=0.0.0.0`); since Ollama's API has no
-authentication, operators should prefer binding to a Docker-reachable
-interface only or firewall port 11434 from untrusted networks. The README
-troubleshooting gains that caveat for all platforms. No new prompts; the Ollama path
+*reachable from the container* — on macOS/Windows (Docker Desktop,
+colima/lima) the default loopback bind is reachable via the host-side
+proxy, no setup needed; on native Linux Docker, Ollama must bind to the
+bridge interface (e.g. `OLLAMA_HOST=172.17.0.1`) or the port must be
+firewalled, since a loopback-only bind refuses. Wildcard binds
+(`OLLAMA_HOST=0.0.0.0`) expose Ollama's unauthenticated API to the local
+network and should be avoided. The README troubleshooting documents the
+platform-specific guidance. No new prompts; the Ollama path
 (which prompts for the URL) is unchanged. Null-robustness rider: the
 `existing_providers` read uses `or {}` / `or DEFAULT_OLLAMA_URL` forms
 so a hand-edited bare `providers:` or explicit null URL cannot crash a
@@ -49,15 +51,17 @@ or prompt on the commercial path; UI changes; B21's hardening items.
 default URL; re-run preserves a hand-edited URL; Ollama→commercial
 switch preserves the prompted URL; the updated switch test; all
 mutation-verified (drop the new line → tests fail). Full suite zero
-warnings. E2e expectations unchanged: the scratch container cannot
-reach host Ollama (its default `127.0.0.1` bind refuses non-local
-connections even when it runs), so local stays unavailable; the URL's
-presence is asserted in the generated config instead.
+warnings. E2e expectations: B24's e2e predates this URL write (its
+baseline config had no `ollama_base_url`, so the in-container localhost
+default applied); future e2e refinements on hosts with running Ollama
+must not assume the local tier is unavailable, since reachability depends
+on host Docker flavor and Ollama's bind configuration. URL presence in
+the generated config is asserted by wizard tests.
 
 **Release framing:** ships with B24 in `v0.2.0` — "LLM tiers work out
 of the box, and the local tier finds host Ollama once it is reachable
-from the container (`OLLAMA_HOST` beyond 127.0.0.1; Linux additionally
-`--add-host`)."
+from the container (works out of the box on Docker Desktop/colima; native
+Linux needs the documented bind/firewall setup)."
 
 **Process note:** deliberately a single PR (spec + plan + code,
 `Closes #84.`) given the one-line production change; squash-merge
