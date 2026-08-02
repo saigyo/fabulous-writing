@@ -18,12 +18,17 @@ files that remain in the image (stated in the output header).
 
 The output describes the linux/CPython 3.13 container image: requirement
 markers are evaluated against a fixed IMAGE_ENV (not the machine running
-the script), so the file is byte-identical whether generated on the dev
-Mac or in ubuntu CI — a pure function of uv.lock, package-lock.json, and
-the curated data.
+the script), so the package LIST is platform-independent — a pure
+function of uv.lock, package-lock.json, and the curated data. License
+TEXTS, however, are read from the distributions actually installed in
+the local venv/node_modules, which are platform-specific wheels/packages
+(e.g. numpy's macOS wheel ships numpy/.dylibs/*, its linux wheel ships
+numpy.libs/*). So the script must be run on linux, matching the image
+and CI, or the generated notices will misattribute license text and
+every CI run will show drift. See the platform guard in main().
 
-Usage (repo root):  uv run --project backend python scripts/collect-licenses.py
-CI drift check:     run it, then `git diff --exit-code THIRD-PARTY-NOTICES.md`
+Usage (repo root, on linux):  uv run --project backend python scripts/collect-licenses.py
+CI drift check:                run it, then `git diff --exit-code THIRD-PARTY-NOTICES.md`
 """
 
 from __future__ import annotations
@@ -201,6 +206,18 @@ def render(sections: list[tuple[str, list[tuple[str, str, str, str]]]]) -> str:
 
 
 def main() -> int:
+    if sys.platform != "linux" and "--force-platform" not in sys.argv:
+        raise SystemExit(
+            "collect-licenses.py must be run on linux: the package LIST is "
+            "platform-independent (marker-filtered against IMAGE_ENV), but "
+            "license TEXTS are read from the distributions actually "
+            "installed in the local venv/node_modules, which are "
+            "platform-specific wheels (e.g. numpy's macOS wheel ships "
+            "numpy/.dylibs/*, its linux wheel ships numpy.libs/*). Run this "
+            "inside a linux container matching the image/CI. Pass "
+            "--force-platform to override at your own risk."
+        )
+
     curated_doc = yaml.safe_load(CURATED.read_text(encoding="utf-8"))
     if "<" in str(curated_doc.get("revision", "<")):
         raise SystemExit("curated-licenses.yaml: revision still unverified")
