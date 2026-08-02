@@ -34,17 +34,24 @@ def scripted(answers: list[str]):
     return input_fn
 
 
-def probe_ok(base_url: str, model: str) -> tuple[bool, str]:
-    return True, "ok"
+def fetch_fail(base_url: str) -> tuple[list[str] | None, str]:
+    return None, "connection refused"
 
 
-def run_first(config_dir, template, answers, secrets_answers, probe=probe_ok):
+def fetch_models_list(names: list[str]):
+    def fetch(base_url: str) -> tuple[list[str] | None, str]:
+        return list(names), "ok"
+
+    return fetch
+
+
+def run_first(config_dir, template, answers, secrets_answers, fetch=fetch_fail):
     return run_wizard(
         config_dir,
         template,
         input_fn=scripted(answers),
         getpass_fn=scripted(secrets_answers),
-        probe=probe,
+        fetch_models=fetch,
     )
 
 
@@ -70,31 +77,35 @@ class TestFirstRun:
         assert "default_provider: claude" in config
         assert "db_path: /data/fabulous.db" in config
 
-    def test_ollama_setup_has_no_key_and_probes(self, tmp_path, template):
+    def test_ollama_fallback_setup_has_no_key(self, tmp_path, template):
         config_dir = tmp_path / "config"
         config_dir.mkdir()
         seen = {}
 
-        def probe(base_url, model):
-            seen["args"] = (base_url, model)
-            return True, "ok"
+        def fetch(base_url):
+            seen["base_url"] = base_url
+            return None, "connection refused"
 
-        rc = run_first(
+        rc = run_wizard(
             config_dir,
             template,
-            # email, provider "4" (ollama), base URL (accept default), model
-            answers=["admin@example.com", "4", "", "llama3.1"],
-            secrets_answers=["s3cret-password!"],
-            probe=probe,
+            input_fn=scripted(["admin@example.com", "4", "", "llama3.1"]),
+            getpass_fn=scripted(["s3cret-password!"]),
+            fetch_models=fetch,
         )
         assert rc == 0
         env = parse_env_file(config_dir / "fabulous.env")
         assert not any(k.endswith("_API_KEY") for k in env)
-        assert seen["args"] == ("http://host.docker.internal:11434", "llama3.1")
+        assert seen["base_url"] == "http://host.docker.internal:11434"
         config = (config_dir / "config.yaml").read_text(encoding="utf-8")
         assert "default_provider: ollama" in config
-        assert "ollama_base_url: http://host.docker.internal:11434" in config
         assert "ollama_model: llama3.1" in config
+        import yaml as yaml_module
+
+        data = yaml_module.safe_load(config)
+        # fetch failed -> the single free-text model maps to ALL four tiers
+        assert data["routing"]["languages"]["en"]["quality"]["model"] == "llama3.1"
+        assert data["routing"]["languages"]["en"]["cheap"]["model"] == "llama3.1"
 
     def test_failed_probe_warns_but_completes(self, tmp_path, template, capsys):
         config_dir = tmp_path / "config"
@@ -104,7 +115,7 @@ class TestFirstRun:
             template,
             answers=["admin@example.com", "4", "", "llama3.1"],
             secrets_answers=["s3cret-password!"],
-            probe=lambda b, m: (False, "connection refused"),
+            fetch=fetch_fail,
         )
         assert rc == 0
         assert (config_dir / "fabulous.env").is_file()
@@ -172,7 +183,7 @@ class TestReRun:
             template,
             input_fn=scripted(["", "", "", "", "n"]),
             getpass_fn=scripted([""]),
-            probe=probe_ok,
+            fetch_models=fetch_fail,
         )
         assert rc == 0
         after = parse_env_file(config_dir / "fabulous.env")
@@ -192,7 +203,7 @@ class TestReRun:
             template,
             input_fn=scripted(["", "3", "n"]),
             getpass_fn=scripted(["", "a" * 24]),
-            probe=probe_ok,
+            fetch_models=fetch_fail,
         )
         assert rc == 0
         env = parse_env_file(config_dir / "fabulous.env")
@@ -208,7 +219,7 @@ class TestReRun:
             template,
             input_fn=scripted(["", "3", "n"]),
             getpass_fn=scripted(["", "a" * 24]),
-            probe=probe_ok,
+            fetch_models=fetch_fail,
         )
         config = (config_dir / "config.yaml").read_text(encoding="utf-8")
         assert "ollama_base_url" not in config
@@ -225,7 +236,7 @@ class TestReRun:
             template,
             input_fn=scripted(["", "", "n"]),
             getpass_fn=scripted(["", ""]),
-            probe=probe_ok,
+            fetch_models=fetch_fail,
         )
         assert (config_dir / "fabulous.env").stat().st_mode & 0o077 == 0
         assert (config_dir / "fabulous.env.bak").stat().st_mode & 0o077 == 0
@@ -238,7 +249,7 @@ class TestReRun:
             template,
             input_fn=scripted(["", "", "", "", "y"]),
             getpass_fn=scripted([""]),
-            probe=probe_ok,
+            fetch_models=fetch_fail,
         )
         assert rc == 0
         after = parse_env_file(config_dir / "fabulous.env")["FW_AUTH_SECRET"]
@@ -253,7 +264,7 @@ class TestReRun:
             template,
             input_fn=scripted(["", "", "", "", "n"]),
             getpass_fn=scripted([""]),
-            probe=probe_ok,
+            fetch_models=fetch_fail,
         )
         assert (config_dir / "fabulous.env.bak").read_text(encoding="utf-8") == original_env
         assert (config_dir / "config.yaml.bak").is_file()
@@ -329,12 +340,460 @@ class TestValidation:
             template,
             input_fn=scripted(["", "", "n"]),
             getpass_fn=scripted(["", ""]),
-            probe=probe_ok,
+            fetch_models=fetch_fail,
         )
         assert (
             parse_env_file(config_dir / "fabulous.env")["FW_ADMIN_PASSWORD"]
             == "password-with-space "
         )
+
+
+class TestRoutingTable:
+    ALL_LANGUAGES = ("en", "de", "fr", "es", "it", "ja", "zh")
+
+    def test_claude_table_full_equality(self):
+        from app.setup_wizard import build_routing_table
+
+        per_language = {
+            "quality": {"provider": "claude", "model": "claude-opus-5"},
+            "balanced": {"provider": "claude", "model": "claude-sonnet-5"},
+            "cheap": {"provider": "claude", "model": "claude-haiku-4-5"},
+            "local": {"provider": "ollama", "model": "llama3.1"},
+        }
+        expected = {lang: per_language for lang in self.ALL_LANGUAGES}
+        assert build_routing_table("claude") == expected
+
+    def test_openai_table_full_equality(self):
+        from app.setup_wizard import build_routing_table
+
+        per_language = {
+            "quality": {"provider": "openai", "model": "gpt-5.6-sol"},
+            "balanced": {"provider": "openai", "model": "gpt-5.6-terra"},
+            "cheap": {"provider": "openai", "model": "gpt-5.6-luna"},
+            "local": {"provider": "ollama", "model": "llama3.1"},
+        }
+        assert build_routing_table("openai") == {
+            lang: per_language for lang in self.ALL_LANGUAGES
+        }
+
+    def test_mistral_table_full_equality(self):
+        from app.setup_wizard import build_routing_table
+
+        # Deliberate: Mistral's Medium 3.5 outranks Large 3 — quality maps
+        # to medium. See the spec's research notes.
+        per_language = {
+            "quality": {"provider": "mistral", "model": "mistral-medium-latest"},
+            "balanced": {"provider": "mistral", "model": "mistral-large-latest"},
+            "cheap": {"provider": "mistral", "model": "mistral-small-latest"},
+            "local": {"provider": "ollama", "model": "llama3.1"},
+        }
+        assert build_routing_table("mistral") == {
+            lang: per_language for lang in self.ALL_LANGUAGES
+        }
+
+    def test_ollama_strong_fast_split(self):
+        from app.setup_wizard import build_routing_table
+
+        table = build_routing_table("ollama", strong="qwen3:32b", fast="gemma4:12b")
+        for lang in self.ALL_LANGUAGES:
+            assert table[lang]["quality"] == {"provider": "ollama", "model": "qwen3:32b"}
+            assert table[lang]["balanced"] == {"provider": "ollama", "model": "qwen3:32b"}
+            assert table[lang]["cheap"] == {"provider": "ollama", "model": "gemma4:12b"}
+            assert table[lang]["local"] == {"provider": "ollama", "model": "gemma4:12b"}
+
+    def test_languages_get_independent_dicts(self):
+        from app.setup_wizard import build_routing_table
+
+        table = build_routing_table("claude")
+        table["en"]["quality"]["model"] = "mutated"
+        assert table["de"]["quality"]["model"] == "claude-opus-5"
+
+    def test_local_default_matches_settings_default(self):
+        from app.core.config import ProviderSettings
+        from app.setup_wizard import DEFAULT_LOCAL_MODEL
+
+        assert DEFAULT_LOCAL_MODEL == ProviderSettings().ollama_model
+
+    def test_generated_config_validates_for_all_providers(self, tmp_path, template):
+        import yaml as yaml_module
+
+        from app.core.config import RoutingEntry, Settings
+        from app.setup_wizard import COMMERCIAL_TIER_MODELS
+
+        for provider, answers, secrets_answers, fetch in (
+            ("claude", ["admin@example.com", "1"], ["s3cret-password!", "sk-ant-abc123"], fetch_fail),
+            ("openai", ["admin@example.com", "2"], ["s3cret-password!", "sk-abc123"], fetch_fail),
+            ("mistral", ["admin@example.com", "3"], ["s3cret-password!", "a" * 24], fetch_fail),
+            ("ollama", ["admin@example.com", "4", "", "1", ""], ["s3cret-password!"], fetch_models_list(["llama3.1"])),
+        ):
+            config_dir = tmp_path / f"config-{provider}"
+            config_dir.mkdir()
+            rc = run_wizard(
+                config_dir,
+                template,
+                input_fn=scripted(answers),
+                getpass_fn=scripted(secrets_answers),
+                fetch_models=fetch,
+            )
+            assert rc == 0
+            data = yaml_module.safe_load((config_dir / "config.yaml").read_text(encoding="utf-8"))
+            settings = Settings.model_validate(data)
+            langs = settings.routing.languages
+            assert set(langs) == set(TestRoutingTable.ALL_LANGUAGES)
+            for lang in TestRoutingTable.ALL_LANGUAGES:
+                assert set(langs[lang]) == {"quality", "balanced", "cheap", "local"}
+            # zh specifically: its BUILT-IN default is deepseek, and
+            # RoutingSettings overlays defaults for unmentioned languages —
+            # so this fails loudly if the wizard's table was absent/partial
+            # and the overlay supplied the entry.
+            if provider == "ollama":
+                assert langs["zh"]["quality"] == RoutingEntry(
+                    provider="ollama", model="llama3.1"
+                )
+            else:
+                assert langs["zh"]["quality"] == RoutingEntry(
+                    provider=provider,
+                    model=COMMERCIAL_TIER_MODELS[provider]["quality"],
+                )
+                assert langs["zh"]["local"].provider == "ollama"
+
+    def test_menu_and_tier_tables_stay_linked(self):
+        from app.setup_wizard import COMMERCIAL_TIER_MODELS, PROVIDER_MENU
+
+        assert set(COMMERCIAL_TIER_MODELS) | {"ollama"} == set(PROVIDER_MENU)
+
+    def test_ollama_table_requires_both_models(self):
+        from app.setup_wizard import build_routing_table
+
+        with pytest.raises(ValueError):
+            build_routing_table("ollama")
+
+    def test_mistral_config_carries_mapping_comment(self, tmp_path, template):
+        import yaml as yaml_module
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        run_wizard(
+            config_dir,
+            template,
+            input_fn=scripted(["admin@example.com", "3"]),
+            getpass_fn=scripted(["s3cret-password!", "a" * 24]),
+            fetch_models=fetch_fail,
+        )
+        text = (config_dir / "config.yaml").read_text(encoding="utf-8")
+        # Full three-line header, byte-for-byte — pins the em dash and the
+        # complete wording, not just an ASCII prefix.
+        assert text.startswith(
+            "# Mistral's naming is inverted vs capability: Medium 3.5 is the\n"
+            "# strongest general model, Large 3 the fast one — quality =>\n"
+            "# mistral-medium-latest is deliberate (B24, #81).\n"
+        )
+        assert yaml_module.safe_load(text)["providers"]["default_provider"] == "mistral"
+
+    def test_non_mistral_config_has_no_mapping_comment(self, tmp_path, template):
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        run_wizard(
+            config_dir,
+            template,
+            input_fn=scripted(["admin@example.com", "1"]),
+            getpass_fn=scripted(["s3cret-password!", "sk-ant-abc123"]),
+            fetch_models=fetch_fail,
+        )
+        text = (config_dir / "config.yaml").read_text(encoding="utf-8")
+        assert not text.startswith("#")
+
+    def test_commercial_path_never_fetches(self, tmp_path, template):
+        def exploding_fetch(base_url):
+            raise AssertionError("fetch_models must not be called for commercial providers")
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        rc = run_wizard(
+            config_dir,
+            template,
+            input_fn=scripted(["admin@example.com", "1"]),
+            getpass_fn=scripted(["s3cret-password!", "sk-ant-abc123"]),
+            fetch_models=exploding_fetch,
+        )
+        assert rc == 0
+
+
+class TestOllamaSelection:
+    def run_ollama(self, tmp_path, template, answers, names):
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        rc = run_wizard(
+            config_dir,
+            template,
+            input_fn=scripted(answers),
+            getpass_fn=scripted(["s3cret-password!"]),
+            fetch_models=fetch_models_list(names),
+        )
+        assert rc == 0
+        return config_dir
+
+    def test_strong_and_fast_by_number(self, tmp_path, template, capsys):
+        # email, provider 4, URL (default), strong "1", fast "2"
+        config_dir = self.run_ollama(
+            tmp_path, template,
+            ["admin@example.com", "4", "", "1", "2"],
+            ["qwen3:32b", "gemma4:12b"],
+        )
+        out = capsys.readouterr().out
+        assert "1. qwen3:32b" in out and "2. gemma4:12b" in out
+        config = (config_dir / "config.yaml").read_text(encoding="utf-8")
+        assert "ollama_model: qwen3:32b" in config
+        import yaml as yaml_module
+
+        data = yaml_module.safe_load(config)
+        assert data["routing"]["languages"]["de"]["quality"]["model"] == "qwen3:32b"
+        assert data["routing"]["languages"]["de"]["cheap"]["model"] == "gemma4:12b"
+
+    def test_fast_defaults_to_strong(self, tmp_path, template):
+        # Strong is deliberately picked as "2" (NOT names[0]) so this test
+        # distinguishes "fast defaults to strong" from "fast defaults to
+        # the first list entry".
+        config_dir = self.run_ollama(
+            tmp_path, template,
+            ["admin@example.com", "4", "", "2", ""],
+            ["qwen3:32b", "gemma4:12b"],
+        )
+        import yaml as yaml_module
+
+        data = yaml_module.safe_load((config_dir / "config.yaml").read_text(encoding="utf-8"))
+        assert data["routing"]["languages"]["en"]["quality"]["model"] == "gemma4:12b"
+        assert data["routing"]["languages"]["en"]["cheap"]["model"] == "gemma4:12b"
+
+    def test_ambiguous_basename_reprompts(self, tmp_path, template):
+        config_dir = self.run_ollama(
+            tmp_path, template,
+            # "qwen3" matches two tags -> must re-prompt, then "2" resolves
+            ["admin@example.com", "4", "", "qwen3", "2", "1"],
+            ["qwen3:32b", "qwen3:7b"],
+        )
+        import yaml as yaml_module
+
+        data = yaml_module.safe_load((config_dir / "config.yaml").read_text(encoding="utf-8"))
+        assert data["routing"]["languages"]["en"]["quality"]["model"] == "qwen3:7b"
+        assert data["routing"]["languages"]["en"]["cheap"]["model"] == "qwen3:32b"
+
+    def test_exact_tag_wins_over_basename_of_longer_tag(self, tmp_path, template):
+        config_dir = self.run_ollama(
+            tmp_path, template,
+            # "llama3.1" is an exact tag AND the basename of llama3.1:70b —
+            # the exact tag must win.
+            ["admin@example.com", "4", "", "llama3.1", ""],
+            ["llama3.1:70b", "llama3.1"],
+        )
+        import yaml as yaml_module
+
+        data = yaml_module.safe_load((config_dir / "config.yaml").read_text(encoding="utf-8"))
+        assert data["routing"]["languages"]["en"]["quality"]["model"] == "llama3.1"
+
+    def test_stale_fast_default_falls_back_to_strong(self, tmp_path, template):
+        # First run picks strong qwen3:32b / fast gemma4:12b; the user then
+        # removes gemma4:12b from Ollama. On re-run the fast prompt must
+        # default to strong ("Enter = strong"), not to the vanished model.
+        config_dir = self.run_ollama(
+            tmp_path, template,
+            ["admin@example.com", "4", "", "1", "2"],
+            ["qwen3:32b", "gemma4:12b"],
+        )
+        rc = run_wizard(
+            config_dir,
+            template,
+            input_fn=scripted(["", "", "", "", "", "n"]),
+            getpass_fn=scripted([""]),
+            fetch_models=fetch_models_list(["qwen3:32b"]),
+        )
+        assert rc == 0
+        import yaml as yaml_module
+
+        data = yaml_module.safe_load((config_dir / "config.yaml").read_text(encoding="utf-8"))
+        assert data["routing"]["languages"]["en"]["cheap"]["model"] == "qwen3:32b"
+
+    def test_pre_b24_basename_default_resolves_to_canonical_tag(self, tmp_path, template):
+        # Upgrade path: a config written BEFORE B24 (no routing key, and
+        # ollama_model stored as a basename — the old probe accepted
+        # "llama3.1" for the tag "llama3.1:latest"). On the first re-run,
+        # Enter at the strong prompt must keep the current model by
+        # resolving the basename to its canonical installed tag.
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "fabulous.env").write_text(
+            "FW_AUTH_SECRET=upgrade-path-secret-0123456789abcdefghij\n"
+            "FW_ADMIN_EMAIL=admin@example.com\n"
+            "FW_ADMIN_PASSWORD=s3cret-password!\n",
+            encoding="utf-8",
+        )
+        (config_dir / "config.yaml").write_text(
+            TEMPLATE + "  ollama_base_url: http://host.docker.internal:11434\n"
+            "  ollama_model: llama3.1\n",
+            encoding="utf-8",
+        )
+        # email keep, provider keep (ollama), URL keep, strong Enter
+        # (= resolved default), fast Enter (= strong), rotate n
+        rc = run_wizard(
+            config_dir,
+            template,
+            input_fn=scripted(["", "", "", "", "", "n"]),
+            getpass_fn=scripted([""]),
+            fetch_models=fetch_models_list(["llama3.1:latest", "qwen3:32b"]),
+        )
+        assert rc == 0
+        import yaml as yaml_module
+
+        data = yaml_module.safe_load((config_dir / "config.yaml").read_text(encoding="utf-8"))
+        assert data["routing"]["languages"]["en"]["quality"]["model"] == "llama3.1:latest"
+        assert data["providers"]["ollama_model"] == "llama3.1:latest"
+
+    def test_switch_to_ollama_fallback_never_offers_commercial_default(self, tmp_path, template):
+        # The dangerous half of the prefill guard: on the fetch-FAIL path,
+        # _ask would silently ACCEPT a leftover commercial default on Enter.
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        run_wizard(
+            config_dir,
+            template,
+            input_fn=scripted(["admin@example.com", "1"]),
+            getpass_fn=scripted(["s3cret-password!", "sk-ant-abc123"]),
+            fetch_models=fetch_fail,
+        )
+        prompts: list[str] = []
+        answers = iter(["", "4", "", "llama3.1", "n"])
+
+        def recording_input(prompt: str = "") -> str:
+            prompts.append(prompt)
+            return next(answers)
+
+        rc = run_wizard(
+            config_dir,
+            template,
+            input_fn=recording_input,
+            getpass_fn=scripted([""]),
+            fetch_models=fetch_fail,
+        )
+        assert rc == 0
+        assert not any("claude-opus-5" in p for p in prompts)
+        import yaml as yaml_module
+
+        data = yaml_module.safe_load((config_dir / "config.yaml").read_text(encoding="utf-8"))
+        assert data["routing"]["languages"]["en"]["quality"]["model"] == "llama3.1"
+
+    def test_switch_to_ollama_never_offers_commercial_default(self, tmp_path, template):
+        # claude first run, then switch to ollama with a model list: the
+        # strong prompt must NOT default to claude-opus-5 (an unusable
+        # default would loop forever on Enter). Pressing Enter with no
+        # usable default re-prompts; "1" then resolves.
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        run_wizard(
+            config_dir,
+            template,
+            input_fn=scripted(["admin@example.com", "1"]),
+            getpass_fn=scripted(["s3cret-password!", "sk-ant-abc123"]),
+            fetch_models=fetch_fail,
+        )
+        prompts: list[str] = []
+        # email keep, provider 4, URL keep, strong: Enter (no usable
+        # default -> re-prompt), then "1"; fast: Enter (= strong); rotate n
+        answers = iter(["", "4", "", "", "1", "", "n"])
+
+        def recording_input(prompt: str = "") -> str:
+            prompts.append(prompt)
+            return next(answers)
+
+        rc = run_wizard(
+            config_dir,
+            template,
+            input_fn=recording_input,
+            getpass_fn=scripted([""]),
+            fetch_models=fetch_models_list(["qwen3:32b"]),
+        )
+        assert rc == 0
+        assert not any("claude-opus-5" in p for p in prompts)
+        import yaml as yaml_module
+
+        data = yaml_module.safe_load((config_dir / "config.yaml").read_text(encoding="utf-8"))
+        assert data["routing"]["languages"]["en"]["quality"]["model"] == "qwen3:32b"
+
+    def test_model_by_name_and_invalid_reprompts(self, tmp_path, template):
+        config_dir = self.run_ollama(
+            tmp_path, template,
+            ["admin@example.com", "4", "", "nope-model", "gemma4:12b", "1"],
+            ["qwen3:32b", "gemma4:12b"],
+        )
+        import yaml as yaml_module
+
+        data = yaml_module.safe_load((config_dir / "config.yaml").read_text(encoding="utf-8"))
+        assert data["routing"]["languages"]["en"]["quality"]["model"] == "gemma4:12b"
+        assert data["routing"]["languages"]["en"]["cheap"]["model"] == "qwen3:32b"
+
+    def test_empty_tag_list_falls_back_to_free_text(self, tmp_path, template, capsys):
+        config_dir = self.run_ollama(
+            tmp_path, template,
+            ["admin@example.com", "4", "", "llama3.1"],
+            [],
+        )
+        assert "no models installed" in capsys.readouterr().out
+        import yaml as yaml_module
+
+        data = yaml_module.safe_load((config_dir / "config.yaml").read_text(encoding="utf-8"))
+        assert data["routing"]["languages"]["ja"]["local"]["model"] == "llama3.1"
+
+    def test_commercial_switch_rewrites_table(self, tmp_path, template):
+        config_dir = self.run_ollama(
+            tmp_path, template,
+            ["admin@example.com", "4", "", "1", "2"],
+            ["qwen3:32b", "gemma4:12b"],
+        )
+        rc = run_wizard(
+            config_dir,
+            template,
+            input_fn=scripted(["", "3", "n"]),
+            getpass_fn=scripted(["", "a" * 24]),
+            fetch_models=fetch_fail,
+        )
+        assert rc == 0
+        import yaml as yaml_module
+
+        data = yaml_module.safe_load((config_dir / "config.yaml").read_text(encoding="utf-8"))
+        assert data["routing"]["languages"]["fr"]["quality"]["model"] == "mistral-medium-latest"
+        text = (config_dir / "config.yaml").read_text(encoding="utf-8")
+        assert "qwen3:32b" not in text
+
+    def test_rerun_prefills_strong_and_fast(self, tmp_path, template):
+        config_dir = self.run_ollama(
+            tmp_path, template,
+            ["admin@example.com", "4", "", "1", "2"],
+            ["qwen3:32b", "gemma4:12b"],
+        )
+        # Prompts are passed to input_fn (never printed), so record them
+        # to assert the pre-filled defaults appear in the prompt text.
+        prompts: list[str] = []
+        answers = iter(["", "", "", "", "", "n"])
+
+        def recording_input(prompt: str = "") -> str:
+            prompts.append(prompt)
+            return next(answers)
+
+        # re-run keeping everything: email, provider, URL, strong, fast, rotate
+        rc = run_wizard(
+            config_dir,
+            template,
+            input_fn=recording_input,
+            getpass_fn=scripted([""]),
+            fetch_models=fetch_models_list(["qwen3:32b", "gemma4:12b"]),
+        )
+        assert rc == 0
+        assert any(p.startswith("Strong model") and "[qwen3:32b]" in p for p in prompts)
+        assert any(p.startswith("Fast model") and "[gemma4:12b]" in p for p in prompts)
+        import yaml as yaml_module
+
+        data = yaml_module.safe_load((config_dir / "config.yaml").read_text(encoding="utf-8"))
+        assert data["routing"]["languages"]["en"]["quality"]["model"] == "qwen3:32b"
+        assert data["routing"]["languages"]["en"]["cheap"]["model"] == "gemma4:12b"
 
 
 class TestImageContract:
@@ -369,4 +828,13 @@ class TestImageContract:
             if provider == "ollama":
                 providers_section["ollama_base_url"] = "http://host.docker.internal:11434"
                 providers_section["ollama_model"] = "llama3.1"
+            from app.setup_wizard import build_routing_table
+
+            config_data["routing"] = {
+                "languages": build_routing_table(
+                    provider,
+                    strong="llama3.1" if provider == "ollama" else None,
+                    fast="llama3.1" if provider == "ollama" else None,
+                )
+            }
             Settings.model_validate(config_data)
