@@ -172,6 +172,51 @@ The UI itself is localized into the same seven languages: it follows the browser
 by default and can be switched with the 🌐 selector in the header (the choice is
 remembered). Rule messages are authored per rule file and are not translated by the UI.
 
+## Run it in a container (quickstart)
+
+Requires only Docker.
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/saigyo/fabulous-writing/main/fabulous.sh && chmod +x fabulous.sh
+./fabulous.sh setup    # interactive: admin account, one LLM provider
+./fabulous.sh serve    # http://localhost:8080
+```
+
+Or with plain `docker run`:
+
+```sh
+docker run --rm -it -v fabulous-config:/config ghcr.io/saigyo/fabulous-writing:latest setup
+docker run --rm -v fabulous-config:/config -v fabulous-data:/data -p 8080:8000 \
+  ghcr.io/saigyo/fabulous-writing:latest serve
+```
+
+- The wizard writes all configuration to the `fabulous-config` volume and
+  can be re-run at any time (e.g. to switch LLM providers); it pre-fills
+  your previous answers.
+- Your data lives in the `fabulous-data` volume; backup = copy that
+  volume's directory.
+- Versions: images are tagged `X.Y.Z` (git tag `vX.Y.Z`) plus `latest`;
+  `./fabulous.sh serve 0.1.0` pins a version. Releases are cut
+  deliberately by pushing an annotated tag `vX.Y.Z` — the release
+  workflow builds and publishes the image, then creates the GitHub
+  Release; nothing is released automatically on pushes to `main`.
+
+### Troubleshooting
+
+- **Ollama not reachable from the container** — the app runs inside
+  Docker, so `localhost:11434` is the container, not your machine. On
+  macOS/Windows use `http://host.docker.internal:11434` (the wizard's
+  default). On Linux add `--add-host=host.docker.internal:host-gateway`
+  to the `docker run serve` line (edit `fabulous.sh` or use plain
+  `docker run`), or use your `docker0` gateway IP (usually
+  `http://172.17.0.1:11434`).
+- **Port already in use** — pick another host port: `FW_PORT=9090
+  ./fabulous.sh serve` (or change `-p 9090:8000`).
+
+Third-party license notices for everything bundled in the image are in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) (also at
+`/app/THIRD-PARTY-NOTICES.md` inside the image).
+
 ## Setup and running
 
 ### Quick start
@@ -326,6 +371,10 @@ licenses.
 
 Both dev servers (see [Quick start](#quick-start)) hot-reload: `uvicorn --reload` for
 the backend, Vite for the frontend.
+
+Building the container image locally (`docker build .`) requires Docker with the
+buildx plugin (BuildKit — needed for `COPY --chmod`); on a Homebrew-installed Docker
+CLI, wire `docker-buildx` into `~/.docker/cli-plugins` if `docker build` fails to find it.
 
 ### Architecture
 
