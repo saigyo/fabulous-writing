@@ -1,7 +1,10 @@
 import os
+from pathlib import Path
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.admin import router as admin_router
 from app.api.auth import LoginThrottle, router as auth_router
@@ -170,7 +173,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
-        return {"status": "ok", "name": APP_NAME}
+        return {
+            "status": "ok",
+            "name": APP_NAME,
+            "version": os.environ.get("FW_APP_VERSION", "dev"),
+        }
+
+    # Single-origin serving for the container image (spec: single-container
+    # design). Registered last: FastAPI matches routes in registration
+    # order, so every /api route above wins over the catch-all. Known,
+    # accepted quirk: with dist_dir set, a POST to an unknown path returns
+    # 405 (the catch-all matches by path, GET-only) instead of 404.
+    dist_dir = settings.frontend.dist_dir
+    if dist_dir is not None:
+        dist = Path(dist_dir).resolve()
+        if not (dist / "index.html").is_file():
+            raise RuntimeError(
+                f"frontend.dist_dir={dist} has no index.html — point it at a"
+                " built Vite dist/"
+            )
+        app.mount(
+            "/assets",
+            StaticFiles(directory=dist / "assets", check_dir=False),
+            name="assets",
+        )
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        def spa(full_path: str) -> FileResponse:
+            # /api/* never falls back to HTML: a missing API route must
+            # stay a JSON 404, not a 200 page.
+            if full_path == "api" or full_path.startswith("api/"):
+                raise HTTPException(status_code=404)
+            candidate = (dist / full_path).resolve()
+            if (
+                full_path
+                and candidate.is_relative_to(dist)
+                and candidate.is_file()
+            ):
+                return FileResponse(candidate)
+            return FileResponse(dist / "index.html")
 
     return app
 
