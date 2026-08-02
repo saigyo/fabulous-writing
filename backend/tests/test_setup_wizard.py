@@ -2,9 +2,10 @@
 
 from pathlib import Path
 
+import httpx
 import pytest
 
-from app.setup_wizard import parse_env_file, run_wizard
+from app.setup_wizard import fetch_ollama_models, parse_env_file, run_wizard
 
 TEMPLATE = """\
 environment: production
@@ -851,3 +852,80 @@ class TestImageContract:
                 )
             }
             Settings.model_validate(config_data)
+
+
+class TestFetchOllamaModels:
+    """Transport-level tests for the real httpx adapter (every picker test
+    above injects fetch_models, so this is the only coverage of the
+    function actually used at runtime). fetch_ollama_models calls the
+    module-level httpx.get(...) directly rather than an injectable client,
+    so it can't take a transport= like OllamaProvider in test_providers.py
+    — the same handler/httpx.MockTransport pattern from there is reused by
+    monkeypatching httpx.get to route through a mock-transport Client.
+    """
+
+    def _patch_get(self, monkeypatch, handler):
+        def fake_get(url, *, timeout=None, **kwargs):
+            with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+                return client.get(url, timeout=timeout)
+
+        monkeypatch.setattr(httpx, "get", fake_get)
+
+    def test_success_lists_and_filters_names(self, monkeypatch):
+        seen: dict[str, str] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["url"] = str(request.url)
+            return httpx.Response(
+                200,
+                json={
+                    "models": [
+                        {"name": "llama3.1:latest"},
+                        {"name": "qwen3:32b"},
+                        {"name": ""},
+                        {},
+                    ]
+                },
+            )
+
+        self._patch_get(monkeypatch, handler)
+
+        # Trailing slash on the base URL must not produce a double slash.
+        names, detail = fetch_ollama_models("http://host:11434/")
+
+        assert names == ["llama3.1:latest", "qwen3:32b"]
+        assert detail == "ok"
+        assert seen["url"] == "http://host:11434/api/tags"
+
+    def test_http_error_returns_none_and_reason(self, monkeypatch):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(500, text="boom")
+
+        self._patch_get(monkeypatch, handler)
+
+        names, detail = fetch_ollama_models("http://host:11434")
+
+        assert names is None
+        assert "500" in detail
+
+    def test_malformed_list_payload_returns_none(self, monkeypatch):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json=[{"name": "llama3.1"}])
+
+        self._patch_get(monkeypatch, handler)
+
+        names, detail = fetch_ollama_models("http://host:11434")
+
+        assert names is None
+        assert detail
+
+    def test_non_json_body_returns_none(self, monkeypatch):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, text="not json")
+
+        self._patch_get(monkeypatch, handler)
+
+        names, detail = fetch_ollama_models("http://host:11434")
+
+        assert names is None
+        assert detail
