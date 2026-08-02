@@ -3722,3 +3722,46 @@ Post-merge: tag `v0.1.0` (first release; arm64 leg runs under QEMU),
 one-time GHCR package-visibility toggle, follow-up issue for four
 deferred minors (exact-pin license-checker, `latest` back-port guard,
 env-file path under custom `FW_CONFIG_FILE`, `--proxy-headers`).
+
+## 2026-08-02 — B24: provider-aligned LLM routing from the wizard (PRs #82, #83)
+
+Direct fallout of the v0.1.0 acceptance test: a wizard-configured
+Anthropic-only instance had working LLM checks only in English, because
+the multi-provider default routing table pointed most language×tier
+combinations at providers the instance did not have. The audit reframed
+the issue — the seeded profiles were innocent (they resolve through
+tiers); the broken layer was `routing.languages`, and worse,
+`RoutingSettings` overlays built-in defaults for any language a config
+does not mention, so a partial fix would silently resurrect stale
+entries. The wizard therefore now emits the complete 7-language ×
+4-tier table into the config it already regenerates whole per run.
+
+Commercial providers get a live-verified tier column (all nine IDs
+checked against real provider endpoints before implementation —
+including the deliberate Mistral inversion: Medium 3.5 currently
+outranks the confusingly-named Large 3, so quality=medium, carried as a
+comment in the generated file). The local tier stays honestly on
+Ollama. Choosing Ollama upgrades free-text model entry to a picker over
+the live `/api/tags` list with a strong/fast split; the free-text
+prompt survives as the unreachable-Ollama fallback, and pre-B24
+basename model values resolve to their canonical installed tag on
+re-run — the upgrade path Copilot's planning-round comment caught.
+
+Review yield stayed high: plan rounds killed an inescapable Enter-loop
+(a provider switch offering `claude-opus-5` as the Ollama default), a
+vacuous validation test (the defaults overlay made "all 7 languages
+present" always true — the fix asserts zh's entries, whose stale
+default is DeepSeek), and ambiguous-basename mis-resolution in the
+picker. The final Opus review added a language-linkage drift guard and
+restored a dropped `ollama_base_url` assertion; the Copilot round on
+the implementation added transport-level tests for the real
+`/api/tags` adapter (previously only ever injected in tests), a
+docstring accuracy fix, and a doc-header bump.
+
+Verification: 47 wizard tests (injected IO, tmp_path, no network; 6
+mutations), full suite 1242 passed zero warnings, and an e2e against a
+locally built image asserting `GET /api/routing` reports every
+non-local tier available with the expected models and local unavailable
+with "Ollama not running". Follow-up filed separately: commercial
+configs omit `ollama_base_url`, so the local tier cannot come alive
+in-container even when host Ollama runs.
