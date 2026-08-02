@@ -1,0 +1,33 @@
+# Hand-curated entries for distributed components no package manager
+# tracks: the Hunspell dictionaries, downloaded as raw files by
+# backend/scripts/install-dictionaries.sh at the revision below.
+# license values verified against the fetched texts at implementation
+# time; text_file holds the full license text (committed, from that
+# same revision) — the generator hard-fails on a missing/empty file.
+revision: 8cfea406b505e4d7df52d5a19bce525df98c54ab
+entries:
+  - name: hunspell-dictionary-en
+    version: wooorm/dictionaries@8cfea406b505 (en)
+    license: HPND (Kevin Atkinson/SCOWL) AND BSD-2-Clause (Ispell) AND Public-Domain (multiple component word lists; see full text)
+    source: https://github.com/wooorm/dictionaries
+    text_file: scripts/curated-license-texts/en.txt
+  - name: hunspell-dictionary-de
+    version: wooorm/dictionaries@8cfea406b505 (de, igerman98)
+    license: GPL-2.0-only OR GPL-3.0-only
+    source: https://github.com/wooorm/dictionaries
+    text_file: scripts/curated-license-texts/de.txt
+  - name: hunspell-dictionary-fr
+    version: wooorm/dictionaries@8cfea406b505 (fr)
+    license: MPL-2.0
+    source: https://github.com/wooorm/dictionaries
+    text_file: scripts/curated-license-texts/fr.txt
+  - name: hunspell-dictionary-es
+    version: wooorm/dictionaries@8cfea406b505 (es)
+    license: GPL-3.0-or-later OR LGPL-3.0-or-later OR MPL-1.1-or-later
+    source: https://github.com/wooorm/dictionaries
+    text_file: scripts/curated-license-texts/es.txt
+  - name: hunspell-dictionary-it
+    version: wooorm/dictionaries@8cfea406b505 (it)
+    license: GPL-3.0-only
+    source: https://github.com/wooorm/dictionaries
+    text_file: scripts/curated-license-texts/it.txt
