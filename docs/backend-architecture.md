@@ -1982,9 +1982,17 @@ run regenerates both `fabulous.env` (secrets, written with `0o600` permissions) 
 `config.yaml` (non-secret config, layered onto the baked-in template) completely,
 rather than patching them in place, so a re-run that switches providers can never
 leave a stale key behind. `run_wizard()` takes its config/template directories as
-arguments and accepts injectable `input_fn`/`getpass_fn`/`probe` callables (defaulting
-to `input`, `getpass.getpass`, and a real Ollama probe), which is what lets the test
-suite drive the wizard's prompts without a real terminal or network access.
+arguments and accepts injectable `input_fn`/`getpass_fn`/`fetch_models` callables
+(defaulting to `input`, `getpass.getpass`, and `fetch_ollama_models`, a `/api/tags`
+fetch — `check_ollama` no longer exists), which is what lets the test suite drive
+the wizard's prompts without a real terminal or network access. The wizard also
+generates the full `routing.languages` table for the chosen provider (B24, #81):
+for a commercial provider, the quality/balanced/cheap tier columns come from a
+verified per-provider model mapping while the local tier stays on the Ollama
+defaults regardless of the chosen provider; for Ollama itself, the strong and fast
+models picked from the live `/api/tags` list cover quality/balanced and cheap/local
+respectively. Like the rest of the config, this table is regenerated whole on
+every run, never patched.
 
 **Version reporting.** `GET /api/health` reports `version` from the `FW_APP_VERSION`
 environment variable (falling back to `"dev"` when unset). The Dockerfile sets it from
