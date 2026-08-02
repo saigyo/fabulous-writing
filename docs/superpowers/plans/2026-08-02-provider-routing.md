@@ -427,6 +427,41 @@ class TestOllamaSelection:
         data = yaml_module.safe_load((config_dir / "config.yaml").read_text(encoding="utf-8"))
         assert data["routing"]["languages"]["en"]["cheap"]["model"] == "qwen3:32b"
 
+    def test_pre_b24_basename_default_resolves_to_canonical_tag(self, tmp_path, template):
+        # Upgrade path: a config written BEFORE B24 (no routing key, and
+        # ollama_model stored as a basename — the old probe accepted
+        # "llama3.1" for the tag "llama3.1:latest"). On the first re-run,
+        # Enter at the strong prompt must keep the current model by
+        # resolving the basename to its canonical installed tag.
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "fabulous.env").write_text(
+            "FW_AUTH_SECRET=upgrade-path-secret-0123456789abcdefghij\n"
+            "FW_ADMIN_EMAIL=admin@example.com\n"
+            "FW_ADMIN_PASSWORD=s3cret-password!\n",
+            encoding="utf-8",
+        )
+        (config_dir / "config.yaml").write_text(
+            TEMPLATE + "  ollama_base_url: http://host.docker.internal:11434\n"
+            "  ollama_model: llama3.1\n",
+            encoding="utf-8",
+        )
+        # email keep, provider keep (ollama), URL keep, strong Enter
+        # (= resolved default), fast Enter (= strong), rotate n
+        rc = run_wizard(
+            config_dir,
+            template,
+            input_fn=scripted(["", "", "", "", "", "n"]),
+            getpass_fn=scripted([""]),
+            fetch_models=fetch_models_list(["llama3.1:latest", "qwen3:32b"]),
+        )
+        assert rc == 0
+        import yaml as yaml_module
+
+        data = yaml_module.safe_load((config_dir / "config.yaml").read_text(encoding="utf-8"))
+        assert data["routing"]["languages"]["en"]["quality"]["model"] == "llama3.1:latest"
+        assert data["providers"]["ollama_model"] == "llama3.1:latest"
+
     def test_switch_to_ollama_fallback_never_offers_commercial_default(self, tmp_path, template):
         # The dangerous half of the prefill guard: on the fetch-FAIL path,
         # _ask would silently ACCEPT a leftover commercial default on Enter.
@@ -671,9 +706,14 @@ def _ask_model_choice(
 ) -> str:
     # A default the picker would reject (e.g. a commercial model ID left
     # over from a provider switch) must never be offered: on Enter it
-    # would re-prompt with the same rejected default forever.
-    if default not in names:
-        default = None
+    # would re-prompt with the same rejected default forever. But first,
+    # resolve a unique basename to its canonical tag — pre-B24 configs
+    # legitimately store e.g. "llama3.1" where the installed tag is
+    # "llama3.1:latest" (the old probe accepted basename matches), and
+    # the re-run contract says Enter keeps the current model.
+    if default is not None and default not in names:
+        matches = [n for n in names if n.split(":")[0] == default]
+        default = matches[0] if len(matches) == 1 else None
     while True:
         raw = _ask(input_fn, prompt, default)
         if raw.isdigit() and 1 <= int(raw) <= len(names):
