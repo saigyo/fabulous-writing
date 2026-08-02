@@ -511,6 +511,16 @@ dev = [
     { name = "pytest-xdist" },
     { name = "zh-core-web-sm" },
 ]
+models = [
+    { name = "de-core-news-sm" },
+    { name = "en-core-web-sm" },
+    { name = "es-core-news-sm" },
+    { name = "fr-core-news-sm" },
+    { name = "ginza" },
+    { name = "it-core-news-sm" },
+    { name = "ja-ginza" },
+    { name = "zh-core-web-sm" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -542,6 +552,16 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
+    { name = "zh-core-web-sm", url = "https://github.com/explosion/spacy-models/releases/download/zh_core_web_sm-3.8.0/zh_core_web_sm-3.8.0-py3-none-any.whl" },
+]
+models = [
+    { name = "de-core-news-sm", url = "https://github.com/explosion/spacy-models/releases/download/de_core_news_sm-3.8.0/de_core_news_sm-3.8.0-py3-none-any.whl" },
+    { name = "en-core-web-sm", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" },
+    { name = "es-core-news-sm", url = "https://github.com/explosion/spacy-models/releases/download/es_core_news_sm-3.8.0/es_core_news_sm-3.8.0-py3-none-any.whl" },
+    { name = "fr-core-news-sm", url = "https://github.com/explosion/spacy-models/releases/download/fr_core_news_sm-3.8.0/fr_core_news_sm-3.8.0-py3-none-any.whl" },
+    { name = "ginza", specifier = ">=5.2.0" },
+    { name = "it-core-news-sm", url = "https://github.com/explosion/spacy-models/releases/download/it_core_news_sm-3.8.0/it_core_news_sm-3.8.0-py3-none-any.whl" },
+    { name = "ja-ginza", specifier = ">=5.2.0" },
     { name = "zh-core-web-sm", url = "https://github.com/explosion/spacy-models/releases/download/zh_core_web_sm-3.8.0/zh_core_web_sm-3.8.0-py3-none-any.whl" },
 ]
 

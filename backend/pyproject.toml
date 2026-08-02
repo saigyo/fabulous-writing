@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = [
+models = [
     "de-core-news-sm",
     "en-core-web-sm",
     "es-core-news-sm>=3.8.0",
@@ -29,11 +29,14 @@ dev = [
     "ginza>=5.2.0",
     "it-core-news-sm>=3.8.0",
     "ja-ginza>=5.2.0",
+    "zh-core-web-sm>=3.8.0",
+]
+dev = [
+    { include-group = "models" },
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
     "pytest-xdist>=3.8.0",
-    "zh-core-web-sm>=3.8.0",
 ]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
