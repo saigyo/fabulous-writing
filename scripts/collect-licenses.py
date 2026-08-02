@@ -45,6 +45,12 @@ from packaging.markers import Marker  # transitive dep of the backend venv
 
 # The image's environment (linux/amd64, CPython 3.13). Markers are evaluated
 # against THIS, never the local platform, so dev and CI agree byte-for-byte.
+# amd64 is the verification architecture: the CI drift gate (the `licenses`
+# job in .github/workflows/docker.yml) runs on it. The release also ships
+# arm64, whose wheels could in principle carry different per-platform
+# license texts; the current dependency set was spot-verified arch-neutral,
+# and any future divergence that also affects amd64 surfaces as CI drift
+# immediately, but a divergence that is arm64-only would not be caught.
 IMAGE_ENV = {
     "sys_platform": "linux",
     "platform_system": "Linux",

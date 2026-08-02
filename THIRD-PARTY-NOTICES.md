@@ -10174,7 +10174,7 @@ SOFTWARE.
 
 ### hunspell-dictionary-en wooorm/dictionaries@8cfea406b505 (en)
 
-License: HPND (Kevin Atkinson/SCOWL) AND BSD-2-Clause (Ispell) AND Public-Domain (multiple component word lists; see full text)
+License: HPND (Kevin Atkinson/SCOWL) AND Ispell license (Geoff Kuenning; BSD-style with modification-marking and non-endorsement clauses) AND WordNet License (Princeton; inflection data) AND UKACD License (J Ross Beresford; verbatim-notice-inclusion requirement) AND Public-Domain (multiple component word lists; see full text)
 
 ````text
 Source: https://github.com/wooorm/dictionaries

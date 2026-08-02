@@ -9,7 +9,12 @@ completely on every run — ``fabulous.env`` (secrets only) and
 re-run pre-fills every prompt from the existing files; because the files
 are rewritten whole from the merged answers, switching providers can never
 leave a stale key behind. Secrets are read via getpass, never echoed, and
-never written anywhere but the env file.
+never written anywhere but the env file. The ``.bak`` files written on each
+run are a deliberate single-generation recovery mechanism for a
+mis-answered re-run: they live in the same volume with the same 0600 mode
+as the primary files and are overwritten by the following run. This means
+that after a provider switch, the previous provider's key persists in
+``fabulous.env.bak`` until the run after next.
 """
 
 from __future__ import annotations

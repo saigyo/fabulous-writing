@@ -207,9 +207,10 @@ docker run --rm -v fabulous-config:/config -v fabulous-data:/data -p 8080:8000 \
   Docker, so `localhost:11434` is the container, not your machine. On
   macOS/Windows use `http://host.docker.internal:11434` (the wizard's
   default). On Linux add `--add-host=host.docker.internal:host-gateway`
-  to the `docker run serve` line (edit `fabulous.sh` or use plain
-  `docker run`), or use your `docker0` gateway IP (usually
-  `http://172.17.0.1:11434`).
+  to BOTH the `setup` and `serve` `docker run` lines — the wizard's
+  reachability probe also runs inside the `setup` container (edit both
+  lines in `fabulous.sh` or use plain `docker run`), or use your
+  `docker0` gateway IP (usually `http://172.17.0.1:11434`).
 - **Port already in use** — pick another host port: `FW_PORT=9090
   ./fabulous.sh serve` (or change `-p 9090:8000`).
 
