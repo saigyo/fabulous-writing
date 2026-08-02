@@ -3765,3 +3765,39 @@ non-local tier available with the expected models and local unavailable
 with "Ollama not running". Follow-up filed separately: commercial
 configs omit `ollama_base_url`, so the local tier cannot come alive
 in-container even when host Ollama runs.
+
+## 2026-08-02 — B25: local tier auto-discovers host Ollama (PR #85)
+
+The small rider rounding out v0.2.0 with B24, done as a single PR
+(spec + plan + code) proportionate to its one-line production change:
+commercial-provider configs now also carry `providers.ollama_base_url`
+— preserved from the existing config when present, defaulting to
+`host.docker.internal` — so `GET /api/routing`'s Ollama ping probes the
+host instead of the container's own localhost, and the local tier can
+genuinely report available. Rider hardening: a hand-edited bare
+`providers:` (YAML null) no longer crashes a re-run, and an explicit
+null URL cannot produce an invalid config.
+
+The instructive part was the reachability truth, which took three
+corrections to get right. The plan review discovered host Ollama binds
+127.0.0.1 by default and inferred container-unreachability; Copilot
+then rightly flagged the resulting OLLAMA_HOST=0.0.0.0 advice as a
+security hazard (unauthenticated API, whole-LAN exposure); and Markus
+finally disproved the premise empirically — `curl
+http://host.docker.internal:11434` from a container reaches his
+loopback-bound Ollama, because VM-based Docker (Docker Desktop,
+colima/lima) proxies from the host side of the loopback. Only native
+Linux Docker's bridge routing cannot reach loopback-only binds. The
+shipped docs now say exactly that, platform-differentiated, with the
+wildcard bind explicitly discouraged. Lesson relearned twice this
+week: verified facts plus plausible inference still lose to one real
+container-level test.
+
+Verification: 5 new tests + 1 updated (the B24 switch test now pins
+keep-URL/drop-model), all mutation-verified incl. the two-arg-.get
+regression and an expected-AttributeError null-guard signature; wizard
+file 52 passed; full suite 1247, zero warnings. Also caught in the
+wash: two implementer "pushed" claims that hadn't pushed, and a
+vacuous-success hole in the controller's CI waiters (zero check-runs
+for an unknown commit read as all-green) — the waiters now require a
+minimum completed-check count.
