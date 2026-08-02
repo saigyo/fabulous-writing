@@ -1,6 +1,6 @@
 # Language Model Recommendations
 
-Last updated: July 2026, checked against the implementation as of 2026-07-05.
+Last updated: August 2026, checked against the implementation as of 2026-08-02.
 Based on research into API and Ollama models for the seven languages supported
 by the app (EN, DE, FR, IT, ES, ZH, JA).
 

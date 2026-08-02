@@ -14,7 +14,7 @@ run are a deliberate single-generation recovery mechanism for a
 mis-answered re-run: they live in the same volume with the same 0600 mode
 as the primary files and are overwritten by the following run. This means
 that after a provider switch, the previous provider's key persists in
-``fabulous.env.bak`` until the run after next. The generated config also carries a full per-language LLM routing table for the chosen provider (B24, #81), so every quality tier works out of the box.
+``fabulous.env.bak`` until the run after next. The generated config also carries a full per-language LLM routing table for the chosen provider (B24, #81), so every non-local quality tier works out of the box (the local tier stays on Ollama and is unavailable until Ollama is running).
 """
 
 from __future__ import annotations
