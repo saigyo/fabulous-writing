@@ -1949,3 +1949,48 @@ test-only accelerators keep the fixed cost per test low:
 (production stays at 12; deliberately not a config knob), and the
 `document_clock` fixture replaces real sleeps for second-precision
 timestamp ordering.
+
+## Container deployment (B17)
+
+Design source: `docs/superpowers/specs/2026-08-02-single-container-design.md`. The
+container image bundles the built frontend and the backend behind a single origin,
+with a wizard owning the persisted config volume.
+
+**Config resolution.** `load_settings()` (`app/core/config.py`) resolves the config
+file in a fixed order: an explicit `config_file` argument first (used by tests and
+one-off scripts), then the `FW_CONFIG_FILE` environment variable, then the
+repo-relative `backend/config.yaml` default. The container entrypoint sets
+`FW_CONFIG_FILE=/config/config.yaml`, so the wizard-generated file on the mounted
+`/config` volume wins over the baked-in default without either side having to know
+about the other.
+
+**Single-origin serving.** When `frontend.dist_dir` is set, `create_app()` mounts the
+built Vite assets at `/assets` and registers a `GET /{full_path:path}` catch-all that
+serves `index.html` for any unmatched path (the SPA's client-side router takes it from
+there), except paths starting with `api` — those stay a JSON 404 instead of falling
+back to HTML — and it resolves each candidate path against `dist_dir` to reject
+traversal outside it. This route is registered last, after every `/api` router, so
+FastAPI's registration-order route matching always gives real API routes priority over
+the catch-all.
+
+**The wizard.** `app/setup_wizard.py` owns the `/config` directory end to end: each
+run regenerates both `fabulous.env` (secrets, written with `0o600` permissions) and
+`config.yaml` (non-secret config, layered onto the baked-in template) completely,
+rather than patching them in place, so a re-run that switches providers can never
+leave a stale key behind. `run_wizard()` takes its config/template directories as
+arguments and accepts injectable `input_fn`/`getpass_fn`/`probe` callables (defaulting
+to `input`, `getpass.getpass`, and a real Ollama probe), which is what lets the test
+suite drive the wizard's prompts without a real terminal or network access.
+
+**Version reporting.** `GET /api/health` reports `version` from the `FW_APP_VERSION`
+environment variable (falling back to `"dev"` when unset). The Dockerfile sets it from
+the `APP_VERSION` build arg, and the release workflow passes the pushed git tag as
+that arg — the tag is the single source of truth for the version string an operator
+sees, not a version pinned anywhere in source.
+
+**Image layer ordering.** The Dockerfile orders its layers by change frequency to
+maximize registry build-cache hits: OS packages, then Hunspell dictionaries, then
+Python dependencies synced from the lockfile alone, then the spaCy/GiNZA models
+(installed via the locked `models` dependency group so their transitive dependencies
+can't drift between builds), and only then the application code. Editing app code
+therefore busts just the final layer, leaving the multi-gigabyte model layer cached.

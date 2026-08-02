@@ -1550,6 +1550,17 @@ exactly once. The request/response types are defined in `types.ts` and match
 the backend's pydantic models field-for-field — the shared contract is structural, not
 generated.
 
+## Production serving (B17)
+
+The container image builds the frontend with `VITE_API_URL=""` (see the Dockerfile).
+`client.ts` resolves the API base with `import.meta.env.VITE_API_URL ?? ""`, and `??`
+only falls through on `null`/`undefined` — an explicitly empty string is kept as-is —
+so every request stays a relative path and the backend serving the built frontend
+becomes the same origin the API calls hit. That means no CORS configuration is needed
+in the container. Local development is unaffected: `VITE_API_URL` is unset under
+`npm run dev`, so `??` falls through to the existing `http://localhost:8000` default
+and the backend's `cors.origins` setup keeps handling that cross-origin case as before.
+
 ## Testing and tooling
 
 - **Unit tests** (`npm test`, vitest) sit next to the code: scheduler, equivalence,
