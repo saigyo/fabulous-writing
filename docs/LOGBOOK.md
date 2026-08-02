@@ -3666,3 +3666,59 @@ live curly-apostrophe→period corruption in fr `scoreOutdated` that
 tsc/vitest could not see — fixed and pinned full-string. Final review
 APPROVED-WITH-MINORS (0C/0I/4M, all parked with rulings).
 Spec: docs/superpowers/specs/2026-08-01-informal-register-design.md.
+
+## 2026-08-02 — B17: single-container setup (PRs #75, #76)
+
+The app became installable with nothing but Docker: one GHCR image
+(multi-stage, Node 26 SPA build → `python:3.13-slim` runtime, ~1.77 GB,
+layers ordered by change frequency), a re-runnable setup wizard
+(`python -m app.setup_wizard`) that owns the `/config` volume and
+regenerates `fabulous.env` + `config.yaml` whole on every run — provider
+switching cannot leave a stale key behind — plus `fabulous.sh` for the
+pull → setup → serve one-liner. Two dev-neutral backend hooks:
+`FW_CONFIG_FILE` in `load_settings()` and `frontend.dist_dir` for
+single-origin SPA serving (startup-enumerated file map; `/api/*` stays a
+JSON 404). `/api/health` reports the version; the git tag is the single
+source of truth (main declines direct pushes, so nothing can commit
+version bumps back). Releases are deliberate: `release.yml` on `vX.Y.Z`
+tags builds amd64+arm64, pushes to GHCR with a registry build cache, and
+creates the GitHub Release only after a successful push.
+
+The license work grew teeth once the image existed: bundling the
+Hunspell dictionaries is exactly the distribution the repo had
+deliberately avoided (de is igerman98, GPL-2.0/3.0), so
+`THIRD-PARTY-NOTICES.md` now carries full texts for all 118 shipped
+components — locked Python set via a new `models` dependency group
+(image install and inventory derive from the same lockfile), npm
+production deps, hand-curated dictionary entries pinned to an exact
+upstream commit — with a CI drift gate and a hard failure on any future
+textless dependency.
+
+Review rounds earned their keep. Final Opus review caught the notices
+file having been generated on macOS: numpy ships per-platform wheel
+license texts, so the file described `.dylibs` binaries the linux image
+does not contain — regenerated in a linux container, and the collector
+now refuses to run off-linux. A task review caught the licenses CI job
+syncing without the models group (collector reads installed dist-info;
+reproduced, fixed, proven in an isolated venv). CodeQL flagged the SPA
+catch-all's `resolve()`+`is_relative_to` guard; rather than dismissing,
+the route now serves only from a startup-built file map, removing the
+taint structurally. Copilot rounds (8 posted + 6 suppressed findings,
+all accepted) removed the uninventoried uv binary from the runtime image
+via BuildKit bind-mounts, completed the de/fr/es dictionary files with
+canonical GPL/LGPL/MPL texts (upstream ships grants that only reference
+them), corrected the en identifier (WordNet, Ispell's
+modification-marking grant, and a UKACD component nobody had listed),
+and covered `frontend/public/` in the docker CI paths.
+
+Verification: full e2e on a colima scratch stack (host port 8001) —
+wizard smoke, health/version, single-origin SPA, login, a rules check
+asserting `skipped_rules == []` (the 1.5 GB model layer genuinely
+loads), SQLite persisting across container replacement, notices and
+`/usr/share/doc` present in-image, clean teardown. Backend suite 1213
+passed, zero warnings; guard tests mutation-verified. The PR itself
+live-tested `docker.yml` (build + drift gate) and CodeQL, all green.
+Post-merge: tag `v0.1.0` (first release; arm64 leg runs under QEMU),
+one-time GHCR package-visibility toggle, follow-up issue for four
+deferred minors (exact-pin license-checker, `latest` back-port guard,
+env-file path under custom `FW_CONFIG_FILE`, `--proxy-headers`).
