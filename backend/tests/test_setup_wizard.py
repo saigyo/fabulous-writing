@@ -100,6 +100,7 @@ class TestFirstRun:
         config = (config_dir / "config.yaml").read_text(encoding="utf-8")
         assert "default_provider: ollama" in config
         assert "ollama_model: llama3.1" in config
+        assert "ollama_base_url: http://host.docker.internal:11434" in config
         import yaml as yaml_module
 
         data = yaml_module.safe_load(config)
@@ -461,6 +462,18 @@ class TestRoutingTable:
         from app.setup_wizard import COMMERCIAL_TIER_MODELS, PROVIDER_MENU
 
         assert set(COMMERCIAL_TIER_MODELS) | {"ollama"} == set(PROVIDER_MENU)
+
+    def test_languages_stay_linked_to_config(self):
+        # If a language is added to config's _LANGUAGE_CODES without updating
+        # the wizard, build_routing_table emits a 7-language table and
+        # RoutingSettings' overlay silently fills the new language from the
+        # stale multi-provider defaults — the exact bug B24 removes.
+        from app.core.config import TIERS, _LANGUAGE_CODES
+        from app.setup_wizard import LANGUAGES, build_routing_table
+
+        assert set(LANGUAGES) == set(_LANGUAGE_CODES)
+        table = build_routing_table("claude")
+        assert set(table["en"]) == set(TIERS)
 
     def test_ollama_table_requires_both_models(self):
         from app.setup_wizard import build_routing_table
