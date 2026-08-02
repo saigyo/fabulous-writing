@@ -4,6 +4,13 @@ Last updated: July 2026, checked against the implementation as of 2026-07-05.
 Based on research into API and Ollama models for the seven languages supported
 by the app (EN, DE, FR, IT, ES, ZH, JA).
 
+> The per-language multi-provider table below remains the default for
+> key-rich setups. Wizard-configured single-provider instances get a
+> generated single-provider routing table instead (`app/setup_wizard.py`,
+> B24/#81) — same model across all languages per tier, including the
+> deliberate Mistral quality=medium mapping (Medium 3.5 is Mistral's
+> current strongest general model, ahead of the confusingly-named Large 3).
+
 This document serves two purposes:
 
 1. **Documentation:** Prose recommendations that explain model choice per language.
