@@ -8,7 +8,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-BASE=https://raw.githubusercontent.com/wooorm/dictionaries/main/dictionaries
+# Pinned revision — matches scripts/curated-licenses.yaml (license notices
+# were verified against exactly this tree). Bump both together.
+BASE=https://raw.githubusercontent.com/wooorm/dictionaries/8cfea406b505e4d7df52d5a19bce525df98c54ab/dictionaries
 mkdir -p dictionaries
 
 for lang in "$@"; do
