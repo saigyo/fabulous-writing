@@ -1553,7 +1553,7 @@ generated.
 ## Production serving (B17)
 
 The container image builds the frontend with `VITE_API_URL=""` (see the Dockerfile).
-`client.ts` resolves the API base with `import.meta.env.VITE_API_URL ?? ""`, and `??`
+`client.ts` resolves the API base with `import.meta.env.VITE_API_URL ?? 'http://localhost:8000'`, and `??`
 only falls through on `null`/`undefined` — an explicitly empty string is kept as-is —
 so every request stays a relative path and the backend serving the built frontend
 becomes the same origin the API calls hit. That means no CORS configuration is needed

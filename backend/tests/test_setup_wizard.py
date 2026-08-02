@@ -346,3 +346,27 @@ class TestImageContract:
 
         assert DEFAULT_CONFIG_DIR == "/config"
         assert DEFAULT_TEMPLATE == "/app/config.container.yaml"
+
+    def test_real_template_validates_for_every_provider(self):
+        # Nothing else pins the real docker/config.container.yaml against
+        # Settings(extra="forbid") — template drift would only explode at
+        # container start. Load the actual repo file, apply the same merge
+        # run_wizard performs for each built-in provider, and validate.
+        import yaml
+
+        from app.core.config import Settings
+
+        template_path = Path(__file__).parents[2] / "docker" / "config.container.yaml"
+        raw = template_path.read_text(encoding="utf-8")
+
+        config_data = yaml.safe_load(raw) or {}
+        Settings.model_validate(config_data)
+
+        for provider in ("claude", "openai", "mistral", "ollama"):
+            config_data = yaml.safe_load(raw) or {}
+            providers_section = config_data.setdefault("providers", {})
+            providers_section["default_provider"] = provider
+            if provider == "ollama":
+                providers_section["ollama_base_url"] = "http://host.docker.internal:11434"
+                providers_section["ollama_model"] = "llama3.1"
+            Settings.model_validate(config_data)
