@@ -371,6 +371,32 @@ class TestCommercialOllamaUrl:
         data = yaml_module.safe_load((config_dir / "config.yaml").read_text(encoding="utf-8"))
         assert data["providers"]["ollama_base_url"] == "http://host.docker.internal:11434"
 
+    def test_explicit_null_url_falls_back_to_default(self, tmp_path, template):
+        import yaml as yaml_module
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "fabulous.env").write_text(
+            "FW_AUTH_SECRET=null-url-secret-0123456789abcdefghijkl\n"
+            "FW_ADMIN_EMAIL=admin@example.com\n"
+            "FW_ADMIN_PASSWORD=s3cret-password!\n",
+            encoding="utf-8",
+        )
+        (config_dir / "config.yaml").write_text(
+            "providers:\n  default_provider: claude\n  ollama_base_url: null\n",
+            encoding="utf-8",
+        )
+        rc = run_wizard(
+            config_dir,
+            template,
+            input_fn=scripted(["", "", "n"]),
+            getpass_fn=scripted(["", "sk-ant-abc123"]),
+            fetch_models=fetch_fail,
+        )
+        assert rc == 0
+        data = yaml_module.safe_load((config_dir / "config.yaml").read_text(encoding="utf-8"))
+        assert data["providers"]["ollama_base_url"] == "http://host.docker.internal:11434"
+
 
 class TestValidation:
     def test_bad_email_reprompts(self, tmp_path, template):

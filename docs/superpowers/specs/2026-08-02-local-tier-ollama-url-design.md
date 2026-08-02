@@ -19,8 +19,10 @@ an Ollama→commercial provider switch. `GET /api/routing`'s Ollama ping
 then probes the host, and the local tier lights up once host Ollama is
 *reachable from the container* — which, in addition to the Linux
 `--add-host` mapping, requires Ollama to listen beyond its default
-`127.0.0.1` bind (`OLLAMA_HOST=0.0.0.0`); the README troubleshooting
-gains that caveat for all platforms. No new prompts; the Ollama path
+`127.0.0.1` bind (`OLLAMA_HOST=0.0.0.0`); since Ollama's API has no
+authentication, operators should prefer binding to a Docker-reachable
+interface only or firewall port 11434 from untrusted networks. The README
+troubleshooting gains that caveat for all platforms. No new prompts; the Ollama path
 (which prompts for the URL) is unchanged. Null-robustness rider: the
 `existing_providers` read uses `or {}` / `or DEFAULT_OLLAMA_URL` forms
 so a hand-edited bare `providers:` or explicit null URL cannot crash a
