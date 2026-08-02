@@ -1,4 +1,5 @@
 import math
+import os
 import re
 from pathlib import Path
 from typing import Literal
@@ -200,6 +201,12 @@ class CorsSettings(BaseModel):
     # Browsers only. The API is also reachable by non-browser clients, which
     # CORS does not constrain — this narrows which *web origins* may call it.
     origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+
+
+class FrontendSettings(BaseModel):
+    # Absolute path to the built SPA (Vite dist/). None (the dev default)
+    # registers no static routes at all — dev keeps its two-origin setup.
+    dist_dir: Path | None = None
 
 
 class AuthSettings(BaseModel):
@@ -472,6 +479,7 @@ class Settings(BaseModel):
     nlp: NlpSettings = Field(default_factory=NlpSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     cors: CorsSettings = Field(default_factory=CorsSettings)
+    frontend: FrontendSettings = Field(default_factory=FrontendSettings)
 
     # User tiers (spec §6.1): policy per tiers-of-service name. Distinct from
     # the quality tiers in TIERS. Empty (the default) = no policy anywhere —
@@ -535,8 +543,14 @@ class Settings(BaseModel):
 
 
 def load_settings(config_file: Path | None = None) -> Settings:
-    """Load settings from a YAML file, falling back to defaults."""
-    path = config_file or BACKEND_DIR / "config.yaml"
+    """Load settings from a YAML file, falling back to defaults.
+
+    Resolution order: explicit argument, then the FW_CONFIG_FILE
+    environment variable (the container entrypoint sets it to the
+    wizard-generated /config/config.yaml), then backend/config.yaml.
+    """
+    env_path = os.environ.get("FW_CONFIG_FILE", "").strip()
+    path = config_file or (Path(env_path) if env_path else BACKEND_DIR / "config.yaml")
     if not path.is_file():
         return Settings()
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}

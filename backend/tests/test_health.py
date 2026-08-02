@@ -13,7 +13,8 @@ from tests.conftest import auth_headers
 DOC_ENDPOINTS = ("/docs", "/redoc", "/openapi.json")
 
 
-def test_health_returns_ok(tmp_path: Path) -> None:
+def test_health_returns_ok(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("FW_APP_VERSION", raising=False)
     # A bare create_app() would build against the default (real) db_path —
     # forbidden for tests, and now also side-effect-heavy (it seeds the
     # admin account). Every other app_client fixture in this suite passes
@@ -23,7 +24,7 @@ def test_health_returns_ok(tmp_path: Path) -> None:
     client = TestClient(create_app(settings))
     response = client.get("/api/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "name": "Fabulous Writing"}
+    assert response.json() == {"status": "ok", "name": "Fabulous Writing", "version": "dev"}
 
 
 def test_create_app_refuses_supabase_mode_before_writing_user_tables(tmp_path: Path) -> None:
