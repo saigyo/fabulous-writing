@@ -214,7 +214,7 @@ class TestReRun:
         config = (config_dir / "config.yaml").read_text(encoding="utf-8")
         assert "default_provider: mistral" in config
 
-    def test_switch_away_from_ollama_drops_ollama_config(self, tmp_path, template):
+    def test_switch_away_from_ollama_keeps_url_drops_model(self, tmp_path, template):
         config_dir = self.first_run(tmp_path, template)  # ollama first run
         run_wizard(
             config_dir,
@@ -224,7 +224,10 @@ class TestReRun:
             fetch_models=fetch_fail,
         )
         config = (config_dir / "config.yaml").read_text(encoding="utf-8")
-        assert "ollama_base_url" not in config
+        # B25 (#84): the base URL is deliberately KEPT on a switch away —
+        # it is the local tier's pointer and the last known Ollama
+        # location. Only the model selection is dropped.
+        assert "ollama_base_url: http://host.docker.internal:11434" in config
         assert "ollama_model" not in config
 
     def test_env_files_are_owner_readable_only(self, tmp_path, template):
@@ -270,6 +273,103 @@ class TestReRun:
         )
         assert (config_dir / "fabulous.env.bak").read_text(encoding="utf-8") == original_env
         assert (config_dir / "config.yaml.bak").is_file()
+
+
+class TestCommercialOllamaUrl:
+    def test_commercial_first_run_writes_default_url(self, tmp_path, template):
+        import yaml as yaml_module
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        run_wizard(
+            config_dir,
+            template,
+            input_fn=scripted(["admin@example.com", "1"]),
+            getpass_fn=scripted(["s3cret-password!", "sk-ant-abc123"]),
+            fetch_models=fetch_fail,
+        )
+        data = yaml_module.safe_load((config_dir / "config.yaml").read_text(encoding="utf-8"))
+        assert data["providers"]["ollama_base_url"] == "http://host.docker.internal:11434"
+        assert "ollama_model" not in data["providers"]
+
+    def test_rerun_preserves_hand_edited_url(self, tmp_path, template):
+        import yaml as yaml_module
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        run_wizard(
+            config_dir,
+            template,
+            input_fn=scripted(["admin@example.com", "1"]),
+            getpass_fn=scripted(["s3cret-password!", "sk-ant-abc123"]),
+            fetch_models=fetch_fail,
+        )
+        # Hand-edit: a LAN Ollama host
+        config_path = config_dir / "config.yaml"
+        data = yaml_module.safe_load(config_path.read_text(encoding="utf-8"))
+        data["providers"]["ollama_base_url"] = "http://192.168.1.50:11434"
+        config_path.write_text(yaml_module.safe_dump(data, sort_keys=False), encoding="utf-8")
+        # Keep-everything re-run (commercial: email, provider, rotate)
+        run_wizard(
+            config_dir,
+            template,
+            input_fn=scripted(["", "", "n"]),
+            getpass_fn=scripted(["", ""]),
+            fetch_models=fetch_fail,
+        )
+        data = yaml_module.safe_load(config_path.read_text(encoding="utf-8"))
+        assert data["providers"]["ollama_base_url"] == "http://192.168.1.50:11434"
+
+    def test_switch_preserves_prompted_url(self, tmp_path, template):
+        # Ollama first run with a NON-default prompted URL (a bare
+        # default here would pass against a hard-coded constant), then a
+        # switch to mistral: the prompted URL must survive.
+        import yaml as yaml_module
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        run_wizard(
+            config_dir,
+            template,
+            input_fn=scripted(
+                ["admin@example.com", "4", "http://10.0.0.7:11434", "llama3.1"]
+            ),
+            getpass_fn=scripted(["s3cret-password!"]),
+            fetch_models=fetch_fail,
+        )
+        run_wizard(
+            config_dir,
+            template,
+            input_fn=scripted(["", "3", "n"]),
+            getpass_fn=scripted(["", "a" * 24]),
+            fetch_models=fetch_fail,
+        )
+        data = yaml_module.safe_load((config_dir / "config.yaml").read_text(encoding="utf-8"))
+        assert data["providers"]["ollama_base_url"] == "http://10.0.0.7:11434"
+        assert data["providers"]["default_provider"] == "mistral"
+
+    def test_bare_providers_key_does_not_crash(self, tmp_path, template):
+        import yaml as yaml_module
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "fabulous.env").write_text(
+            "FW_AUTH_SECRET=null-guard-secret-0123456789abcdefghij\n"
+            "FW_ADMIN_EMAIL=admin@example.com\n"
+            "FW_ADMIN_PASSWORD=s3cret-password!\n",
+            encoding="utf-8",
+        )
+        (config_dir / "config.yaml").write_text("providers:\n", encoding="utf-8")
+        rc = run_wizard(
+            config_dir,
+            template,
+            input_fn=scripted(["", "1", "n"]),
+            getpass_fn=scripted(["", "sk-ant-abc123"]),
+            fetch_models=fetch_fail,
+        )
+        assert rc == 0
+        data = yaml_module.safe_load((config_dir / "config.yaml").read_text(encoding="utf-8"))
+        assert data["providers"]["ollama_base_url"] == "http://host.docker.internal:11434"
 
 
 class TestValidation:
@@ -839,8 +939,8 @@ class TestImageContract:
             config_data = yaml.safe_load(raw) or {}
             providers_section = config_data.setdefault("providers", {})
             providers_section["default_provider"] = provider
+            providers_section["ollama_base_url"] = "http://host.docker.internal:11434"
             if provider == "ollama":
-                providers_section["ollama_base_url"] = "http://host.docker.internal:11434"
                 providers_section["ollama_model"] = "llama3.1"
             from app.setup_wizard import build_routing_table
 

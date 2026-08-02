@@ -321,7 +321,7 @@ def run_wizard(
     password = _ask_password(getpass_fn, existing_env.get("FW_ADMIN_PASSWORD"))
 
     current_provider = None
-    existing_providers = existing_config.get("providers", {})
+    existing_providers = existing_config.get("providers") or {}
     if rerun:
         current_provider = existing_providers.get("default_provider")
     provider = _ask_provider(input_fn, current_provider)
@@ -417,6 +417,18 @@ def run_wizard(
     if provider == "ollama":
         providers_section["ollama_base_url"] = ollama_url
         providers_section["ollama_model"] = ollama_model
+    else:
+        # Commercial provider: still point Ollama at the host so the
+        # local tier's availability ping probes the right place — the
+        # tier lights up once host Ollama is reachable (B25, #84; needs
+        # OLLAMA_HOST beyond 127.0.0.1 — see README troubleshooting).
+        # The prefill-style read preserves a hand-edited custom URL
+        # across re-runs and the last prompted URL across a provider
+        # switch; `or` (not a .get default) so an explicit null cannot
+        # emit an invalid config.
+        providers_section["ollama_base_url"] = (
+            existing_providers.get("ollama_base_url") or DEFAULT_OLLAMA_URL
+        )
 
     config_data["routing"] = {
         "languages": build_routing_table(
