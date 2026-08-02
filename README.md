@@ -204,13 +204,21 @@ docker run --rm -v fabulous-config:/config -v fabulous-data:/data -p 8080:8000 \
 ### Troubleshooting
 
 - **Ollama not reachable from the container** — the app runs inside
-  Docker, so `localhost:11434` is the container, not your machine. On
-  macOS/Windows use `http://host.docker.internal:11434` (the wizard's
+  Docker, so `localhost:11434` is the container, not your machine.
+  This applies to both Ollama-only and commercial-provider setups (the
+  local tier probes `providers.ollama_base_url` for availability in both).
+  On macOS/Windows use `http://host.docker.internal:11434` (the wizard's
   default). On Linux add `--add-host=host.docker.internal:host-gateway`
   to BOTH the `setup` and `serve` `docker run` lines — the wizard's
   model-list fetch also runs inside the `setup` container (edit both
   lines in `fabulous.sh` or use plain `docker run`), or use your
-  `docker0` gateway IP (usually `http://172.17.0.1:11434`).
+  `docker0` gateway IP (usually `http://172.17.0.1:11434`). On all platforms,
+  Ollama must listen beyond `127.0.0.1` for the container to reach it:
+  start Ollama with `OLLAMA_HOST=0.0.0.0` (or an interface-specific bind)
+  before running the `setup` command. On commercial-provider configs, the
+  Ollama URL has no setup prompt; to correct a stale hand-edited value
+  in `config.yaml`, edit it directly (or switch to the Ollama provider,
+  which re-prompts the URL).
 - **Port already in use** — pick another host port: `FW_PORT=9090
   ./fabulous.sh serve` (or change `-p 9090:8000`).
 

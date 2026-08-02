@@ -1988,8 +1988,10 @@ fetch — `check_ollama` no longer exists), which is what lets the test suite dr
 the wizard's prompts without a real terminal or network access. The wizard also
 generates the full `routing.languages` table for the chosen provider (B24, #81):
 for a commercial provider, the quality/balanced/cheap tier columns come from a
-verified per-provider model mapping while the local tier stays on the Ollama
-defaults regardless of the chosen provider; for Ollama itself, the strong and fast
+verified per-provider model mapping while the local tier runs on Ollama; the config
+carries `providers.ollama_base_url` pointing at the host (`host.docker.internal`),
+hand-edits preserved on re-runs, so the local tier reports available once host Ollama
+is reachable from the container (B25, #84); for Ollama itself, the strong and fast
 models picked from the live `/api/tags` list cover quality/balanced and cheap/local
 respectively. Like the rest of the config, this table is regenerated whole on
 every run, never patched.
