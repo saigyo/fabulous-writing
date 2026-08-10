@@ -9477,7 +9477,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ````
 
-### @codemirror/lang-markdown 6.5.1
+### @codemirror/lang-markdown 6.5.2
 
 License: MIT
 
@@ -9617,7 +9617,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ````
 
-### @codemirror/view 6.43.7
+### @codemirror/view 6.43.8
 
 License: MIT
 
@@ -9869,7 +9869,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ````
 
-### @types/react 19.2.17
+### @types/react 19.2.18
 
 License: MIT
 
