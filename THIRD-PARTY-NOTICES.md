@@ -369,7 +369,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ````
 
-### boto3 1.43.58
+### boto3 1.43.64
 
 License: Apache-2.0
 
@@ -556,7 +556,7 @@ boto3
 Copyright 2013-2017 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ````
 
-### botocore 1.43.62
+### botocore 1.43.67
 
 License: Apache-2.0
 
@@ -2296,7 +2296,7 @@ SOFTWARE.
 ```
 ````
 
-### fastapi 0.140.13
+### fastapi 0.141.1
 
 License: MIT
 
@@ -8873,7 +8873,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### uvicorn 0.51.0
+### uvicorn 0.52.1
 
 License: BSD-3-Clause
 
