@@ -135,3 +135,26 @@ class TestEnvFileParsing:
         assert proc.returncode == 78
         assert "line 1" in proc.stderr
         assert not (out / "uvicorn.argv").exists()
+
+
+class TestTrustedProxies:
+    def test_flags_added_when_set(self, tmp_path):
+        proc, out = run_entrypoint(
+            tmp_path, extra_env={"FW_TRUSTED_PROXIES": "10.0.0.1,10.0.0.2"}
+        )
+        assert proc.returncode == 0
+        argv = stub_argv(out)
+        assert "--proxy-headers" in argv
+        assert argv[argv.index("--forwarded-allow-ips") + 1] == "10.0.0.1,10.0.0.2"
+
+    def test_flags_absent_by_default(self, tmp_path):
+        proc, out = run_entrypoint(tmp_path)
+        assert proc.returncode == 0
+        argv = stub_argv(out)
+        assert "--proxy-headers" not in argv
+        assert "--forwarded-allow-ips" not in argv
+
+    def test_empty_value_means_off(self, tmp_path):
+        proc, out = run_entrypoint(tmp_path, extra_env={"FW_TRUSTED_PROXIES": ""})
+        assert proc.returncode == 0
+        assert "--proxy-headers" not in stub_argv(out)
