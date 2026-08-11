@@ -274,6 +274,30 @@ class TestReRun:
         assert (config_dir / "fabulous.env.bak").read_text(encoding="utf-8") == original_env
         assert (config_dir / "config.yaml.bak").is_file()
 
+    def test_config_only_rerun_prefills_provider(self, tmp_path, template, capsys):
+        # fabulous.env deleted, config.yaml survives (B21 #78 item 4):
+        # still a re-run — provider/model prefills come from the config.
+        config_dir = self.first_run(tmp_path, template)  # ollama first run
+        (config_dir / "fabulous.env").unlink()
+        # inputs: email (typed — its prefill lived in the deleted env),
+        # provider "" (keep ollama), base URL "" (keep), model "" (keep
+        # llama3.1 from the routing table); getpass: fresh password.
+        # No rotate prompt: the secret's only copy was deleted.
+        rc = run_wizard(
+            config_dir,
+            template,
+            input_fn=scripted(["admin@example.com", "", "", ""]),
+            getpass_fn=scripted(["s3cret-password!"]),
+            fetch_models=fetch_fail,
+        )
+        assert rc == 0
+        assert "re-run" in capsys.readouterr().out
+        config = (config_dir / "config.yaml").read_text(encoding="utf-8")
+        assert "default_provider: ollama" in config
+        assert "ollama_model: llama3.1" in config
+        env = parse_env_file(config_dir / "fabulous.env")
+        assert len(env["FW_AUTH_SECRET"]) >= 32
+
 
 class TestCommercialOllamaUrl:
     def test_commercial_first_run_writes_default_url(self, tmp_path, template):
