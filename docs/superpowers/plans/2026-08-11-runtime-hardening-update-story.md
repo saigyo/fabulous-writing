@@ -91,6 +91,7 @@ def run_entrypoint(tmp_path, *, env_text=None, extra_env=None):
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
     )
     return proc, out_dir
@@ -180,9 +181,9 @@ class TestEnvFileParsing:
 
 - [ ] **Step 2: Run the new tests, verify the expected failures**
 
-Run (from `backend/`): `uv run pytest tests/test_entrypoint_sh.py -v -p no:xdist`
+Run (from `backend/`): `uv run pytest tests/test_entrypoint_sh.py -v -n0`
 
-Expected FAILs against the current script: `test_env_file_next_to_config_is_applied`, `test_fw_env_file_overrides_location`, `test_empty_fw_env_file_falls_back_to_derived_default`, `test_crlf_line_ending_stripped_from_value` (the script still reads hardcoded `/config/fabulous.env`, which doesn't exist on the test host, and keeps `\r`), and both malformed-line tests (the old parser dies with the shell's own `export` error — wrong exit code, and the shell's message echoes the content). Expected PASSes (trivially green — the file is simply never read on this host): `test_real_environment_wins_over_file`, `test_missing_env_file_serves_anyway`, `test_comments_and_blank_lines_skipped` — these get mutation-verified in Step 5.
+Expected FAILs against the current script — all for the same root cause: it reads only the hardcoded `/config/fabulous.env`, which does not exist on the test host, so the tmp env file is never opened and the script serves with exit 0. That fails `test_env_file_next_to_config_is_applied`, `test_fw_env_file_overrides_location`, `test_empty_fw_env_file_falls_back_to_derived_default`, `test_crlf_line_ending_stripped_from_value`, `test_comments_and_blank_lines_skipped` (each misses its sentinel), and both malformed-line tests (exit 0 instead of 78). Expected PASSes (trivially green for that same reason): `test_real_environment_wins_over_file`, `test_missing_env_file_serves_anyway` — these two get mutation-verified in Step 5.
 
 - [ ] **Step 3: Rewrite the env-file block in `docker/entrypoint.sh`**
 
@@ -194,6 +195,9 @@ Replace lines 19–28 (the `if [ -f /config/fabulous.env ]` block) so the whole 
 # Env-file semantics: the env file (default: fabulous.env next to the
 # config file, override with FW_ENV_FILE) is applied only for variables
 # not already set — real environment variables win (fly.io secrets, B16).
+# NB: the wizard writes into FW_SETUP_CONFIG_DIR (default /config) — a
+# deployment that relocates FW_CONFIG_FILE must relocate that too, or
+# set FW_ENV_FILE explicitly.
 set -eu
 
 if [ "${1:-serve}" = "setup" ]; then
@@ -228,8 +232,8 @@ if [ -f "$ENV_FILE" ]; then
         esac
         key=${line%%=*}
         value=${line#*=}
-        # A key export can't accept would crash with a bare shell error
-        # under set -eu; validate POSIX name syntax first.
+        # A key that export can't accept would crash with a bare shell
+        # error under set -eu; validate POSIX name syntax first.
         case "$key" in
             ''|*[!A-Za-z0-9_]*|[0-9]*) bad_env_line "$ENV_FILE" "$lineno" ;;
         esac
@@ -246,24 +250,34 @@ exec uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 - [ ] **Step 4: Run the new tests, verify all pass**
 
-Run: `uv run pytest tests/test_entrypoint_sh.py -v -p no:xdist`
+Run: `uv run pytest tests/test_entrypoint_sh.py -v -n0`
 Expected: all 9 PASS.
 
 - [ ] **Step 5: Mutation-verify the trivially-green guards**
 
 One at a time, hand-edit `docker/entrypoint.sh`, re-run the named test, confirm it FAILS, revert the edit:
 1. Swap the precedence branch — replace the `if ! printenv …; then export …; fi` body with an unconditional `export "$key=$value"` → `test_real_environment_wins_over_file` must fail.
-2. Remove `''|\#*) continue ;;` → `test_comments_and_blank_lines_skipped` must fail (comment line now hits `bad_env_line`).
-3. Change `if [ -f "$ENV_FILE" ]` to `if true` → `test_missing_env_file_serves_anyway` must fail (read from a missing file aborts under `set -e`).
+2. Add an `else` branch to `if [ -f "$ENV_FILE" ]`: `else echo "no env file" >&2; exit 78` → `test_missing_env_file_serves_anyway` must fail (exit 78, no argv file). (Do NOT mutate via `if true` + reading the missing file: a redirection failure inside a compound command is fatal under dash but NOT under macOS bash-as-sh, so that mutation only goes red on Linux.)
 
-After the three rounds, `git diff docker/entrypoint.sh` must show only the Step 3 state (all mutations reverted); re-run the file once more to confirm green.
+After the two rounds, `git diff docker/entrypoint.sh` must show only the Step 3 state (all mutations reverted); re-run the file once more to confirm green.
 
-- [ ] **Step 6: Full gate and commit**
+- [ ] **Step 6: Add the new shell scripts to the backend CI path filter**
+
+In `.github/workflows/backend.yml`, both `on.push.paths` and `on.pull_request.paths` currently list `"backend/**"` and `".github/workflows/backend.yml"`. Add to BOTH lists:
+
+```yaml
+      - "docker/entrypoint.sh"
+      - "fabulous.sh"
+```
+
+Without this, a later change to either script alone would silently skip the very tests that guard it (this PR triggers the workflow anyway via `backend/**`, but future script-only changes would not).
+
+- [ ] **Step 7: Full gate and commit**
 
 Run from `backend/`: `uv run pytest -q` — green, zero warnings. Check `git status --short -- frontend/` is empty.
 
 ```bash
-git add docker/entrypoint.sh backend/tests/test_entrypoint_sh.py
+git add docker/entrypoint.sh backend/tests/test_entrypoint_sh.py .github/workflows/backend.yml
 git commit -m "fix(docker): derive env-file path from config dir, harden env parsing (B21, #78)
 
 FW_ENV_FILE overrides; default follows dirname(FW_CONFIG_FILE) so a
@@ -319,7 +333,7 @@ class TestTrustedProxies:
 
 - [ ] **Step 2: Run, verify the expected failure**
 
-Run: `uv run pytest tests/test_entrypoint_sh.py -v -p no:xdist -k TrustedProxies`
+Run: `uv run pytest tests/test_entrypoint_sh.py -v -n0 -k TrustedProxies`
 Expected: `test_flags_added_when_set` FAILS (`--proxy-headers` absent); the other two pass trivially — mutation-verified in Step 5.
 
 - [ ] **Step 3: Implement in `docker/entrypoint.sh`**
@@ -339,7 +353,7 @@ exec uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 - [ ] **Step 4: Run, verify all entrypoint tests pass**
 
-Run: `uv run pytest tests/test_entrypoint_sh.py -v -p no:xdist`
+Run: `uv run pytest tests/test_entrypoint_sh.py -v -n0`
 Expected: all 12 PASS.
 
 - [ ] **Step 5: Mutation-verify the trivially-green guards**
@@ -435,7 +449,7 @@ Append to `class TestReRun` in `backend/tests/test_setup_wizard.py`:
 
 - [ ] **Step 2: Run, verify it fails**
 
-Run: `uv run pytest tests/test_setup_wizard.py::TestReRun::test_config_only_rerun_prefills_provider -v -p no:xdist`
+Run: `uv run pytest tests/test_setup_wizard.py::TestReRun::test_config_only_rerun_prefills_provider -v -n0`
 Expected: FAIL — with `rerun` False the provider prompt has no prefill, so the scripted `""` answer is rejected and the wizard re-asks, exhausting the iterator (`StopIteration`).
 
 - [ ] **Step 3: Implement**
@@ -450,7 +464,7 @@ In `backend/app/setup_wizard.py`, replace line 310 (`rerun = bool(existing_env)`
 
 - [ ] **Step 4: Run, verify it passes (plus neighbors)**
 
-Run: `uv run pytest tests/test_setup_wizard.py -v -p no:xdist`
+Run: `uv run pytest tests/test_setup_wizard.py -v -n0`
 Expected: all PASS (the fresh-install path still has both files absent → `rerun` False, unchanged).
 
 - [ ] **Step 5: Full gate and commit**
@@ -543,6 +557,7 @@ def run_serve(tmp_path, *, nc_exit=None, pull_exit=0, version_label=""):
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
     )
     log_path = tmp_path / "docker.log"
@@ -597,7 +612,7 @@ class TestVersionPrint:
 
 - [ ] **Step 2: Run, verify the expected failures**
 
-Run: `uv run pytest tests/test_fabulous_sh.py -v -p no:xdist`
+Run: `uv run pytest tests/test_fabulous_sh.py -v -n0`
 Expected: `test_busy_port_refuses_before_any_docker_call` FAILS (old script runs docker regardless; exit 0, log non-empty), `test_free_port_pulls_then_runs` FAILS (no `pull` entry), `test_pull_failure_warns_and_still_serves` FAILS (no warning), `test_version_label_printed` FAILS (no version line). Trivially green: `test_nc_absent_skips_check_and_serves`, the two no-version-line tests — mutation-verified in Step 5.
 
 - [ ] **Step 3: Implement the serve branch**
@@ -610,7 +625,7 @@ In `fabulous.sh`, replace the `serve)` case branch with:
         # port does not fail: the container serves healthily while the
         # squatter answers localhost:$PORT. Refuse up front when we can
         # tell; without nc, skip — the README covers the collision.
-        if command -v nc >/dev/null 2>&1 && nc -z localhost "$PORT" >/dev/null 2>&1; then
+        if command -v nc >/dev/null 2>&1 && nc -z -w 1 127.0.0.1 "$PORT" >/dev/null 2>&1; then
             echo "Port $PORT is already in use on this host." >&2
             echo "Pick another port: FW_PORT=9090 $0 serve" >&2
             exit 75
@@ -638,13 +653,13 @@ In `fabulous.sh`, replace the `serve)` case branch with:
 
 - [ ] **Step 4: Run, verify all pass**
 
-Run: `uv run pytest tests/test_fabulous_sh.py -v -p no:xdist`
+Run: `uv run pytest tests/test_fabulous_sh.py -v -n0`
 Expected: all 7 PASS.
 
 - [ ] **Step 5: Mutation-verify the trivially-green guards**
 
 One at a time, hand-edit `fabulous.sh`, run the named test, confirm FAIL, revert:
-1. Replace the entire `if` condition (`command -v nc >/dev/null 2>&1 && nc -z localhost "$PORT" >/dev/null 2>&1`) with `true` — the refusal branch is now taken unconditionally → `test_nc_absent_skips_check_and_serves` must fail (returncode 75 instead of 0).
+1. Replace the entire `if` condition (`command -v nc >/dev/null 2>&1 && nc -z -w 1 127.0.0.1 "$PORT" >/dev/null 2>&1`) with `true` — the refusal branch is now taken unconditionally → `test_nc_absent_skips_check_and_serves` must fail (returncode 75 instead of 0).
 2. Change the version guard to `if true; then` → both no-version-line tests must fail (a `Serving Fabulous Writing` line appears).
 
 Revert both; `git diff fabulous.sh` must show only Step 3's state; re-run the file green.
@@ -700,4 +715,4 @@ Claude-Session: https://claude.ai/code/session_01QG5RSDiRACnzQgN89FceuQ"
 
 ## After all tasks
 
-Final whole-branch review, then the PR (superpowers:finishing-a-development-branch → push + PR with Copilot review; Markus merges). PR body carries `Closes #78.` and `Closes #86.` as separate keyword sentences. LOGBOOK entry follows the repo convention: last commit on the PR branch after reviews settle — not part of these tasks. Architecture docs: `docs/backend-architecture.md` container/runtime section gets the new env vars (`FW_ENV_FILE`, `FW_TRUSTED_PROXIES`) and the serve-flow change — fold into the LOGBOOK commit step per convention.
+Final whole-branch review, then the PR (superpowers:finishing-a-development-branch → push + PR with Copilot review; Markus merges). PR body carries `Closes #78.` and `Closes #86.` as separate keyword sentences. LOGBOOK entry follows the repo convention: last commit on the PR branch after reviews settle — not part of these tasks. Architecture docs: `docs/backend-architecture.md` container/runtime section gets the new env vars (`FW_ENV_FILE`, `FW_TRUSTED_PROXIES`), the serve-flow change, and a note that relocating `FW_CONFIG_FILE` requires relocating `FW_SETUP_CONFIG_DIR` (the wizard's output dir) too — or setting `FW_ENV_FILE` explicitly — since the two are independent knobs. Fold into the LOGBOOK commit step per convention.
