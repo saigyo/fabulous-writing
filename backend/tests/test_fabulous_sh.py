@@ -25,13 +25,16 @@ exit 0
 
 NC_STUB = """\
 #!/bin/sh
+if [ "$4" = "::1" ]; then exit "${STUB_NC_EXIT_V6:-1}"; fi
 exit "${STUB_NC_EXIT:-1}"
 """
 
 
-def run_serve(tmp_path, *, nc_exit=None, pull_exit=0, version_label=""):
+def run_serve(tmp_path, *, nc_exit=None, nc_exit_v6=None, pull_exit=0, version_label=""):
     """Run `fabulous.sh serve`. nc_exit None = no nc on PATH;
-    0 = port busy; 1 = port free."""
+    0 = port busy; 1 = port free. nc_exit_v6 overrides the ::1 probe result
+    (only meaningful when nc_exit is not None, since that's what puts the
+    nc stub on PATH)."""
     stub_bin = tmp_path / "bin"
     stub_bin.mkdir(exist_ok=True)
     docker = stub_bin / "docker"
@@ -48,6 +51,8 @@ def run_serve(tmp_path, *, nc_exit=None, pull_exit=0, version_label=""):
         nc.write_text(NC_STUB, encoding="utf-8")
         nc.chmod(0o755)
         env["STUB_NC_EXIT"] = str(nc_exit)
+        if nc_exit_v6 is not None:
+            env["STUB_NC_EXIT_V6"] = str(nc_exit_v6)
     proc = subprocess.run(
         ["/bin/sh", str(FABULOUS), "serve"],
         env=env,
@@ -73,6 +78,13 @@ class TestPortPreCheck:
         proc, log = run_serve(tmp_path, nc_exit=None)
         assert proc.returncode == 0
         assert any(entry.startswith("run ") for entry in log)
+
+    def test_ipv6_only_squatter_refused(self, tmp_path):
+        # localhost may resolve to ::1 — a v6-only listener still wins
+        # the browser's lookup, so it must be treated as busy.
+        proc, log = run_serve(tmp_path, nc_exit=1, nc_exit_v6=0)
+        assert proc.returncode == 75
+        assert log == []
 
 
 class TestAutoPull:
