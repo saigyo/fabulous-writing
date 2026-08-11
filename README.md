@@ -201,6 +201,28 @@ docker run --rm -v fabulous-config:/config -v fabulous-data:/data -p 8080:8000 \
   workflow builds and publishes the image, then creates the GitHub
   Release; nothing is released automatically on pushes to `main`.
 
+### Updating
+
+`./fabulous.sh serve` checks for a newer image on every start (`docker
+pull` — a no-op when you're current, skipped with a warning when
+offline) and prints the version it serves. With plain `docker run`,
+update manually:
+
+```sh
+docker pull ghcr.io/saigyo/fabulous-writing:latest
+```
+
+Image updates never touch your configuration or data — both live in
+the `fabulous-config`/`fabulous-data` volumes. To check the version of
+the image you have locally:
+
+```sh
+docker inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' \
+  ghcr.io/saigyo/fabulous-writing:latest
+```
+
+The running app also reports its version at `/api/health`.
+
 ### Troubleshooting
 
 - **Ollama not reachable from the container** — the app runs inside

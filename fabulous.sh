@@ -20,6 +20,26 @@ case "$COMMAND" in
             "$IMAGE" setup
         ;;
     serve)
+        # With some Docker backends (colima), publishing a taken host
+        # port does not fail: the container serves healthily while the
+        # squatter answers localhost:$PORT. Refuse up front when we can
+        # tell; without nc, skip — the README covers the collision.
+        if command -v nc >/dev/null 2>&1 && nc -z -w 1 127.0.0.1 "$PORT" >/dev/null 2>&1; then
+            echo "Port $PORT is already in use on this host." >&2
+            echo "Pick another port: FW_PORT=9090 $0 serve" >&2
+            exit 75
+        fi
+        # Auto-update: a no-op when current; an offline host still
+        # serves the cached image.
+        if ! docker pull "$IMAGE"; then
+            echo "WARNING: could not check for updates — serving the local $IMAGE if present." >&2
+        fi
+        version_label=$(docker image inspect \
+            --format '{{index .Config.Labels "org.opencontainers.image.version"}}' \
+            "$IMAGE" 2>/dev/null || true)
+        if [ -n "$version_label" ] && [ "$version_label" != "<no value>" ]; then
+            echo "Serving Fabulous Writing $version_label"
+        fi
         exec docker run --rm \
             -v fabulous-config:/config \
             -v fabulous-data:/data \
