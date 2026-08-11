@@ -30,6 +30,7 @@
 
 **Files:**
 - Modify: `docker/entrypoint.sh`
+- Modify: `.github/workflows/backend.yml` (path filter)
 - Create (Test): `backend/tests/test_entrypoint_sh.py`
 
 **Interfaces:**
@@ -257,7 +258,7 @@ Expected: all 9 PASS.
 
 One at a time, hand-edit `docker/entrypoint.sh`, re-run the named test, confirm it FAILS, revert the edit:
 1. Swap the precedence branch — replace the `if ! printenv …; then export …; fi` body with an unconditional `export "$key=$value"` → `test_real_environment_wins_over_file` must fail.
-2. Add an `else` branch to `if [ -f "$ENV_FILE" ]`: `else echo "no env file" >&2; exit 78` → `test_missing_env_file_serves_anyway` must fail (exit 78, no argv file). (Do NOT mutate via `if true` + reading the missing file: a redirection failure inside a compound command is fatal under dash but NOT under macOS bash-as-sh, so that mutation only goes red on Linux.)
+2. Add an `else` branch to `if [ -f "$ENV_FILE" ]` (before its `fi`): `else echo "no env file" >&2; exit 78;` → `test_missing_env_file_serves_anyway` must fail (exit 78, no argv file). (Do NOT mutate via `if true` + reading the missing file: a redirection failure inside a compound command is fatal under dash but NOT under macOS bash-as-sh, so that mutation only goes red on Linux.)
 
 After the two rounds, `git diff docker/entrypoint.sh` must show only the Step 3 state (all mutations reverted); re-run the file once more to confirm green.
 
@@ -267,10 +268,9 @@ In `.github/workflows/backend.yml`, both `on.push.paths` and `on.pull_request.pa
 
 ```yaml
       - "docker/entrypoint.sh"
-      - "fabulous.sh"
 ```
 
-Without this, a later change to either script alone would silently skip the very tests that guard it (this PR triggers the workflow anyway via `backend/**`, but future script-only changes would not).
+Without this, a later change to the script alone would silently skip the very tests that guard it (this PR triggers the workflow anyway via `backend/**`, but future script-only changes would not). Task 4 adds the matching `fabulous.sh` line in its own commit.
 
 - [ ] **Step 7: Full gate and commit**
 
@@ -491,6 +491,7 @@ Claude-Session: https://claude.ai/code/session_01QG5RSDiRACnzQgN89FceuQ"
 **Files:**
 - Modify: `fabulous.sh` (serve branch only)
 - Modify: `README.md` (new `### Updating` subsection between the quickstart bullet list and `### Troubleshooting`)
+- Modify: `.github/workflows/backend.yml` (path filter)
 - Create (Test): `backend/tests/test_fabulous_sh.py`
 
 **Interfaces:**
@@ -692,12 +693,20 @@ docker inspect --format '{{index .Config.Labels "org.opencontainers.image.versio
 The running app also reports its version at `/api/health`.
 ````
 
-- [ ] **Step 7: Full gate and commit**
+- [ ] **Step 7: Add `fabulous.sh` to the backend CI path filter**
+
+In `.github/workflows/backend.yml`, add to BOTH `on.push.paths` and `on.pull_request.paths` (below the `"docker/entrypoint.sh"` line Task 1 added):
+
+```yaml
+      - "fabulous.sh"
+```
+
+- [ ] **Step 8: Full gate and commit**
 
 Run from `backend/`: `uv run pytest -q` — green, zero warnings. `git status --short -- frontend/` empty.
 
 ```bash
-git add fabulous.sh backend/tests/test_fabulous_sh.py README.md
+git add fabulous.sh backend/tests/test_fabulous_sh.py README.md .github/workflows/backend.yml
 git commit -m "feat(cli): serve pre-checks the host port, auto-pulls, prints version (B21+B26, #78, #86)
 
 Port pre-check (nc, when available) catches the colima case where a
