@@ -225,6 +225,13 @@ docker run --rm -v fabulous-config:/config -v fabulous-data:/data -p 8080:8000 \
   which re-prompts the URL).
 - **Port already in use** — pick another host port: `FW_PORT=9090
   ./fabulous.sh serve` (or change `-p 9090:8000`).
+- **Behind a reverse proxy (nginx/Traefik/…)** — set `FW_TRUSTED_PROXIES`
+  on the serve container (e.g. `docker run -e FW_TRUSTED_PROXIES=172.16.0.1
+  …`) to the proxy's address as the container sees it (comma-separated,
+  CIDRs and `*` allowed — uvicorn's `--forwarded-allow-ips` syntax).
+  Without it, every visitor arrives with the proxy's IP and the login
+  throttle treats all clients as one. The direct `-p` mapping of the
+  quickstart needs none of this; leave it unset there.
 
 Third-party license notices for everything bundled in the image are in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) (also at

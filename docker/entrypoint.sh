@@ -51,4 +51,11 @@ if [ -f "$ENV_FILE" ]; then
     done < "$ENV_FILE"
 fi
 
+# Opt-in reverse-proxy support: uvicorn rewrites request.client from
+# X-Forwarded-For only for peers on this list, so the login throttle
+# keys on real client IPs instead of collapsing to the proxy's.
+if [ -n "${FW_TRUSTED_PROXIES:-}" ]; then
+    exec uvicorn app.main:app --host 0.0.0.0 --port 8000 \
+        --proxy-headers --forwarded-allow-ips "$FW_TRUSTED_PROXIES"
+fi
 exec uvicorn app.main:app --host 0.0.0.0 --port 8000
