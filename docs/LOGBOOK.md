@@ -3801,3 +3801,49 @@ wash: two implementer "pushed" claims that hadn't pushed, and a
 vacuous-success hole in the controller's CI waiters (zero check-runs
 for an unknown commit read as all-green) — the waiters now require a
 minimum completed-check count.
+
+## 2026-08-11 — B21+B26: runtime hardening + quickstart update story (PR #93)
+
+Five deferred B17 runtime gaps and the stale-`latest` problem, shipped
+as companions. The entrypoint's env-file path now derives from
+`dirname(FW_CONFIG_FILE)` (override: `FW_ENV_FILE`) instead of a
+hardcoded `/config/fabulous.env`; its parser tolerates CRLF edits and
+fails fast on malformed lines — exit 78, naming file and line number
+only, since the content may hold a mis-pasted secret (the old behavior
+died inside `export` and echoed the line). `FW_TRUSTED_PROXIES` opts a
+deployment into uvicorn's `--proxy-headers`/`--forwarded-allow-ips`,
+so the login throttle keys on real client IPs behind a reverse proxy.
+The wizard's re-run detection now keys on either surviving file, so a
+deleted `fabulous.env` no longer discards the config's provider
+prefills. `fabulous.sh serve` pre-checks the host port (the colima
+trap: publishing a squatted port succeeds and the squatter answers),
+auto-pulls before running — stale `latest` becomes an automatic
+update, offline hosts warn and serve the cache — and prints the OCI
+version label. README gained "Updating" and reverse-proxy notes.
+
+New testing shape for this repo: the shell scripts are exercised by
+the normal pytest gate, running the real scripts under /bin/sh with
+stub `uvicorn`/`docker`/`nc` executables on a controlled PATH — no
+Docker, no network, xdist-safe. Two traps found on the way: the
+plan's `-p no:xdist` verification commands abort under the repo's
+`-n auto` addopts (use `-n0`), and a mutation chosen for the
+missing-env-file guard was red under dash but green under macOS
+bash-as-sh (redirection failures on compound commands are not fatal
+there) — shell-portable mutations only.
+
+The final Opus review earned its keep: the CRLF guard test was
+vacuous — `read_text()`'s universal-newline translation ate the very
+`\r` under test; it now reads raw bytes and fails when the strip is
+deleted. Copilot round 1 added the second loopback family to the port
+probe (a `::1`-only squatter wins the browser's `localhost` lookup);
+round 2's suppressed comments caught our docs claiming forwarded
+headers are "ignored entirely" when unset — uvicorn 0.51+ processes
+them by default with a loopback-only trust list, verified in the
+pinned package, and `--forwarded-allow-ips` replaces rather than
+extends that list. Posture unchanged, wording corrected everywhere.
+
+Verification: 21 new tests (12 entrypoint, 8 fabulous.sh, 1 wizard),
+every guard mutation-verified; full suite 1268, zero warnings; three
+Copilot rounds to a clean 12/12-file read set; CI green throughout.
+Deferred with rulings: parse-loop shell internals clobberable by
+exotic env-file keys; `setup` stays pull-free by design.
