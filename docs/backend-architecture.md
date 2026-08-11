@@ -1964,6 +1964,29 @@ repo-relative `backend/config.yaml` default. The container entrypoint sets
 `/config` volume wins over the baked-in default without either side having to know
 about the other.
 
+**Env file and trusted proxies (B21, #78 / B26, #86).** `FW_ENV_FILE` (default:
+`fabulous.env` next to the config file, i.e. `dirname(FW_CONFIG_FILE)`) is applied by
+the entrypoint only for variables not already set in the real environment — real env
+vars always win. A malformed line (no `=`, or not a valid shell identifier) is fatal:
+`exit 78` naming the file and line number only, never the key or value, so a
+mis-pasted secret never reaches the logs; CRLF line endings are tolerated.
+`FW_TRUSTED_PROXIES` is opt-in: when set, the entrypoint adds `--proxy-headers
+--forwarded-allow-ips "$FW_TRUSTED_PROXIES"` to the `uvicorn` invocation, so
+`request.client.host` — and the login-throttle key derived from it — sees the real
+client IP behind a reverse proxy instead of collapsing to the proxy's own address;
+unset, `X-Forwarded-For` is ignored entirely. `FW_CONFIG_FILE` and
+`FW_SETUP_CONFIG_DIR` are independent knobs: relocating the config file does not
+relocate the wizard's output directory, so a deployment that moves one must move the
+other too, or set `FW_ENV_FILE` explicitly.
+
+**`fabulous.sh serve`.** The wrapper pre-checks the target host port with `nc`
+(skipped if unavailable) and exits 75 on a squatted port — some Docker backends
+(colima) accept publishing an already-bound host port without failing, so the
+container would otherwise silently lose the port to whatever's already listening. It
+then `docker pull`s the image, falling back to the cached local image with a warning
+when offline, prints the image's `org.opencontainers.image.version` label if present,
+and only then runs the container.
+
 **Single-origin serving.** When `frontend.dist_dir` is set, `create_app()` mounts the
 built Vite assets at `/assets` and registers a `GET /{full_path:path}` catch-all that
 serves `index.html` for any unmatched path (the SPA's client-side router takes it from

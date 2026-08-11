@@ -205,8 +205,10 @@ docker run --rm -v fabulous-config:/config -v fabulous-data:/data -p 8080:8000 \
 
 `./fabulous.sh serve` checks for a newer image on every start (`docker
 pull` — a no-op when you're current, skipped with a warning when
-offline) and prints the version it serves. With plain `docker run`,
-update manually:
+offline) and prints the version it serves. A pinned version (e.g.
+`./fabulous.sh serve 0.1.0`) just validates/pulls that tag and stays
+put — it never moves to a newer one on its own. With plain `docker
+run`, update manually:
 
 ```sh
 docker pull ghcr.io/saigyo/fabulous-writing:latest
@@ -253,7 +255,10 @@ The running app also reports its version at `/api/health`.
   CIDRs and `*` allowed — uvicorn's `--forwarded-allow-ips` syntax).
   Without it, every visitor arrives with the proxy's IP and the login
   throttle treats all clients as one. The direct `-p` mapping of the
-  quickstart needs none of this; leave it unset there.
+  quickstart needs none of this; leave it unset there. `*` trusts every
+  peer, so any client can spoof `X-Forwarded-For` and bypass the login
+  throttle — use it only where the container is unreachable except
+  through the proxy; prefer the proxy's actual address or CIDR.
 
 Third-party license notices for everything bundled in the image are in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) (also at

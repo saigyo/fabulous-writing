@@ -59,7 +59,7 @@ def stub_env(out_dir):
     """Parse the stub's `env` dump; first line wins per key (sentinel
     values in these tests never contain newlines)."""
     result = {}
-    for line in (out_dir / "uvicorn.env").read_text(encoding="utf-8").splitlines():
+    for line in (out_dir / "uvicorn.env").read_bytes().decode("utf-8").split("\n"):
         key, sep, value = line.partition("=")
         if sep:
             result.setdefault(key, value)
@@ -126,6 +126,7 @@ class TestEnvFileParsing:
         )
         assert proc.returncode == 78
         assert "line 3" in proc.stderr
+        assert "fabulous.env" in proc.stderr
         assert "leaky-value" not in proc.stderr
         assert "foo bar" not in proc.stderr
         assert not (out / "uvicorn.argv").exists()
