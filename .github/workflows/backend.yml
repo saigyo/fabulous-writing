@@ -7,11 +7,13 @@ on:
       - "backend/**"
       - ".github/workflows/backend.yml"
       - "docker/entrypoint.sh"
+      - "fabulous.sh"
   pull_request:
     paths:
       - "backend/**"
       - ".github/workflows/backend.yml"
       - "docker/entrypoint.sh"
+      - "fabulous.sh"
 
 concurrency:
   group: backend-${{ github.workflow }}-${{ github.ref }}
