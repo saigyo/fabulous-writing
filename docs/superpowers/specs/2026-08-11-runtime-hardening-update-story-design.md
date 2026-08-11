@@ -85,15 +85,18 @@ File: `fabulous.sh` (serve branch only; `setup` unchanged).
 
 Order: **port pre-check → pull → version print → run**.
 
-- **Port pre-check** (B21.5): if `nc` is available, probe
-  `nc -z -w 1 127.0.0.1 "$PORT"` (`-w 1` so a filtered port cannot hang
-  the check; 127.0.0.1 because that is the address the quickstart URL
-  uses, and `localhost` may resolve to `::1` while Docker published on
-  IPv4); if something is listening, refuse with
-  `exit 75` and a message naming the port and the remedy
-  (`FW_PORT=9090 ./fabulous.sh serve`). Without `nc`, skip the check
-  silently — no new hard dependency; the README troubleshooting bullet
-  still covers the collision. Rationale: with some Docker backends
+- **Port pre-check** (B21.5): if `nc` is available, loop over both
+  loopback addresses — `127.0.0.1` and `::1` — probing
+  `nc -z -w 1 "$probe_addr" "$PORT"` for each (`-w 1` so a filtered port
+  cannot hang the check; both families because `localhost` may resolve
+  to either, and a `::1`-only squatter still wins the browser's
+  lookup — the two-family probe was added after Copilot round 1 on PR
+  #93). An `nc` without IPv6 support just fails the `::1` probe,
+  degrading to the IPv4-only check. If any probe finds something
+  listening, refuse with `exit 75` and a message naming the port and the
+  remedy (`FW_PORT=9090 ./fabulous.sh serve`). Without `nc`, skip the
+  check silently — no new hard dependency; the README troubleshooting
+  bullet still covers the collision. Rationale: with some Docker backends
   (colima), publishing an already-taken host port does not fail — the
   container serves healthily while `localhost:$PORT` is answered by the
   squatter.

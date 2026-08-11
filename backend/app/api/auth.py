@@ -365,13 +365,14 @@ def _require_local_mode(request: Request) -> None:
 
 
 def _throttle_key(request: Request, email: str) -> tuple[str, str]:
-    # Forwarded headers are deliberately ignored unless the deployment
-    # opts in: trusting them unverified would let an attacker mint a
-    # fresh spoofed IP per request and bypass the throttle entirely.
-    # The opt-in is FW_TRUSTED_PROXIES (container env) — the entrypoint
-    # then starts uvicorn with --proxy-headers/--forwarded-allow-ips,
-    # which rewrites request.client.host from X-Forwarded-For for
-    # connections from trusted proxies only; this key needs no change.
+    # Forwarded headers cannot mint throttle keys from untrusted peers:
+    # uvicorn's proxy-header middleware (on by default) rewrites
+    # request.client.host from X-Forwarded-For only for connections from
+    # its trust list — loopback, or the standard FORWARDED_ALLOW_IPS env
+    # var, extended via FW_TRUSTED_PROXIES (container env), which the
+    # entrypoint passes as --forwarded-allow-ips. A client connecting
+    # directly is never on that list, so spoofed headers cannot bypass
+    # the throttle; this key needs no app-side change.
     # request.client is only None for a connection with no transport-level
     # peer address (e.g. certain non-network ASGI test transports); every
     # such connection collapsing into one shared "unknown" bucket is an
