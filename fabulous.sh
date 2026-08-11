@@ -24,10 +24,17 @@ case "$COMMAND" in
         # port does not fail: the container serves healthily while the
         # squatter answers localhost:$PORT. Refuse up front when we can
         # tell; without nc, skip — the README covers the collision.
-        if command -v nc >/dev/null 2>&1 && nc -z -w 1 127.0.0.1 "$PORT" >/dev/null 2>&1; then
-            echo "Port $PORT is already in use on this host." >&2
-            echo "Pick another port: FW_PORT=9090 $0 serve" >&2
-            exit 75
+        # Probe both loopback families: a ::1-only squatter still wins
+        # the browser's localhost lookup. An nc without IPv6 support
+        # just fails the ::1 probe, which is the same as "free".
+        if command -v nc >/dev/null 2>&1; then
+            for probe_addr in 127.0.0.1 ::1; do
+                if nc -z -w 1 "$probe_addr" "$PORT" >/dev/null 2>&1; then
+                    echo "Port $PORT is already in use on this host." >&2
+                    echo "Pick another port: FW_PORT=9090 $0 serve" >&2
+                    exit 75
+                fi
+            done
         fi
         # Auto-update: a no-op when current; an offline host still
         # serves the cached image.
