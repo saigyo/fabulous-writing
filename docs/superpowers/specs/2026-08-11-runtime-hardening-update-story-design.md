@@ -22,7 +22,11 @@ File: `docker/entrypoint.sh`.
   `FW_CONFIG_FILE` (B16/fly.io) carries the secrets file along;
   `FW_ENV_FILE` overrides independently. An empty `FW_ENV_FILE` falls back
   to the derived default (same `:-` semantics the config path already
-  uses).
+  uses). Caveat (documented in the entrypoint header and architecture
+  docs): the wizard writes into `FW_SETUP_CONFIG_DIR` (default
+  `/config`) — an independent knob; a deployment relocating
+  `FW_CONFIG_FILE` must relocate that too, or set `FW_ENV_FILE`
+  explicitly.
 - Parser hardening, in the read loop:
   - Strip one trailing carriage return from each line before any other
     handling (`line=${line%$'\r'}` equivalent in POSIX sh:
@@ -82,7 +86,10 @@ File: `fabulous.sh` (serve branch only; `setup` unchanged).
 Order: **port pre-check → pull → version print → run**.
 
 - **Port pre-check** (B21.5): if `nc` is available, probe
-  `nc -z localhost "$PORT"`; if something is listening, refuse with
+  `nc -z -w 1 127.0.0.1 "$PORT"` (`-w 1` so a filtered port cannot hang
+  the check; 127.0.0.1 because that is the address the quickstart URL
+  uses, and `localhost` may resolve to `::1` while Docker published on
+  IPv4); if something is listening, refuse with
   `exit 75` and a message naming the port and the remedy
   (`FW_PORT=9090 ./fabulous.sh serve`). Without `nc`, skip the check
   silently — no new hard dependency; the README troubleshooting bullet
