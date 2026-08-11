@@ -368,11 +368,11 @@ def _throttle_key(request: Request, email: str) -> tuple[str, str]:
     # Forwarded headers cannot mint throttle keys from untrusted peers:
     # uvicorn's proxy-header middleware (on by default) rewrites
     # request.client.host from X-Forwarded-For only for connections from
-    # its trust list — loopback, or the standard FORWARDED_ALLOW_IPS env
-    # var, extended via FW_TRUSTED_PROXIES (container env), which the
-    # entrypoint passes as --forwarded-allow-ips. A client connecting
-    # directly is never on that list, so spoofed headers cannot bypass
-    # the throttle; this key needs no app-side change.
+    # its trust list — loopback or the standard FORWARDED_ALLOW_IPS env
+    # var by default, replaced by FW_TRUSTED_PROXIES (container env),
+    # which the entrypoint passes as --forwarded-allow-ips. External
+    # clients are not on the default list, so spoofed headers cannot
+    # bypass the throttle; this key needs no app-side change.
     # request.client is only None for a connection with no transport-level
     # peer address (e.g. certain non-network ASGI test transports); every
     # such connection collapsing into one shared "unknown" bucket is an
