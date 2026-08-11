@@ -102,7 +102,7 @@ def stub_env(out_dir):
     """Parse the stub's `env` dump; first line wins per key (sentinel
     values in these tests never contain newlines)."""
     result = {}
-    for line in (out_dir / "uvicorn.env").read_text(encoding="utf-8").splitlines():
+    for line in (out_dir / "uvicorn.env").read_bytes().decode("utf-8").split("\n"):
         key, sep, value = line.partition("=")
         if sep:
             result.setdefault(key, value)
@@ -530,6 +530,7 @@ exit 0
 
 NC_STUB = """\
 #!/bin/sh
+if [ "$4" = "::1" ]; then exit "${STUB_NC_EXIT_V6:-1}"; fi
 exit "${STUB_NC_EXIT:-1}"
 """
 
@@ -626,10 +627,17 @@ In `fabulous.sh`, replace the `serve)` case branch with:
         # port does not fail: the container serves healthily while the
         # squatter answers localhost:$PORT. Refuse up front when we can
         # tell; without nc, skip — the README covers the collision.
-        if command -v nc >/dev/null 2>&1 && nc -z -w 1 127.0.0.1 "$PORT" >/dev/null 2>&1; then
-            echo "Port $PORT is already in use on this host." >&2
-            echo "Pick another port: FW_PORT=9090 $0 serve" >&2
-            exit 75
+        # Probe both loopback families: a ::1-only squatter still wins
+        # the browser's localhost lookup. An nc without IPv6 support
+        # just fails the ::1 probe, which is the same as "free".
+        if command -v nc >/dev/null 2>&1; then
+            for probe_addr in 127.0.0.1 ::1; do
+                if nc -z -w 1 "$probe_addr" "$PORT" >/dev/null 2>&1; then
+                    echo "Port $PORT is already in use on this host." >&2
+                    echo "Pick another port: FW_PORT=9090 $0 serve" >&2
+                    exit 75
+                fi
+            done
         fi
         # Auto-update: a no-op when current; an offline host still
         # serves the cached image.
@@ -655,7 +663,8 @@ In `fabulous.sh`, replace the `serve)` case branch with:
 - [ ] **Step 4: Run, verify all pass**
 
 Run: `uv run pytest tests/test_fabulous_sh.py -v -n0`
-Expected: all 7 PASS.
+Expected: all 8 PASS (includes `test_ipv6_only_squatter_refused`, added for the
+two-family probe).
 
 - [ ] **Step 5: Mutation-verify the trivially-green guards**
 

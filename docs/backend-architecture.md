@@ -1974,7 +1974,9 @@ mis-pasted secret never reaches the logs; CRLF line endings are tolerated.
 --forwarded-allow-ips "$FW_TRUSTED_PROXIES"` to the `uvicorn` invocation, so
 `request.client.host` — and the login-throttle key derived from it — sees the real
 client IP behind a reverse proxy instead of collapsing to the proxy's own address;
-unset, `X-Forwarded-For` is ignored entirely. `FW_CONFIG_FILE` and
+unset, uvicorn's default trust list applies — loopback only, or the standard
+`FORWARDED_ALLOW_IPS` env var — so forwarded headers from external peers are still
+rejected. `FW_CONFIG_FILE` and
 `FW_SETUP_CONFIG_DIR` are independent knobs: relocating the config file does not
 relocate the wizard's output directory, so a deployment that moves one must move the
 other too, or set `FW_ENV_FILE` explicitly.
