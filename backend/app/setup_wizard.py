@@ -307,7 +307,9 @@ def run_wizard(
     existing_config: dict = {}
     if config_path.is_file():
         existing_config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    rerun = bool(existing_env)
+    # Either surviving file triggers re-run mode: config.yaml alone still
+    # holds provider/model prefills worth offering (B21 #78 item 4).
+    rerun = bool(existing_env) or bool(existing_config)
 
     print("Fabulous Writing setup" + (" (re-run — Enter keeps current values)" if rerun else ""))
     if rerun:
