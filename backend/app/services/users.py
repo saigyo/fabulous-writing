@@ -6,12 +6,12 @@ unchanged.
 """
 
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from app.core.auth import check_password, hash_password
+from app.core.auth import IAT_LEEWAY_SECONDS, check_password, hash_password
 from app.services._sqlite import connect, migrate_columns
 
 _SCHEMA = """
@@ -135,6 +135,7 @@ class UserStore:
         display_name: str | None = None,
         tier: str = "basic",
         is_admin: bool = False,
+        external_id: str | None = None,
     ) -> User:
         # Strip only — do NOT lowercase. COLLATE NOCASE on the column already
         # gives case-insensitive matching; lowercasing here would throw away
@@ -155,9 +156,18 @@ class UserStore:
             try:
                 cursor = conn.execute(
                     "INSERT INTO users"
-                    " (email, display_name, password_hash, tier, is_admin, created_at)"
-                    " VALUES (?, ?, ?, ?, ?, ?)",
-                    (email, display_name, password_hash, tier, int(is_admin), _utcnow()),
+                    " (email, display_name, password_hash, tier, is_admin, created_at,"
+                    " external_id)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        email,
+                        display_name,
+                        password_hash,
+                        tier,
+                        int(is_admin),
+                        _utcnow(),
+                        external_id,
+                    ),
                 )
             except sqlite3.IntegrityError as exc:
                 raise DuplicateEmailError(f"A user with email {email} already exists") from exc
@@ -177,6 +187,35 @@ class UserStore:
                 "SELECT * FROM users WHERE email = ? COLLATE NOCASE", (email.strip(),)
             ).fetchone()
         return _row_to_user(row) if row is not None else None
+
+    def get_by_external_id(self, external_id: str) -> User | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM users WHERE external_id = ?", (external_id,)
+            ).fetchone()
+        return _row_to_user(row) if row is not None else None
+
+    def mark_password_changed(self, user_id: int) -> bool:
+        # Supabase-mode revocation lever: the password itself lives with
+        # Supabase; locally only the timestamp (checked by deps.py's
+        # epoch-less fallback) and the epoch (harmless here, exact for any
+        # residual local tokens) move. The recorded instant is backdated by
+        # IAT_LEEWAY_SECONDS: it is compared (strict <) against iat values
+        # from SUPABASE's clock, and without the allowance a trailing
+        # Supabase clock would reject the fresh session minted right after
+        # the change (the frontend's silent re-login). Tokens from the
+        # final leeway window before the change stay valid at our layer;
+        # the gateway's global sign-out is the second eviction layer.
+        changed_at = (
+            datetime.now(UTC) - timedelta(seconds=IAT_LEEWAY_SECONDS)
+        ).isoformat(timespec="seconds")
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE users SET password_changed_at = ?,"
+                " token_epoch = token_epoch + 1 WHERE id = ?",
+                (changed_at, user_id),
+            )
+        return cursor.rowcount > 0
 
     def list_users(self) -> list[User]:
         with self._connect() as conn:
