@@ -29,6 +29,8 @@ export const PREF_KEYS = [
 export const PREFS_VERSION = 2
 
 const TOKEN_KEY = 'fabulous-writing-token'
+const REFRESH_TOKEN_KEY = 'fabulous-writing-refresh-token'
+const TOKEN_EXPIRES_KEY = 'fabulous-writing-token-expires'
 // The pre-B1 single blob that mixed the token with the last user's
 // preferences. Deleted once at boot (see prefsPersistence.ts), never read.
 const LEGACY_KEY = 'fabulous-writing-settings'
@@ -59,6 +61,68 @@ export function writeToken(token: string): void {
 export function clearToken(): void {
   try {
     localStorage.removeItem(TOKEN_KEY)
+  } catch {
+    // Nothing to clear if storage itself is unavailable.
+  }
+}
+
+export function readRefreshToken(): string | null {
+  try {
+    return localStorage.getItem(REFRESH_TOKEN_KEY)
+  } catch {
+    return null
+  }
+}
+
+// null clears the key rather than writing the string "null" — session.ts
+// passes the API's own refresh_token straight through (`?? null`), so a
+// local-mode/expired response removes the stored value instead of pinning
+// a literal "null" string that Number(...)/readRefreshToken would then
+// have to special-case.
+export function writeRefreshToken(token: string | null): void {
+  try {
+    if (token === null) localStorage.removeItem(REFRESH_TOKEN_KEY)
+    else localStorage.setItem(REFRESH_TOKEN_KEY, token)
+  } catch {
+    // Without storage the session just won't survive a reload.
+  }
+}
+
+export function clearRefreshToken(): void {
+  try {
+    localStorage.removeItem(REFRESH_TOKEN_KEY)
+  } catch {
+    // Nothing to clear if storage itself is unavailable.
+  }
+}
+
+export function readTokenExpiresAt(): number | null {
+  try {
+    const raw = localStorage.getItem(TOKEN_EXPIRES_KEY)
+    if (raw === null) return null
+    const n = Number(raw)
+    return Number.isNaN(n) ? null : n
+  } catch {
+    return null
+  }
+}
+
+// Same null-clears convention as writeRefreshToken above. Stored as a
+// decimal string (Unix seconds, matching the backend's expires_at) rather
+// than an ISO date: readTokenExpiresAt's Number(...) round-trips it exactly
+// and needs no date parsing.
+export function writeTokenExpiresAt(expiresAt: number | null): void {
+  try {
+    if (expiresAt === null) localStorage.removeItem(TOKEN_EXPIRES_KEY)
+    else localStorage.setItem(TOKEN_EXPIRES_KEY, String(expiresAt))
+  } catch {
+    // Without storage the session just won't survive a reload.
+  }
+}
+
+export function clearTokenExpiresAt(): void {
+  try {
+    localStorage.removeItem(TOKEN_EXPIRES_KEY)
   } catch {
     // Nothing to clear if storage itself is unavailable.
   }

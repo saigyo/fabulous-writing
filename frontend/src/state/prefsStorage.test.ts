@@ -1,13 +1,19 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  clearRefreshToken,
   clearToken,
+  clearTokenExpiresAt,
   deleteLegacyBlob,
   prefsKey,
   readPrefs,
+  readRefreshToken,
   readToken,
+  readTokenExpiresAt,
   writePrefs,
+  writeRefreshToken,
   writeToken,
+  writeTokenExpiresAt,
   type Prefs,
 } from './prefsStorage'
 
@@ -32,6 +38,47 @@ describe('token accessors', () => {
     expect(readToken()).toBe('tok')
     clearToken()
     expect(readToken()).toBeNull()
+  })
+})
+
+describe('refresh-token accessors', () => {
+  it('round-trips under the refresh-token key and clears', () => {
+    expect(readRefreshToken()).toBeNull()
+    writeRefreshToken('rt')
+    expect(localStorage.getItem('fabulous-writing-refresh-token')).toBe('rt')
+    expect(readRefreshToken()).toBe('rt')
+    clearRefreshToken()
+    expect(readRefreshToken()).toBeNull()
+  })
+
+  it('writing null removes the key rather than storing the string "null"', () => {
+    writeRefreshToken('rt')
+    writeRefreshToken(null)
+    expect(localStorage.getItem('fabulous-writing-refresh-token')).toBeNull()
+    expect(readRefreshToken()).toBeNull()
+  })
+})
+
+describe('token-expiry accessors', () => {
+  it('round-trips as a decimal string under the expiry key and clears', () => {
+    expect(readTokenExpiresAt()).toBeNull()
+    writeTokenExpiresAt(1_900_000_000)
+    expect(localStorage.getItem('fabulous-writing-token-expires')).toBe('1900000000')
+    expect(readTokenExpiresAt()).toBe(1_900_000_000)
+    clearTokenExpiresAt()
+    expect(readTokenExpiresAt()).toBeNull()
+  })
+
+  it('writing null removes the key rather than storing the string "null"', () => {
+    writeTokenExpiresAt(1_900_000_000)
+    writeTokenExpiresAt(null)
+    expect(localStorage.getItem('fabulous-writing-token-expires')).toBeNull()
+    expect(readTokenExpiresAt()).toBeNull()
+  })
+
+  it('treats a corrupt (non-numeric) stored value as absent', () => {
+    localStorage.setItem('fabulous-writing-token-expires', 'not-a-number')
+    expect(readTokenExpiresAt()).toBeNull()
   })
 })
 
@@ -129,6 +176,8 @@ describe('storage failures (quota, privacy mode)', () => {
     vi.stubGlobal('localStorage', throwingStub)
     expect(readToken()).toBeNull()
     expect(readPrefs(1)).toBeNull()
+    expect(readRefreshToken()).toBeNull()
+    expect(readTokenExpiresAt()).toBeNull()
   })
 
   it('writes and removals never throw when the underlying storage throws', () => {
@@ -147,5 +196,11 @@ describe('storage failures (quota, privacy mode)', () => {
     expect(() => writePrefs(1, prefs)).not.toThrow()
     expect(() => clearToken()).not.toThrow()
     expect(() => deleteLegacyBlob()).not.toThrow()
+    expect(() => writeRefreshToken('rt')).not.toThrow()
+    expect(() => writeRefreshToken(null)).not.toThrow()
+    expect(() => clearRefreshToken()).not.toThrow()
+    expect(() => writeTokenExpiresAt(1_900_000_000)).not.toThrow()
+    expect(() => writeTokenExpiresAt(null)).not.toThrow()
+    expect(() => clearTokenExpiresAt()).not.toThrow()
   })
 })

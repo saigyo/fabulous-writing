@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { MeResponse } from '../api/client'
+import type { LoginResponse, MeResponse } from '../api/client'
 import { en } from '../i18n/en'
 import { useStore } from '../state/store'
 
@@ -13,6 +13,7 @@ import { useStore } from '../state/store'
 vi.mock('../api/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api/client')>()),
   postLogin: vi.fn(),
+  postLogout: vi.fn(),
 }))
 // session.ts (imported transitively via login/logout/expireSession) pulls in
 // documents.ts's full hydration chain; only these two exports are needed.
@@ -21,7 +22,7 @@ vi.mock('../documents/documents', () => ({
   clearLegacyText: vi.fn(),
 }))
 
-import { postLogin } from '../api/client'
+import { postLogin, postLogout } from '../api/client'
 import * as sessionModule from './session'
 import { AccountMenu } from './AccountMenu'
 
@@ -85,6 +86,11 @@ afterEach(() => {
 
 beforeEach(() => {
   vi.resetAllMocks()
+  // resetAllMocks() wipes any implementation, so postLogout must be
+  // re-armed every test: "log-out calls logout()" below runs with a real
+  // token, and an unresolved postLogout() would throw on the missing
+  // .catch().
+  vi.mocked(postLogout).mockResolvedValue(undefined)
   localStorage.clear()
   useStore.setState({
     token: 'tok',
@@ -120,7 +126,12 @@ describe('AccountMenu', () => {
 
   it('the change request carries the Authorization header', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(noContent())
-    vi.mocked(postLogin).mockResolvedValueOnce({ token: 'new-tok', user: user() })
+    vi.mocked(postLogin).mockResolvedValueOnce({
+      token: 'new-tok',
+      refresh_token: null,
+      expires_at: null,
+      user: user(),
+    })
     const u = userEvent.setup()
     render(<AccountMenu />)
     await openPasswordForm(u)
@@ -230,7 +241,12 @@ describe('AccountMenu', () => {
 
   it('a successful change leaves the user signed in and shows passwordChanged', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(noContent())
-    vi.mocked(postLogin).mockResolvedValueOnce({ token: 'new-tok', user: user() })
+    vi.mocked(postLogin).mockResolvedValueOnce({
+      token: 'new-tok',
+      refresh_token: null,
+      expires_at: null,
+      user: user(),
+    })
     const u = userEvent.setup()
     render(<AccountMenu />)
     await openPasswordForm(u)
@@ -298,7 +314,7 @@ describe('AccountMenu', () => {
 
   it('logging out while the silent re-login is pending abandons the completion silently', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(noContent())
-    let resolvePostLogin!: (v: { token: string; user: MeResponse }) => void
+    let resolvePostLogin!: (v: LoginResponse) => void
     vi.mocked(postLogin).mockImplementationOnce(
       () =>
         new Promise((resolve) => {
@@ -323,7 +339,7 @@ describe('AccountMenu', () => {
     expect(useStore.getState().authStatus).toBe('anonymous')
 
     // login()'s own generation guard discards this rather than committing it.
-    resolvePostLogin({ token: 'new-tok', user: user() })
+    resolvePostLogin({ token: 'new-tok', refresh_token: null, expires_at: null, user: user() })
     await waitFor(() => expect(postLogin).toHaveBeenCalledTimes(1))
     await new Promise((r) => setTimeout(r, 0)) // let the resolved promise chain settle
     expect(useStore.getState().token).toBeNull()
@@ -349,7 +365,9 @@ describe('AccountMenu', () => {
             rejectOriginalPostLogin = reject
           }),
       )
-      .mockImplementationOnce(() => Promise.resolve({ token: 'live-tok', user: user() }))
+      .mockImplementationOnce(() =>
+        Promise.resolve({ token: 'live-tok', refresh_token: null, expires_at: null, user: user() }),
+      )
 
     const u = userEvent.setup()
     render(<AccountMenu />)

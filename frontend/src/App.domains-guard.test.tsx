@@ -15,6 +15,11 @@ vi.mock('./api/client', async (importOriginal) => ({
   getRouting: vi.fn().mockResolvedValue(null),
   getProfiles: vi.fn().mockResolvedValue([]),
   postLogin: vi.fn(),
+  // Resolved once here: the file's beforeEach uses clearAllMocks() (not
+  // resetAllMocks()), which clears call history but preserves this
+  // implementation — every logout() in this file runs with a real token,
+  // so an unresolved postLogout() would throw on the missing .catch().
+  postLogout: vi.fn().mockResolvedValue(undefined),
 }))
 // documents.ts pulls in hydration.ts -> checking/controller.ts; logout()
 // (via auth/session.ts) only needs these two exports, so the module is
@@ -114,7 +119,12 @@ describe('Header domains-fetch re-fires on same-user re-login (Copilot round-9 U
     // login() always returns a fresh `user` object (see auth/session.ts) —
     // a brand-new object literal here mirrors that, even though the id and
     // every field are identical to the pre-login user (same-user re-login).
-    vi.mocked(client.postLogin).mockResolvedValue({ token: 'new-token', user: user() })
+    vi.mocked(client.postLogin).mockResolvedValue({
+      token: 'new-token',
+      refresh_token: null,
+      expires_at: null,
+      user: user(),
+    })
 
     render(<Header />) // mount fires the first (pre-login) fetch
     await waitFor(() => expect(getDomainsCalls).toBe(1))

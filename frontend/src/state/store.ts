@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { readToken } from './prefsStorage'
+import { readToken, readTokenExpiresAt, readRefreshToken } from './prefsStorage'
 import type {
   DocumentSummary,
   Folder,
@@ -106,11 +106,16 @@ interface AppStateData {
   // Collapsed folder groups in the document sidebar (folder ids).
   docFoldersCollapsed: number[]
 
-  // Auth. token is the only one of these six persisted — in its own
-  // localStorage key (prefsStorage.ts), read once at store creation; user is
-  // re-fetched from /api/auth/me on every load rather than cached, so it can
-  // never go stale (stale tier/is_admin flags).
+  // Auth. token, refreshToken and tokenExpiresAt are the three of these
+  // eight persisted — each in its own localStorage key (prefsStorage.ts),
+  // read once at store creation; user is re-fetched from /api/auth/me on
+  // every load rather than cached, so it can never go stale (stale
+  // tier/is_admin flags). refreshToken/tokenExpiresAt are both null in
+  // local mode (no backing Supabase session to refresh) — see session.ts's
+  // scheduleRefresh().
   token: string | null
+  refreshToken: string | null
+  tokenExpiresAt: number | null
   user: MeResponse | null
   authStatus: 'unknown' | 'anonymous' | 'authenticated'
   // Set only by expireSession(), cleared only by login(): see session.ts.
@@ -186,6 +191,14 @@ interface AppStateActions {
   // it (see session.ts), so a re-login after an expiry does not race this
   // setter.
   setAuth: (token: string | null, user: MeResponse | null) => void
+  // Writes the store fields only — persistence (writeToken/writeRefreshToken/
+  // writeTokenExpiresAt) stays the caller's job in session.ts, exactly like
+  // setAuth() above leaves writeToken/clearToken to its callers.
+  setSessionTokens: (
+    token: string,
+    refreshToken: string | null,
+    expiresAt: number | null,
+  ) => void
   // Called only from login() on a commit — see authGeneration's own comment.
   bumpAuthGeneration: () => void
 }
@@ -229,23 +242,30 @@ function migrateByFinding<T>(
   )
 }
 
-// Every AppStateData field except the six auth fields (token, user,
-// authStatus, sessionExpired, restoreFailed, authGeneration) — those are
-// managed explicitly by resetSessionState()'s callers via setAuth(),
-// never through this object. Since B1 (#34), callers null the auth
-// fields BEFORE the reset (the ordering invariant in session.ts: the
-// prefs write subscriber must see user === null while pref fields are
-// bulk-reset) and set the new session's values after it. authGeneration
-// specifically must survive a reset untouched: it is bumped only by
-// login()'s own commit, which runs after the reset on a cross-user
-// login — keeping it out of this object makes that explicit instead of
-// coincidental.
+// Every AppStateData field except the eight auth fields (token,
+// refreshToken, tokenExpiresAt, user, authStatus, sessionExpired,
+// restoreFailed, authGeneration) — those are managed explicitly by
+// resetSessionState()'s callers via setAuth()/setSessionTokens(), never
+// through this object. Since B1 (#34), callers null the auth fields BEFORE
+// the reset (the ordering invariant in session.ts: the prefs write
+// subscriber must see user === null while pref fields are bulk-reset) and
+// set the new session's values after it. authGeneration specifically must
+// survive a reset untouched: it is bumped only by login()'s own commit,
+// which runs after the reset on a cross-user login — keeping it out of
+// this object makes that explicit instead of coincidental.
 // Exported (rather than enumerated again inside resetSessionState()) so a
 // field added here is reset automatically instead of silently leaking from
 // one account's session into the next.
 export const INITIAL_DATA: Omit<
   AppStateData,
-  'token' | 'user' | 'authStatus' | 'sessionExpired' | 'restoreFailed' | 'authGeneration'
+  | 'token'
+  | 'refreshToken'
+  | 'tokenExpiresAt'
+  | 'user'
+  | 'authStatus'
+  | 'sessionExpired'
+  | 'restoreFailed'
+  | 'authGeneration'
 > = {
   language: 'en',
   uiLocale: null,
@@ -311,10 +331,14 @@ export function resetSessionState(): void {
 
 export const useStore = create<AppState>()((set) => ({
   ...INITIAL_DATA,
-  // The only field initialised from storage: the token must be readable
-  // before we know who the user is, so it lives in its own key
-  // (prefsStorage.ts) rather than any per-user preference blob.
+  // Initialised from storage, each in its own key (prefsStorage.ts) rather
+  // than any per-user preference blob: the token must be readable before we
+  // know who the user is, and refreshToken/tokenExpiresAt travel with it so
+  // scheduleRefresh() (session.ts) can arm on a reload without waiting on
+  // /api/auth/me.
   token: readToken(),
+  refreshToken: readRefreshToken(),
+  tokenExpiresAt: readTokenExpiresAt(),
   user: null,
   authStatus: 'unknown',
   sessionExpired: false,
@@ -450,6 +474,8 @@ export const useStore = create<AppState>()((set) => ({
       authStatus: token && user ? 'authenticated' : 'anonymous',
       restoreFailed: false,
     }),
+  setSessionTokens: (token, refreshToken, tokenExpiresAt) =>
+    set({ token, refreshToken, tokenExpiresAt }),
   bumpAuthGeneration: () =>
     set((state) => ({ authGeneration: state.authGeneration + 1 })),
 }))

@@ -19,6 +19,10 @@ vi.mock('../api/client', async (importOriginal) => ({
   updateTerm: vi.fn(),
   deleteTerm: vi.fn(),
   postLogin: vi.fn(),
+  // Resolved once here (see App.domains-guard.test.tsx's comment): this
+  // file's beforeEach uses clearAllMocks(), which preserves the
+  // implementation, and every logout() below runs with a real token.
+  postLogout: vi.fn().mockResolvedValue(undefined),
 }))
 // documents.ts pulls in hydration.ts -> checking/controller.ts; logout()
 // (via auth/session.ts) only needs these two exports, so the module is
@@ -331,6 +335,8 @@ describe('TerminologyView refreshDomains re-fires on same-user re-login (Copilot
     // is identical to the pre-login user (same-user re-login).
     vi.mocked(postLogin).mockResolvedValue({
       token: 'new-token',
+      refresh_token: null,
+      expires_at: null,
       user: user({ is_admin: false }),
     })
 

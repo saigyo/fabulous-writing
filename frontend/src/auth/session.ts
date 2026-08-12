@@ -1,9 +1,16 @@
-import { getMe, HttpError, postLogin, setUnauthorizedHandler } from '../api/client'
+import { getMe, HttpError, postLogin, postLogout, postRefresh, setUnauthorizedHandler } from '../api/client'
 import { cancelInFlightCheck } from '../checking/cancelSlot'
 import { clearLegacyText, invalidateDocumentWork } from '../documents/documents'
 import { clearSnapshot, readSnapshot } from '../documents/buffer'
 import { loadUserPrefs } from '../state/prefsPersistence'
-import { clearToken, writeToken } from '../state/prefsStorage'
+import {
+  clearRefreshToken,
+  clearToken,
+  clearTokenExpiresAt,
+  writeRefreshToken,
+  writeToken,
+  writeTokenExpiresAt,
+} from '../state/prefsStorage'
 import { resetSessionState, useStore } from '../state/store'
 import { setRefreshUserHandler } from './refreshSlot'
 
@@ -26,7 +33,7 @@ export const sessionGeneration = (): number => generation
 export async function login(email: string, password: string): Promise<boolean> {
   const startedAt = generation
   const previousUserId = useStore.getState().user?.id
-  const { token, user } = await postLogin(email, password)
+  const { token, refresh_token, expires_at, user } = await postLogin(email, password)
   // Someone logged out while this was in flight — drop the token on the floor
   // rather than signing a deliberately logged-out user back in.
   if (startedAt !== generation) return false
@@ -47,9 +54,15 @@ export async function login(email: string, password: string): Promise<boolean> {
     loadUserPrefs(user.id)
   }
   discardForeignBuffer(user.id)   // keeps this user's own unsaved work
+  // Local mode returns refresh_token/expires_at as null (backend/app/api/
+  // auth.py) — writing null clears any stale value from a previous
+  // Supabase-mode session under the same browser profile.
   writeToken(token)
+  writeRefreshToken(refresh_token ?? null)
+  writeTokenExpiresAt(expires_at ?? null)
   useStore.setState({ sessionExpired: false, restoreFailed: false })
   useStore.getState().setAuth(token, user)
+  useStore.getState().setSessionTokens(token, refresh_token ?? null, expires_at ?? null)
   // Reactive counterpart to the generation++ above (see authGeneration's own
   // comment in state/store.ts): a same-user re-login stays on this same
   // branch — resetSessionState() above is skipped for it — so this bump is
@@ -57,6 +70,7 @@ export async function login(email: string, password: string): Promise<boolean> {
   // password-change flow (auth/AccountMenu.tsx) silently re-authenticates
   // the current user while they stay mounted.
   useStore.getState().bumpAuthGeneration()
+  scheduleRefresh()
   return true
 }
 
@@ -68,6 +82,13 @@ export function logout(): void {
   generation++
   invalidateDocumentWork()   // first: pending saves must not write the buffer back
   cancelInFlightCheck()
+  // Fire before clearToken(): postLogout() reads the store's token at fetch
+  // time (client.ts's requestWithOptions), so it must still be there. A
+  // visitor who was never signed in (no token) has no server-side session
+  // to end. Best-effort: the local teardown below proceeds regardless of
+  // whether the request lands.
+  const hadToken = !!useStore.getState().token
+  if (hadToken) void postLogout().catch(() => {})
   clearToken()
   // Ordering invariant (B1, #34): null the user BEFORE
   // resetSessionState(), or the write subscriber would commit the reset
@@ -77,6 +98,9 @@ export function logout(): void {
   resetSessionState()
   clearSnapshot()
   clearLegacyText()
+  clearRefreshToken()
+  clearTokenExpiresAt()
+  cancelScheduledRefresh()
 }
 
 /** The token stopped working. The same user is almost certainly coming
@@ -92,6 +116,64 @@ export function expireSession(): void {
   useStore.getState().setAuth(null, null)
   resetSessionState()
   useStore.setState({ sessionExpired: true })
+  clearRefreshToken()
+  clearTokenExpiresAt()
+  cancelScheduledRefresh()
+}
+
+const REFRESH_MARGIN_MS = 120_000
+const REFRESH_RETRY_MS = 60_000
+let refreshTimer: ReturnType<typeof setTimeout> | null = null
+let refreshInFlight: Promise<void> | null = null
+
+function cancelScheduledRefresh(): void {
+  if (refreshTimer !== null) clearTimeout(refreshTimer)
+  refreshTimer = null
+}
+
+function scheduleRefresh(): void {
+  cancelScheduledRefresh()
+  const { tokenExpiresAt, refreshToken } = useStore.getState()
+  if (!refreshToken || tokenExpiresAt === null) return  // local mode: never
+  const delay = Math.max(tokenExpiresAt * 1000 - Date.now() - REFRESH_MARGIN_MS, 0)
+  refreshTimer = setTimeout(() => { void refreshSession() }, delay)
+}
+
+/** Single-flight, generation-guarded (same discipline as runRestore). On a
+ * 401 the refresh token is dead — the session ends through the same
+ * expireSession() path as any other credential failure. Any other failure
+ * (offline laptop waking up) retries on a fixed cadence; a request-level
+ * 401 in the meantime ends the session anyway. */
+export function refreshSession(): Promise<void> {
+  if (!refreshInFlight) {
+    const run = doRefresh().finally(() => {
+      if (refreshInFlight === run) refreshInFlight = null
+    })
+    refreshInFlight = run
+  }
+  return refreshInFlight
+}
+
+async function doRefresh(): Promise<void> {
+  const startedAt = generation
+  const { refreshToken } = useStore.getState()
+  if (!refreshToken) return
+  try {
+    const { token, refresh_token, expires_at } = await postRefresh(refreshToken)
+    if (startedAt !== generation) return
+    writeToken(token)
+    writeRefreshToken(refresh_token ?? null)
+    writeTokenExpiresAt(expires_at ?? null)
+    useStore.getState().setSessionTokens(token, refresh_token ?? null, expires_at ?? null)
+    scheduleRefresh()
+  } catch (error) {
+    if (startedAt !== generation) return
+    if (error instanceof HttpError && error.status === 401) {
+      expireSession()
+      return
+    }
+    refreshTimer = setTimeout(() => { void refreshSession() }, REFRESH_RETRY_MS)
+  }
 }
 
 let restoreInFlight: Promise<void> | null = null
@@ -118,6 +200,22 @@ async function runRestore(): Promise<void> {
   // landing while getMe() is in flight means the token this restore is
   // about to commit may no longer be the session's token at all.
   const startedAt = generation
+  const { refreshToken, tokenExpiresAt } = useStore.getState()
+  // A token due to expire within the margin is refreshed before getMe()
+  // ever fires, so the restore lands with a token that survives past this
+  // page load rather than expiring moments after it succeeds.
+  if (
+    tokenExpiresAt !== null &&
+    refreshToken &&
+    tokenExpiresAt * 1000 - Date.now() < REFRESH_MARGIN_MS
+  ) {
+    await refreshSession()
+    if (startedAt !== generation) return
+  }
+  // Captured AFTER the refresh above: a stale-expiry restore may have
+  // rotated the token, and both the generation guard below and the
+  // eventual setAuth() must commit the rotated token, not the one this
+  // restore started with.
   const token = useStore.getState().token
   if (!token) {
     useStore.getState().setAuth(null, null)
@@ -132,6 +230,7 @@ async function runRestore(): Promise<void> {
     // values are already in place, so no write fires.
     loadUserPrefs(user.id)
     useStore.getState().setAuth(token, user)
+    scheduleRefresh()
   } catch (error) {
     // Not the live path for a 401 as of Task 4: getMe()'s own request()
     // call already routed that 401 through handleUnauthorized() ->

@@ -3,7 +3,7 @@ import { StrictMode } from 'react'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { HttpError, type MeResponse } from '../api/client'
+import { HttpError, type LoginResponse, type MeResponse } from '../api/client'
 import { en } from '../i18n/en'
 import { useStore } from '../state/store'
 
@@ -192,7 +192,12 @@ describe('LoginGate', () => {
 
   it('submitting valid credentials calls login(), which flips the gate to authenticated', async () => {
     useStore.setState({ authStatus: 'anonymous' })
-    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', user: user() })
+    vi.mocked(postLogin).mockResolvedValue({
+      token: 'tok',
+      refresh_token: null,
+      expires_at: null,
+      user: user(),
+    })
     render(
       <LoginGate>
         <Sentinel />
@@ -268,7 +273,7 @@ describe('LoginGate', () => {
     await u.click(screen.getByRole('button', { name: en.signInSubmit }))
     await waitFor(() => screen.getByText(en.signInInvalid))
 
-    let resolveSecond!: (v: { token: string; user: MeResponse }) => void
+    let resolveSecond!: (v: LoginResponse) => void
     vi.mocked(postLogin).mockImplementationOnce(
       () =>
         new Promise((resolve) => {
@@ -281,7 +286,7 @@ describe('LoginGate', () => {
     expect(screen.queryByText(en.signInInvalid)).toBeNull()
     expect(screen.queryByText(en.sessionExpired)).toBeNull()
 
-    resolveSecond({ token: 'tok', user: user() })
+    resolveSecond({ token: 'tok', refresh_token: null, expires_at: null, user: user() })
     await waitFor(() => screen.getByTestId('app-sentinel'))
   })
 
