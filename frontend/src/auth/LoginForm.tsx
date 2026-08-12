@@ -4,14 +4,22 @@ import { useMessages } from '../i18n'
 import { useStore } from '../state/store'
 import { login } from './session'
 
+interface LoginFormProps {
+  // Hands the currently-typed email to the gate, which switches to
+  // ForgotPasswordForm with it prefilled — only reachable when the link
+  // below is rendered at all (authFeatures?.password_reset).
+  onForgot: (email: string) => void
+}
+
 /** The card shown while authStatus is 'anonymous'. login()'s own boolean
  * return (false = superseded by a session change in flight) is ignored
  * here on purpose: LoginGate re-renders off authStatus, so a superseded
  * attempt just leaves this form mounted rather than needing its own
  * handling. Only a rejected promise is this form's concern. */
-export function LoginForm() {
+export function LoginForm({ onForgot }: LoginFormProps) {
   const m = useMessages()
   const sessionExpired = useStore((s) => s.sessionExpired)
+  const authFeatures = useStore((s) => s.authFeatures)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [pending, setPending] = useState(false)
@@ -72,6 +80,15 @@ export function LoginForm() {
       <button type="submit" className="login-submit" disabled={pending}>
         {pending ? m.signInPending : m.signInSubmit}
       </button>
+      {authFeatures?.password_reset && (
+        <button
+          type="button"
+          className="login-link"
+          onClick={() => onForgot(email)}
+        >
+          {m.forgotPassword}
+        </button>
+      )}
     </form>
   )
 }

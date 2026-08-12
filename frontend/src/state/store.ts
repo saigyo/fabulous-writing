@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { readToken, readTokenExpiresAt, readRefreshToken } from './prefsStorage'
 import type {
+  AuthFeatures,
   DocumentSummary,
   Folder,
   HeldBackSuggestion,
@@ -136,6 +137,15 @@ interface AppStateData {
   // depend on it (LoginGate stops rendering children), and re-running them
   // on the way to a null user would only fire fetches no one is looking at.
   authGeneration: number
+  // Set once by LoginGate's unconditional, empty-deps mount effect (Task 7)
+  // from GET /api/health's auth_features — never re-fetched afterwards. Not
+  // persisted: it describes the deployment, not the session, so there is no
+  // storage key for it. It MUST survive resetSessionState() (see the ninth
+  // exclusion member below) — the gate that would re-fetch it is mounted
+  // for the whole app lifetime and only runs that effect once per page
+  // load, so a reset on logout would silently and permanently hide
+  // "Forgot password?" for the rest of the tab's life.
+  authFeatures: AuthFeatures | null
 }
 
 interface AppStateActions {
@@ -201,6 +211,9 @@ interface AppStateActions {
   ) => void
   // Called only from login() on a commit — see authGeneration's own comment.
   bumpAuthGeneration: () => void
+  // Called only from LoginGate's mount-effect health fetch — see
+  // authFeatures's own comment above.
+  setAuthFeatures: (authFeatures: AuthFeatures) => void
 }
 
 type AppState = AppStateData & AppStateActions
@@ -242,17 +255,19 @@ function migrateByFinding<T>(
   )
 }
 
-// Every AppStateData field except the eight auth fields (token,
+// Every AppStateData field except the nine auth fields (token,
 // refreshToken, tokenExpiresAt, user, authStatus, sessionExpired,
-// restoreFailed, authGeneration) — those are managed explicitly by
-// resetSessionState()'s callers via setAuth()/setSessionTokens(), never
-// through this object. Since B1 (#34), callers null the auth fields BEFORE
-// the reset (the ordering invariant in session.ts: the prefs write
-// subscriber must see user === null while pref fields are bulk-reset) and
-// set the new session's values after it. authGeneration specifically must
-// survive a reset untouched: it is bumped only by login()'s own commit,
-// which runs after the reset on a cross-user login — keeping it out of
-// this object makes that explicit instead of coincidental.
+// restoreFailed, authGeneration, authFeatures) — those are managed
+// explicitly by resetSessionState()'s callers via setAuth()/
+// setSessionTokens(), never through this object. Since B1 (#34), callers
+// null the auth fields BEFORE the reset (the ordering invariant in
+// session.ts: the prefs write subscriber must see user === null while pref
+// fields are bulk-reset) and set the new session's values after it.
+// authGeneration specifically must survive a reset untouched: it is bumped
+// only by login()'s own commit, which runs after the reset on a cross-user
+// login — keeping it out of this object makes that explicit instead of
+// coincidental. authFeatures (Task 7) must survive a reset for a different
+// reason — see its own comment on AppStateData above.
 // Exported (rather than enumerated again inside resetSessionState()) so a
 // field added here is reset automatically instead of silently leaking from
 // one account's session into the next.
@@ -266,6 +281,7 @@ export const INITIAL_DATA: Omit<
   | 'sessionExpired'
   | 'restoreFailed'
   | 'authGeneration'
+  | 'authFeatures'
 > = {
   language: 'en',
   uiLocale: null,
@@ -344,6 +360,7 @@ export const useStore = create<AppState>()((set) => ({
   sessionExpired: false,
   restoreFailed: false,
   authGeneration: 0,
+  authFeatures: null,
 
   setLanguage: (language) => set({ language }),
   setUiLocale: (uiLocale) => set({ uiLocale }),
@@ -478,4 +495,5 @@ export const useStore = create<AppState>()((set) => ({
     set({ token, refreshToken, tokenExpiresAt }),
   bumpAuthGeneration: () =>
     set((state) => ({ authGeneration: state.authGeneration + 1 })),
+  setAuthFeatures: (authFeatures) => set({ authFeatures }),
 }))

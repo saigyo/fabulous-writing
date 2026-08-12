@@ -18,6 +18,10 @@ vi.mock('../api/client', async (importOriginal) => ({
   createTerm: vi.fn(),
   updateTerm: vi.fn(),
   deleteTerm: vi.fn(),
+  // This file renders TerminologyView directly, not LoginGate, so nothing
+  // here would actually call getHealth — mocked anyway (Task 7) so a real
+  // fetch is never one accidental render away.
+  getHealth: vi.fn(async () => ({ status: 'ok', name: '', version: 'dev' })),
   postLogin: vi.fn(),
   // Resolved once here (see App.domains-guard.test.tsx's comment): this
   // file's beforeEach uses clearAllMocks(), which preserves the

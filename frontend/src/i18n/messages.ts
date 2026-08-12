@@ -245,6 +245,21 @@ export interface Messages {
   passwordFailed: string
   connectionFailed: string
   connectionRetry: string
+  forgotPassword: string
+  resetRequestSent: string
+  resetHeading: string
+  inviteHeading: string
+  resetNewPassword: string
+  resetRepeatPassword: string
+  resetMismatch: string
+  resetSubmit: string
+  resetSuccess: string
+  resetBackToSignIn: string
+  resetLinkInvalid: string
+  resetEmailLabel: string
+  resetRequestSubmit: string
+  backToSignIn: string
+  adminPasswordOptionalHint: string
 
   // Dialog
   dialogCancel: string

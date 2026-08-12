@@ -1,9 +1,29 @@
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { getHealth } from '../api/client'
 import { useMessages } from '../i18n'
 import { useStore } from '../state/store'
 import { Wordmark } from '../Wordmark'
+import { ForgotPasswordForm } from './ForgotPasswordForm'
 import { LoginForm } from './LoginForm'
+import { ResetPasswordForm } from './ResetPasswordForm'
 import { restoreSession } from './session'
+
+interface ResetParams {
+  tokenHash: string
+  type: 'recovery' | 'invite'
+}
+
+/** Reads a reset/invite link's params from the current URL, once. Only
+ * "recovery"/"invite" are accepted `type` values — anything else (missing
+ * param, typo, a stray query string from something unrelated) is treated as
+ * no link at all, and the gate falls through to the ordinary login form. */
+function readResetParams(): ResetParams | null {
+  const params = new URLSearchParams(window.location.search)
+  const tokenHash = params.get('token_hash')
+  const type = params.get('type')
+  if (!tokenHash || (type !== 'recovery' && type !== 'invite')) return null
+  return { tokenHash, type }
+}
 
 /** Split shell shared by every visible pre-auth state (B4, #37): brand
  * pane (wordmark + tagline) beside the pane content. The gate's state
@@ -30,13 +50,44 @@ function GateShell({ children }: { children: ReactNode }) {
 export function LoginGate({ children }: { children: ReactNode }) {
   const authStatus = useStore((s) => s.authStatus)
   const restoreFailed = useStore((s) => s.restoreFailed)
+  const setAuthFeatures = useStore((s) => s.setAuthFeatures)
   const m = useMessages()
+  // Captured once, straight from the initial render — not in an effect —
+  // so a link is available on the very first paint rather than flashing
+  // the ordinary login form for one frame first.
+  const [resetParams, setResetParams] = useState(readResetParams)
+  // null = not showing ForgotPasswordForm; a string (possibly empty) is the
+  // email LoginForm was showing when the link was clicked.
+  const [forgotEmail, setForgotEmail] = useState<string | null>(null)
 
   useEffect(() => {
     // Empty deps: <StrictMode> double-invokes this in development, but
     // restoreSession() already dedups concurrent calls to one in-flight
     // /api/auth/me request (see session.ts) — no guard needed here.
     void restoreSession()
+  }, [])
+
+  useEffect(() => {
+    // Unconditional, empty deps: this gate is mounted for the whole app
+    // lifetime (never unmounted/remounted across auth transitions), so
+    // gating this on authStatus would re-fire it on every login/logout for
+    // no reason — one fetch per page load is enough. /api/health is public;
+    // this is deliberately the one /api/* call an anonymous first visit now
+    // issues (see client.ts's getHealth comment and Task 8's doc update).
+    // Best-effort: a failed health check just means no reset/invite
+    // affordance this load, not a broken gate.
+    getHealth()
+      .then((h) => h.auth_features && setAuthFeatures(h.auth_features))
+      .catch(() => {})
+  }, [setAuthFeatures])
+
+  useEffect(() => {
+    // Strips a burned token_hash/type pair from the URL right after the
+    // params above are captured into state, so a reload of this same tab
+    // does not resubmit it. Runs once, after the initial paint the
+    // useState(readResetParams) initializer already covered.
+    if (resetParams) window.history.replaceState(null, '', window.location.pathname)
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- resetParams is captured once via useState's lazy initializer and never changes after mount
   }, [])
 
   if (restoreFailed) {
@@ -66,7 +117,17 @@ export function LoginGate({ children }: { children: ReactNode }) {
   if (authStatus === 'anonymous') {
     return (
       <GateShell>
-        <LoginForm />
+        {resetParams ? (
+          <ResetPasswordForm
+            tokenHash={resetParams.tokenHash}
+            type={resetParams.type}
+            onDone={() => setResetParams(null)}
+          />
+        ) : forgotEmail !== null ? (
+          <ForgotPasswordForm email={forgotEmail} onBack={() => setForgotEmail(null)} />
+        ) : (
+          <LoginForm onForgot={setForgotEmail} />
+        )}
       </GateShell>
     )
   }
