@@ -1,5 +1,6 @@
 """Supabase-mode auth routes: login/refresh/logout/password/reset, mode
-dispatch, and the password-change eviction window (B14 Task 4, #55)."""
+dispatch, the password-change eviction window (B14 Task 4, #55), and
+supabase-mode admin bootstrap + invitation-only user entry (Task 5)."""
 
 import time
 
@@ -7,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.auth import _INVALID_LOGIN
-from app.core.auth import IAT_LEEWAY_SECONDS
+from app.core.auth import AuthConfigError, IAT_LEEWAY_SECONDS
 from app.core.config import Settings
 from app.main import create_app
 from app.services.supabase_gateway import SupabaseUnavailableError
@@ -19,22 +20,43 @@ PASSWORD = "correct horse battery staple"
 UUID = "fake-uuid-primary"
 
 
-@pytest.fixture()
-def supabase_app(tmp_path, monkeypatch):
+def _build_supabase_app(tmp_path, monkeypatch, fake):
+    """Builds a supabase-mode app with `fake` wired in BEFORE create_app
+    runs: seed_admin bootstraps the admin through the gateway as part of
+    app construction, so the fake must already be in place at that point --
+    swapping app.state.supabase_gateway afterwards (as Task 4's fixture
+    did) is too late."""
     monkeypatch.setenv("FW_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_t")
     monkeypatch.setenv("FW_SUPABASE_SECRET_KEY", "sb_secret_t")
+    monkeypatch.setattr("app.main.SupabaseAuthGateway", lambda creds: fake)
     settings = Settings(
         db_path=tmp_path / "t.db",
         auth={"mode": "supabase", "supabase": {"url": "https://api-test.invalid"}},
     )
-    app = create_app(settings)
+    return create_app(settings)
+
+
+@pytest.fixture()
+def supabase_app(tmp_path, monkeypatch):
     fake = FakeSupabaseGateway()
-    app.state.supabase_gateway = fake
+    app = _build_supabase_app(tmp_path, monkeypatch, fake)
+    assert app.state.supabase_gateway is fake
     # Route tests authenticate via the fake's tokens; swap the verifier for
     # one that resolves them (no network: the real verifier is never given
     # a chance to fetch JWKS).
     app.state.token_verifier = FakeSupabaseVerifier(fake, app.state.user_store)
     return app, fake
+
+
+def _admin_bearer(client: TestClient) -> dict:
+    # The bootstrap admin's password lives with the fake (seed_admin's
+    # supabase branch writes no local hash), so this goes through the fake
+    # exactly like a real client's login would.
+    token = client.post(
+        "/api/auth/login",
+        json={"email": TEST_ADMIN_EMAIL, "password": TEST_ADMIN_PASSWORD},
+    ).json()["token"]
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _bearer(token: str) -> dict:
@@ -401,3 +423,93 @@ class TestExternalIdCollision:
         )
         assert resp.status_code == 422
         assert resp.json()["detail"]["code"] == "invalid_or_expired_link"
+
+
+class TestSeedAdminSupabase:
+    """seed_admin's supabase branch (Task 5, #55): the admin bootstraps
+    through the gateway during create_app, before any test code runs."""
+
+    def test_fresh_app_seeds_admin_through_gateway(self, supabase_app):
+        app, fake = supabase_app
+        admin = app.state.user_store.get_by_email(TEST_ADMIN_EMAIL)
+        assert admin is not None
+        assert fake.create_user_calls == [(TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD)]
+        # The admin is the first entity the fake ever mints a uuid for.
+        assert admin.external_id == "fake-uuid-1"
+        assert admin.is_admin is True
+        assert admin.tier == "premium"
+        # No local hash: Supabase owns the credential.
+        assert app.state.user_store.verify_credentials(
+            TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD
+        ) is None
+
+    def test_rerun_against_existing_project_links_existing_uuid(self, tmp_path, monkeypatch):
+        fake = FakeSupabaseGateway()
+        fake.register_user(TEST_ADMIN_EMAIL, "some-other-password", uuid="existing-admin-uuid")
+        app = _build_supabase_app(tmp_path, monkeypatch, fake)
+        admin = app.state.user_store.get_by_email(TEST_ADMIN_EMAIL)
+        assert admin is not None
+        assert admin.external_id == "existing-admin-uuid"
+        # create_user was attempted (and rejected as a duplicate) before the
+        # fallback lookup linked the existing account.
+        assert fake.create_user_calls == [(TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD)]
+
+    def test_bootstrap_failure_aborts_create_app(self, tmp_path, monkeypatch):
+        fake = FakeSupabaseGateway()
+
+        async def boom(_email, _password):
+            raise SupabaseUnavailableError("down")
+
+        fake.create_user = boom
+        with pytest.raises(AuthConfigError):
+            _build_supabase_app(tmp_path, monkeypatch, fake)
+
+
+class TestAdminCreateSupabase:
+    """Admin create in supabase mode: invitation when no password is given,
+    Supabase-owned credential when one is (Task 5, #55)."""
+
+    def test_invite_without_password_returns_201_and_invited_true(self, supabase_app):
+        app, fake = supabase_app
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        resp = client.post(
+            "/api/admin/users", json={"email": "invitee@example.com"}, headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["invited"] is True
+        assert fake.invites == ["invitee@example.com"]
+        created = app.state.user_store.get_by_email("invitee@example.com")
+        assert created is not None
+        assert created.external_id is not None
+        audit_fields = [r["field"] for r in app.state.user_store.list_audit()]
+        assert "invite" in audit_fields
+
+    def test_create_with_password_in_supabase_mode_writes_no_local_hash(self, supabase_app):
+        app, fake = supabase_app
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        resp = client.post(
+            "/api/admin/users",
+            json={"email": "withpw@example.com", "password": "an initial password 1"},
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["invited"] is False
+        assert ("withpw@example.com", "an initial password 1") in fake.create_user_calls
+        assert app.state.user_store.verify_credentials(
+            "withpw@example.com", "an initial password 1"
+        ) is None
+
+    def test_list_users_response_has_no_invited_key(self, supabase_app):
+        app, _fake = supabase_app
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        client.post(
+            "/api/admin/users", json={"email": "listed@example.com"}, headers=headers,
+        )
+        listing = client.get("/api/admin/users", headers=headers).json()
+        assert listing
+        assert all("invited" not in item for item in listing)

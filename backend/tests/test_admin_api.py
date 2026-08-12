@@ -87,6 +87,26 @@ def test_create_rejects_duplicates_and_weak_passwords(client):
     assert "at least 12" in weak.json()["detail"]
 
 
+def test_create_without_password_is_422_in_local_mode(client):
+    # Local mode has no invitation path: a passwordless local account would
+    # have no way to log in, so this is a 422, not a silent invite.
+    response = client.post(
+        "/api/admin/users",
+        json={"email": "nopassword@example.com"},
+        headers=admin_headers(client),
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "password_required"
+
+
+def test_create_response_has_invited_false_but_get_listing_has_no_invited_key(client):
+    created = make_user(client)
+    assert created["invited"] is False
+    listing = client.get("/api/admin/users", headers=admin_headers(client)).json()
+    assert listing
+    assert all("invited" not in item for item in listing)
+
+
 def test_create_rejects_whitespace_only_email(client):
     # Round-2 added whitespace stripping to UserStore, but nothing rejected
     # an email that is only whitespace: it normalized to '', so an admin

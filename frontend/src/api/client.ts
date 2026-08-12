@@ -220,7 +220,9 @@ export interface AdminUser {
 
 export interface AdminUserCreate {
   email: string
-  password: string
+  // Omitted in supabase mode: the admin invites the user through Supabase
+  // instead of setting a credential directly (backend/app/api/admin.py).
+  password?: string
   display_name?: string
   tier: string
   is_admin: boolean
@@ -246,8 +248,11 @@ export const getAdminUsers = () => request<AdminUser[]>('/api/admin/users')
 
 export const getAdminTiers = () => request<string[]>('/api/admin/tiers')
 
+// `invited` is an event of this call, not durable user state (it never
+// appears on AdminUser / GET admin/users) -- see AdminUserCreated in
+// backend/app/api/admin.py.
 export const postAdminUser = (body: AdminUserCreate) =>
-  request<AdminUser>('/api/admin/users', {
+  request<AdminUser & { invited?: boolean }>('/api/admin/users', {
     method: 'POST',
     body: JSON.stringify(body),
   })

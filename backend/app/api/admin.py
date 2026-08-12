@@ -9,9 +9,11 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
+from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import CurrentUser, require_admin
 from app.core.auth import ADMIN_SET_MIN_PASSWORD_LENGTH, validate_password
+from app.services.supabase_gateway import SupabaseAuthError, SupabaseUnavailableError
 from app.services.users import DuplicateEmailError, InvalidEmailError, User
 
 router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_admin)])
@@ -23,7 +25,10 @@ class UserCreate(BaseModel):
     # 320 is RFC 5321's ceiling for an address; matches LoginRequest.email
     # in app/api/auth.py.
     email: str = Field(max_length=320)
-    password: str
+    # None: local mode -> 422 (a local account with no way to log in makes
+    # no sense); supabase mode -> the admin invites the user through
+    # Supabase instead of setting a credential directly.
+    password: str | None = None
     display_name: str | None = None
     tier: str = "basic"
     is_admin: bool = False
@@ -71,6 +76,15 @@ class UserPatch(BaseModel):
         if value is None:
             raise ValueError(f"{info.field_name} must not be null")
         return value
+
+
+class AdminUserCreated(User):
+    """The create route's response only: `invited` is an event of *this*
+    call, not durable user state, so it must never appear on `User` itself
+    -- that would leak a permanently-false key into GET /admin/users and
+    every other `User` consumer."""
+
+    invited: bool = False
 
 
 def _store(request: Request):
@@ -127,28 +141,85 @@ def list_tiers(request: Request) -> list[str]:
     return list(_known_tiers(request))
 
 
+def _create_user_local(store, body: UserCreate) -> User:
+    return store.create_user(
+        body.email,
+        body.password,
+        display_name=body.display_name,
+        tier=body.tier,
+        is_admin=body.is_admin,
+    )
+
+
 @router.post("/users", status_code=201)
-def create_user(
+async def create_user(
     request: Request, body: UserCreate, actor: CurrentUser = Depends(require_admin)
-) -> User:
-    _check_password_strength(body.password)
+) -> AdminUserCreated:
     _validate_tier_name(request, body.tier)
     if body.is_admin:
         _guard_admin_creation(request, actor, body.email)
     store = _store(request)
-    try:
-        user = store.create_user(
-            body.email,
-            body.password,
-            display_name=body.display_name,
-            tier=body.tier,
-            is_admin=body.is_admin,
+    supabase = request.app.state.settings.auth.mode == "supabase"
+
+    if body.password is None:
+        if not supabase:
+            raise HTTPException(422, {"code": "password_required"})
+        gateway = request.app.state.supabase_gateway
+        try:
+            external_id = await gateway.invite_user(body.email)
+        except SupabaseAuthError as exc:
+            raise HTTPException(422, {"code": "invite_failed"}) from exc
+        except SupabaseUnavailableError as exc:
+            raise HTTPException(503, "Authentication service unavailable") from exc
+        try:
+            user = store.create_user(
+                body.email,
+                None,
+                display_name=body.display_name,
+                tier=body.tier,
+                is_admin=body.is_admin,
+                external_id=external_id,
+            )
+        except (DuplicateEmailError, InvalidEmailError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+        store.record_audit(
+            actor_id=actor.id, target_id=user.id, field="invite", new_value=user.email
         )
-    except (DuplicateEmailError, InvalidEmailError) as exc:
-        raise HTTPException(422, str(exc)) from exc
+        return AdminUserCreated(**user.model_dump(), invited=True)
+
+    _check_password_strength(body.password)
+    if supabase:
+        gateway = request.app.state.supabase_gateway
+        try:
+            external_id = await gateway.create_user(body.email, body.password)
+        except SupabaseAuthError as exc:
+            raise HTTPException(422, {"code": "create_failed"}) from exc
+        except SupabaseUnavailableError as exc:
+            raise HTTPException(503, "Authentication service unavailable") from exc
+        try:
+            # Supabase owns the credential -- no local hash written, ever: a
+            # local hash here would resurrect local login semantics for an
+            # account whose password lives with Supabase.
+            user = store.create_user(
+                body.email,
+                None,
+                display_name=body.display_name,
+                tier=body.tier,
+                is_admin=body.is_admin,
+                external_id=external_id,
+            )
+        except (DuplicateEmailError, InvalidEmailError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+    else:
+        try:
+            # bcrypt stays off the event loop, same rule as login/password
+            # change (Task 4).
+            user = await run_in_threadpool(_create_user_local, store, body)
+        except (DuplicateEmailError, InvalidEmailError) as exc:
+            raise HTTPException(422, str(exc)) from exc
     store.record_audit(actor_id=actor.id, target_id=user.id, field="created",
                        new_value=user.email)
-    return user
+    return AdminUserCreated(**user.model_dump())
 
 
 @router.patch("/users/{user_id}")
