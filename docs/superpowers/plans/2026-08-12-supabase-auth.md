@@ -79,9 +79,9 @@ In `backend/pyproject.toml`, change `"pyjwt>=2.10.0"` to `"pyjwt[crypto]>=2.10.0
 uv lock && uv sync
 ```
 
-- [ ] **Step 2: Regenerate third-party notices**
+- [ ] **Step 2: Regenerate third-party notices (linux container — mandatory)**
 
-From the repo root: `uv run --project backend python scripts/collect-licenses.py`, then `git diff --stat THIRD-PARTY-NOTICES.md`. The collector's authoritative run is linux (CI's `licenses` job); if the macOS output differs from CI expectations the CI job will say so on push — commit whatever the local run produces and reconcile on CI feedback (this matched reality for every previous dependency bump).
+`scripts/collect-licenses.py` hard-refuses to run off linux (`scripts/collect-licenses.py:217-228` raises `SystemExit`), because license texts come from platform-specific wheels. `--force-platform` is FORBIDDEN — its output is wrong by construction and guarantees drift in CI's `licenses` job. Run the containerized recipe documented in `docs/backend-architecture.md` § Container deployment (python:3.13-slim + nodejs/npm + pip-installed uv, `UV_PROJECT_ENVIRONMENT=/tmp/imgvenv` so the host venv stays clean; docker runs via colima on this machine), AFTER Step 1's `uv lock && uv sync` so the lockfile already carries the new packages. Expect the diff to GROW by roughly seven entries: `supabase-auth` itself, `h2`/`hpack`/`hyperframe` (via its `httpx[http2]` extra), and `cryptography`/`cffi`/`pycparser` (via `pyjwt[crypto]`). Note the effective pyjwt floor becomes 2.12 (supabase-auth requires `pyjwt[crypto]>=2.12.0`); our own `pyjwt[crypto]>=2.10.0` line stays so the ES256 requirement is declared where it is used.
 
 - [ ] **Step 3: Write the failing tests**
 
@@ -90,6 +90,7 @@ From the repo root: `uv run --project backend python scripts/collect-licenses.py
 ```python
 """Supabase-mode configuration and token verification (B14 #55)."""
 
+import pydantic
 import pytest
 
 from app.core.auth import AuthConfigError
@@ -125,6 +126,11 @@ class TestResolveCredentials:
             secret_key="sb_secret_unit_test",
         )
 
+    def test_repr_never_contains_key_material(self, tmp_path):
+        creds = resolve_supabase_credentials(supabase_settings(tmp_path), env=ENV_OK)
+        assert "sb_publishable_unit_test" not in repr(creds)
+        assert "sb_secret_unit_test" not in repr(creds)
+
     def test_trailing_slash_is_stripped(self, tmp_path):
         creds = resolve_supabase_credentials(
             supabase_settings(tmp_path, url=URL + "/"), env=ENV_OK
@@ -145,7 +151,9 @@ class TestResolveCredentials:
         assert "sb_" not in str(excinfo.value)  # never echo key material
 
     def test_unknown_supabase_key_fails_loudly(self, tmp_path):
-        with pytest.raises(Exception):  # pydantic ValidationError: extra="forbid"
+        # Specifically ValidationError: the point is that extra="forbid" sits
+        # on the NESTED model (AuthSettings itself has no extra="forbid").
+        with pytest.raises(pydantic.ValidationError):
             Settings(
                 db_path=tmp_path / "test.db",
                 auth={"mode": "supabase", "supabase": {"url": URL, "tpyo": 1}},
@@ -188,7 +196,7 @@ users table, so nothing in a Supabase JWT's claims can grant privileges.
 import logging
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.core.auth import AuthConfigError
 from app.core.config import Settings
@@ -202,8 +210,11 @@ SUPABASE_SECRET_KEY_ENV = "FW_SUPABASE_SECRET_KEY"
 @dataclass(frozen=True)
 class SupabaseCredentials:
     url: str              # normalized: no trailing slash
-    publishable_key: str  # user-flow GoTrue calls
-    secret_key: str       # admin API only; never leaves the backend
+    # repr=False on both keys: the dataclass repr would otherwise put key
+    # material into any debug log, --showlocals dump, or exception chain
+    # that formats this object.
+    publishable_key: str = field(repr=False)  # user-flow GoTrue calls
+    secret_key: str = field(repr=False)       # admin API only; never leaves the backend
 
 
 def resolve_supabase_credentials(
@@ -239,7 +250,7 @@ Run: `uv run pytest tests/test_supabase_auth.py -n0 -q` — expected PASS. Then 
 
 - [ ] **Step 7: Mutation-verify**
 
-Comment out the `rstrip("/")` call → `test_trailing_slash_is_stripped` fails. Comment out the `if not publishable` guard → `test_missing_key_names_the_variable_not_the_value[FW_SUPABASE_PUBLISHABLE_KEY]` fails. Restore both, re-run, green.
+Comment out the `rstrip("/")` call → `test_trailing_slash_is_stripped` fails. Comment out the `if not publishable` guard → `test_missing_key_names_the_variable_not_the_value[FW_SUPABASE_PUBLISHABLE_KEY]` fails. Remove one `field(repr=False)` → `test_repr_never_contains_key_material` fails. Restore all, re-run, green.
 
 - [ ] **Step 8: Commit**
 
@@ -282,14 +293,41 @@ class TestUserStoreExternalId:
         assert fetched is not None and fetched.id == created.id
         assert store.get_by_external_id("uuid-absent") is None
 
-    def test_mark_password_changed_sets_timestamp_without_hash(self, tmp_path):
+    def test_mark_password_changed_sets_timestamp_without_touching_hash(self, tmp_path):
+        # Created WITH a password so the "touches no hash" contract is
+        # actually observable — a password-less row would make the final
+        # assertion pass with the whole method deleted.
         store = UserStore(tmp_path / "u.db")
-        user = store.create_user("a@example.com", None, external_id="uuid-1")
+        user = store.create_user("a@example.com", "local-password-1", external_id="uuid-1")
         assert user.password_changed_at is None
         assert store.mark_password_changed(user.id) is True
         after = store.get_user(user.id)
         assert after.password_changed_at is not None
-        assert store.verify_credentials("a@example.com", "anything") is None
+        assert after.token_epoch == user.token_epoch + 1
+        assert store.verify_credentials("a@example.com", "local-password-1") is not None
+
+    def test_mark_password_changed_backdates_by_iat_leeway(self, tmp_path):
+        # The recorded instant is _utcnow() MINUS IAT_LEEWAY_SECONDS: the
+        # timestamp is compared (deps.py fallback, strict <) against iat
+        # values minted by SUPABASE's clock at second granularity. Without
+        # the backdate, Supabase trailing our clock by sub-second amounts
+        # across a second boundary would 401 the frontend's silent re-login
+        # right after a password change. Cost: tokens minted in the final
+        # leeway window before the change stay valid at our layer — the
+        # gateway's global sign-out is the second eviction layer for those.
+        from datetime import UTC, datetime, timedelta
+
+        from app.core.auth import IAT_LEEWAY_SECONDS
+
+        store = UserStore(tmp_path / "u.db")
+        user = store.create_user("a@example.com", "local-password-1")
+        before = datetime.now(UTC)
+        store.mark_password_changed(user.id)
+        recorded = datetime.fromisoformat(store.get_user(user.id).password_changed_at)
+        offset = before - recorded
+        assert timedelta(seconds=IAT_LEEWAY_SECONDS - 2) <= offset <= timedelta(
+            seconds=IAT_LEEWAY_SECONDS + 2
+        )
 ```
 
 (`User.password_changed_at` is already exposed on the model — confirm; if not, expose it read-only alongside `external_id`.)
@@ -314,14 +352,28 @@ In `users.py` `create_user`: add keyword-only `external_id: str | None = None`; 
         # Supabase-mode revocation lever: the password itself lives with
         # Supabase; locally only the timestamp (checked by deps.py's
         # epoch-less fallback) and the epoch (harmless here, exact for any
-        # residual local tokens) move.
+        # residual local tokens) move. The recorded instant is backdated by
+        # IAT_LEEWAY_SECONDS: it is compared (strict <) against iat values
+        # from SUPABASE's clock, and without the allowance a trailing
+        # Supabase clock would reject the fresh session minted right after
+        # the change (the frontend's silent re-login). Tokens from the
+        # final leeway window before the change stay valid at our layer;
+        # the gateway's global sign-out is the second eviction layer.
+        changed_at = (
+            datetime.now(UTC) - timedelta(seconds=IAT_LEEWAY_SECONDS)
+        ).isoformat(timespec="seconds")
         with self._connect() as conn:
             cursor = conn.execute(
                 "UPDATE users SET password_changed_at = ?,"
                 " token_epoch = token_epoch + 1 WHERE id = ?",
-                (_utcnow(), user_id),
+                (changed_at, user_id),
             )
         return cursor.rowcount > 0
+```
+
+(imports: `from datetime import UTC, datetime, timedelta` and `from app.core.auth import IAT_LEEWAY_SECONDS` — check for an existing import cycle: `core/auth.py` does not import `services/users.py`, so this is safe; keep the constant import at module level next to the existing `hash_password` import.)
+
+```python
 ```
 
 - [ ] **Step 4: Run store tests** → PASS.
@@ -385,6 +437,8 @@ def mint(private, *, kid="kid-1", url=URL, sub="uuid-1", email="a@example.com", 
         "exp": int(time.time()) + 3600,
         "iss": f"{url}/auth/v1",
         "aud": "authenticated",
+        "role": "authenticated",
+        "is_anonymous": False,
     }
     claims.update(over)
     claims = {k: v for k, v in claims.items() if v is not None}
@@ -416,6 +470,22 @@ class TestSupabaseTokenVerifier:
         assert row.tier == "basic" and row.is_admin is False and row.is_active is True
         assert row.email == "new@example.com"
 
+    def test_unlinked_admin_row_adopts_only_via_email_match(self, verifier_setup):
+        # Decision on record, not an accident: in a mixed/migrated deployment
+        # an UNLINKED admin row is handed to the first Supabase identity
+        # presenting a verified token for exactly that email. The operator
+        # controls who can register that address at Supabase (invitation-only,
+        # signup off), which is what makes this adoption acceptable.
+        private, store, verifier = verifier_setup
+        admin = store.create_user(
+            "admin@example.com", "admin-password-12", is_admin=True, tier="premium"
+        )
+        verified = verifier.verify(
+            mint(private, sub="uuid-a", email="admin@example.com")
+        )
+        assert verified.user_id == admin.id
+        assert store.get_user(admin.id).external_id == "uuid-a"
+
     def test_jit_links_existing_unlinked_local_user_by_email(self, verifier_setup):
         # A pre-existing local-mode account adopting its Supabase identity.
         private, store, verifier = verifier_setup
@@ -443,6 +513,8 @@ class TestSupabaseTokenVerifier:
             {"iss": "https://evil.invalid/auth/v1"},
             {"aud": "anon"},
             {"iat": int(time.time()) + 3600},  # beyond IAT_LEEWAY_SECONDS
+            {"is_anonymous": True},   # anonymous sign-ins: rejected on claims
+            {"role": "anon"},         # not the authenticated role
         ],
     )
     def test_bad_claims_rejected(self, verifier_setup, kwargs):
@@ -509,7 +581,10 @@ def resolve_supabase_user(
         if existing is not None:
             if existing.external_id is not None:
                 raise InvalidToken("email belongs to a different subject")
-            return store.update_user(existing.id, external_id=subject)
+            linked = store.update_user(existing.id, external_id=subject)
+            if linked is None:  # row vanished between the two statements
+                raise InvalidToken("adoption race lost")
+            return linked
     if not email:
         raise InvalidToken("token carries no email; cannot provision")
     try:
@@ -557,6 +632,14 @@ class SupabaseTokenVerifier:
             # PyJWKClientError (unknown kid, unreachable JWKS) subclasses
             # PyJWTError, so network failure fails closed right here.
             raise InvalidToken(str(exc)) from exc
+        # Fail closed on CLAIMS, not on dashboard configuration: the setup
+        # guide says to disable anonymous sign-ins and public signup, but a
+        # dashboard toggle must never be the only thing standing between a
+        # drive-by visitor and a JIT-provisioned local row.
+        if claims.get("is_anonymous") is True:
+            raise InvalidToken("anonymous tokens are not accepted")
+        if claims.get("role") != "authenticated":
+            raise InvalidToken("role is not authenticated")
         try:
             issued_at = datetime.fromtimestamp(float(claims["iat"]), UTC)
         except (TypeError, ValueError, OverflowError, OSError) as exc:
@@ -581,7 +664,7 @@ class SupabaseTokenVerifier:
 
 - [ ] **Step 9: Mutation-verify**
 
-(a) In `resolve_supabase_user`, drop the `existing.external_id is not None` guard → `test_email_collision_with_different_subject_fails_closed` fails. (b) In `verify`, change `algorithms=["ES256", "RS256"]` to `["ES256", "RS256", "HS256"]` → `test_hs256_token_rejected` fails. (c) Remove `issuer=self._issuer` → wrong-`iss` param case fails. Restore all, green.
+(a) In `resolve_supabase_user`, drop the `existing.external_id is not None` guard → `test_email_collision_with_different_subject_fails_closed` fails. (b) In `verify`, change `algorithms=["ES256", "RS256"]` to `["ES256", "RS256", "HS256"]` → `test_hs256_token_rejected` fails. (c) Remove `issuer=self._issuer` → wrong-`iss` param case fails. (d) Drop the `is_anonymous` guard → `test_bad_claims_rejected[kwargs6]` fails. (e) Drop the `role` guard → `test_bad_claims_rejected[kwargs7]` fails. (f) In `mark_password_changed`, drop the leeway subtraction → `test_mark_password_changed_backdates_by_iat_leeway` fails. Restore all, green.
 
 - [ ] **Step 10: Commit**
 
@@ -632,15 +715,17 @@ class SupabaseAuthGateway:
 
 **Design rules:**
 - Per-operation GoTrue client instances (`persist_session=False`, `auto_refresh_token=False`) and per-operation `httpx.AsyncClient` (async-context-managed) — never a client shared across event loops, because `seed_admin` (Task 5) drives this gateway from `asyncio.run()` in a different loop than uvicorn's.
-- User-flow client: base URL `f"{credentials.url}/auth/v1"`, headers `{"apikey": credentials.publishable_key}`. Admin API: same base URL, headers `{"apikey": credentials.secret_key, "Authorization": f"Bearer {credentials.secret_key}"}`.
-- Error mapping in ONE private helper: the library's `AuthApiError` (4xx semantics) → `SupabaseAuthError(str(exc))`; `AuthRetryableError`, `httpx.HTTPError`, timeouts → `SupabaseUnavailableError(str(exc))`. Callers log; messages never reach HTTP responses (Task 4 maps to generic 401/503).
+- User-flow client: base URL `f"{credentials.url}/auth/v1"`, headers `{"apikey": credentials.publishable_key, "Authorization": f"Bearer {credentials.publishable_key}"}` — BOTH headers, matching supabase-py's own reference client; MockTransport tests cannot catch a missing `Authorization` against the live gateway, so it is pinned by assertion instead. Admin API: same base URL, headers `{"apikey": credentials.secret_key, "Authorization": f"Bearer {credentials.secret_key}"}`.
+- Error mapping in ONE private helper, and the ORDER is load-bearing (later classes are siblings/bases of earlier ones): (1) `AuthRetryableError` → `SupabaseUnavailableError`; (2) `httpx.HTTPError` (ConnectError, timeouts — the library's `_request` catches only `(HTTPStatusError, RuntimeError)`, so transport errors propagate raw) → `SupabaseUnavailableError`; (3) `AuthError` (the BASE class — covers `AuthApiError`, `AuthWeakPasswordError`, `AuthInvalidCredentialsError`, `AuthSessionMissingError`, all siblings, not subclasses of `AuthApiError`) and `ValueError` (the library's `validate_uuid` raises it for malformed subjects) → `SupabaseAuthError(str(exc))`. Callers log; messages never reach HTTP responses (Task 4 maps to generic 401/422/503).
+- `sign_out` and `global_sign_out` go through the **admin** API — `AsyncGoTrueAdminAPI.sign_out(jwt, scope)` — NOT the user client's `sign_out()`, which resolves its session from client-local storage and is a silent no-op with `persist_session=False`.
 - `confirm_with_token_hash`: `verify_otp({"token_hash": token_hash, "type": type_})` → session; then admin `update_user_by_id(session.user_id, {"password": new_password})`; return the session (Task 4 revokes it via `global_sign_out`).
-- `get_user_id_by_email`: page through admin `list_users` (`per_page=100`) comparing case-insensitively; return `None` when exhausted. Bootstrap-only path — an O(pages) walk is fine.
+- `get_user_id_by_email`: page through admin `list_users` with EXPLICIT ints (`page=n, per_page=100` — passing `None` renders empty query values), comparing case-insensitively; return `None` when exhausted. Bootstrap-only path — an O(pages) walk is fine. The return shape is `List[User]`, not a page object.
+- Async tests are plain `async def test_…`; `pytest-asyncio`'s `asyncio_mode = "auto"` (`backend/pyproject.toml`) collects them, exactly as `tests/test_providers.py` does. No marker, no `anyio_backend` fixture, no config change.
 - Verify every library call name/signature against the installed package first (see the risk note in File Structure) and adjust mechanically if needed.
 
 - [ ] **Step 1: Write the failing tests**
 
-`backend/tests/test_supabase_gateway.py` — the real library exercised against canned GoTrue responses via `httpx.MockTransport`; no sockets. Verify with the installed package how to inject the transport (both `AsyncGoTrueClient` and `AsyncGoTrueAdminAPI` accept an `http_client: httpx.AsyncClient`; construct those with `httpx.AsyncClient(transport=mock_transport)`). The gateway constructor therefore accepts a test-only `transport: httpx.AsyncTransport | None = None` keyword it threads into every client it builds.
+`backend/tests/test_supabase_gateway.py` — the real library exercised against canned GoTrue responses via `httpx.MockTransport`; no sockets. Both `AsyncGoTrueClient` and `AsyncGoTrueAdminAPI` accept `http_client: Optional[AsyncClient]` (verified against v2.31.0); construct those with `httpx.AsyncClient(transport=mock_transport)`. The gateway constructor therefore accepts a test-only `transport: httpx.AsyncTransport | None = None` keyword it threads into every client it builds. User ids in fixtures MUST be real UUIDs — the library's `validate_uuid` (`supabase_auth/helpers.py`) raises `ValueError` for anything else before the request ever reaches the transport.
 
 ```python
 """SupabaseAuthGateway over canned GoTrue responses (httpx.MockTransport)."""
@@ -664,10 +749,13 @@ CREDS = SupabaseCredentials(
     secret_key="sb_secret_gw",
 )
 
+USER_UUID = "11111111-1111-4111-8111-111111111111"
+OTHER_UUID = "22222222-2222-4222-8222-222222222222"
+
 SESSION_JSON = {
     "access_token": "at-1", "refresh_token": "rt-1", "expires_in": 3600,
     "expires_at": 1_900_000_000, "token_type": "bearer",
-    "user": {"id": "uuid-1", "email": "a@example.com", "aud": "authenticated",
+    "user": {"id": USER_UUID, "email": "a@example.com", "aud": "authenticated",
              "app_metadata": {}, "user_metadata": {}, "created_at": "2026-01-01T00:00:00Z"},
 }
 
@@ -677,24 +765,26 @@ def gateway_with(handler):
 
 
 class TestSignIn:
-    @pytest.mark.anyio
     async def test_success_maps_session(self):
         seen = {}
 
         def handler(request):
             seen["url"] = str(request.url)
             seen["apikey"] = request.headers.get("apikey")
+            seen["auth"] = request.headers.get("Authorization")
             return httpx.Response(200, json=SESSION_JSON)
 
         session = await gateway_with(handler).sign_in("a@example.com", "pw")
         assert session == SupabaseSession(
             access_token="at-1", refresh_token="rt-1",
-            expires_at=1_900_000_000, user_id="uuid-1", email="a@example.com",
+            expires_at=1_900_000_000, user_id=USER_UUID, email="a@example.com",
         )
         assert "/auth/v1/token" in seen["url"] and "grant_type=password" in seen["url"]
         assert seen["apikey"] == "sb_publishable_gw"  # user flow: publishable key
+        # Both headers, like supabase-py's reference client — a missing
+        # Authorization passes MockTransport but fails the live gateway.
+        assert seen["auth"] == "Bearer sb_publishable_gw"
 
-    @pytest.mark.anyio
     async def test_invalid_credentials_raise_auth_error(self):
         def handler(request):
             return httpx.Response(400, json={
@@ -705,7 +795,6 @@ class TestSignIn:
         with pytest.raises(SupabaseAuthError):
             await gateway_with(handler).sign_in("a@example.com", "wrong")
 
-    @pytest.mark.anyio
     async def test_network_failure_raises_unavailable(self):
         def handler(request):
             raise httpx.ConnectError("boom")
@@ -715,7 +804,6 @@ class TestSignIn:
 
 
 class TestAdminCalls:
-    @pytest.mark.anyio
     async def test_create_user_uses_secret_key_and_returns_uuid(self):
         seen = {}
 
@@ -725,19 +813,17 @@ class TestAdminCalls:
             return httpx.Response(200, json=SESSION_JSON["user"])
 
         uuid = await gateway_with(handler).create_user("a@example.com", "pw-12chars-min")
-        assert uuid == "uuid-1"
+        assert uuid == USER_UUID
         assert seen["auth"] == "Bearer sb_secret_gw"
         assert seen["body"].get("email_confirm") is True
 
-    @pytest.mark.anyio
     async def test_invite_user_returns_uuid(self):
         def handler(request):
             assert request.url.path.endswith("/invite")
             return httpx.Response(200, json=SESSION_JSON["user"])
 
-        assert await gateway_with(handler).invite_user("a@example.com") == "uuid-1"
+        assert await gateway_with(handler).invite_user("a@example.com") == USER_UUID
 
-    @pytest.mark.anyio
     async def test_get_user_id_by_email_pages_until_found(self):
         calls = []
 
@@ -745,27 +831,35 @@ class TestAdminCalls:
             page = int(dict(request.url.params).get("page", "1"))
             calls.append(page)
             users = (
-                [{**SESSION_JSON["user"], "id": "uuid-x", "email": "x@example.com"}]
+                [{**SESSION_JSON["user"], "id": OTHER_UUID, "email": "x@example.com"}]
                 if page == 1
-                else [{**SESSION_JSON["user"], "id": "uuid-1", "email": "A@example.com"}]
+                else [{**SESSION_JSON["user"], "id": USER_UUID, "email": "A@example.com"}]
                 if page == 2
                 else []
             )
             return httpx.Response(200, json={"users": users, "aud": "authenticated"})
 
         found = await gateway_with(handler).get_user_id_by_email("a@example.com")
-        assert found == "uuid-1" and calls == [1, 2]
+        assert found == USER_UUID and calls == [1, 2]
 
-    @pytest.mark.anyio
     async def test_get_user_id_by_email_exhausts_to_none(self):
         def handler(request):
             return httpx.Response(200, json={"users": [], "aud": "authenticated"})
 
         assert await gateway_with(handler).get_user_id_by_email("a@example.com") is None
 
+    async def test_malformed_uuid_maps_to_auth_error_not_500(self):
+        # The library's validate_uuid raises a bare ValueError before any
+        # request is made; the mapper must translate it, or a malformed
+        # subject becomes a 500 in production.
+        def handler(request):  # pragma: no cover - never reached
+            raise AssertionError("no request should be made")
+
+        with pytest.raises(SupabaseAuthError):
+            await gateway_with(handler).change_password("not-a-uuid", "new-password-1")
+
 
 class TestConfirm:
-    @pytest.mark.anyio
     async def test_confirm_verifies_then_updates_password(self):
         order = []
 
@@ -774,7 +868,7 @@ class TestConfirm:
                 order.append("verify")
                 return httpx.Response(200, json=SESSION_JSON)
             order.append("update")
-            assert request.url.path.endswith("/admin/users/uuid-1")
+            assert request.url.path.endswith("/admin/users/" + USER_UUID)
             assert json.loads(request.content)["password"] == "new-password-1"
             return httpx.Response(200, json=SESSION_JSON["user"])
 
@@ -784,8 +878,6 @@ class TestConfirm:
         assert order == ["verify", "update"]
         assert session.access_token == "at-1"
 ```
-
-Add `anyio_backend` fixture (or reuse the repo's existing async-test convention — check how other async tests run; if none exists, add `pytest.ini`-free `@pytest.mark.anyio` with the `anyio` plugin that FastAPI already ships, pinning backend to asyncio via a module-level `anyio_backend` fixture returning `"asyncio"`).
 
 - [ ] **Step 2: Run to verify failure** → FAIL: module not found.
 
@@ -804,7 +896,7 @@ from dataclasses import dataclass
 
 import httpx
 from supabase_auth import AsyncGoTrueAdminAPI, AsyncGoTrueClient
-from supabase_auth.errors import AuthApiError, AuthError, AuthRetryableError
+from supabase_auth.errors import AuthError, AuthRetryableError
 
 from app.core.supabase_auth import SupabaseCredentials
 
@@ -817,7 +909,7 @@ with `_user_client()` / `_admin_client()` async-context helpers, the error-mappi
 
 - [ ] **Step 5: Mutation-verify**
 
-(a) Swap the admin header to the publishable key → `test_create_user_uses_secret_key_and_returns_uuid` fails. (b) Make the error mapper raise `SupabaseAuthError` for `httpx.ConnectError` → `test_network_failure_raises_unavailable` fails. Restore, green.
+(a) Swap the admin header to the publishable key → `test_create_user_uses_secret_key_and_returns_uuid` fails. (b) Make the error mapper raise `SupabaseAuthError` for `httpx.ConnectError` → `test_network_failure_raises_unavailable` fails. (c) Remove `ValueError` from the mapper → `test_malformed_uuid_maps_to_auth_error_not_500` fails. (d) Drop the user-flow `Authorization` header → `test_success_maps_session` fails. Restore all, green.
 
 - [ ] **Step 6: Commit**
 
@@ -834,6 +926,7 @@ git commit -m "feat(auth): SupabaseAuthGateway over supabase-auth — per-op cli
 - Modify: `backend/app/main.py:132-141` (mode dispatch), health route
 - Modify: `backend/app/api/auth.py` (routes + `LoginResponse`)
 - Modify: `backend/tests/test_auth_enforcement.py` (allowlist)
+- Modify: `backend/tests/test_health.py` (two existing tests change — spelled out below)
 - Modify: `backend/tests/fakes_supabase.py` (add `FakeSupabaseGateway`)
 - Test: `backend/tests/test_auth_supabase_api.py`
 
@@ -841,12 +934,19 @@ git commit -m "feat(auth): SupabaseAuthGateway over supabase-auth — per-op cli
 - Consumes: Tasks 1-3 surfaces verbatim.
 - Produces: routes per the table below; `LoginResponse` gains `refresh_token: str | None = None`, `expires_at: int | None = None`; `/api/health` gains `"auth_features": {"password_reset": bool, "invites": bool}` (both `true` iff supabase mode); `app.state.supabase_gateway` in supabase mode.
 
-**main.py wiring** (replaces the `auth.mode != "local"` guard at `main.py:132-135`):
+**main.py wiring** (replaces the `auth.mode != "local"` guard at `main.py:132-135`). Module-level imports — deliberately NOT lazy inside `create_app`, so Task 5's `monkeypatch.setattr("app.main.SupabaseAuthGateway", ...)` seam exists (consequence: `supabase_auth` is imported on every `app.main` import, including local-mode runs and the whole test suite):
 
 ```python
-    app.state.user_store = UserStore(settings.db_path)
+from app.core.supabase_auth import SupabaseTokenVerifier, resolve_supabase_credentials
+from app.services.supabase_gateway import SupabaseAuthGateway
+```
+
+Credential resolution runs BEFORE `UserStore(...)` — fail-closed ordering: a misconfigured supabase app must abort before any user table is written (the rewritten `test_health.py` test below pins this, mirroring what the old guard pinned):
+
+```python
     if settings.auth.mode == "supabase":
         credentials = resolve_supabase_credentials(settings)
+        app.state.user_store = UserStore(settings.db_path)
         app.state.supabase_gateway = SupabaseAuthGateway(credentials)
         app.state.token_verifier = SupabaseTokenVerifier(
             credentials.url, app.state.user_store
@@ -855,9 +955,20 @@ git commit -m "feat(auth): SupabaseAuthGateway over supabase-auth — per-op cli
         app.state.auth_secret = resolve_auth_secret(
             ephemeral_ok=settings.auth.ephemeral_secret
         )
+        app.state.user_store = UserStore(settings.db_path)
         app.state.token_verifier = LocalTokenVerifier(app.state.auth_secret)
     app.state.login_throttle = LoginThrottle()
+    # Separate instance for reset-request: sharing login_throttle would let
+    # 5 free POSTs block a legitimate login for the same (email, ip) AND
+    # would void the throttle's bcrypt-bounded-exemption invariant (its
+    # docstring) — reset requests pay no bcrypt. max_delay <= entry_ttl is
+    # enforced by LoginThrottle.__post_init__.
+    app.state.reset_throttle = LoginThrottle(
+        threshold=3, base_delay=60.0, max_delay=900.0, entry_ttl=900.0
+    )
 ```
+
+Also update `LoginThrottle`'s docstring (`api/auth.py`) with one sentence naming the second instance and why reset-request must never share the login table.
 
 Health route becomes:
 
@@ -873,15 +984,15 @@ Health route becomes:
         }
 ```
 
-**Route table (auth.py).** `_require_supabase_mode(request)` mirrors `_require_local_mode` (404 when mode is `"local"`). All new handlers are `async def` (the gateway is async); existing local handlers stay sync.
+**Route table (auth.py).** `_require_supabase_mode(request)` mirrors `_require_local_mode` (404 when mode is `"local"`). Supabase-only handlers are plain `async def`. The three handlers serving BOTH modes (`login`, `password`, and Task 5's admin create) become `async def` too — but their LOCAL branches must not run inline on the event loop (production bcrypt is ~173 ms/hash; `test_check_api.py` asserts `/api/health` answers < 0.3 s under load, and `LoginThrottle`'s thread-safety reasoning assumes the threadpool). Pattern: extract the current sync body verbatim into a private function and delegate — `from starlette.concurrency import run_in_threadpool` … `return await run_in_threadpool(_login_local, request, body)`; same for `_change_password_local`. Add a line to the `LoginThrottle` docstring noting the threadpool hop is preserved deliberately.
 
 | Route | Public | Body model | Behavior |
 |---|---|---|---|
 | `POST /auth/login` | yes | existing `LoginRequest` | supabase branch: throttle check exactly as local → `await gateway.sign_in` → `SupabaseAuthError` ⇒ `record_failure` + 401 `_INVALID_LOGIN`; `SupabaseUnavailableError` ⇒ 503 `"Authentication service unavailable"` → `resolve_supabase_user(...)` → inactive user ⇒ `record_failure` + 401 → `record_success`, respond `LoginResponse(token=s.access_token, refresh_token=s.refresh_token, expires_at=s.expires_at, user=MeResponse.from_user(...))` |
-| `POST /auth/refresh` | yes | `RefreshRequest(refresh_token: str, max_length=8192)` | supabase-only. `gateway.refresh` → auth error ⇒ generic 401; unavailable ⇒ 503 → resolve user (NO JIT here — refresh of a never-logged-in subject is a 401: pass `email=None`... no: reuse `resolve_supabase_user` with the session's email; a refreshed session implies a prior login, JIT is harmless and keeps one code path) → inactive ⇒ 401 → `LoginResponse`. No throttle: refresh tokens are 256-bit random, GoTrue rate-limits, and a throttle keyed by IP would let one NAT starve a building. |
-| `POST /auth/logout` | bearer | none | supabase-only. Raw token from the `Authorization` header (`request.headers`); `await gateway.sign_out(raw)` inside `try/except (SupabaseAuthError, SupabaseUnavailableError): pass` — revocation is best-effort, the frontend clears locally regardless. 204 always. |
+| `POST /auth/refresh` | yes | `RefreshRequest(refresh_token: str, max_length=8192)` | supabase-only. `gateway.refresh` → auth error ⇒ generic 401; unavailable ⇒ 503 → `resolve_supabase_user` with the session's email (a refreshed session implies a prior login; reusing the one resolution path keeps JIT semantics in one place) → inactive ⇒ 401 → `LoginResponse`. No throttle: refresh tokens are 256-bit random, GoTrue rate-limits, and a throttle keyed by IP would let one NAT starve a building. |
+| `POST /auth/logout` | bearer | none | supabase-only, and NOT in the enforcement allowlist — so its signature MUST be `async def logout(request: Request, current: CurrentUser = Depends(get_current_user)) -> Response`: the dependency runs before the handler body, so an anonymous caller gets 401 in BOTH modes (a mode-check-first handler would answer 404 in local mode and fail `test_auth_enforcement`). The raw token is read from `request.headers` in addition (the dependency does not expose it); `await gateway.sign_out(raw)` inside `try/except (SupabaseAuthError, SupabaseUnavailableError): pass` — revocation is best-effort, the frontend clears locally regardless. 204 for authenticated callers. |
 | `POST /auth/password` | bearer | existing `PasswordChange` | supabase branch: `gateway.sign_in(current.email, body.current)` → `SupabaseAuthError` ⇒ 422 `{"code": "wrong_current_password"}`; unavailable ⇒ 503 → `validate_password(body.new, min_length=SELF_MIN_PASSWORD_LENGTH)` with the same 422 code recovery as local → `user = store.get_user(current.id)`; `gateway.change_password(user.external_id, body.new)` → `store.mark_password_changed(current.id)` → `gateway.global_sign_out(raw_token)` best-effort (`except SupabaseUnavailableError: logger.warning(...)` — the local `password_changed_at` bump already revoked every outstanding access token at our layer) → 204 |
-| `POST /auth/reset-request` | yes | `ResetRequest(email: str, max_length=320)` | supabase-only. Throttle: if `blocked_for(key) > 0` ⇒ `record_blocked_attempt`, respond 204 WITHOUT calling the gateway (silent — enumeration-resistant and mail-bomb-resistant); else `record_failure(key)` unconditionally (each request costs one slot; success never resets — resets are rare) then `gateway.send_reset_email` with both error types swallowed to 204. Always 204. |
+| `POST /auth/reset-request` | yes | `ResetRequest(email: str, max_length=320)` | supabase-only. Uses `app.state.reset_throttle` — its OWN instance, never `login_throttle` (see wiring comment): if `blocked_for(key) > 0` ⇒ `record_blocked_attempt`, respond 204 WITHOUT calling the gateway (silent — enumeration-resistant and mail-bomb-resistant); else `record_failure(key)` (each request costs one slot; success never resets — resets are rare) then `gateway.send_reset_email` with both error types swallowed to 204. Always 204. `_throttle_key` is shared (same normalization), only the table differs. |
 | `POST /auth/reset-confirm` | yes | `ResetConfirm(token_hash: str (max_length=1024), type: Literal["recovery", "invite"], new_password: str)` | supabase-only. `validate_password(new_password, min_length=SELF_MIN_PASSWORD_LENGTH)` ⇒ 422 codes as local → `session = await gateway.confirm_with_token_hash(...)` → `SupabaseAuthError` ⇒ 422 `{"code": "invalid_or_expired_link"}`; unavailable ⇒ 503 → `resolve_supabase_user(store, subject=session.user_id, email=session.email)` (JIT: this IS the invite-acceptance materialization point) → `store.mark_password_changed(user.id)` → `gateway.global_sign_out(session.access_token)` best-effort → 204. The user then signs in normally with the new password. |
 
 `LoginResponse`:
@@ -902,6 +1013,13 @@ class LoginResponse(BaseModel):
 {("/api/health", "GET"), ("/api/auth/login", "POST"), ("/api/auth/refresh", "POST"),
  ("/api/auth/reset-request", "POST"), ("/api/auth/reset-confirm", "POST")}
 ```
+
+`/api/auth/logout` is deliberately NOT here — it requires a bearer (see route table). Do not add it; adding it would be a security regression and contradicts spec §6.
+
+**`test_health.py` — two existing tests change (do NOT weaken anything else to get green):**
+
+- `test_health_returns_ok` asserts the response dict with EXACT equality; extend the expected dict with `"auth_features": {"password_reset": False, "invites": False}` — exact equality stays, it is the guard that any new health key is deliberate.
+- `test_create_app_refuses_supabase_mode_before_writing_user_tables` pinned the old not-implemented guard. Replace it with the fail-closed equivalent this task must keep true: build `Settings` with `auth={"mode": "supabase", "supabase": {"url": "https://health-test.invalid"}}` and NO `FW_SUPABASE_*` env (monkeypatch.delenv both, `raising=False`); `create_app` must raise `AuthConfigError`, and afterwards the sqlite file must contain neither `users` nor `admin_audit` tables (same table-inspection code as the current test). This is why the wiring resolves credentials BEFORE constructing `UserStore`.
 
 **`FakeSupabaseGateway`** (append to `tests/fakes_supabase.py`): in-memory `dict[email → (password, uuid)]` plus counters; deterministic tokens `f"fake-access-{n}"`/`f"fake-refresh-{n}"`; `expires_at=2_000_000_000`; records `global_sign_out_calls`, `sign_out_calls`, `reset_emails: list[str]`, `invites: list[str]`; `confirm_with_token_hash` accepts any token_hash present in its `valid_token_hashes: dict[hash → (uuid, email)]` map and updates the stored password; raises `SupabaseAuthError` otherwise. Async methods (`async def`) mirroring the Task 3 interface exactly.
 
@@ -928,17 +1046,17 @@ def supabase_app(tmp_path, monkeypatch):
 
 with `FakeSupabaseVerifier.verify(token)` looking the token up in the fake's issued-session map and returning `VerifiedToken(user_id=resolve_supabase_user(...).id, issued_at=<the fake's per-token mint time>, epoch=None)`. **Note:** `create_app` in supabase mode reaches `seed_admin` (Task 5 makes it supabase-aware; until then it would try the local path). To keep Task 4 self-contained, this fixture also sets `FW_ADMIN_EMAIL`/`FW_ADMIN_PASSWORD` (conftest already does session-wide) and tolerates the seeded local-style admin row — tests here operate on additional users created directly via `app.state.user_store`. Task 5 revisits.
 
-**Tests to write** (each is a small focused test in classes by route): login success returns triple + user; login wrong password → 401 generic + throttle counted; login while throttled → 401 without gateway call (`fake.sign_in_calls` unchanged); login when unavailable → 503; inactive user login → 401; refresh success rotates tokens; refresh invalid → 401; logout → 204 + `sign_out_calls == [token]`; logout with gateway down → still 204; password change happy path → 204, `mark_password_changed` visible (`password_changed_at` set), `global_sign_out_calls` non-empty, wrong current → 422 `wrong_current_password`, short new → 422 `password_too_short`; reset-request → always 204 (unknown email too), throttled → 204 with `fake.reset_emails` unchanged; reset-confirm valid recovery hash → 204 + password updated in fake + `password_changed_at` set + global sign-out called; invalid hash → 422 `invalid_or_expired_link`; invite-type hash for unknown subject JIT-creates the row; **mode dispatch**: every supabase-only route → 404 in a local-mode app; `POST /auth/login`'s local behavior in a local-mode app unchanged (existing tests cover; add one probe that supabase fields are `None` in local `LoginResponse`); `/api/health` `auth_features` false/false in local mode, true/true in supabase mode; **eviction integration**: authenticate with fake token minted at T, `mark_password_changed` via the password route, then the SAME token → 401 from `/api/auth/me` (this exercises deps.py's fallback with `epoch=None` end-to-end).
+**Tests to write** (each is a small focused test in classes by route): login success returns triple + user; login wrong password → 401 generic + throttle counted; login while throttled → 401 without gateway call (`fake.sign_in_calls` unchanged); login when unavailable → 503; inactive user login → 401; refresh success rotates tokens; refresh invalid → 401; logout → 204 + `sign_out_calls == [token]`; logout with gateway down → still 204; anonymous logout → 401 in BOTH modes (supabase app and a local app); N reset-requests for `(email, ip)` do NOT block `POST /api/auth/login` for the same key (the two-throttle isolation guard); password change happy path → 204, `mark_password_changed` visible (`password_changed_at` set), `global_sign_out_calls` non-empty, wrong current → 422 `wrong_current_password`, short new → 422 `password_too_short`; reset-request → always 204 (unknown email too), throttled → 204 with `fake.reset_emails` unchanged; reset-confirm valid recovery hash → 204 + password updated in fake + `password_changed_at` set + global sign-out called; invalid hash → 422 `invalid_or_expired_link`; invite-type hash for unknown subject JIT-creates the row; **mode dispatch**: every supabase-only route → 404 in a local-mode app; `POST /auth/login`'s local behavior in a local-mode app unchanged (existing tests cover; add one probe that supabase fields are `None` in local `LoginResponse`); `/api/health` `auth_features` false/false in local mode, true/true in supabase mode; **eviction integration**: authenticate with fake token minted at T, `mark_password_changed` via the password route, then the SAME token → 401 from `/api/auth/me` (this exercises deps.py's fallback with `epoch=None` end-to-end).
 
 - [ ] **Step 1: Write the failing tests** (the list above; write them all first)
 - [ ] **Step 2: Run** `uv run pytest tests/test_auth_supabase_api.py -n0 -q` → FAIL (`create_app` raises `AuthConfigError: not implemented yet`).
 - [ ] **Step 3: Implement** main.py wiring, then the routes per the table, then the allowlist additions.
 - [ ] **Step 4: Run the new file, then the FULL suite** — zero warnings; the enforcement walk must pass with exactly the three new allowlist entries.
-- [ ] **Step 5: Mutation-verify** (a) drop the throttle check in the supabase login branch → throttled-login test fails; (b) drop `mark_password_changed` from the password route → the eviction integration test fails; (c) drop one allowlist entry → enforcement test fails (proving the walk sees the new routes). Restore, green.
+- [ ] **Step 5: Mutation-verify** (a) drop the throttle check in the supabase login branch → throttled-login test fails; (b) drop `mark_password_changed` from the password route → the eviction integration test fails; (c) drop one allowlist entry → enforcement test fails (proving the walk sees the new routes); (d) point reset-request at `login_throttle` instead of `reset_throttle` → the two-throttle isolation test fails; (e) remove `Depends(get_current_user)` from logout → the anonymous-logout-401 test fails. Restore all, green.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add backend/app/main.py backend/app/api/auth.py backend/tests/test_auth_enforcement.py backend/tests/fakes_supabase.py backend/tests/test_auth_supabase_api.py
+git add backend/app/main.py backend/app/api/auth.py backend/tests/test_auth_enforcement.py backend/tests/test_health.py backend/tests/fakes_supabase.py backend/tests/test_auth_supabase_api.py
 git commit -m "feat(auth): supabase-mode wiring + proxied login/refresh/logout/password/reset routes (B14, #55)"
 ```
 
@@ -968,8 +1086,8 @@ git commit -m "feat(auth): supabase-mode wiring + proxied login/refresh/logout/p
         # Supabase owns the credential; the local row owns authority.
         # asyncio.run is safe here: create_app runs before uvicorn's loop
         # exists, and the gateway builds per-operation clients (no pool
-        # crosses loops).
-        import asyncio
+        # crosses loops). `import asyncio` goes at module top level like
+        # every other import in backend/app/.
 
         async def _bootstrap() -> str:
             try:
@@ -997,11 +1115,43 @@ git commit -m "feat(auth): supabase-mode wiring + proxied login/refresh/logout/p
 
 main.py call site: `seed_admin(app.state.user_store, gateway=getattr(app.state, "supabase_gateway", None))`.
 
-**Admin create** (`admin.py`): the create body's `password` becomes `str | None = None`. When `None`: local mode ⇒ 422 `{"code": "password_required"}`; supabase mode ⇒ `uuid = await gateway.invite_user(body.email)` (auth error ⇒ 502 is wrong — map `SupabaseAuthError` to 422 `{"code": "invite_failed"}`, unavailable ⇒ 503), then `store.create_user(body.email, None, ..., external_id=uuid)`, audit action `"invite"`, response `invited=True`. When set: validate as today (min 12); in supabase mode `uuid = await gateway.create_user(body.email, body.password)` then local row with `external_id=uuid` and NO local hash (the credential lives with Supabase; a local hash would resurrect local login semantics); local mode unchanged. The route becomes `async def`.
+**Admin create** (`admin.py`): the create body's `password` becomes `str | None = None`. When `None`: local mode ⇒ 422 `{"code": "password_required"}`; supabase mode ⇒ `uuid = await gateway.invite_user(body.email)` (map `SupabaseAuthError` to 422 `{"code": "invite_failed"}`, unavailable ⇒ 503), then `store.create_user(body.email, None, ..., external_id=uuid)`, audit action `"invite"`. When set: validate as today (min 12); in supabase mode `uuid = await gateway.create_user(body.email, body.password)` then local row with `external_id=uuid` and NO local hash (the credential lives with Supabase; a local hash would resurrect local login semantics); local mode unchanged and delegated via `run_in_threadpool(_create_user_local, ...)` (same event-loop rule as Task 4: bcrypt must stay off the loop). The route becomes `async def` and keeps `status_code=201`.
 
-**Tests:** supabase-mode `create_app` with `FakeSupabaseGateway` pre-injected is impossible for seeding (seed runs inside `create_app` before the fixture swaps state). Restructure the fixture: `seed_admin` is invoked from `create_app` — give `create_app` no seam; instead the fixture creates the supabase app with a `monkeypatch.setattr("app.main.SupabaseAuthGateway", lambda creds: FakeSupabaseGateway())` so the fake is in place from the start (and the fixture then reads it back from `app.state.supabase_gateway`). Update the Task 4 fixture to this pattern in this task. Tests: fresh supabase app seeds admin through the fake (fake records `create_user` call; local row has `external_id`, `is_admin=True`, no usable password — `verify_credentials` returns `None`); re-run against existing project (fake raises already-registered on `create_user`, returns UUID from `get_user_id_by_email`) links; bootstrap failure (fake raises unavailable) aborts `create_app` with `AuthConfigError`; admin invite: POST `/api/admin/users` without password → 204/200 with `invited=True`, fake records invite, row `external_id` set; local mode without password → 422 `password_required`; audit row action recorded; with password in supabase mode → fake `create_user` called, no local hash.
+**Response model — `invited` must NOT go on the shared `User`** (it would leak a permanently-false key into `GET /admin/users` and every other `User` consumer; invitation is an event, not user state). In `api/admin.py`:
 
-- [ ] **Step 1: failing tests** → **Step 2: run (FAIL)** → **Step 3: implement** → **Step 4: full suite green, zero warnings** → **Step 5: mutation-verify** (drop the local-row `external_id=` kwarg in seeding → link test fails; make invite path store a local hash... skip — instead drop the `invited=True` response field → invite test fails; restore) → **Step 6: commit**
+```python
+class AdminUserCreated(User):
+    invited: bool = False
+```
+
+Only the create route's return annotation changes to `AdminUserCreated` (build it via `AdminUserCreated(**created.model_dump(), invited=True)`); `GET /admin/users` and `PATCH /admin/users/{id}` keep returning `User` unchanged. Frontend mirror in `client.ts`: `postAdminUser` returns `AdminUser & { invited?: boolean }` — the `AdminUser` interface itself is untouched.
+
+**Fixture restructure (replaces Task 4's `supabase_app` fixture — update it in THIS task):** `seed_admin` runs inside `create_app`, before any test code can swap `app.state`, so the fake must be in place at construction time. The seam is the module-level import Task 4 created:
+
+```python
+@pytest.fixture()
+def supabase_app(tmp_path, monkeypatch):
+    monkeypatch.setenv("FW_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_t")
+    monkeypatch.setenv("FW_SUPABASE_SECRET_KEY", "sb_secret_t")
+    fake = FakeSupabaseGateway()
+    # In place BEFORE create_app: seed_admin bootstraps through it.
+    monkeypatch.setattr("app.main.SupabaseAuthGateway", lambda creds: fake)
+    settings = Settings(
+        db_path=tmp_path / "t.db",
+        auth={"mode": "supabase", "supabase": {"url": "https://api-test.invalid"}},
+    )
+    app = create_app(settings)
+    assert app.state.supabase_gateway is fake
+    app.state.token_verifier = FakeSupabaseVerifier(fake, app.state.user_store)
+    return app, fake
+```
+
+- [ ] **Step 1: Write the failing tests** — seeding: fresh supabase app seeds the admin through the fake (fake records the `create_user` call; local row has `external_id` = the fake's UUID, `is_admin=True`, `tier="premium"`, and NO usable password — `verify_credentials(email, FW_ADMIN_PASSWORD) is None`); re-run against an existing project (fake configured to raise already-registered from `create_user` and answer `get_user_id_by_email`) links the existing UUID; bootstrap failure (fake raises `SupabaseUnavailableError`) aborts `create_app` with `AuthConfigError`. Admin create: POST `/api/admin/users` without password in supabase mode → **201** with `invited: true` in the body, fake records the invite, row `external_id` set, audit row action `"invite"`; local mode without password → 422 `password_required`; with password in supabase mode → 201, fake `create_user` called, local row has no hash (`verify_credentials` with that password is `None`); `GET /api/admin/users` response items carry NO `invited` key.
+- [ ] **Step 2: Run** `uv run pytest tests/test_auth_supabase_api.py -n0 -q` → FAIL (seed_admin has no gateway parameter yet).
+- [ ] **Step 3: Implement** seed_admin branch, main.py call site, admin create changes, `AdminUserCreated`, frontend type mirror.
+- [ ] **Step 4: Full suite** `uv run pytest -q` green, zero warnings; `git status --short -- frontend/` shows only `client.ts` (committed here).
+- [ ] **Step 5: Mutation-verify** (a) drop the `external_id=external_id` kwarg from the seeding row → the link test fails; (b) drop `invited=True` from the create response → the invite test fails; (c) drop the `"invite"` audit call → the audit test fails. Restore all, green.
+- [ ] **Step 6: Commit**
 
 ```bash
 git add backend/app/services/seed_admin.py backend/app/main.py backend/app/api/admin.py backend/tests/ frontend/src/api/client.ts
@@ -1014,14 +1164,17 @@ git commit -m "feat(auth): supabase admin bootstrap + invitation-only user entry
 
 **Files:**
 - Modify: `frontend/src/api/client.ts`, `frontend/src/state/prefsStorage.ts`, `frontend/src/state/store.ts`, `frontend/src/auth/session.ts`
+- Modify: `frontend/src/auth/session.integration.test.ts` (mock factory — see below)
 - Test: `frontend/src/auth/session.test.ts` (extend), `frontend/src/state/store.test.ts` if present
+
+**Mock-factory rule (prevents real fetches):** every frontend test file mocks `../api/client` by spreading `importOriginal` — any function NOT named in the factory is the REAL one and fetches `http://localhost:8000`. This task calls `postLogout()` from `logout()`, so add `postLogout: vi.fn()` to the factories in `session.test.ts` AND `session.integration.test.ts` (the latter currently mocks only `postLogin`/`updateDocument`). Also update the `requestWithOptions` comment at `client.ts:52-62` — "whose only caller is postLogin" becomes a list naming `postLogin`, `postRefresh` (and Task 7's `postResetRequest`/`postResetConfirm`); it documents a security-relevant flag and must not go stale.
 
 **Interfaces:**
 - Consumes: `LoginResponse` with `refresh_token`/`expires_at` (Task 4).
 - Produces:
   - `client.ts`: `postRefresh(refreshToken: string): Promise<LoginResponse>` (`keepSessionOn401: true` — a dead refresh token must surface to the caller, which decides to expire); `postLogout(): Promise<void>`; `LoginResponse` type extended (`refresh_token: string | null`, `expires_at: number | null`).
   - `prefsStorage.ts`: `REFRESH_TOKEN_KEY = 'fabulous-writing-refresh-token'`, `TOKEN_EXPIRES_KEY = 'fabulous-writing-token-expires'`; `readRefreshToken/writeRefreshToken/clearRefreshToken`, `readTokenExpiresAt/writeTokenExpiresAt/clearTokenExpiresAt` (same try/catch localStorage pattern as the token trio; expiry stored as decimal string, read via `Number(...)` with `NaN → null`).
-  - `store.ts`: `refreshToken: string | null`, `tokenExpiresAt: number | null` initialized from storage; both added to the auth-field exclusion union so `resetSessionState()` leaves them to explicit management; `setSessionTokens(token: string, refreshToken: string | null, expiresAt: number | null): void` action that writes store fields only (persistence stays in session.ts).
+  - `store.ts`: `refreshToken: string | null`, `tokenExpiresAt: number | null` initialized from storage; both added to the `Omit<>` auth-field exclusion union (`store.ts:246-249`) so `resetSessionState()` leaves them to explicit management, and the "six auth fields" comment at `store.ts:232-242` updated to name the full set (Task 7 adds `authFeatures` as the ninth); `setSessionTokens(token: string, refreshToken: string | null, expiresAt: number | null): void` action that writes store fields only (persistence stays in session.ts).
   - `session.ts`: `scheduleRefresh()` (module-private), exported `__testing` hooks if the existing file has that convention (it does not — drive tests through fake timers + fetch mocks instead).
 
 **session.ts changes:**
@@ -1104,7 +1257,8 @@ git commit -m "feat(frontend): mode-agnostic session refresh — token triple, s
 
 **Files:**
 - Create: `frontend/src/auth/ForgotPasswordForm.tsx`, `frontend/src/auth/ResetPasswordForm.tsx`
-- Modify: `frontend/src/auth/LoginGate.tsx`, `LoginForm.tsx`, `frontend/src/api/client.ts`, `frontend/src/state/store.ts` (authFeatures), admin create form (password-optional affordance — locate via `grep -rn "postAdminUser" frontend/src/admin/`)
+- Modify: `frontend/src/auth/LoginGate.tsx`, `LoginForm.tsx`, `frontend/src/api/client.ts`, `frontend/src/state/store.ts` (authFeatures), `frontend/src/admin/AdminView.tsx` (password-optional affordance)
+- Modify (mock factories — add `getHealth: vi.fn(async () => ({ status: 'ok', name: '', version: 'dev' }))` to each, or the gate's new mount effect issues REAL fetches): `frontend/src/auth/LoginGate.test.tsx`, `frontend/src/App.domains-guard.test.tsx`, `frontend/src/terminology/TerminologyView.ownership.test.tsx`, `frontend/src/auth/AccountMenu.test.tsx`
 - Modify: `frontend/src/i18n/messages.ts` + all of `en.ts de.ts fr.ts es.ts it.ts ja.ts zh.ts`
 - Test: `frontend/src/auth/ResetPasswordForm.test.tsx` (new), `LoginGate.test.tsx` (extend)
 
@@ -1130,14 +1284,14 @@ export const postResetConfirm = (tokenHash: string, type: 'recovery' | 'invite',
   })
 ```
 
-  Store: `authFeatures: AuthFeatures | null` (NOT persisted, NOT in the reset exclusion — it re-fetches), `setAuthFeatures(f: AuthFeatures): void`.
+  Store: `authFeatures: AuthFeatures | null`, `setAuthFeatures(f: AuthFeatures): void`. `authFeatures` MUST be added to the `Omit<>` reset-exclusion union (alongside Task 6's `refreshToken`/`tokenExpiresAt`): `LoginGate` is mounted for the whole app lifetime and its health effect has empty deps (runs once per page load), so a `resetSessionState()` on logout would wipe the flags and nothing would re-fetch them — "Forgot password?" would silently vanish after the first logout. Not persisted to storage.
 
 **Behavior:**
-- `LoginGate` mount effect (in the `'anonymous'` state only): `getHealth().then((h) => h.auth_features && setAuthFeatures(h.auth_features)).catch(() => {})` — anonymous visits may call `/api/health` (public); the "zero `/api/*` calls on first anonymous visit" doc promise changes and Task 8 updates it.
+- `LoginGate` mount effect, UNCONDITIONAL with empty deps (the gate is always mounted; gating on `authStatus` would re-fire on every transition): `getHealth().then((h) => h.auth_features && setAuthFeatures(h.auth_features)).catch(() => {})` — `/api/health` is public; the "zero `/api/*` calls on first anonymous visit" doc promise changes and Task 8 updates it.
 - `LoginGate` reads `token_hash` + `type` from `new URLSearchParams(window.location.search)` once on mount (store in component state, then `history.replaceState(null, '', window.location.pathname)` so a reload doesn't resubmit a burned hash). While anonymous and a hash is present → render `ResetPasswordForm` instead of `LoginForm`.
 - `ResetPasswordForm({ tokenHash, type, onDone })`: heading `type === 'invite' ? m.inviteHeading : m.resetHeading`; one new-password field + confirm field (`MIN_PASSWORD_LENGTH` pre-validation, mismatch → `m.resetMismatch`); submit → `postResetConfirm` → success state shows `m.resetSuccess` + a button (`m.resetBackToSignIn`) calling `onDone()` (gate returns to `LoginForm`); 422 `invalid_or_expired_link` → `m.resetLinkInvalid`; other errors → `m.signInFailed`.
 - `LoginForm`: when `authFeatures?.password_reset`, render below the submit button a link-style button (`m.forgotPassword`) → parent gate switches to `ForgotPasswordForm` (email field prefilled from the login form's email state — pass via callback `onForgot(email)`); `ForgotPasswordForm` submits `postResetRequest(email)` and unconditionally shows `m.resetRequestSent` (enumeration-neutral), with a back link.
-- Admin create form: when `authFeatures?.invites`, the password field's label gains `m.adminPasswordOptionalHint` and empty password submits `{ password: undefined }` → invited flow; keep required client-side when invites are unavailable.
+- Admin create form (`AdminView.tsx:135-141`) — TWO guard sites change, both conditional on `authFeatures?.invites`: (1) the `!password` early-return in the submit guard must not fire when invites are available; (2) the `password.length < ADMIN_MIN_PASSWORD_LENGTH` check is skipped when the field is empty and invites are available (a NON-empty short password still fails it). The password label gains `m.adminPasswordOptionalHint`; empty password submits `{ password: undefined }` → invited flow. Without invites, behavior is byte-identical to today.
 
 **i18n keys** (add to `messages.ts` type and every locale; informal register; translations below are the plan's copy — locales must match `register.test.ts` conventions):
 
@@ -1159,11 +1313,16 @@ export const postResetConfirm = (tokenHash: string, type: 'recovery' | 'invite',
 | `backToSignIn` | `Back to sign-in` | `Zurück zur Anmeldung` |
 | `adminPasswordOptionalHint` | `Leave empty to send an invitation email` | `Leer lassen, um eine Einladungs-E-Mail zu senden` |
 
-fr/es/it/ja/zh: translate in the same register as each file's existing `signIn*` strings (fr `tu`, es `tú`, it `tu`, ja plain polite forms consistent with existing keys, zh 你). The i18n completeness test (`i18n.test.ts`) enforces every locale carries every key.
+fr/es/it/ja/zh: translate in the same register as each file's existing `signIn*` strings (fr `tu`, es `tú`, it `tu`, ja plain polite forms consistent with existing keys, zh 你). The i18n completeness test (`i18n.test.ts`) enforces every locale carries exactly the English key set, so all 15 keys × 7 locales plus the `Messages` interface land in ONE commit. Caution: `register.test.ts` scans RAW file source including comments — a French comment containing "vous"/"votre" or a German one containing "Sie"/"Ihre" fails it even with clean UI strings; keep new code comments in English.
 
 **Tests:** gate renders `ResetPasswordForm` when URL carries `token_hash&type=recovery` and strips the URL after mount; successful confirm shows success then returns to login form via the button; invalid-link 422 shows `resetLinkInvalid`; forgot-password link renders only when `authFeatures.password_reset` is true (both directions — mutation-verify by dropping the conditional); `ForgotPasswordForm` shows the neutral sent-message for both 204 and thrown errors.
 
-- [ ] Steps: failing tests → run (FAIL) → implement → `npm test -- --run` green → mutation-verify (drop the `password_reset` conditional → gating test fails; drop `history.replaceState` → URL-strip test fails; restore) → commit
+- [ ] **Step 1: Write the failing tests** (the Tests list above, incl. the logout-keeps-affordance test: log in, log out, assert "Forgot password?" still renders)
+- [ ] **Step 2: Run** `npm test -- --run src/auth` → FAIL (new components/keys missing)
+- [ ] **Step 3: Implement** — client additions, store field + exclusion, gate routing, the two forms, admin form guards, all 7 locale files + `messages.ts` in one pass
+- [ ] **Step 4: Full frontend suite** `npm test -- --run` green (register + i18n completeness tests included)
+- [ ] **Step 5: Mutation-verify** (a) drop the `password_reset` conditional → gating test fails; (b) drop `history.replaceState` → URL-strip test fails; (c) remove `'authFeatures'` from the reset-exclusion union → logout-keeps-affordance test fails. Restore all, green.
+- [ ] **Step 6: Commit**
 
 ```bash
 git add frontend/src/auth/ frontend/src/api/client.ts frontend/src/state/store.ts frontend/src/i18n/ frontend/src/admin/
@@ -1180,7 +1339,7 @@ git commit -m "feat(frontend): password-reset + invitation acceptance UI, featur
 
 **Content requirements:**
 
-`docs/supabase-auth-setup.md` — the dashboard walkthrough, written for an operator with a fresh supabase.com account, in this order: (1) create project, note `https://<ref>.supabase.co`; (2) **Settings → JWT Keys**: migrate off the legacy JWT secret and rotate to an asymmetric key — ES256 recommended; state plainly that supabase mode DOES NOT WORK on the legacy shared-secret system (the backend accepts only ES256/RS256 via JWKS); (3) **Settings → API Keys**: create publishable + secret keys → `FW_SUPABASE_PUBLISHABLE_KEY` / `FW_SUPABASE_SECRET_KEY`; (4) **Auth → Providers**: Email only; anonymous sign-ins off; every OAuth provider off; (5) **Auth → Settings**: "Allow new users to sign up" OFF (invitation-only; admin-API invites are exempt from the toggle — if a Supabase change ever makes invites respect it, revisit this page, not the app), email confirmations on; (6) **Auth → URL Configuration**: Site URL = deployment origin (`http://localhost:9090` works for local runs — links open on the operator's machine); additional redirect URLs same origin; (7) **Auth → Email (SMTP)**: custom SMTP for production, built-in sender is dev-rate-limited; (8) access-token TTL: default 1h is fine — revocation is enforced by the backend's own verification layer, not TTL; (9) container wiring example:
+`docs/supabase-auth-setup.md` — the dashboard walkthrough, written for an operator with a fresh supabase.com account, in this order: (1) create project, note `https://<ref>.supabase.co`; (2) **Settings → JWT Keys**: migrate off the legacy JWT secret and rotate to an asymmetric key — ES256 recommended; state plainly that supabase mode DOES NOT WORK on the legacy shared-secret system (the backend accepts only ES256/RS256 via JWKS); (3) **Settings → API Keys**: create publishable + secret keys → `FW_SUPABASE_PUBLISHABLE_KEY` / `FW_SUPABASE_SECRET_KEY`; (4) **Auth → Providers**: Email only; anonymous sign-ins off; every OAuth provider off — and note that the backend independently REJECTS anonymous tokens on their claims (`is_anonymous`, `role`), so the dashboard toggle is defence in depth, not the control; (5) **Auth → Settings**: "Allow new users to sign up" OFF (invitation-only; admin-API invites are exempt from the toggle — if a Supabase change ever makes invites respect it, revisit this page, not the app), email confirmations on; (6) **Auth → URL Configuration**: Site URL = deployment origin (`http://localhost:9090` works for local runs — links open on the operator's machine); additional redirect URLs same origin; (7) **Auth → Email (SMTP)**: custom SMTP for production, built-in sender is dev-rate-limited; (8) access-token TTL: default 1h is fine — revocation is enforced by the backend's own verification layer, not TTL; (9) container wiring example:
 
 ```yaml
 # config.yaml
@@ -1200,7 +1359,7 @@ FW_ADMIN_PASSWORD=<bootstrap password, min 12 chars>
 
 plus the note that `FW_AUTH_SECRET` is NOT needed in supabase mode, and the bootstrap semantics (first start with an empty user table creates the admin in Supabase; the env vars go inert afterwards).
 
-`README.md`: one paragraph + link under the deployment section ("Hosted authentication (Supabase)"). `backend/config.example.yaml`: commented `auth.supabase` stanza. `docs/backend-architecture.md`: extend the auth section — mode dispatch, verifier contract (local id, epoch=None fallback, lazy JWKS), gateway per-op clients, invitation-only entry, eviction layers table (local: epoch; supabase: password_changed_at + global sign-out). `docs/frontend-architecture.md`: token triple, refresh engine, reset/invite gate flow; UPDATE the "first anonymous visit makes zero `/api/*` calls" promise to "exactly one (`GET /api/health`)".
+`README.md`: one paragraph + link under the deployment section ("Hosted authentication (Supabase)"). `backend/config.example.yaml`: commented `auth.supabase` stanza. `docs/backend-architecture.md`: extend the auth section — mode dispatch, verifier contract (local id, epoch=None fallback, lazy JWKS), gateway per-op clients, invitation-only entry, eviction layers table (local: epoch; supabase: backdated password_changed_at + global sign-out) — AND correct the two now-false statements at `backend-architecture.md:1214` and `:1220` claiming `create_app` raises `AuthConfigError` for `auth.mode: supabase` (it now raises only when the supabase config/secrets are missing). `docs/frontend-architecture.md`: token triple, refresh engine, reset/invite gate flow; UPDATE the "first anonymous visit makes zero `/api/*` calls" promise to "exactly one (`GET /api/health`)".
 
 - [ ] Write all five documents → **gates** (`uv run pytest -q` zero warnings — docs shouldn't move tests, prove it; `git status --short -- frontend/` clean) → commit
 

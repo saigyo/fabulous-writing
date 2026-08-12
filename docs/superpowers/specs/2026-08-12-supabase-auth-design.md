@@ -42,10 +42,12 @@ Files: `backend/app/core/config.py`, `backend/app/core/auth.py`,
 - The secret key never reaches the browser, config files, DB, or logs.
   Unchanged rules: bcrypt work factor is not a knob;
   `auth.allow_additional_admins` and `limits.admin` stay config-only.
-- Dependencies (`backend/pyproject.toml`): `supabase-auth>=2.31` (brings
-  nothing new transitively beyond our stack) and the `pyjwt[crypto]` extra
-  (ES256 support). `THIRD-PARTY-NOTICES.md` regenerated (the licenses CI
-  job fails on drift).
+- Dependencies (`backend/pyproject.toml`): `supabase-auth>=2.31` and the
+  `pyjwt[crypto]` extra (ES256 support). Transitively new: `h2`/`hpack`/
+  `hyperframe` (supabase-auth requires `httpx[http2]`) and `cryptography`/
+  `cffi`/`pycparser` (via `pyjwt[crypto]`, effective floor 2.12).
+  `THIRD-PARTY-NOTICES.md` regenerated via the linux container recipe (the
+  licenses CI job fails on drift).
 
 ## 2. Token verification seam
 
