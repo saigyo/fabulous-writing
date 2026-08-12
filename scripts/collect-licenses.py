@@ -88,6 +88,12 @@ is out of date. Do not edit by hand.
 SUPPLEMENTAL_TEXTS = {
     "ja-ginza": "scripts/curated-license-texts/ja-ginza.txt",
     "sudachipy": "scripts/curated-license-texts/sudachipy.txt",
+    # MIT, per its License-Expression/classifier; the wheel's dist-info
+    # carries no LICENSE file. Text fetched from
+    # github.com/supabase/supabase-py at tag v2.31.0 (matches the pinned
+    # supabase-auth version — the PyPI package is published from that
+    # monorepo's src/auth subdirectory).
+    "supabase-auth": "scripts/curated-license-texts/supabase-auth.txt",
 }
 
 

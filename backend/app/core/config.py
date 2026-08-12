@@ -209,6 +209,14 @@ class FrontendSettings(BaseModel):
     dist_dir: Path | None = None
 
 
+class SupabaseSettings(BaseModel):
+    # The hosted project's URL (https://<ref>.supabase.co) — public
+    # knowledge, not a secret; the two FW_SUPABASE_* keys are env-only.
+    model_config = ConfigDict(extra="forbid")
+
+    url: str
+
+
 class AuthSettings(BaseModel):
     # Startup-only knobs. None of these is reachable through the API: a
     # stolen admin session must not be able to lift its own constraints.
@@ -217,6 +225,8 @@ class AuthSettings(BaseModel):
     ephemeral_secret: bool = False
     # When false, no API path may create or promote an admin (§7.1).
     allow_additional_admins: bool = False
+    # Present iff mode == "supabase"; resolve_supabase_credentials enforces.
+    supabase: SupabaseSettings | None = None
 
 
 # Restricted to the ledger's source values; a typo'd key must fail loudly,
