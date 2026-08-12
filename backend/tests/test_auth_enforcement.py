@@ -20,7 +20,10 @@ try:
 except ImportError:  # pragma: no cover - only if a future FastAPI drops this
     _IncludedRouter = None
 
-PUBLIC = {("/api/health", "GET"), ("/api/auth/login", "POST")}
+PUBLIC = {
+    ("/api/health", "GET"), ("/api/auth/login", "POST"), ("/api/auth/refresh", "POST"),
+    ("/api/auth/reset-request", "POST"), ("/api/auth/reset-confirm", "POST"),
+}
 
 # Path params vary by router ({check_id}, {document_id}, {domain_id},
 # {term_id}, {profile_id}, {folder_id}, {user_id}, ...); substituting "1"

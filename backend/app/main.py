@@ -27,8 +27,9 @@ from app.checkers.llm.ollama import OllamaProvider
 from app.checkers.llm.openai_compat import OpenAICompatProvider
 from app.checkers.llm.provider import LLMProvider
 from app.checkers.rules.engine import RuleEngine
-from app.core.auth import AuthConfigError, LocalTokenVerifier, resolve_auth_secret
+from app.core.auth import LocalTokenVerifier, resolve_auth_secret
 from app.core.config import BUILTIN_ENV_KEYS, Settings, load_settings
+from app.core.supabase_auth import SupabaseTokenVerifier, resolve_supabase_credentials
 from app.nlp.registry import NlpRegistry
 from app.services.documents import DocumentStore
 from app.services.folders import FolderStore
@@ -37,6 +38,7 @@ from app.services.profiles import ProfileStore
 from app.services.seed import seed_terminology
 from app.services.seed_admin import seed_admin
 from app.services.seed_profiles import seed_profiles
+from app.services.supabase_gateway import SupabaseAuthGateway
 from app.services.terminology import TerminologyStore
 from app.services.usage import UsageStore
 from app.services.users import UserStore
@@ -129,16 +131,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.folder_store = FolderStore(settings.db_path)
     app.state.profile_store = ProfileStore(settings.db_path)
     app.state.usage_store = UsageStore(settings.db_path, credit_cost=settings.credit_cost)
-    if settings.auth.mode != "local":
-        raise AuthConfigError(
-            "auth.mode 'supabase' is not implemented yet (sub-project 2)"
+    if settings.auth.mode == "supabase":
+        credentials = resolve_supabase_credentials(settings)
+        app.state.user_store = UserStore(settings.db_path)
+        app.state.supabase_gateway = SupabaseAuthGateway(credentials)
+        app.state.token_verifier = SupabaseTokenVerifier(
+            credentials.url, app.state.user_store
         )
-    app.state.user_store = UserStore(settings.db_path)
-    app.state.auth_secret = resolve_auth_secret(
-        ephemeral_ok=settings.auth.ephemeral_secret
-    )
-    app.state.token_verifier = LocalTokenVerifier(app.state.auth_secret)
+    else:
+        app.state.auth_secret = resolve_auth_secret(
+            ephemeral_ok=settings.auth.ephemeral_secret
+        )
+        app.state.user_store = UserStore(settings.db_path)
+        app.state.token_verifier = LocalTokenVerifier(app.state.auth_secret)
     app.state.login_throttle = LoginThrottle()
+    # Separate instance for reset-request: sharing login_throttle would let
+    # 5 free POSTs block a legitimate login for the same (email, ip) AND
+    # would void the throttle's bcrypt-bounded-exemption invariant (its
+    # docstring) — reset requests pay no bcrypt. max_delay <= entry_ttl is
+    # enforced by LoginThrottle.__post_init__.
+    app.state.reset_throttle = LoginThrottle(
+        threshold=3, base_delay=60.0, max_delay=900.0, entry_ttl=900.0
+    )
     seed_admin(app.state.user_store)
     # Startup sweep (spec §6.6): single-process deployment — no 'started'
     # row can belong to a live run of a process that no longer exists.
@@ -172,11 +186,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(admin_router)
 
     @app.get("/api/health")
-    def health() -> dict[str, str]:
+    def health() -> dict[str, object]:
+        supabase = settings.auth.mode == "supabase"
         return {
             "status": "ok",
             "name": APP_NAME,
             "version": os.environ.get("FW_APP_VERSION", "dev"),
+            "auth_features": {"password_reset": supabase, "invites": supabase},
         }
 
     # Single-origin serving for the container image (spec: single-container

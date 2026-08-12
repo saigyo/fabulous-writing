@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from fastapi.testclient import TestClient
 
 from app.core.auth import AuthConfigError
-from app.core.config import AuthSettings, Settings
+from app.core.config import Settings
 from app.main import create_app
 from tests.conftest import auth_headers
 
@@ -24,24 +24,35 @@ def test_health_returns_ok(tmp_path: Path, monkeypatch) -> None:
     client = TestClient(create_app(settings))
     response = client.get("/api/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "name": "Fabulous Writing", "version": "dev"}
+    assert response.json() == {
+        "status": "ok", "name": "Fabulous Writing", "version": "dev",
+        "auth_features": {"password_reset": False, "invites": False},
+    }
 
 
-def test_create_app_refuses_supabase_mode_before_writing_user_tables(tmp_path: Path) -> None:
-    """auth.mode != 'local' must fail closed before UserStore ever touches
-    the database, not just before an admin gets seeded into it. Merely
-    asserting the exception would also pass with UserStore constructed
-    ahead of the guard: the `users`/`admin_audit` tables would already
-    exist by the time the check ran, they would just stay empty. Other
-    stores (terminology, documents, folders, profiles) legitimately create
-    the db file itself regardless of auth mode, so the file existing is
-    not the signal — the absence of the auth-owned tables is.
+def test_create_app_refuses_supabase_mode_before_writing_user_tables(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A misconfigured supabase-mode app (no FW_SUPABASE_* credentials) must
+    fail closed before UserStore ever touches the database, not just before
+    an admin gets seeded into it. Merely asserting the exception would also
+    pass with UserStore constructed ahead of the credential check: the
+    `users`/`admin_audit` tables would already exist by the time it ran,
+    they would just stay empty. Other stores (terminology, documents,
+    folders, profiles) legitimately create the db file itself regardless of
+    auth mode, so the file existing is not the signal — the absence of the
+    auth-owned tables is. This is why main.py resolves supabase credentials
+    BEFORE constructing UserStore.
     """
+    monkeypatch.delenv("FW_SUPABASE_PUBLISHABLE_KEY", raising=False)
+    monkeypatch.delenv("FW_SUPABASE_SECRET_KEY", raising=False)
     db_path = tmp_path / "test.db"
     settings = Settings(
-        db_path=db_path, rules_dir=tmp_path / "rules", auth=AuthSettings(mode="supabase")
+        db_path=db_path,
+        rules_dir=tmp_path / "rules",
+        auth={"mode": "supabase", "supabase": {"url": "https://health-test.invalid"}},
     )
-    with pytest.raises(AuthConfigError, match="supabase"):
+    with pytest.raises(AuthConfigError):
         create_app(settings)
     conn = sqlite3.connect(db_path)
     try:

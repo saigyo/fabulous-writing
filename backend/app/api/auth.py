@@ -1,20 +1,30 @@
-"""Local authentication endpoints (auth.mode: local)."""
+"""Local and supabase-mode authentication endpoints (app/core/config.py:
+AuthSettings.mode). login, change_password and (Task 5) admin create serve
+both modes; every other route here is mode-specific (see
+_require_supabase_mode)."""
 
+import logging
 import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field, field_validator
+from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import CurrentUser, get_current_user
 from app.core.auth import SELF_MIN_PASSWORD_LENGTH, issue_token, validate_password
 from app.core.config import KNOWN_FEATURES, Settings
 from app.core.permissions import features_for, label_for, limits_for, policy_for
+from app.core.supabase_auth import resolve_supabase_user
+from app.services.supabase_gateway import SupabaseAuthError, SupabaseUnavailableError
 from app.services.usage import UsageStore
 from app.services.users import User
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["auth"])
 
@@ -42,8 +52,22 @@ class LoginThrottle:
     """Exponential backoff per (email, client IP) after repeated failures.
 
     In-process state, which is correct for the single-process deployment the
-    spec requires; it is not shared across other processes. Supabase's own
-    rate limiting replaces this in sub-project 2.
+    spec requires; it is not shared across other processes.
+
+    Two instances exist, on `app.state`: `login_throttle` guards
+    `/auth/login` in both modes; `reset_throttle` is a SEPARATE instance
+    guarding `/auth/reset-request` only. They must never share a table:
+    sharing would let 5 free reset-request POSTs block a legitimate login
+    for the same (email, ip), and would void the bcrypt-bounded-exemption
+    argument below for the shared table (reset requests pay no bcrypt).
+
+    The three handlers serving both auth modes (`login`, `change_password`,
+    and the Task 5 admin-create route) run their LOCAL branch via
+    `run_in_threadpool` rather than inline on the event loop — this is what
+    keeps their bcrypt calls (~173 ms in production) off the loop, and it is
+    also what this table's thread-safety reasoning below assumes; this
+    deliberately preserves the pre-async-conversion threadpool hop rather
+    than changing it.
 
     FastAPI runs synchronous ("def") route handlers in a threadpool, so a
     single process still means *multiple OS threads* touching this table
@@ -78,18 +102,28 @@ class LoginThrottle:
     accumulated backoff.
 
     What actually limits growth of the exempt set is bcrypt cost, not the
-    cap: every entry that becomes exempt first had to reach `threshold`
-    failed logins, and `record_failure` only runs after `verify_credentials`
-    has already spent a full bcrypt hash on that attempt — there is no way
-    to make an entry exempt without paying that cost `threshold` times over.
-    Sustaining a large exempt set means renewing roughly
-    `exempt_entries / max_delay` blocks per second, each a bcrypt call: a
-    rate high enough to pin a large table is a rate the server's own bcrypt
-    throughput cannot absorb anyway. That traffic is still CPU load on an
-    unauthenticated endpoint — true of any bcrypt-backed login endpoint, not
-    a cost this exemption introduces — and it is per-IP or global rate
-    limiting at the deployment layer, not this table, that is meant to
-    address it.
+    cap — for the LOGIN instance only: every entry that becomes exempt
+    first had to reach `threshold` failed logins, and `record_failure` only
+    runs after `verify_credentials` has already spent a full bcrypt hash on
+    that attempt — there is no way to make an entry exempt without paying
+    that cost `threshold` times over. Sustaining a large exempt set means
+    renewing roughly `exempt_entries / max_delay` blocks per second, each a
+    bcrypt call: a rate high enough to pin a large table is a rate the
+    server's own bcrypt throughput cannot absorb anyway. That traffic is
+    still CPU load on an unauthenticated endpoint — true of any
+    bcrypt-backed login endpoint, not a cost this exemption introduces — and
+    it is per-IP or global rate limiting at the deployment layer, not this
+    table, that is meant to address it.
+
+    `reset_throttle`'s exempt entries cost NOTHING to mint — reset-request
+    calls `record_failure` unconditionally on every non-blocked attempt, no
+    bcrypt or any other expensive operation in between — so the bcrypt
+    argument above does not apply to it. What bounds its exempt set instead
+    is `entry_ttl` (900 s) plus the small `threshold` (3): an exempt entry
+    still expires at `last_seen + max_delay` at the latest and, per the
+    `__post_init__` invariant, `max_delay <= entry_ttl`, so the same
+    TTL-sweep argument used for ordinary entries applies here too, just
+    without a bcrypt cost gating how fast new exempt entries can be minted.
     """
 
     threshold: int = 5
@@ -349,6 +383,10 @@ class MeResponse(BaseModel):
 
 class LoginResponse(BaseModel):
     token: str
+    # Supabase mode only; local mode leaves both None and the frontend
+    # treats their absence as "this session never refreshes".
+    refresh_token: str | None = None
+    expires_at: int | None = None
     user: MeResponse
 
 
@@ -357,11 +395,37 @@ class PasswordChange(BaseModel):
     new: str
 
 
-def _require_local_mode(request: Request) -> None:
-    """Local login does not exist in supabase mode: a leaked FW_AUTH_SECRET
-    must not be able to forge tokens against a Supabase-mode instance."""
-    if request.app.state.settings.auth.mode != "local":
+class RefreshRequest(BaseModel):
+    refresh_token: str = Field(max_length=8192)
+
+
+class ResetRequest(BaseModel):
+    email: str = Field(max_length=320)
+
+
+class ResetConfirm(BaseModel):
+    token_hash: str = Field(max_length=1024)
+    type: Literal["recovery", "invite"]
+    new_password: str
+
+
+def _require_supabase_mode(request: Request) -> None:
+    """These routes do not exist in local mode: there is no Supabase
+    session to refresh, revoke, or reset a password against."""
+    if request.app.state.settings.auth.mode != "supabase":
         raise HTTPException(404, "Not found")
+
+
+def _bearer_token(request: Request) -> str:
+    """Raw bearer token from the request headers.
+
+    get_current_user's CurrentUser does not carry the raw token (only the
+    verified identity), but sign_out/global_sign_out need the actual token
+    string to hand to GoTrue -- so routes that need both re-read the header
+    directly, same as get_current_user itself does.
+    """
+    _scheme, _, token = request.headers.get("Authorization", "").partition(" ")
+    return token.strip()
 
 
 def _throttle_key(request: Request, email: str) -> tuple[str, str]:
@@ -389,9 +453,7 @@ def _throttle_key(request: Request, email: str) -> tuple[str, str]:
     return (normalized_email, client_ip)
 
 
-@router.post("/auth/login")
-def login(request: Request, body: LoginRequest) -> LoginResponse:
-    _require_local_mode(request)
+def _login_local(request: Request, body: LoginRequest) -> LoginResponse:
     app = request.app
     key = _throttle_key(request, body.email)
     if app.state.login_throttle.blocked_for(key) > 0:
@@ -414,6 +476,90 @@ def login(request: Request, body: LoginRequest) -> LoginResponse:
     )
 
 
+async def _login_supabase(request: Request, body: LoginRequest) -> LoginResponse:
+    app = request.app
+    key = _throttle_key(request, body.email)
+    if app.state.login_throttle.blocked_for(key) > 0:
+        app.state.login_throttle.record_blocked_attempt(key)
+        raise HTTPException(401, _INVALID_LOGIN)
+    try:
+        session = await app.state.supabase_gateway.sign_in(body.email, body.password)
+    except SupabaseAuthError:
+        app.state.login_throttle.record_failure(key)
+        raise HTTPException(401, _INVALID_LOGIN) from None
+    except SupabaseUnavailableError:
+        raise HTTPException(503, "Authentication service unavailable") from None
+    user = resolve_supabase_user(
+        app.state.user_store, subject=session.user_id, email=session.email
+    )
+    if not user.is_active:
+        app.state.login_throttle.record_failure(key)
+        raise HTTPException(401, _INVALID_LOGIN)
+    app.state.login_throttle.record_success(key)
+    return LoginResponse(
+        token=session.access_token,
+        refresh_token=session.refresh_token,
+        expires_at=session.expires_at,
+        user=MeResponse.from_user(
+            user, app.state.settings, usage_store=app.state.usage_store,
+        ),
+    )
+
+
+@router.post("/auth/login")
+async def login(request: Request, body: LoginRequest) -> LoginResponse:
+    if request.app.state.settings.auth.mode == "supabase":
+        return await _login_supabase(request, body)
+    # bcrypt (~173 ms/hash in production) must not block the event loop;
+    # see LoginThrottle's docstring.
+    return await run_in_threadpool(_login_local, request, body)
+
+
+@router.post("/auth/refresh")
+async def refresh(request: Request, body: RefreshRequest) -> LoginResponse:
+    _require_supabase_mode(request)
+    app = request.app
+    try:
+        session = await app.state.supabase_gateway.refresh(body.refresh_token)
+    except SupabaseAuthError:
+        raise HTTPException(401, _INVALID_LOGIN) from None
+    except SupabaseUnavailableError:
+        raise HTTPException(503, "Authentication service unavailable") from None
+    user = resolve_supabase_user(
+        app.state.user_store, subject=session.user_id, email=session.email
+    )
+    if not user.is_active:
+        raise HTTPException(401, _INVALID_LOGIN)
+    return LoginResponse(
+        token=session.access_token,
+        refresh_token=session.refresh_token,
+        expires_at=session.expires_at,
+        user=MeResponse.from_user(
+            user, app.state.settings, usage_store=app.state.usage_store,
+        ),
+    )
+
+
+@router.post("/auth/logout", status_code=204)
+async def logout(
+    request: Request, current: CurrentUser = Depends(get_current_user)
+) -> Response:
+    # get_current_user (above, via Depends) runs before this body -- an
+    # anonymous caller is rejected with 401 in BOTH modes, which is exactly
+    # why this route is deliberately absent from test_auth_enforcement's
+    # allowlist. Only an AUTHENTICATED caller reaches the mode check below,
+    # so a local-mode instance answers 404, not 500 (it has no
+    # supabase_gateway to call).
+    _require_supabase_mode(request)
+    try:
+        await request.app.state.supabase_gateway.sign_out(_bearer_token(request))
+    except (SupabaseAuthError, SupabaseUnavailableError):
+        # Best-effort: the frontend clears its local session regardless of
+        # whether Supabase-side revocation succeeded.
+        pass
+    return Response(status_code=204)
+
+
 @router.get("/auth/me")
 def me(request: Request, current: CurrentUser = Depends(get_current_user)) -> MeResponse:
     user = request.app.state.user_store.get_user(current.id)
@@ -425,11 +571,9 @@ def me(request: Request, current: CurrentUser = Depends(get_current_user)) -> Me
     )
 
 
-@router.post("/auth/password", status_code=204)
-def change_password(
-    request: Request, body: PasswordChange, current: CurrentUser = Depends(get_current_user)
+def _change_password_local(
+    request: Request, body: PasswordChange, current: CurrentUser
 ) -> Response:
-    _require_local_mode(request)
     store = request.app.state.user_store
     # 422, not 401: the bearer token authenticated this request fine — this
     # is a validation failure of the submitted body, not a failure to
@@ -453,4 +597,104 @@ def change_password(
         )
         raise HTTPException(422, {"code": code}) from exc
     store.set_password(current.id, body.new)
+    return Response(status_code=204)
+
+
+async def _change_password_supabase(
+    request: Request, body: PasswordChange, current: CurrentUser
+) -> Response:
+    app = request.app
+    try:
+        await app.state.supabase_gateway.sign_in(current.email, body.current)
+    except SupabaseAuthError:
+        raise HTTPException(422, {"code": "wrong_current_password"}) from None
+    except SupabaseUnavailableError:
+        raise HTTPException(503, "Authentication service unavailable") from None
+    try:
+        validate_password(body.new, min_length=SELF_MIN_PASSWORD_LENGTH)
+    except ValueError as exc:
+        code = (
+            "password_too_short"
+            if len(body.new) < SELF_MIN_PASSWORD_LENGTH
+            else "password_too_long"
+        )
+        raise HTTPException(422, {"code": code}) from exc
+    store = app.state.user_store
+    user = store.get_user(current.id)
+    await app.state.supabase_gateway.change_password(user.external_id, body.new)
+    store.mark_password_changed(current.id)
+    try:
+        await app.state.supabase_gateway.global_sign_out(_bearer_token(request))
+    except SupabaseUnavailableError:
+        # Best-effort: the local password_changed_at bump above already
+        # revoked every outstanding access token at our own layer.
+        logger.warning(
+            "supabase global_sign_out unavailable after password change for user %s",
+            current.id,
+        )
+    return Response(status_code=204)
+
+
+@router.post("/auth/password", status_code=204)
+async def change_password(
+    request: Request, body: PasswordChange, current: CurrentUser = Depends(get_current_user)
+) -> Response:
+    if request.app.state.settings.auth.mode == "supabase":
+        return await _change_password_supabase(request, body, current)
+    return await run_in_threadpool(_change_password_local, request, body, current)
+
+
+@router.post("/auth/reset-request", status_code=204)
+async def reset_request(request: Request, body: ResetRequest) -> Response:
+    _require_supabase_mode(request)
+    app = request.app
+    key = _throttle_key(request, body.email)
+    if app.state.reset_throttle.blocked_for(key) > 0:
+        # Silent: no gateway call, so an attacker cannot use this to
+        # mail-bomb a victim, and the response gives no signal either way.
+        app.state.reset_throttle.record_blocked_attempt(key)
+        return Response(status_code=204)
+    # Each request costs one slot regardless of outcome -- success never
+    # resets the count (resets are rare), unlike login's record_success.
+    app.state.reset_throttle.record_failure(key)
+    try:
+        await app.state.supabase_gateway.send_reset_email(body.email)
+    except (SupabaseAuthError, SupabaseUnavailableError):
+        # Swallowed: an unknown email must look identical to a known one.
+        pass
+    return Response(status_code=204)
+
+
+@router.post("/auth/reset-confirm", status_code=204)
+async def reset_confirm(request: Request, body: ResetConfirm) -> Response:
+    _require_supabase_mode(request)
+    app = request.app
+    try:
+        validate_password(body.new_password, min_length=SELF_MIN_PASSWORD_LENGTH)
+    except ValueError as exc:
+        code = (
+            "password_too_short"
+            if len(body.new_password) < SELF_MIN_PASSWORD_LENGTH
+            else "password_too_long"
+        )
+        raise HTTPException(422, {"code": code}) from exc
+    try:
+        session = await app.state.supabase_gateway.confirm_with_token_hash(
+            body.token_hash, body.type, body.new_password
+        )
+    except SupabaseAuthError:
+        raise HTTPException(422, {"code": "invalid_or_expired_link"}) from None
+    except SupabaseUnavailableError:
+        raise HTTPException(503, "Authentication service unavailable") from None
+    # JIT: for an invite-type hash, this IS the invite-acceptance
+    # materialization point -- the local row is created here, on first
+    # confirm, not at invite time.
+    user = resolve_supabase_user(
+        app.state.user_store, subject=session.user_id, email=session.email
+    )
+    app.state.user_store.mark_password_changed(user.id)
+    try:
+        await app.state.supabase_gateway.global_sign_out(session.access_token)
+    except (SupabaseAuthError, SupabaseUnavailableError):
+        pass
     return Response(status_code=204)
