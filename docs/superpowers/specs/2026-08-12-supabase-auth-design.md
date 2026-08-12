@@ -56,23 +56,28 @@ Files: `backend/app/core/auth.py` (or sibling `supabase_verify.py`),
   implementation by mode.
 - New `SupabaseTokenVerifier`: verifies bearer JWTs **locally** with
   PyJWT's `PyJWKClient` against
-  `{auth.supabase.url}/auth/v1/.well-known/jwks.json` (cached, refetch on
-  unknown `kid`; JWKS prefetched at startup so misconfiguration fails
-  fast). Accepted algorithms: `ES256`, `RS256` — never HS256 in supabase
-  mode (the project must use the asymmetric signing-keys system; the
-  setup guide covers migrating off the legacy shared secret). Claims
-  checked: signature, `exp`, `iss == {url}/auth/v1`,
-  `aud == "authenticated"`. Returns the existing verified-token shape
-  with `sub` = Supabase user UUID, `iat`, and `epoch=None`.
-- `get_current_user` (`deps.py`): in supabase mode the user row is looked
-  up by `users.external_id == sub`. The reserved epoch-less fallback path
-  becomes live: a token whose `iat` predates the row's
-  `password_changed_at` is rejected (401). Row re-read per request keeps
-  instant deactivation working.
-- **JIT shadow rows:** a verified token with no matching row creates one:
-  `external_id=sub`, `email` from the token's `email` claim,
-  `tier=default`, `is_admin=False`, `is_active=True`. This is how invited
-  users materialize on first login.
+  `{auth.supabase.url}/auth/v1/.well-known/jwks.json` (cached ~10 min,
+  refetch on unknown `kid`; fetched lazily on first use — a Supabase
+  outage must not wedge container restarts, and requests fail closed with
+  401 until the key set is reachable). Accepted algorithms: `ES256`,
+  `RS256` — never HS256 in supabase mode (the project must use the
+  asymmetric signing-keys system; the setup guide covers migrating off
+  the legacy shared secret). Claims checked: signature, `exp`,
+  `iss == {url}/auth/v1`, `aud == "authenticated"`.
+- Per the pinned `TokenVerifier` contract (`core/auth.py`), the verifier
+  resolves its subject UUID to the local row (`users.external_id`)
+  **internally** and returns the local `users.id` with `epoch=None` —
+  `api/deps.py` is not modified. Its reserved epoch-less fallback becomes
+  live: a token whose `iat` predates the row's `password_changed_at` is
+  rejected (401). Row re-read per request keeps instant deactivation
+  working.
+- **JIT shadow rows** (inside the verifier's resolution step): a verified
+  token with no matching row creates one: `external_id=sub`, `email` from
+  the token's `email` claim, `tier=default`, `is_admin=False`,
+  `is_active=True` — this is how invited users materialize on first
+  login. An email already owned by an *unlinked* local row adopts the
+  subject (pre-Supabase account switching modes); an email owned by a row
+  linked to a different subject fails closed.
 - **Authorization stays local.** The SQLite `users` table is the sole
   authority for `is_admin`, `tier`, `is_active`. Supabase JWT claims,
   `app_metadata`, and `user_metadata` are never used for authorization
@@ -106,8 +111,10 @@ except where noted, and the local routes 404 in supabase mode (existing
 - Supabase-unreachable errors map to a generic 503 (`"authentication
   service unavailable"`); GoTrue error bodies are logged server-side,
   never echoed to clients.
-- `GET /api/health` gains `auth_features: {"password_reset": bool}` —
-  capability flags only, no provider names leak to the frontend.
+- `GET /api/health` gains
+  `auth_features: {"password_reset": bool, "invites": bool}` — capability
+  flags only (both true iff supabase mode), no provider names leak to the
+  frontend; `invites` lets the admin form offer password-less creation.
 
 ## 4. Admin model, bootstrap, invitations
 
@@ -160,7 +167,10 @@ Files: `frontend/src/auth/session.ts`, `LoginGate.tsx`, `LoginForm.tsx`,
 - `LoginGate` recognizes `token_hash` + `type` query parameters on load
   and renders `ResetPasswordForm` (set-new-password) in the anonymous
   state; the same form serves `recovery` and `invite`. On success it
-  clears the URL parameters and logs in with the new credentials.
+  clears the URL parameters and returns to the sign-in form with a
+  success notice (no auto-login: the confirm-time session was minted
+  before `password_changed_at`, so the eviction fallback rightly rejects
+  it — the user signs in with the new password).
 - UI copy follows the informal register rule (Du/tu/tú) for all new
   strings.
 
