@@ -22,12 +22,20 @@
 # Authentication. These are startup-only: none of them can be changed
 # through the API, so a stolen admin session cannot lift its own limits.
 auth:
-  mode: local                   # 'supabase' arrives with sub-project 2
+  mode: local                   # local (default) | supabase
   # Dev-only: allow a generated, per-start signing secret when
-  # FW_AUTH_SECRET is unset. Tokens then die on every restart.
+  # FW_AUTH_SECRET is unset. Tokens then die on every restart. Ignored in
+  # supabase mode (there is no locally-signed token to protect).
   ephemeral_secret: false
   # When false, no API call may create or promote an admin account.
   allow_additional_admins: false
+  # Required only when mode: supabase — see docs/supabase-auth-setup.md for
+  # the full dashboard walkthrough (JWT key rotation, provider settings,
+  # SMTP). FW_AUTH_SECRET is not needed in this mode; FW_SUPABASE_PUBLISHABLE_KEY
+  # and FW_SUPABASE_SECRET_KEY (env-only, never here) are, alongside the two
+  # bootstrap-admin variables below.
+  # supabase:
+  #   url: https://<ref>.supabase.co
 
 # Global, server-level limits (metering). max_document_chars/
 # max_concurrent_llm_runs/llm_run_max_age/concurrency_reject_delay apply to
@@ -102,8 +110,11 @@ auth:
 # Required environment variables (never stored in this file). FW_AUTH_SECRET
 # is the only one with an escape hatch: ephemeral_secret above (dev only).
 # The two admin variables are always required while the users table is empty.
-#   FW_AUTH_SECRET     signing secret, >= 32 chars, randomly generated:
-#                      openssl rand -base64 32
+#   FW_AUTH_SECRET               local mode only: signing secret, >= 32 chars,
+#                                 randomly generated: openssl rand -base64 32
+#   FW_SUPABASE_PUBLISHABLE_KEY  supabase mode only (see auth.supabase above)
+#   FW_SUPABASE_SECRET_KEY       supabase mode only; admin API, never leaves
+#                                 the backend
 #   FW_ADMIN_EMAIL     bootstrap admin, used only while the users table is empty
 #   FW_ADMIN_PASSWORD  bootstrap admin password, >= 12 chars
 

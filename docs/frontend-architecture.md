@@ -1032,20 +1032,34 @@ flipped to match. `LoginGate` keeps the `authStatus` branching — which state r
 at all — while `GateShell` is pure layout, applied identically to both branches that
 render something.
 
-**The gate** (`auth/LoginGate.tsx`) renders `LoginForm` only while `authStatus` is
-`'anonymous'`, and the app (children) only once it is `'authenticated'`. While
-`'unknown'` it renders **nothing** (`LoginGate.tsx:76`) — deliberately, and this is the
-reason that state exists: showing the login form during the restore round-trip would
-flash it at an already-authenticated user on every reload, and mounting the app would
-fire its mount effects unauthenticated. `authStatus` starts `'unknown'`;
-`restoreSession()` (called once at mount) resolves it before anything else renders. With no stored token,
-`restoreSession()` returns immediately without calling the API at all — a first-time
-anonymous visit makes **zero** `/api/*` requests. With a stored token it calls `GET
-/api/auth/me` — **exactly one** request — and sets `authStatus` from the result: `ok`
-→ `'authenticated'`, a 401 → `'anonymous'` (via `expireSession()`, which also shows the
-session-expired notice), anything else (a dropped connection, a 500) → leaves
-`authStatus: 'unknown'` and sets `restoreFailed`, deliberately **not** clearing a
+**The gate** (`auth/LoginGate.tsx`) renders `LoginForm` (or, with a reset/invite link in
+the URL, `ResetPasswordForm` — below) only while `authStatus` is `'anonymous'`, and the
+app (children) only once it is `'authenticated'`. While `'unknown'` it renders
+**nothing** (`LoginGate.tsx:137`) — deliberately, and this is the reason that state
+exists: showing the login form during the restore round-trip would flash it at an
+already-authenticated user on every reload, and mounting the app would fire its mount
+effects unauthenticated. `authStatus` starts `'unknown'`; `restoreSession()` (called
+once at mount) resolves it before anything else renders. With no stored token,
+`restoreSession()` returns immediately without calling `/api/auth/me` at all. With a
+stored token it calls `GET /api/auth/me` — one request — and sets `authStatus` from the
+result: `ok` → `'authenticated'`, a 401 → `'anonymous'` (via `expireSession()`, which
+also shows the session-expired notice), anything else (a dropped connection, a 500) →
+leaves `authStatus: 'unknown'` and sets `restoreFailed`, deliberately **not** clearing a
 perfectly good token over a backend hiccup.
+
+A **second**, unconditional mount effect in the same component calls `GET /api/health`
+once per page load, regardless of `authStatus` or whether a token is stored — that
+endpoint is public, so this is deliberately the one `/api/*` call an anonymous first
+visit now issues. Its only purpose is reading `auth_features` (`{ password_reset,
+invites }`, mirroring `app/main.py`'s `health()` handler, which sets both flags to
+`auth.mode == "supabase"`) into the store, which is what lets `LoginForm` decide
+whether to render the
+forgot-password link and lets `AdminView`'s create form decide whether the password
+field can be left blank for an invite — both are feature-flagged off a Supabase-only
+capability, not on `authStatus`, since the flag has to be known *before* anyone is
+signed in. Put together: **a first-time anonymous visit makes exactly one `/api/*`
+request, `GET /api/health`** (not zero); a visit with a stored token makes two, that
+health check plus `GET /api/auth/me`.
 
 **Where the Bearer header is attached.** `api/client.ts` builds `Authorization: Bearer
 <token>` in exactly one place, `authHeader()`, reading `useStore.getState().token` at
@@ -1164,6 +1178,72 @@ work survives. `logout()` additionally cancels any in-flight check
 invalidates pending document writes before clearing state, so a check or a save that
 was mid-flight when the user logged out cannot land after the session that started it
 is gone.
+
+### Hosted sessions: the token triple and the refresh engine (B14)
+
+`auth.mode: supabase` (`docs/supabase-auth-setup.md`) gives a session two more moving
+parts than local mode ever had: a refresh token and an expiry. `state/store.ts` carries
+all three as siblings — `token`, `refreshToken`, `tokenExpiresAt` — rather than nesting
+the latter two under `token`, because `login()`, `doRefresh()`, and `restoreSession()`
+all need to update them together in one `setSessionTokens()` call without touching
+`user`. **Local mode leaves `refreshToken`/`tokenExpiresAt` `null`** — the backend's
+`LoginResponse` (`backend/app/api/auth.py`) returns both as `null` in that mode — and
+the frontend treats their absence as "this session never refreshes itself," which is
+exactly correct: a local HS256 token's only path back to a signed-in state after it
+expires is signing in again. Writing `null` on every login also clears any stale
+Supabase-mode value left in the same browser profile's storage from an earlier session.
+
+**`scheduleRefresh()`** (`auth/session.ts`) is a no-op whenever `refreshToken` or
+`tokenExpiresAt` is `null` (local mode, always). In supabase mode it arms a
+`setTimeout` for `tokenExpiresAt - REFRESH_MARGIN_MS` (2 minutes before the access
+token's actual expiry), called after every `login()`, every successful `doRefresh()`,
+and — pre-emptively — from `runRestore()` when a stored token is already inside that
+margin at page load, so a restore never lands the user with a token that expires
+moments later. `refreshSession()`/`doRefresh()` are single-flight (`refreshInFlight`,
+matching the `restoreInFlight` pattern `restoreSession()` uses): concurrent callers
+(the timer firing while another refresh is already in progress) share one in-flight
+`POST /api/auth/refresh` rather than racing two. A successful refresh rewrites the
+triple and reschedules itself; a `401` (the refresh token itself is dead) ends the
+session through `expireSession()`, same as any other authentication failure; any other
+failure (a laptop waking up offline) retries on a fixed `REFRESH_RETRY_MS` (60s)
+cadence rather than giving up — a dropped connection must not itself end a session that
+a real 401 hasn't yet.
+
+### The reset/invite gate flow (B14)
+
+Both a self-service password reset and an admin-created invite land the same way: an
+email from Supabase carrying a link back to this app's origin
+(`docs/supabase-auth-setup.md`'s Site URL / redirect URL setup) with `?token_hash=...
+&type=recovery` or `&type=invite` in the query string. `LoginGate.tsx`'s
+`readResetParams()` reads that pair **once**, via a lazy `useState` initializer (so it
+is available on the very first paint, not one render late) — only `type=recovery` or
+`type=invite` is accepted; anything else (no param, a typo, an unrelated stray query
+string) falls through to the ordinary `LoginForm`. A second mount effect strips the
+params from the URL right after that capture, so reloading the same tab does not
+resubmit a burned link. When present, the gate renders `ResetPasswordForm` in place of
+`LoginForm` for the whole `'anonymous'` state — new password, repeat-password,
+client-side length check against `MIN_PASSWORD_LENGTH`, then a single `POST
+/api/auth/reset-confirm` carrying `token_hash`/`type`/the new password. One component
+serves both flows; only the heading and copy branch on `type` (`m.inviteHeading` vs.
+`m.resetHeading`), since the backend endpoint and the UI's own validation are identical
+either way.
+
+**Deliberately not an auto-login.** A successful `reset-confirm` returns the gate to
+`LoginForm` (`onDone`) rather than signing the browser straight in with the session
+`reset-confirm` receives back from Supabase. That session would have been minted
+*before* this same request's own `mark_password_changed` backdate
+(`docs/backend-architecture.md`'s eviction table) — honoring it would mean immediately
+handing the caller a token their own password change was supposed to invalidate. The
+link only proves control of the mailbox at the moment it was sent, not that this
+browser tab should inherit a session now, so the form hands back to the ordinary
+sign-in path instead.
+
+`ForgotPasswordForm` (reached from `LoginForm`'s "Forgot your password?" link, gated by
+`authFeatures?.password_reset` — the same `GET /api/health` flag described above) always
+shows the same neutral "check your email" confirmation regardless of whether `POST
+/api/auth/reset-request` resolves or rejects: the backend itself never reveals whether
+an address has an account, and a different client-side message would undo that
+protection.
 
 ## Tiers and policy gating
 
