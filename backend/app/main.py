@@ -153,7 +153,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.reset_throttle = LoginThrottle(
         threshold=3, base_delay=60.0, max_delay=900.0, entry_ttl=900.0
     )
-    seed_admin(app.state.user_store)
+    seed_admin(app.state.user_store, gateway=getattr(app.state, "supabase_gateway", None))
     # Startup sweep (spec §6.6): single-process deployment — no 'started'
     # row can belong to a live run of a process that no longer exists.
     app.state.usage_store.sweep_all_started()

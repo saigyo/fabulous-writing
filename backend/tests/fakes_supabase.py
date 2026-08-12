@@ -64,6 +64,7 @@ class FakeSupabaseGateway:
         self.global_sign_out_calls: list[str] = []
         self.reset_emails: list[str] = []
         self.invites: list[str] = []
+        self.create_user_calls: list[tuple[str, str]] = []
 
     def _mint_uuid(self) -> str:
         uuid = f"fake-uuid-{self._next_uuid}"
@@ -150,6 +151,13 @@ class FakeSupabaseGateway:
         return self._mint_session(uuid, email)
 
     async def create_user(self, email: str, password: str) -> str:
+        self.create_user_calls.append((email, password))
+        if email in self._users:
+            # Mirrors real GoTrue admin.create_user: a duplicate email is
+            # rejected, not silently overwritten. This is what lets a test
+            # simulate "re-run against an existing project" by pre-registering
+            # the email via register_user() before the call under test.
+            raise SupabaseAuthError(f"{email} already registered")
         uuid = self._mint_uuid()
         self._users[email] = (password, uuid)
         return uuid
