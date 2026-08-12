@@ -342,3 +342,62 @@ class TestEvictionIntegration:
         assert stale.status_code == 401
         fresh = client.get("/api/auth/me", headers=_bearer(in_window_token))
         assert fresh.status_code == 200
+
+
+class TestExternalIdCollision:
+    """resolve_supabase_user raises InvalidToken (not an HTTPException) when
+    a verified Supabase session's email belongs to a local row already
+    linked to a DIFFERENT external_id. Each of login/refresh/reset-confirm
+    calls resolve_supabase_user directly, so each must catch it and answer
+    its own generic error -- not let it escape as an unhandled 500."""
+
+    COLLIDING_EMAIL = "collision@example.com"
+    SESSION_UUID = "fake-uuid-session"
+    OTHER_UUID = "fake-uuid-already-linked"
+
+    def _seed_collision(self, app, fake):
+        # A local row already linked to a DIFFERENT external_id than the
+        # one the incoming Supabase session will carry.
+        app.state.user_store.create_user(
+            self.COLLIDING_EMAIL, "local-password-1", external_id=self.OTHER_UUID
+        )
+        fake.register_user(self.COLLIDING_EMAIL, PASSWORD, uuid=self.SESSION_UUID)
+
+    def test_login_collision_is_401_not_500(self, supabase_app):
+        app, fake = supabase_app
+        self._seed_collision(app, fake)
+        client = TestClient(app)
+        resp = client.post(
+            "/api/auth/login",
+            json={"email": self.COLLIDING_EMAIL, "password": PASSWORD},
+        )
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == _INVALID_LOGIN
+
+    def test_refresh_collision_is_401_not_500(self, supabase_app):
+        app, fake = supabase_app
+        self._seed_collision(app, fake)
+        session = fake.issue_session(self.COLLIDING_EMAIL, uuid=self.SESSION_UUID)
+        client = TestClient(app)
+        resp = client.post(
+            "/api/auth/refresh", json={"refresh_token": session.refresh_token}
+        )
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == _INVALID_LOGIN
+
+    def test_reset_confirm_collision_is_422_not_500(self, supabase_app):
+        app, fake = supabase_app
+        self._seed_collision(app, fake)
+        fake.valid_token_hashes["colliding-hash"] = (
+            self.SESSION_UUID, self.COLLIDING_EMAIL,
+        )
+        client = TestClient(app)
+        resp = client.post(
+            "/api/auth/reset-confirm",
+            json={
+                "token_hash": "colliding-hash", "type": "recovery",
+                "new_password": "another-new-pw-1",
+            },
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "invalid_or_expired_link"
