@@ -3,13 +3,15 @@
 // key and the per-user preference blobs (prefsStorage.ts) — which the
 // default "node" test environment has no window/localStorage for.
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { HttpError, type MeResponse } from '../api/client'
+import { HttpError, type LoginResponse, type MeResponse } from '../api/client'
 import type { DocSnapshot } from '../documents/buffer'
 import { useStore } from '../state/store'
 
 vi.mock('../api/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api/client')>()),
   postLogin: vi.fn(),
+  postRefresh: vi.fn(),
+  postLogout: vi.fn(),
   getMe: vi.fn(),
 }))
 // documents.ts pulls in hydration.ts -> checking/controller.ts; session.ts
@@ -20,16 +22,23 @@ vi.mock('../documents/documents', () => ({
   clearLegacyText: vi.fn(),
 }))
 
-import { getMe, postLogin } from '../api/client'
+import { getMe, postLogin, postLogout, postRefresh } from '../api/client'
 import { setCancelCheckHandler } from '../checking/cancelSlot'
 import { clearLegacyText, invalidateDocumentWork } from '../documents/documents'
 import { clearSnapshot, readSnapshot, writeSnapshot } from '../documents/buffer'
 import { initPrefsPersistence, PREFS_DEFAULTS } from '../state/prefsPersistence'
-import { readPrefs, readToken, writePrefs } from '../state/prefsStorage'
+import {
+  readPrefs,
+  readRefreshToken,
+  readToken,
+  readTokenExpiresAt,
+  writePrefs,
+} from '../state/prefsStorage'
 import {
   expireSession,
   login,
   logout,
+  refreshSession,
   refreshUser,
   restoreSession,
   sessionGeneration,
@@ -80,11 +89,18 @@ function snapshotFor(ownerId: number | undefined): DocSnapshot {
 
 beforeEach(() => {
   vi.resetAllMocks()
+  // resetAllMocks() wipes any implementation, so postLogout must be
+  // re-armed every test: a logout()/expireSession() test set up with a
+  // real token calls the real logout path, and an unresolved postLogout()
+  // would throw on the missing .catch().
+  vi.mocked(postLogout).mockResolvedValue(undefined)
   localStorage.clear()
   clearSnapshot()
   setCancelCheckHandler(() => {})
   useStore.setState({
     token: null,
+    refreshToken: null,
+    tokenExpiresAt: null,
     user: null,
     authStatus: 'unknown',
     sessionExpired: false,
@@ -101,7 +117,7 @@ beforeEach(() => {
 
 describe('login', () => {
   it('stores the token and user returned by the API and flips authStatus to authenticated', async () => {
-    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', user: user(1) })
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', refresh_token: null, expires_at: null, user: user(1) })
     const ok = await login('ada@example.com', 'pw')
     expect(ok).toBe(true)
     const state = useStore.getState()
@@ -119,28 +135,28 @@ describe('login', () => {
 
   it('clears a document buffer belonging to a different user', async () => {
     writeSnapshot(snapshotFor(99))
-    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', user: user(1) })
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', refresh_token: null, expires_at: null, user: user(1) })
     await login('a@example.com', 'pw')
     expect(readSnapshot()).toBeNull()
   })
 
   it('keeps a document buffer already belonging to the signing-in user', async () => {
     writeSnapshot(snapshotFor(1))
-    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', user: user(1) })
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', refresh_token: null, expires_at: null, user: user(1) })
     await login('a@example.com', 'pw')
     expect(readSnapshot()).not.toBeNull()
   })
 
   it('clears a buffer with no ownerId at all (written by an older build)', async () => {
     writeSnapshot(snapshotFor(undefined))
-    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', user: user(1) })
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', refresh_token: null, expires_at: null, user: user(1) })
     await login('a@example.com', 'pw')
     expect(readSnapshot()).toBeNull()
   })
 
   it('preserves the persisted settings when signing in as the same user', async () => {
     useStore.setState({ user: user(1), uiLocale: 'de', currentDocId: 42 })
-    vi.mocked(postLogin).mockResolvedValue({ token: 'tok2', user: user(1) })
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok2', refresh_token: null, expires_at: null, user: user(1) })
     await login('a@example.com', 'pw')
     expect(useStore.getState().uiLocale).toBe('de')
     expect(useStore.getState().currentDocId).toBe(42)
@@ -156,7 +172,7 @@ describe('login', () => {
       folders: [{ id: 1, name: 'F' }] as never,
       scorecard: { overall: 50 } as never,
     })
-    vi.mocked(postLogin).mockResolvedValue({ token: 'tok2', user: user(2) })
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok2', refresh_token: null, expires_at: null, user: user(2) })
     await login('b@example.com', 'pw')
     const state = useStore.getState()
     expect(state.uiLocale).toBeNull()
@@ -169,13 +185,13 @@ describe('login', () => {
 
   it('clears the legacy text key on a foreign or unowned login', async () => {
     writeSnapshot(snapshotFor(99))
-    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', user: user(1) })
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', refresh_token: null, expires_at: null, user: user(1) })
     await login('a@example.com', 'pw')
     expect(clearLegacyText).toHaveBeenCalled()
   })
 
   it('persists the token under the token key; logout removes it', async () => {
-    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', user: user(1) })
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', refresh_token: null, expires_at: null, user: user(1) })
     await login('a@example.com', 'pw')
     expect(localStorage.getItem('fabulous-writing-token')).toBe('tok')
     logout()
@@ -183,7 +199,7 @@ describe('login', () => {
   })
 
   it('returns false and commits nothing when logout() runs while postLogin is in flight', async () => {
-    let resolvePostLogin!: (v: { token: string; user: MeResponse }) => void
+    let resolvePostLogin!: (v: LoginResponse) => void
     vi.mocked(postLogin).mockImplementationOnce(
       () =>
         new Promise((resolve) => {
@@ -195,7 +211,7 @@ describe('login', () => {
     const pending = login('a@example.com', 'pw')
     logout() // fires while postLogin is still in flight
 
-    resolvePostLogin({ token: 'tok', user: user(1) })
+    resolvePostLogin({ token: 'tok', refresh_token: null, expires_at: null, user: user(1) })
     const result = await pending
 
     expect(result).toBe(false)
@@ -203,6 +219,59 @@ describe('login', () => {
     expect(state.token).toBeNull()
     expect(state.user).toBeNull()
     expect(state.authStatus).toBe('anonymous')
+  })
+
+  it('persists the refresh-token triple and schedules a refresh ahead of expiry', async () => {
+    vi.useFakeTimers()
+    try {
+      const expiresAt = Math.floor(Date.now() / 1000) + 300
+      vi.mocked(postLogin).mockResolvedValue({
+        token: 'tok',
+        refresh_token: 'rt',
+        expires_at: expiresAt,
+        user: user(1),
+      })
+      await login('a@example.com', 'pw')
+
+      expect(readToken()).toBe('tok')
+      expect(readRefreshToken()).toBe('rt')
+      expect(readTokenExpiresAt()).toBe(expiresAt)
+      const state = useStore.getState()
+      expect(state.refreshToken).toBe('rt')
+      expect(state.tokenExpiresAt).toBe(expiresAt)
+
+      vi.mocked(postRefresh).mockResolvedValue({
+        token: 'tok2',
+        refresh_token: 'rt2',
+        expires_at: expiresAt + 300,
+        user: user(1),
+      })
+      await vi.advanceTimersByTimeAsync(300_000 - 120_000) // expiry - REFRESH_MARGIN_MS
+      expect(postRefresh).toHaveBeenCalledTimes(1)
+      expect(postRefresh).toHaveBeenCalledWith('rt')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('never schedules a refresh when the response carries no refresh triple (local mode)', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(postLogin).mockResolvedValue({
+        token: 'tok',
+        refresh_token: null,
+        expires_at: null,
+        user: user(1),
+      })
+      await login('a@example.com', 'pw')
+
+      expect(readRefreshToken()).toBeNull()
+      expect(readTokenExpiresAt()).toBeNull()
+      await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000) // a full day
+      expect(postRefresh).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
@@ -240,6 +309,36 @@ describe('logout', () => {
     logout()
     expect(spy).toHaveBeenCalledTimes(1)
   })
+
+  it('fires postLogout while the store token is still set, before clearing it, and clears the refresh-token pair', () => {
+    useStore.setState({
+      token: 'tok',
+      refreshToken: 'rt',
+      tokenExpiresAt: 1_900_000_000,
+      user: user(1),
+      authStatus: 'authenticated',
+    })
+    localStorage.setItem('fabulous-writing-refresh-token', 'rt')
+    localStorage.setItem('fabulous-writing-token-expires', '1900000000')
+    let tokenAtCallTime: string | null | undefined
+    vi.mocked(postLogout).mockImplementation(() => {
+      tokenAtCallTime = useStore.getState().token
+      return Promise.resolve()
+    })
+
+    logout()
+
+    expect(postLogout).toHaveBeenCalledTimes(1)
+    expect(tokenAtCallTime).toBe('tok')
+    expect(readRefreshToken()).toBeNull()
+    expect(readTokenExpiresAt()).toBeNull()
+  })
+
+  it('does not call postLogout for a visitor who was never signed in', () => {
+    useStore.setState({ token: null, user: null, authStatus: 'anonymous' })
+    logout()
+    expect(postLogout).not.toHaveBeenCalled()
+  })
 })
 
 describe('expireSession', () => {
@@ -275,6 +374,174 @@ describe('expireSession', () => {
     useStore.setState({ token: 'tok', user: user(1), authStatus: 'authenticated' })
     expireSession()
     expect(localStorage.getItem('fabulous-writing-token')).toBeNull()
+  })
+
+  it('removes the refresh-token and token-expiry keys', () => {
+    localStorage.setItem('fabulous-writing-refresh-token', 'rt')
+    localStorage.setItem('fabulous-writing-token-expires', '1900000000')
+    useStore.setState({
+      token: 'tok',
+      refreshToken: 'rt',
+      tokenExpiresAt: 1_900_000_000,
+      user: user(1),
+      authStatus: 'authenticated',
+    })
+    expireSession()
+    expect(readRefreshToken()).toBeNull()
+    expect(readTokenExpiresAt()).toBeNull()
+  })
+})
+
+describe('refresh engine (refreshSession/scheduleRefresh)', () => {
+  async function loginWithTriple(expiresAt: number, refreshToken = 'rt'): Promise<void> {
+    vi.mocked(postLogin).mockResolvedValue({
+      token: 'tok',
+      refresh_token: refreshToken,
+      expires_at: expiresAt,
+      user: user(1),
+    })
+    await login('a@example.com', 'pw')
+  }
+
+  it('a successful refresh rotates the store and storage and reschedules the next one', async () => {
+    vi.useFakeTimers()
+    try {
+      // Deliberately far out: login()'s own scheduleRefresh() arms a timer
+      // for THIS expiry, and it must not be the one that fires below — that
+      // would pass even with doRefresh()'s own reschedule call deleted. Only
+      // a reschedule keyed off the ROTATED (near) expiry set after the
+      // manual refreshSession() call can fire inside this test's window.
+      const farExpiresAt = Math.floor(Date.now() / 1000) + 100_000
+      await loginWithTriple(farExpiresAt)
+
+      const nearExpiresAt = Math.floor(Date.now() / 1000) + 300
+      vi.mocked(postRefresh).mockResolvedValue({
+        token: 'tok2',
+        refresh_token: 'rt2',
+        expires_at: nearExpiresAt,
+        user: user(1),
+      })
+      await refreshSession()
+
+      expect(postRefresh).toHaveBeenCalledWith('rt')
+      const state = useStore.getState()
+      expect(state.token).toBe('tok2')
+      expect(state.refreshToken).toBe('rt2')
+      expect(state.tokenExpiresAt).toBe(nearExpiresAt)
+      expect(readToken()).toBe('tok2')
+      expect(readRefreshToken()).toBe('rt2')
+      expect(readTokenExpiresAt()).toBe(nearExpiresAt)
+
+      // Reschedule check: only fires if doRefresh()'s success path re-armed
+      // scheduleRefresh() off the rotated (near) expiry above.
+      vi.mocked(postRefresh).mockClear()
+      vi.mocked(postRefresh).mockResolvedValue({
+        token: 'tok3',
+        refresh_token: 'rt3',
+        expires_at: nearExpiresAt + 300,
+        user: user(1),
+      })
+      await vi.advanceTimersByTimeAsync(300_000 - 120_000) // nearExpiresAt - REFRESH_MARGIN_MS
+      expect(postRefresh).toHaveBeenCalledTimes(1)
+      expect(postRefresh).toHaveBeenCalledWith('rt2')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a 401 on refresh ends the session through expireSession()', async () => {
+    const expiresAt = Math.floor(Date.now() / 1000) + 300
+    await loginWithTriple(expiresAt)
+
+    vi.mocked(postRefresh).mockRejectedValue(new HttpError(401, 'refresh token revoked'))
+    await refreshSession()
+
+    const state = useStore.getState()
+    expect(state.sessionExpired).toBe(true)
+    expect(state.token).toBeNull()
+    expect(state.authStatus).toBe('anonymous')
+    expect(readToken()).toBeNull()
+    expect(readRefreshToken()).toBeNull()
+    expect(readTokenExpiresAt()).toBeNull()
+  })
+
+  it('a network error on refresh retries after 60s rather than ending the session', async () => {
+    vi.useFakeTimers()
+    try {
+      const expiresAt = Math.floor(Date.now() / 1000) + 300
+      await loginWithTriple(expiresAt)
+
+      vi.mocked(postRefresh).mockRejectedValueOnce(new TypeError('offline'))
+      await refreshSession()
+      expect(postRefresh).toHaveBeenCalledTimes(1)
+      expect(useStore.getState().sessionExpired).toBe(false)
+
+      vi.mocked(postRefresh).mockResolvedValue({
+        token: 'tok2',
+        refresh_token: 'rt2',
+        expires_at: expiresAt + 300,
+        user: user(1),
+      })
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(postRefresh).toHaveBeenCalledTimes(1) // not due yet
+      await vi.advanceTimersByTimeAsync(30_000) // 60s total
+      expect(postRefresh).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('concurrent refreshSession() calls share one in-flight request', async () => {
+    const expiresAt = Math.floor(Date.now() / 1000) + 300
+    await loginWithTriple(expiresAt)
+
+    let resolvePostRefresh!: (v: LoginResponse) => void
+    vi.mocked(postRefresh).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePostRefresh = resolve
+        }),
+    )
+
+    const p1 = refreshSession()
+    const p2 = refreshSession()
+    resolvePostRefresh({
+      token: 'tok2',
+      refresh_token: 'rt2',
+      expires_at: expiresAt + 300,
+      user: user(1),
+    })
+    await Promise.all([p1, p2])
+
+    expect(postRefresh).toHaveBeenCalledTimes(1)
+    expect(useStore.getState().token).toBe('tok2')
+  })
+
+  it('a refresh completing after logout() does not commit a stale token', async () => {
+    const expiresAt = Math.floor(Date.now() / 1000) + 300
+    await loginWithTriple(expiresAt)
+
+    let resolvePostRefresh!: (v: LoginResponse) => void
+    vi.mocked(postRefresh).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePostRefresh = resolve
+        }),
+    )
+    const pending = refreshSession()
+    logout() // fires while postRefresh is still in flight; bumps generation
+
+    resolvePostRefresh({
+      token: 'tok2',
+      refresh_token: 'rt2',
+      expires_at: expiresAt + 300,
+      user: user(1),
+    })
+    await pending
+
+    const state = useStore.getState()
+    expect(state.token).toBeNull()
+    expect(state.authStatus).toBe('anonymous')
   })
 })
 
@@ -359,6 +626,34 @@ describe('restoreSession', () => {
     expect(state.token).toBeNull()
     expect(state.user).toBeNull()
     expect(state.authStatus).toBe('anonymous')
+  })
+
+  it('refreshes a stale-expiry token before calling getMe(), and commits the rotated token', async () => {
+    const callOrder: string[] = []
+    const expiresAt = Math.floor(Date.now() / 1000) + 60 // inside the 120s margin
+    useStore.setState({
+      token: 'old-tok',
+      refreshToken: 'rt',
+      tokenExpiresAt: expiresAt,
+      authStatus: 'unknown',
+    })
+    vi.mocked(postRefresh).mockImplementation(async (refreshToken) => {
+      callOrder.push('refresh')
+      expect(refreshToken).toBe('rt')
+      return { token: 'new-tok', refresh_token: 'rt2', expires_at: expiresAt + 300, user: user(1) }
+    })
+    vi.mocked(getMe).mockImplementation(async () => {
+      callOrder.push('getMe')
+      return user(1)
+    })
+
+    await restoreSession()
+
+    expect(callOrder).toEqual(['refresh', 'getMe'])
+    const state = useStore.getState()
+    expect(state.token).toBe('new-tok')
+    expect(state.refreshToken).toBe('rt2')
+    expect(state.authStatus).toBe('authenticated')
   })
 })
 
@@ -479,7 +774,7 @@ describe('refreshUser', () => {
 describe('per-user preference survival (B1, #34)', () => {
   it("restores the incoming user's stored preferences on login (load runs before setAuth)", async () => {
     writePrefs(2, { ...PREFS_DEFAULTS, uiLocale: 'fr', currentDocId: 9 })
-    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', user: user(2) })
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', refresh_token: null, expires_at: null, user: user(2) })
     await login('b@example.com', 'pw')
     expect(useStore.getState().uiLocale).toBe('fr')
     expect(useStore.getState().currentDocId).toBe(9)
@@ -494,20 +789,20 @@ describe('per-user preference survival (B1, #34)', () => {
   })
 
   it("keeps the departing user's blob values across logout and restores them on re-login", async () => {
-    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', user: user(1) })
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', refresh_token: null, expires_at: null, user: user(1) })
     await login('a@example.com', 'pw')
     useStore.getState().setUiLocale('de')   // subscriber writes user 1's blob
     logout()
     // The blob still holds the pre-logout values — a reset that ran while
     // the user was still visible would have overwritten it with defaults.
     expect(readPrefs(1)?.uiLocale).toBe('de')
-    vi.mocked(postLogin).mockResolvedValue({ token: 'tok2', user: user(1) })
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok2', refresh_token: null, expires_at: null, user: user(1) })
     await login('a@example.com', 'pw')
     expect(useStore.getState().uiLocale).toBe('de')
   })
 
   it('preferences survive session expiry', async () => {
-    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', user: user(1) })
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', refresh_token: null, expires_at: null, user: user(1) })
     await login('a@example.com', 'pw')
     useStore.getState().setUiLocale('de')
     expireSession()
@@ -515,13 +810,13 @@ describe('per-user preference survival (B1, #34)', () => {
   })
 
   it("A→B→A: A's preferences survive B's session and B never sees A's values", async () => {
-    vi.mocked(postLogin).mockResolvedValue({ token: 'tokA', user: user(1) })
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tokA', refresh_token: null, expires_at: null, user: user(1) })
     await login('a@example.com', 'pw')
     useStore.getState().setUiLocale('de')
     useStore.getState().toggleDocSidebar()   // docSidebarCollapsed: true
     logout()
 
-    vi.mocked(postLogin).mockResolvedValue({ token: 'tokB', user: user(2) })
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tokB', refresh_token: null, expires_at: null, user: user(2) })
     await login('b@example.com', 'pw')
     // The #34 leak, end to end: B has no blob and must see pure defaults.
     expect(useStore.getState().uiLocale).toBeNull()
@@ -529,7 +824,7 @@ describe('per-user preference survival (B1, #34)', () => {
     useStore.getState().setUiLocale('es')
     logout()
 
-    vi.mocked(postLogin).mockResolvedValue({ token: 'tokA2', user: user(1) })
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tokA2', refresh_token: null, expires_at: null, user: user(1) })
     await login('a@example.com', 'pw')
     const state = useStore.getState()
     expect(state.uiLocale).toBe('de')
@@ -550,20 +845,20 @@ describe('per-user preference survival (B1, #34)', () => {
     const unsub = useStore.subscribe((state, prev) => {
       if (state.user && !prev.user) seenAtUserVisible.push(state.uiLocale)
     })
-    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', user: user(2) })
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', refresh_token: null, expires_at: null, user: user(2) })
     await login('b@example.com', 'pw')
     unsub()
     expect(seenAtUserVisible).toEqual(['fr'])
   })
 
   it('same-user silent re-login neither resets nor re-reads the blob', async () => {
-    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', user: user(1) })
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', refresh_token: null, expires_at: null, user: user(1) })
     await login('a@example.com', 'pw')
     useStore.getState().setUiLocale('de')
     // Stale blob on purpose: if the re-login re-read storage, uiLocale
     // would flip to 'it'; if it reset, uiLocale would flip to null.
     writePrefs(1, { ...PREFS_DEFAULTS, uiLocale: 'it' })
-    vi.mocked(postLogin).mockResolvedValue({ token: 'tok2', user: user(1) })
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok2', refresh_token: null, expires_at: null, user: user(1) })
     await login('a@example.com', 'pw')
     expect(useStore.getState().uiLocale).toBe('de')
   })

@@ -51,7 +51,9 @@ interface RequestOptions extends Omit<RequestInit, 'headers'> {
 
 // keepSessionOn401 lives only on this internal type, never on the exported
 // RequestOptions — so it is reachable exclusively through requestWithOptions
-// below, whose only caller is postLogin. Anything importing the public
+// below. Its callers, kept complete here since this flag is
+// security-relevant and must not go stale: postLogin, postRefresh (Task 7
+// adds postResetRequest/postResetConfirm). Anything importing the public
 // request() gets a type that has no such property at all: passing
 // { keepSessionOn401: true } as an object literal to request() is a compile
 // error, not a convention someone has to remember. This is a property of
@@ -169,6 +171,10 @@ export interface MeResponse {
 
 export interface LoginResponse {
   token: string
+  // Both null in local mode (backend/app/api/auth.py): session.ts treats
+  // their absence as "this session never refreshes".
+  refresh_token: string | null
+  expires_at: number | null
   user: MeResponse
 }
 
@@ -185,6 +191,22 @@ export const postLogin = (email: string, password: string) =>
     body: JSON.stringify({ email, password }),
     keepSessionOn401: true,
   })
+
+// keepSessionOn401: a dead refresh token is a 401 here, and must reach the
+// caller as an HttpError rather than clearing auth state directly — the
+// refresh engine (session.ts) is the one that decides to expireSession()
+// on that error, exactly like a request-level 401 would.
+export const postRefresh = (refreshToken: string) =>
+  requestWithOptions<LoginResponse>('/api/auth/refresh', {
+    method: 'POST',
+    body: JSON.stringify({ refresh_token: refreshToken }),
+    keepSessionOn401: true,
+  })
+
+// Deliberately uses the public request(): a 401 here can only mean the
+// bearer token was already dead, and logout()'s own teardown must proceed
+// either way — see session.ts.
+export const postLogout = () => request<void>('/api/auth/logout', { method: 'POST' })
 
 export const getMe = () => request<MeResponse>('/api/auth/me')
 

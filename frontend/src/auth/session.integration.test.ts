@@ -16,6 +16,10 @@ import { useStore } from '../state/store'
 vi.mock('../api/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api/client')>()),
   postLogin: vi.fn(),
+  // Resolved once here (see App.domains-guard.test.tsx's comment): this
+  // file's beforeEach uses clearAllMocks(), which preserves the
+  // implementation, and every logout() below runs with a real token.
+  postLogout: vi.fn().mockResolvedValue(undefined),
   updateDocument: vi.fn(),
 }))
 vi.mock('../editor/editorRef', () => ({
@@ -91,7 +95,12 @@ beforeEach(() => {
 describe('a real logout()+login() turnover vs. a real save started under the outgoing user', () => {
   async function switchToADifferentUserWithTheSameDocIdOpen(): Promise<void> {
     logout() // the real logout()
-    vi.mocked(postLogin).mockResolvedValue({ token: 'tok2', user: { ...USER, id: 2 } })
+    vi.mocked(postLogin).mockResolvedValue({
+      token: 'tok2',
+      refresh_token: null,
+      expires_at: null,
+      user: { ...USER, id: 2 },
+    })
     await login('b@example.com', 'pw') // the real login(), as a different user
     useStore.getState().setDocMeta({ id: 5, name: "B's doc", nameSource: 'user', revision: 9 })
   }
@@ -171,6 +180,8 @@ describe('the failed-legacy-migration handoff, against real localStorage', () =>
     localStorage.setItem('fabulous-writing-text', 'previous user private text')
     vi.mocked(postLogin).mockResolvedValue({
       token: 'tok2',
+      refresh_token: null,
+      expires_at: null,
       user: { ...USER, id: 2 },
     })
     await login('b@example.com', 'pw')

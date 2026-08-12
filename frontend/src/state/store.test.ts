@@ -233,6 +233,40 @@ describe('resetSessionState', () => {
     expect(state.uiLocale).toBeNull()
     expect(state.currentDocId).toBeNull()
   })
+
+  it('leaves refreshToken/tokenExpiresAt untouched, like the other auth fields', () => {
+    useStore.setState({ refreshToken: 'rt', tokenExpiresAt: 1_900_000_000 })
+    resetSessionState()
+    const state = useStore.getState()
+    expect(state.refreshToken).toBe('rt')
+    expect(state.tokenExpiresAt).toBe(1_900_000_000)
+  })
+})
+
+describe('setSessionTokens', () => {
+  it('writes token/refreshToken/tokenExpiresAt only, leaving user and authStatus alone', () => {
+    useStore.setState({
+      token: null,
+      refreshToken: null,
+      tokenExpiresAt: null,
+      user: null,
+      authStatus: 'anonymous',
+    })
+    useStore.getState().setSessionTokens('tok', 'rt', 1_900_000_000)
+    const state = useStore.getState()
+    expect(state.token).toBe('tok')
+    expect(state.refreshToken).toBe('rt')
+    expect(state.tokenExpiresAt).toBe(1_900_000_000)
+    expect(state.user).toBeNull()
+    expect(state.authStatus).toBe('anonymous')
+  })
+
+  it('accepts null refreshToken/tokenExpiresAt (local mode)', () => {
+    useStore.getState().setSessionTokens('tok', null, null)
+    const state = useStore.getState()
+    expect(state.refreshToken).toBeNull()
+    expect(state.tokenExpiresAt).toBeNull()
+  })
 })
 
 describe('setAuth', () => {
