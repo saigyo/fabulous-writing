@@ -11,7 +11,7 @@ from app.api.auth import _INVALID_LOGIN
 from app.core.auth import AuthConfigError, IAT_LEEWAY_SECONDS
 from app.core.config import Settings
 from app.main import create_app
-from app.services.supabase_gateway import SupabaseUnavailableError
+from app.services.supabase_gateway import SupabaseAuthError, SupabaseUnavailableError
 from tests.conftest import TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD, auth_headers
 from tests.fakes_supabase import FakeSupabaseGateway, FakeSupabaseVerifier
 
@@ -513,3 +513,142 @@ class TestAdminCreateSupabase:
         listing = client.get("/api/admin/users", headers=headers).json()
         assert listing
         assert all("invited" not in item for item in listing)
+
+
+class TestAdminPatchPasswordSupabase:
+    """PATCH /admin/users/{id} with a password, in supabase mode (finding 1,
+    final review): must rotate the credential at Supabase, kill the
+    target's outstanding refresh token, bump password_changed_at locally,
+    and write NO local hash -- the local-mode branch (bcrypt + set_password)
+    must never run here."""
+
+    OLD_PASSWORD = "an initial password 1"
+    NEW_PASSWORD = "a replacement password 1"
+
+    def _make_user(self, client, headers, email="target@example.com"):
+        resp = client.post(
+            "/api/admin/users",
+            json={"email": email, "password": self.OLD_PASSWORD},
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        return resp.json()
+
+    def test_old_password_and_refresh_token_are_dead_after_reset(self, supabase_app):
+        app, _fake = supabase_app
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        created = self._make_user(client, headers)
+        login = client.post(
+            "/api/auth/login",
+            json={"email": created["email"], "password": self.OLD_PASSWORD},
+        )
+        assert login.status_code == 200
+        refresh_token = login.json()["refresh_token"]
+
+        resp = client.patch(
+            f"/api/admin/users/{created['id']}",
+            json={"password": self.NEW_PASSWORD},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+
+        stale_login = client.post(
+            "/api/auth/login",
+            json={"email": created["email"], "password": self.OLD_PASSWORD},
+        )
+        assert stale_login.status_code == 401
+
+        stale_refresh = client.post(
+            "/api/auth/refresh", json={"refresh_token": refresh_token},
+        )
+        assert stale_refresh.status_code == 401
+
+        fresh_login = client.post(
+            "/api/auth/login",
+            json={"email": created["email"], "password": self.NEW_PASSWORD},
+        )
+        assert fresh_login.status_code == 200
+
+    def test_password_changed_at_bumped_and_no_local_hash_written(self, supabase_app):
+        app, _fake = supabase_app
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        created = self._make_user(client, headers)
+        assert created["password_changed_at"] is None
+
+        resp = client.patch(
+            f"/api/admin/users/{created['id']}",
+            json={"password": self.NEW_PASSWORD},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["password_changed_at"] is not None
+        assert (
+            body["password_changed_at"]
+            == app.state.user_store.get_user(created["id"]).password_changed_at
+        )
+        # No local hash: Supabase owns the credential.
+        assert (
+            app.state.user_store.verify_credentials(created["email"], self.NEW_PASSWORD)
+            is None
+        )
+
+    def test_writes_one_audit_row_without_logging_the_password(self, supabase_app):
+        app, _fake = supabase_app
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        created = self._make_user(client, headers)
+
+        resp = client.patch(
+            f"/api/admin/users/{created['id']}",
+            json={"password": self.NEW_PASSWORD},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        rows = [
+            r for r in app.state.user_store.list_audit()
+            if r["field"] == "password" and r["target_id"] == created["id"]
+        ]
+        assert len(rows) == 1
+        assert rows[0]["old_value"] is None and rows[0]["new_value"] is None
+
+    def test_gateway_auth_error_maps_to_422_and_writes_no_hash(self, supabase_app):
+        app, fake = supabase_app
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        created = self._make_user(client, headers)
+
+        async def boom(_user_id, _password):
+            raise SupabaseAuthError("rejected")
+
+        fake.change_password = boom
+        resp = client.patch(
+            f"/api/admin/users/{created['id']}",
+            json={"password": self.NEW_PASSWORD},
+            headers=headers,
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "password_reset_failed"
+        assert (
+            app.state.user_store.verify_credentials(created["email"], self.NEW_PASSWORD)
+            is None
+        )
+
+    def test_gateway_unavailable_maps_to_503(self, supabase_app):
+        app, fake = supabase_app
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        created = self._make_user(client, headers)
+
+        async def boom(_user_id, _password):
+            raise SupabaseUnavailableError("down")
+
+        fake.change_password = boom
+        resp = client.patch(
+            f"/api/admin/users/{created['id']}",
+            json={"password": self.NEW_PASSWORD},
+            headers=headers,
+        )
+        assert resp.status_code == 503

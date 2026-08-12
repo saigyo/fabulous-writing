@@ -100,6 +100,13 @@ export function logout(): void {
   clearLegacyText()
   clearRefreshToken()
   clearTokenExpiresAt()
+  // setAuth(null, null) above sets token/user/authStatus/restoreFailed only
+  // -- resetSessionState()'s INITIAL_DATA deliberately omits refreshToken/
+  // tokenExpiresAt (see its own comment), so without this line they would
+  // survive the teardown in the STORE even though storage is cleared, live
+  // enough for an already-orphaned refresh timer (see finding 3's fix) to
+  // rematerialise a full session for the departed user in localStorage.
+  useStore.setState({ refreshToken: null, tokenExpiresAt: null })
   cancelScheduledRefresh()
 }
 
@@ -118,6 +125,9 @@ export function expireSession(): void {
   useStore.setState({ sessionExpired: true })
   clearRefreshToken()
   clearTokenExpiresAt()
+  // See logout()'s identical line: the store fields survive setAuth()/
+  // resetSessionState() otherwise.
+  useStore.setState({ refreshToken: null, tokenExpiresAt: null })
   cancelScheduledRefresh()
 }
 
@@ -131,21 +141,39 @@ function cancelScheduledRefresh(): void {
   refreshTimer = null
 }
 
-function scheduleRefresh(): void {
+// The one and only arming site: every caller (including the retry branch in
+// doRefresh's catch below) goes through here, so cancelScheduledRefresh()
+// always has the single live handle -- an arm that bypassed this function
+// would orphan whatever timer was already running, uncancellable by
+// logout()/expireSession() (finding 3, final review).
+function scheduleRefresh(delayMs?: number): void {
   cancelScheduledRefresh()
+  if (delayMs !== undefined) {
+    refreshTimer = setTimeout(() => { void refreshSession() }, delayMs)
+    return
+  }
   const { tokenExpiresAt, refreshToken } = useStore.getState()
   if (!refreshToken || tokenExpiresAt === null) return  // local mode: never
   const delay = Math.max(tokenExpiresAt * 1000 - Date.now() - REFRESH_MARGIN_MS, 0)
   refreshTimer = setTimeout(() => { void refreshSession() }, delay)
 }
 
-/** Single-flight, generation-guarded (same discipline as runRestore). On a
- * 401 the refresh token is dead — the session ends through the same
- * expireSession() path as any other credential failure. Any other failure
- * (offline laptop waking up) retries on a fixed cadence; a request-level
- * 401 in the meantime ends the session anyway. */
+// Generation the current refreshInFlight promise was started under. Without
+// this, a promise from a superseded session (e.g. postRefresh hanging past a
+// logout+re-login) gets handed to the new generation's caller too: it
+// resolves via doRefresh's own `startedAt !== generation` guard into a no-op
+// that never re-arms a timer, silently leaving the new session with none
+// (finding 4, final review).
+let refreshInFlightGen = -1
+
+/** Single-flight per generation, generation-guarded (same discipline as
+ * runRestore). On a 401 the refresh token is dead — the session ends
+ * through the same expireSession() path as any other credential failure.
+ * Any other failure (offline laptop waking up) retries on a fixed cadence;
+ * a request-level 401 in the meantime ends the session anyway. */
 export function refreshSession(): Promise<void> {
-  if (!refreshInFlight) {
+  if (!refreshInFlight || refreshInFlightGen !== generation) {
+    refreshInFlightGen = generation
     const run = doRefresh().finally(() => {
       if (refreshInFlight === run) refreshInFlight = null
     })
@@ -172,7 +200,7 @@ async function doRefresh(): Promise<void> {
       expireSession()
       return
     }
-    refreshTimer = setTimeout(() => { void refreshSession() }, REFRESH_RETRY_MS)
+    scheduleRefresh(REFRESH_RETRY_MS)
   }
 }
 

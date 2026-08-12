@@ -1313,6 +1313,24 @@ also apply, though in the invite case the local row already exists from the
 `invite_user` call above, so it resolves by `external_id` on the first hit
 instead of creating a fresh row.
 
+### Admin password reset (`app/api/admin.py`, supabase mode)
+
+`PATCH /api/admin/users/{id}` with a `password` field mode-dispatches the
+same way `create_user` already did: in local mode it stays the
+threadpooled `set_password` bcrypt write it always was; in supabase mode it
+calls `gateway.change_password(existing.external_id, body.password)` (the
+same admin API call `_change_password_supabase` uses) followed by
+`store.mark_password_changed(user_id)` — **never** `store.set_password`,
+same invariant as `create_user`'s supabase branch: Supabase owns the
+credential, so no local hash is ever written for a supabase-mode row.
+`SupabaseAuthError`/`SupabaseUnavailableError` map to `422`/`503`, matching
+`create_user`'s error mapping. Unlike the self-service change-password
+route, there is no separate `global_sign_out` call here: an admin
+resetting someone else's password has no bearer token for that target to
+hand `/logout`, and none is needed — `change_password` already revokes
+every outstanding session/refresh token for that user server-side as part
+of the same admin API call (see the eviction table below).
+
 ### Revocation and eviction across auth modes
 
 Both modes end up needing to invalidate outstanding tokens without a
@@ -1322,7 +1340,7 @@ server-issued `epoch` claim and a Supabase token does not:
 | Trigger | Local mode | Supabase mode |
 |---|---|---|
 | Deactivation / de-admin | `get_current_user` re-reads the user row every request; takes effect immediately, no token action needed | same |
-| Password change (self-service or admin reset) | `set_password` bumps `users.token_epoch`; every outstanding token carries the old epoch and fails `get_current_user`'s equality check | `mark_password_changed` backdates `users.password_changed_at` by `IAT_LEEWAY_SECONDS` (below) **and** `token_epoch += 1`; `get_current_user` falls back to the `password_changed_at` comparison since `epoch=None`; the gateway's `global_sign_out` is called as a second, Supabase-side layer |
+| Password change (self-service or admin reset) | `set_password` bumps `users.token_epoch`; every outstanding token carries the old epoch and fails `get_current_user`'s equality check | `mark_password_changed` backdates `users.password_changed_at` by `IAT_LEEWAY_SECONDS` (below) **and** `token_epoch += 1`; `get_current_user` falls back to the `password_changed_at` comparison since `epoch=None`; the gateway's `change_password` (self-service and admin reset both call it) revokes the target's refresh tokens/sessions at Supabase's layer as part of the same admin API call — access tokens are not affected (see below) |
 | Comparison used | Exact equality (`epoch == token_epoch`) — no clock coupling | `issued_at < password_changed_at` — clock-coupled, second granularity |
 
 The `IAT_LEEWAY_SECONDS` backdate on `mark_password_changed` is not
@@ -1330,10 +1348,17 @@ cosmetic: `password_changed_at` is compared against `iat` values from
 **Supabase's** clock, not this server's, so without the allowance a
 trailing Supabase clock would reject the fresh session minted moments after
 the change — specifically the frontend's own silent re-login
-(`docs/frontend-architecture.md`'s reset/invite flow). Tokens issued in the
-final `IAT_LEEWAY_SECONDS` window before the change stay valid at this
-backend's own layer for the remainder of that window; `global_sign_out` is
-what actually closes that residual gap, at Supabase's layer, immediately.
+(`docs/frontend-architecture.md`'s reset/invite flow). `global_sign_out`
+does **not** close the residual gap this backdate leaves open: GoTrue's
+`/logout?scope=global` revokes sessions and refresh tokens, but access
+tokens are stateless JWTs this backend verifies locally against JWKS —
+Supabase is never consulted per request, so it cannot revoke one already
+issued. The honest residual is narrower than "revoked, immediately" but
+real: a token issued in the final `IAT_LEEWAY_SECONDS` window before the
+change stays valid at this backend's own layer for the rest of its natural
+lifetime, bounded by the Supabase access-token TTL (§9 of the setup guide,
+default 1 hour) — with no way to mint a replacement, since its refresh
+token is already dead.
 
 ### Startup bootstrap
 

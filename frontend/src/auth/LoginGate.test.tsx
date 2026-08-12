@@ -340,6 +340,20 @@ describe('LoginGate', () => {
     expect(window.location.search).toBe('')
   })
 
+  it('renders ResetPasswordForm instead of the children when the tab is already authenticated (finding 7)', () => {
+    window.history.pushState({}, '', '/?token_hash=abc123&type=recovery')
+    useStore.setState({ token: 'tok', user: user(), authStatus: 'authenticated' })
+    render(
+      <LoginGate>
+        <Sentinel />
+      </LoginGate>,
+    )
+    screen.getByText(en.resetHeading)
+    // The recovery link must not be silently burned by falling through to
+    // the already-authenticated app.
+    expect(screen.queryByTestId('app-sentinel')).toBeNull()
+  })
+
   it('ignores an unrecognised `type` value on the URL and shows the ordinary login form', () => {
     window.history.pushState({}, '', '/?token_hash=abc123&type=bogus')
     useStore.setState({ authStatus: 'anonymous' })

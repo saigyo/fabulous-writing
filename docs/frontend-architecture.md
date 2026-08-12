@@ -1214,14 +1214,21 @@ a real 401 hasn't yet.
 Both a self-service password reset and an admin-created invite land the same way: an
 email from Supabase carrying a link back to this app's origin
 (`docs/supabase-auth-setup.md`'s Site URL / redirect URL setup) with `?token_hash=...
-&type=recovery` or `&type=invite` in the query string. `LoginGate.tsx`'s
+&type=recovery` or `&type=invite` in the query string — that query-param shape is not
+what Supabase's stock email templates produce, so the dashboard's "Reset Password" and
+"Invite user" templates must be repointed per the setup guide's §7, or both flows fail
+closed with no visible error. `LoginGate.tsx`'s
 `readResetParams()` reads that pair **once**, via a lazy `useState` initializer (so it
 is available on the very first paint, not one render late) — only `type=recovery` or
 `type=invite` is accepted; anything else (no param, a typo, an unrelated stray query
 string) falls through to the ordinary `LoginForm`. A second mount effect strips the
 params from the URL right after that capture, so reloading the same tab does not
 resubmit a burned link. When present, the gate renders `ResetPasswordForm` in place of
-`LoginForm` for the whole `'anonymous'` state — new password, repeat-password,
+whatever it would otherwise show — including the authenticated app, checked before
+`authStatus === 'authenticated'` — rather than only while `'anonymous'`: a recovery or
+invite link opened in a tab that still holds a valid stored token is an explicit intent
+to change the credential, not something to silently swallow into the already-running
+app (a stale-session admin re-invite is the sharpest case). New password, repeat-password,
 client-side length check against `MIN_PASSWORD_LENGTH`, then a single `POST
 /api/auth/reset-confirm` carrying `token_hash`/`type`/the new password. One component
 serves both flows; only the heading and copy branch on `type` (`m.inviteHeading` vs.

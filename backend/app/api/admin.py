@@ -222,8 +222,14 @@ async def create_user(
     return AdminUserCreated(**user.model_dump())
 
 
+def _set_password_local(store, user_id: int, password: str) -> None:
+    # bcrypt stays off the event loop, same rule as create/login/self-service
+    # change (Task 4) -- this runs inside run_in_threadpool below.
+    store.set_password(user_id, password)
+
+
 @router.patch("/users/{user_id}")
-def patch_user(
+async def patch_user(
     request: Request,
     user_id: int,
     body: UserPatch,
@@ -266,11 +272,31 @@ def patch_user(
         )
     if body.password is not None:
         _check_password_strength(body.password)
-        store.set_password(user_id, body.password)
+        if request.app.state.settings.auth.mode == "supabase":
+            gateway = request.app.state.supabase_gateway
+            try:
+                # Rotates the credential at Supabase. GoTrue's admin update
+                # revokes every outstanding session/refresh token for this
+                # user as part of the same call -- there is no separate
+                # admin-scoped sign-out endpoint to call afterwards, unlike
+                # the self-service change-password flow, which has the
+                # caller's own bearer token to hand to /logout.
+                await gateway.change_password(existing.external_id, body.password)
+            except SupabaseAuthError as exc:
+                raise HTTPException(422, {"code": "password_reset_failed"}) from exc
+            except SupabaseUnavailableError as exc:
+                raise HTTPException(503, "Authentication service unavailable") from exc
+            # NOT set_password -- no local hash written, ever: a local hash
+            # here would resurrect local login semantics for an account
+            # whose password lives with Supabase (same invariant create_user
+            # states above).
+            store.mark_password_changed(user_id)
+        else:
+            await run_in_threadpool(_set_password_local, store, user_id, body.password)
         # Never record password material, not even its length.
         store.record_audit(actor_id=actor.id, target_id=user_id, field="password")
-        # Re-fetch: `updated` above was resolved before set_password() ran,
-        # so it still carries the pre-reset password_changed_at — part of
-        # this endpoint's response contract since it returns User directly.
+        # Re-fetch: `updated` above was resolved before the password write
+        # ran, so it still carries the pre-reset password_changed_at — part
+        # of this endpoint's response contract since it returns User directly.
         updated = store.get_user(user_id)
     return updated

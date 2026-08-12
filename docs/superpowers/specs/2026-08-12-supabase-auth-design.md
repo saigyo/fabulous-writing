@@ -107,8 +107,15 @@ except where noted, and the local routes 404 in supabase mode (existing
   frontend behavior change there.
 - **M2 guarantee in supabase mode:** password change (a) revokes all
   refresh tokens via admin `sign_out(scope="global")` and (b) sets local
-  `password_changed_at`, so outstanding access tokens die immediately at
-  our own verification layer regardless of their remaining TTL. Reset- and
+  `password_changed_at`, backdated by `IAT_LEEWAY_SECONDS` to absorb clock
+  skew with Supabase. (a) closes refresh tokens only — access tokens are
+  stateless JWTs verified locally against JWKS, never checked against
+  Supabase per request, so `global_sign_out` cannot revoke one already
+  issued. (b) evicts every access token at our own verification layer
+  immediately, **except** one minted in the final `IAT_LEEWAY_SECONDS`
+  before the change, which stays valid until its own natural expiry
+  (bounded by the Supabase access-token TTL) with no way to mint a
+  replacement, since its refresh token is already dead. Reset- and
   invite-confirm do the same.
 - Supabase-unreachable errors map to a generic 503 (`"authentication
   service unavailable"`); GoTrue error bodies are logged server-side,

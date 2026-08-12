@@ -203,9 +203,17 @@ class UserStore:
         # IAT_LEEWAY_SECONDS: it is compared (strict <) against iat values
         # from SUPABASE's clock, and without the allowance a trailing
         # Supabase clock would reject the fresh session minted right after
-        # the change (the frontend's silent re-login). Tokens from the
-        # final leeway window before the change stay valid at our layer;
-        # the gateway's global sign-out is the second eviction layer.
+        # the change (the frontend's silent re-login). Tokens issued in the
+        # final leeway window before the change stay valid here for the rest
+        # of their natural TTL: the gateway's global sign-out revokes
+        # REFRESH tokens only (GoTrue's `/logout?scope=global` deletes
+        # sessions and refresh tokens; access tokens are stateless JWTs this
+        # backend verifies locally against JWKS, so Supabase is never
+        # consulted per request and cannot revoke one already issued). The
+        # honest residual: an access token minted in that window keeps
+        # working until it expires on its own, bounded by the Supabase
+        # access-token TTL, and no new one can be minted since its refresh
+        # token is already dead.
         changed_at = (
             datetime.now(UTC) - timedelta(seconds=IAT_LEEWAY_SECONDS)
         ).isoformat(timespec="seconds")

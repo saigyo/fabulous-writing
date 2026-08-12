@@ -332,6 +332,12 @@ describe('logout', () => {
     expect(tokenAtCallTime).toBe('tok')
     expect(readRefreshToken()).toBeNull()
     expect(readTokenExpiresAt()).toBeNull()
+    // Finding 2 (final review): storage alone is not enough -- the pair
+    // must also die in the STORE, or an orphaned refresh timer can still
+    // read a live refreshToken back off useStore and rematerialise a
+    // session for the departed user.
+    expect(useStore.getState().refreshToken).toBeNull()
+    expect(useStore.getState().tokenExpiresAt).toBeNull()
   })
 
   it('does not call postLogout for a visitor who was never signed in', () => {
@@ -389,6 +395,9 @@ describe('expireSession', () => {
     expireSession()
     expect(readRefreshToken()).toBeNull()
     expect(readTokenExpiresAt()).toBeNull()
+    // Finding 2 (final review): same store-level assertion as logout()'s test.
+    expect(useStore.getState().refreshToken).toBeNull()
+    expect(useStore.getState().tokenExpiresAt).toBeNull()
   })
 })
 
@@ -486,6 +495,87 @@ describe('refresh engine (refreshSession/scheduleRefresh)', () => {
       expect(postRefresh).toHaveBeenCalledTimes(1) // not due yet
       await vi.advanceTimersByTimeAsync(30_000) // 60s total
       expect(postRefresh).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a second retry cancels the first retry timer instead of leaking it (finding 3)', async () => {
+    vi.useFakeTimers()
+    try {
+      const expiresAt = Math.floor(Date.now() / 1000) + 300
+      await loginWithTriple(expiresAt)
+
+      // First network failure arms a retry timer (T1), due 60s from now.
+      vi.mocked(postRefresh).mockRejectedValueOnce(new TypeError('offline'))
+      await refreshSession()
+      expect(postRefresh).toHaveBeenCalledTimes(1)
+
+      // 10s later -- T1 is still 50s out -- a second failure must CANCEL T1
+      // and arm a fresh timer T2 (due 60s from NOW, i.e. 10s after T1's
+      // original target) rather than orphaning it. An arming site that
+      // bypasses cancelScheduledRefresh() leaks T1 as an uncancellable
+      // duplicate that keeps running on its own schedule.
+      await vi.advanceTimersByTimeAsync(10_000)
+      vi.mocked(postRefresh).mockRejectedValueOnce(new TypeError('offline'))
+      await refreshSession()
+      expect(postRefresh).toHaveBeenCalledTimes(2)
+
+      vi.mocked(postRefresh).mockResolvedValue({
+        token: 'tok2',
+        refresh_token: 'rt2',
+        expires_at: expiresAt + 300,
+        user: user(1),
+      })
+      // Just past T1's original target, still short of T2's: if T1 leaked,
+      // it fires here and postRefresh is called a third time already.
+      await vi.advanceTimersByTimeAsync(50_001)
+      expect(postRefresh).toHaveBeenCalledTimes(2)
+
+      // Now past T2's target as well.
+      await vi.advanceTimersByTimeAsync(9_999)
+      expect(postRefresh).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a fresh generation issues its own refresh even while an older one is hung (finding 4)', async () => {
+    vi.useFakeTimers()
+    try {
+      const expiresAt1 = Math.floor(Date.now() / 1000) + 300
+      await loginWithTriple(expiresAt1, 'rt-old')
+
+      // postRefresh never resolves -- models a hung request with no
+      // timeout. The in-flight slot is now pinned to THIS generation.
+      vi.mocked(postRefresh).mockImplementationOnce(() => new Promise(() => {}))
+      void refreshSession()
+
+      logout()
+      const nearExpiresAt = Math.floor(Date.now() / 1000) + 300
+      vi.mocked(postLogin).mockResolvedValue({
+        token: 'tok-new',
+        refresh_token: 'rt-new',
+        expires_at: nearExpiresAt,
+        user: user(2),
+      })
+      // A new generation, with its own scheduleRefresh() timer.
+      await login('bea@example.com', 'pw')
+
+      vi.mocked(postRefresh).mockResolvedValue({
+        token: 'tok-new-2',
+        refresh_token: 'rt-new-2',
+        expires_at: nearExpiresAt + 300,
+        user: user(2),
+      })
+      await vi.advanceTimersByTimeAsync(300_000 - 120_000) // nearExpiresAt - REFRESH_MARGIN_MS
+
+      // Without generation-scoping the single-flight slot, this timer's
+      // refreshSession() call would be handed the still-pending promise
+      // from the OLD generation and never issue a second POST -- the new
+      // user's session would silently end up with no working refresh timer.
+      expect(postRefresh).toHaveBeenCalledTimes(2)
+      expect(postRefresh).toHaveBeenLastCalledWith('rt-new')
     } finally {
       vi.useRealTimers()
     }
