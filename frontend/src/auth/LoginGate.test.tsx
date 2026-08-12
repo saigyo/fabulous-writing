@@ -10,7 +10,11 @@ import { useStore } from '../state/store'
 vi.mock('../api/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api/client')>()),
   postLogin: vi.fn(),
+  postLogout: vi.fn(),
   getMe: vi.fn(),
+  getHealth: vi.fn(),
+  postResetRequest: vi.fn(),
+  postResetConfirm: vi.fn(),
 }))
 // Same reasoning as session.test.ts: documents.ts pulls in hydration.ts ->
 // checking/controller.ts, which session.ts (imported for real below) only
@@ -20,7 +24,15 @@ vi.mock('../documents/documents', () => ({
   clearLegacyText: vi.fn(),
 }))
 
-import { getMe, postLogin } from '../api/client'
+import {
+  getHealth,
+  getMe,
+  postLogin,
+  postLogout,
+  postResetConfirm,
+  postResetRequest,
+} from '../api/client'
+import { logout } from './session'
 import { LoginGate } from './LoginGate'
 
 function user(overrides: Partial<MeResponse> = {}): MeResponse {
@@ -50,17 +62,26 @@ function Sentinel() {
 
 afterEach(() => {
   cleanup()
+  // A test that pushed a reset/invite URL (window.history.pushState) must
+  // not leak it into the next test — happy-dom's `window.location` is a
+  // single object shared across every test in this file.
+  window.history.replaceState(null, '', '/')
 })
 
 beforeEach(() => {
   vi.resetAllMocks()
   localStorage.clear()
+  // No auth_features: individual tests override this (mockResolvedValueOnce
+  // or a fresh mockResolvedValue) when they care what the mount effect's
+  // getHealth() call resolves to.
+  vi.mocked(getHealth).mockResolvedValue({ status: 'ok', name: '', version: 'dev' })
   useStore.setState({
     token: null,
     user: null,
     authStatus: 'unknown',
     sessionExpired: false,
     restoreFailed: false,
+    authFeatures: null,
     uiLocale: 'en', // pin the catalog so message assertions are deterministic
   })
 })
@@ -302,5 +323,237 @@ describe('LoginGate', () => {
     )
     await waitFor(() => screen.getByTestId('app-sentinel'))
     expect(getMe).toHaveBeenCalledTimes(1)
+  })
+
+  it('renders ResetPasswordForm when the URL carries a recovery link, and strips the URL after mount', () => {
+    window.history.pushState({}, '', '/?token_hash=abc123&type=recovery')
+    useStore.setState({ authStatus: 'anonymous' })
+    render(
+      <LoginGate>
+        <Sentinel />
+      </LoginGate>,
+    )
+    screen.getByText(en.resetHeading)
+    expect(screen.queryByLabelText(en.signInEmail)).toBeNull()
+    // Mutation pin (b): dropping the gate's history.replaceState() call
+    // would leave this query string in place.
+    expect(window.location.search).toBe('')
+  })
+
+  it('ignores an unrecognised `type` value on the URL and shows the ordinary login form', () => {
+    window.history.pushState({}, '', '/?token_hash=abc123&type=bogus')
+    useStore.setState({ authStatus: 'anonymous' })
+    render(
+      <LoginGate>
+        <Sentinel />
+      </LoginGate>,
+    )
+    screen.getByLabelText(en.signInEmail)
+    expect(screen.queryByText(en.resetHeading)).toBeNull()
+  })
+
+  it('a successful reset confirm shows the success message, then returns to sign-in via its button', async () => {
+    window.history.pushState({}, '', '/?token_hash=abc123&type=recovery')
+    useStore.setState({ authStatus: 'anonymous' })
+    vi.mocked(postResetConfirm).mockResolvedValue(undefined)
+    render(
+      <LoginGate>
+        <Sentinel />
+      </LoginGate>,
+    )
+    const u = userEvent.setup()
+    await u.type(screen.getByLabelText(en.resetNewPassword), 'newpassword123')
+    await u.type(screen.getByLabelText(en.resetRepeatPassword), 'newpassword123')
+    await u.click(screen.getByRole('button', { name: en.resetSubmit }))
+
+    await waitFor(() =>
+      expect(postResetConfirm).toHaveBeenCalledWith('abc123', 'recovery', 'newpassword123'),
+    )
+    await waitFor(() => screen.getByText(en.resetSuccess))
+    expect(screen.queryByTestId('app-sentinel')).toBeNull() // no auto-login
+
+    await u.click(screen.getByRole('button', { name: en.resetBackToSignIn }))
+    screen.getByLabelText(en.signInEmail)
+  })
+
+  it('a mismatched confirm shows resetMismatch without calling the API', async () => {
+    window.history.pushState({}, '', '/?token_hash=abc123&type=recovery')
+    useStore.setState({ authStatus: 'anonymous' })
+    render(
+      <LoginGate>
+        <Sentinel />
+      </LoginGate>,
+    )
+    const u = userEvent.setup()
+    await u.type(screen.getByLabelText(en.resetNewPassword), 'newpassword123')
+    await u.type(screen.getByLabelText(en.resetRepeatPassword), 'somethingelse')
+    await u.click(screen.getByRole('button', { name: en.resetSubmit }))
+
+    screen.getByText(en.resetMismatch)
+    expect(postResetConfirm).not.toHaveBeenCalled()
+  })
+
+  it('a 422 invalid_or_expired_link on confirm shows resetLinkInvalid', async () => {
+    window.history.pushState({}, '', '/?token_hash=abc123&type=invite')
+    useStore.setState({ authStatus: 'anonymous' })
+    vi.mocked(postResetConfirm).mockRejectedValue(
+      new HttpError(422, 'POST /api/auth/reset-confirm failed: 422', 'invalid_or_expired_link'),
+    )
+    render(
+      <LoginGate>
+        <Sentinel />
+      </LoginGate>,
+    )
+    screen.getByText(en.inviteHeading) // type=invite picks the invite heading
+    const u = userEvent.setup()
+    await u.type(screen.getByLabelText(en.resetNewPassword), 'newpassword123')
+    await u.type(screen.getByLabelText(en.resetRepeatPassword), 'newpassword123')
+    await u.click(screen.getByRole('button', { name: en.resetSubmit }))
+
+    await waitFor(() => screen.getByText(en.resetLinkInvalid))
+  })
+
+  it('a non-invalid-link error on confirm falls back to the generic sign-in-failed message', async () => {
+    window.history.pushState({}, '', '/?token_hash=abc123&type=recovery')
+    useStore.setState({ authStatus: 'anonymous' })
+    vi.mocked(postResetConfirm).mockRejectedValue(new HttpError(500, 'Internal error'))
+    render(
+      <LoginGate>
+        <Sentinel />
+      </LoginGate>,
+    )
+    const u = userEvent.setup()
+    await u.type(screen.getByLabelText(en.resetNewPassword), 'newpassword123')
+    await u.type(screen.getByLabelText(en.resetRepeatPassword), 'newpassword123')
+    await u.click(screen.getByRole('button', { name: en.resetSubmit }))
+
+    await waitFor(() => screen.getByText(en.signInFailed))
+  })
+
+  it('shows the forgot-password link when authFeatures.password_reset is true', () => {
+    useStore.setState({
+      authStatus: 'anonymous',
+      authFeatures: { password_reset: true, invites: false },
+    })
+    render(
+      <LoginGate>
+        <Sentinel />
+      </LoginGate>,
+    )
+    screen.getByText(en.forgotPassword)
+  })
+
+  it('hides the forgot-password link when authFeatures.password_reset is false', () => {
+    // Mutation pin (a): with the `authFeatures?.password_reset` conditional
+    // dropped from LoginForm, this direction fails while the test above
+    // still passes — asserting both directions is what actually pins it.
+    useStore.setState({
+      authStatus: 'anonymous',
+      authFeatures: { password_reset: false, invites: true },
+    })
+    render(
+      <LoginGate>
+        <Sentinel />
+      </LoginGate>,
+    )
+    expect(screen.queryByText(en.forgotPassword)).toBeNull()
+  })
+
+  it('also hides the forgot-password link before the health fetch has resolved', () => {
+    useStore.setState({ authStatus: 'anonymous', authFeatures: null })
+    render(
+      <LoginGate>
+        <Sentinel />
+      </LoginGate>,
+    )
+    expect(screen.queryByText(en.forgotPassword)).toBeNull()
+  })
+
+  it('clicking forgot-password prefills ForgotPasswordForm and shows the neutral sent message on success', async () => {
+    useStore.setState({
+      authStatus: 'anonymous',
+      authFeatures: { password_reset: true, invites: false },
+    })
+    vi.mocked(postResetRequest).mockResolvedValue(undefined)
+    render(
+      <LoginGate>
+        <Sentinel />
+      </LoginGate>,
+    )
+    const u = userEvent.setup()
+    await u.type(screen.getByLabelText(en.signInEmail), 'ada@example.com')
+    await u.click(screen.getByText(en.forgotPassword))
+
+    const emailInput = screen.getByLabelText(en.resetEmailLabel) as HTMLInputElement
+    expect(emailInput.value).toBe('ada@example.com')
+
+    await u.click(screen.getByRole('button', { name: en.resetRequestSubmit }))
+    await waitFor(() => screen.getByText(en.resetRequestSent))
+    expect(postResetRequest).toHaveBeenCalledWith('ada@example.com')
+  })
+
+  it('shows the same neutral sent message even when the reset request throws (enumeration-neutral)', async () => {
+    useStore.setState({
+      authStatus: 'anonymous',
+      authFeatures: { password_reset: true, invites: false },
+    })
+    vi.mocked(postResetRequest).mockRejectedValue(new HttpError(500, 'boom'))
+    render(
+      <LoginGate>
+        <Sentinel />
+      </LoginGate>,
+    )
+    const u = userEvent.setup()
+    await u.click(screen.getByText(en.forgotPassword))
+    await u.type(screen.getByLabelText(en.resetEmailLabel), 'nobody@example.com')
+    await u.click(screen.getByRole('button', { name: en.resetRequestSubmit }))
+
+    await waitFor(() => screen.getByText(en.resetRequestSent))
+  })
+
+  it('the back link from ForgotPasswordForm returns to the ordinary login form', async () => {
+    useStore.setState({
+      authStatus: 'anonymous',
+      authFeatures: { password_reset: true, invites: false },
+    })
+    render(
+      <LoginGate>
+        <Sentinel />
+      </LoginGate>,
+    )
+    const u = userEvent.setup()
+    await u.click(screen.getByText(en.forgotPassword))
+    screen.getByLabelText(en.resetEmailLabel)
+    await u.click(screen.getByText(en.backToSignIn))
+    screen.getByLabelText(en.signInEmail)
+  })
+
+  it('keeps the forgot-password affordance after logout (authFeatures survives resetSessionState)', async () => {
+    // Mutation pin (c): removing 'authFeatures' from store.ts's
+    // reset-exclusion union makes resetSessionState() null this field on
+    // every logout, and this assertion fails.
+    useStore.setState({
+      token: 'tok',
+      user: user(),
+      authStatus: 'authenticated',
+      authFeatures: { password_reset: true, invites: false },
+    })
+    // The gate's own restoreSession() mount effect also fires here (token is
+    // set) — give it something to resolve to, or its loadUserPrefs(user.id)
+    // throws on an undefined user and the resulting restoreFailed:true would
+    // mask the very state this test means to exercise.
+    vi.mocked(getMe).mockResolvedValue(user())
+    vi.mocked(postLogout).mockResolvedValue(undefined)
+    render(
+      <LoginGate>
+        <Sentinel />
+      </LoginGate>,
+    )
+    screen.getByTestId('app-sentinel')
+
+    logout()
+
+    await waitFor(() => screen.getByLabelText(en.signInEmail))
+    screen.getByText(en.forgotPassword)
   })
 })

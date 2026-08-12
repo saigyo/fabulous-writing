@@ -14,6 +14,10 @@ vi.mock('../api/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api/client')>()),
   postLogin: vi.fn(),
   postLogout: vi.fn(),
+  // This file renders AccountMenu directly, not LoginGate, so nothing here
+  // would actually call getHealth — mocked anyway (Task 7) so a real fetch
+  // is never one accidental render away.
+  getHealth: vi.fn(async () => ({ status: 'ok', name: '', version: 'dev' })),
 }))
 // session.ts (imported transitively via login/logout/expireSession) pulls in
 // documents.ts's full hydration chain; only these two exports are needed.

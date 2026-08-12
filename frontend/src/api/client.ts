@@ -52,8 +52,8 @@ interface RequestOptions extends Omit<RequestInit, 'headers'> {
 // keepSessionOn401 lives only on this internal type, never on the exported
 // RequestOptions — so it is reachable exclusively through requestWithOptions
 // below. Its callers, kept complete here since this flag is
-// security-relevant and must not go stale: postLogin, postRefresh (Task 7
-// adds postResetRequest/postResetConfirm). Anything importing the public
+// security-relevant and must not go stale: postLogin, postRefresh,
+// postResetRequest, postResetConfirm. Anything importing the public
 // request() gets a type that has no such property at all: passing
 // { keepSessionOn401: true } as an object literal to request() is a compile
 // error, not a convention someone has to remember. This is a property of
@@ -153,6 +153,27 @@ export async function request<T>(path: string, init?: RequestOptions): Promise<T
   return requestWithOptions<T>(path, init)
 }
 
+// Mirrors backend/app/api/health.py: password_reset/invites are each true
+// only when the deployment's auth backend actually supports them (Supabase
+// mode with the relevant capability configured) — local mode omits
+// auth_features entirely, which the gate's mount effect (LoginGate.tsx)
+// already treats as "neither flag is on" via the optional-chaining read.
+export interface AuthFeatures {
+  password_reset: boolean
+  invites: boolean
+}
+
+export interface HealthResponse {
+  status: string
+  name: string
+  version: string
+  auth_features?: AuthFeatures
+}
+
+// Public and unauthenticated by design (backend/app/api/health.py) — this is
+// the one /api/* call the gate issues before any session exists.
+export const getHealth = () => request<HealthResponse>('/api/health')
+
 /** Mirrors the backend's own response (`backend/app/api/auth.py`). M4 added
  * `policy` (LLM tier/provider/model gating, spec §8); M5 delivers the
  * promised extension — `usage`/`limits` (quota/size/concurrency) and
@@ -207,6 +228,27 @@ export const postRefresh = (refreshToken: string) =>
 // bearer token was already dead, and logout()'s own teardown must proceed
 // either way — see session.ts.
 export const postLogout = () => request<void>('/api/auth/logout', { method: 'POST' })
+
+// keepSessionOn401: requested while anonymous (ForgotPasswordForm), so there
+// is no session to clear — matches postLogin's reasoning above. Always
+// resolves 204 regardless of whether the address has an account
+// (enumeration-neutral, backend/app/api/auth.py).
+export const postResetRequest = (email: string) =>
+  requestWithOptions<void>('/api/auth/reset-request', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+    keepSessionOn401: true,
+  })
+
+// keepSessionOn401: submitted from ResetPasswordForm while anonymous (a
+// recovery/invite link, not a bearer token) — a 401 must reach the caller as
+// an HttpError, not clear auth state that does not exist yet.
+export const postResetConfirm = (tokenHash: string, type: 'recovery' | 'invite', newPassword: string) =>
+  requestWithOptions<void>('/api/auth/reset-confirm', {
+    method: 'POST',
+    body: JSON.stringify({ token_hash: tokenHash, type, new_password: newPassword }),
+    keepSessionOn401: true,
+  })
 
 export const getMe = () => request<MeResponse>('/api/auth/me')
 

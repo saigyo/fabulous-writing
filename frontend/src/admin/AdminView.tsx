@@ -15,6 +15,7 @@ import { useStore } from '../state/store'
 
 export function AdminView() {
   const me = useStore((s) => s.user)
+  const authFeatures = useStore((s) => s.authFeatures)
   const m = useMessages()
   // null = not loaded (or failed), for both. Tier names are config-defined
   // and never guessed client-side: a hardcoded fallback would offer options
@@ -66,6 +67,7 @@ export function AdminView() {
         tiers={tiers}
         usersLoaded={users !== null}
         allowMoreAdmins={allowMoreAdmins}
+        invitesAvailable={authFeatures?.invites ?? false}
         onCreated={(user) => setUsers((current) => [...(current ?? []), user])}
         run={run}
         fail={fail}
@@ -108,12 +110,25 @@ interface CreateFormProps {
   tiers: string[] | null
   usersLoaded: boolean
   allowMoreAdmins: boolean
+  // authFeatures.invites (Task 7): when true, the password field becomes
+  // optional — an empty submission sends { password: undefined } and the
+  // backend invites the new user through Supabase instead of setting a
+  // credential directly.
+  invitesAvailable: boolean
   onCreated: (user: AdminUser) => void
   run: (action: () => Promise<void>) => Promise<void>
   fail: (message: string) => void
 }
 
-function CreateForm({ tiers, usersLoaded, allowMoreAdmins, onCreated, run, fail }: CreateFormProps) {
+function CreateForm({
+  tiers,
+  usersLoaded,
+  allowMoreAdmins,
+  invitesAvailable,
+  onCreated,
+  run,
+  fail,
+}: CreateFormProps) {
   const m = useMessages()
   const [email, setEmail] = useState('')
   const [displayName, setDisplayName] = useState('')
@@ -132,8 +147,15 @@ function CreateForm({ tiers, usersLoaded, allowMoreAdmins, onCreated, run, fail 
   }, [tiers, tier])
 
   async function create() {
-    if (!tiers || !usersLoaded || pending || !email.trim() || !password) return
-    if (password.length < ADMIN_MIN_PASSWORD_LENGTH) {
+    // Without invites, an empty password still fails this guard exactly as
+    // before — invitesAvailable is false and the byte-identical behaviour
+    // the brief requires falls straight out of that.
+    if (!tiers || !usersLoaded || pending || !email.trim() || (!password && !invitesAvailable)) {
+      return
+    }
+    // A non-empty short password still fails this check regardless of
+    // invites — only an empty field (the invited-user path) skips it.
+    if (password && password.length < ADMIN_MIN_PASSWORD_LENGTH) {
       // Reuses the existing parameterized key (AccountMenu precedent) —
       // no second hardcoded-floor message to drift.
       fail(m.passwordTooShort(ADMIN_MIN_PASSWORD_LENGTH))
@@ -145,7 +167,7 @@ function CreateForm({ tiers, usersLoaded, allowMoreAdmins, onCreated, run, fail 
       await run(async () => {
         const created = await postAdminUser({
           email: email.trim(),
-          password,
+          password: password || undefined,
           ...(displayName.trim() ? { display_name: displayName.trim() } : {}),
           tier,
           is_admin: isAdmin,
@@ -182,6 +204,7 @@ function CreateForm({ tiers, usersLoaded, allowMoreAdmins, onCreated, run, fail 
         value={password}
         placeholder={m.adminPassword}
         aria-label={m.adminPassword}
+        title={invitesAvailable ? m.adminPasswordOptionalHint : undefined}
         onChange={(e) => setPassword(e.target.value)}
       />
       <select
@@ -205,7 +228,9 @@ function CreateForm({ tiers, usersLoaded, allowMoreAdmins, onCreated, run, fail 
       </label>
       <button
         onClick={() => void create()}
-        disabled={!tiers || !usersLoaded || pending || !email.trim() || !password}
+        disabled={
+          !tiers || !usersLoaded || pending || !email.trim() || (!password && !invitesAvailable)
+        }
       >
         {m.adminCreate}
       </button>

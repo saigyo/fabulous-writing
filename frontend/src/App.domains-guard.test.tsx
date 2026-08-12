@@ -14,6 +14,10 @@ vi.mock('./api/client', async (importOriginal) => ({
   getLanguages: vi.fn().mockResolvedValue([]),
   getRouting: vi.fn().mockResolvedValue(null),
   getProfiles: vi.fn().mockResolvedValue([]),
+  // This file renders Header directly, not LoginGate, so nothing here would
+  // actually call getHealth — mocked anyway (Task 7) so a real fetch is
+  // never one accidental render away.
+  getHealth: vi.fn(async () => ({ status: 'ok', name: '', version: 'dev' })),
   postLogin: vi.fn(),
   // Resolved once here: the file's beforeEach uses clearAllMocks() (not
   // resetAllMocks()), which clears call history but preserves this

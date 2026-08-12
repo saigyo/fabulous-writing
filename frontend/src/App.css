@@ -2016,6 +2016,18 @@ dialog.app-dialog h2 {
   font-weight: 600;
 }
 
+/* Forgot-password / back-to-sign-in affordances (Task 7): plain buttons
+   styled as inline text links, not full-width form controls. */
+.login-link {
+  align-self: center;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 0.8rem;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 /* ---- account menu (header) ---- */
 
 .account-menu-anchor {
