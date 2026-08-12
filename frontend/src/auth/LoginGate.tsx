@@ -16,7 +16,12 @@ interface ResetParams {
 /** Reads a reset/invite link's params from the current URL, once. Only
  * "recovery"/"invite" are accepted `type` values — anything else (missing
  * param, typo, a stray query string from something unrelated) is treated as
- * no link at all, and the gate falls through to the ordinary login form. */
+ * no link at all, and the gate falls through to the ordinary login form.
+ * This query-param shape (not Supabase's stock-template fragment link) is
+ * only what the emailed link carries if the dashboard's email templates
+ * were pointed at the app the way `docs/supabase-auth-setup.md` §7
+ * describes — otherwise the tokens arrive as a URL fragment this function
+ * never sees, and both flows fail closed here, silently. */
 function readResetParams(): ResetParams | null {
   const params = new URLSearchParams(window.location.search)
   const tokenHash = params.get('token_hash')
@@ -113,17 +118,28 @@ export function LoginGate({ children }: { children: ReactNode }) {
     )
   }
 
+  // A recovery/invite link is an explicit intent to change the credential:
+  // checked BEFORE 'authenticated' so a link opened in a tab that still
+  // holds a valid stored token renders the reset form instead of silently
+  // returning to the app with the link burned (finding 7, final review).
+  // This also covers 'unknown' (restore still in flight) — the form does
+  // not depend on auth state, so there is nothing to wait for.
+  if (resetParams) {
+    return (
+      <GateShell>
+        <ResetPasswordForm
+          tokenHash={resetParams.tokenHash}
+          type={resetParams.type}
+          onDone={() => setResetParams(null)}
+        />
+      </GateShell>
+    )
+  }
   if (authStatus === 'authenticated') return <>{children}</>
   if (authStatus === 'anonymous') {
     return (
       <GateShell>
-        {resetParams ? (
-          <ResetPasswordForm
-            tokenHash={resetParams.tokenHash}
-            type={resetParams.type}
-            onDone={() => setResetParams(null)}
-          />
-        ) : forgotEmail !== null ? (
+        {forgotEmail !== null ? (
           <ForgotPasswordForm email={forgotEmail} onBack={() => setForgotEmail(null)} />
         ) : (
           <LoginForm onForgot={setForgotEmail} />

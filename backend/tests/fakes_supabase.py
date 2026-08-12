@@ -134,6 +134,14 @@ class FakeSupabaseGateway:
         for email, (_password, uuid) in list(self._users.items()):
             if uuid == user_id:
                 self._users[email] = (new_password, uuid)
+                # Mirrors real GoTrue: admin.update_user_by_id with a
+                # password logs the user out everywhere as part of the same
+                # call (UpdatePassword -> Logout(user.ID) server-side) --
+                # every outstanding refresh token for this user dies right
+                # here, with no separate sign-out call required or possible.
+                for token, (rt_uuid, _email) in list(self._refresh_tokens.items()):
+                    if rt_uuid == user_id:
+                        del self._refresh_tokens[token]
                 return
         raise SupabaseAuthError(f"unknown user_id {user_id!r}")
 

@@ -86,7 +86,31 @@ the same origin under **additional redirect URLs**. This is what makes a
 password-reset or invite email's link land back on your app instead of a
 generic Supabase page.
 
-## 7. Auth → Email (SMTP)
+## 7. Auth → Email Templates: point them at the app, not Supabase's verify page
+
+**Do this or password reset and invite acceptance silently do nothing.**
+Supabase's stock "Reset Password" and "Invite user" templates link to
+`{{ .ConfirmationURL }}`, which routes through Supabase's own
+`/auth/v1/verify` endpoint and lands back on your Site URL with the tokens
+in the URL **fragment** (`#access_token=...&type=recovery`) — not a
+`token_hash` query parameter. This backend's frontend
+(`LoginGate.tsx`'s `readResetParams()`) only recognizes
+`?token_hash=...&type=recovery|invite` in the query string, because the
+backend verifies the link server-side via `verify_otp({token_hash, type})`
+(`supabase_gateway.py`) rather than trusting a client-side session GoTrue's
+verify page hands back. With the stock templates, the link opens the
+ordinary login form with no error — both flows fail closed, silently.
+
+For **each** of the "Reset Password" and "Invite user" templates (**Auth →
+Email Templates**), replace the link with:
+
+- Reset Password: `{{ .SiteURL }}/?token_hash={{ .TokenHash }}&type=recovery`
+- Invite user: `{{ .SiteURL }}/?token_hash={{ .TokenHash }}&type=invite`
+
+`{{ .SiteURL }}` resolves to the Site URL set in §6 above, so this only
+works once that field is filled in.
+
+## 8. Auth → Email (SMTP)
 
 Supabase's built-in email sender is **rate-limited for development use** —
 fine for testing the flow, not for production traffic (a burst of invites
@@ -94,20 +118,27 @@ or reset requests will start bouncing). For a production deployment,
 configure **custom SMTP** here before you rely on invite or reset emails
 actually arriving.
 
-## 8. Access-token TTL
+## 9. Access-token TTL
 
 The default access-token lifetime (1 hour) is fine as-is — there's no need
-to shorten it for security reasons. Revocation in this app is enforced at
-the backend's own verification layer, not by how quickly a token expires:
-a password change backdates `password_changed_at` and forces a global
-Supabase sign-out (see
+to shorten it for security reasons. Revocation in this app is enforced
+mostly at the backend's own verification layer: a password change backdates
+`password_changed_at` and rejects every access token minted before that
+instant on the next request. The one exception is deliberate: a token
+minted in the final `IAT_LEEWAY_SECONDS` (60s) before the change stays
+valid until it expires on its own. A global Supabase sign-out runs
+alongside the backdate, but it revokes **refresh tokens and sessions
+only** — access tokens are stateless JWTs this backend verifies locally
+against Supabase's published JWKS, so Supabase is never consulted per
+request and cannot revoke one already issued (see
 [Revocation and eviction](backend-architecture.md#authentication-and-user-accounts)
-in the architecture doc), so a stolen token becomes worthless well before
-its TTL would have ended it anyway. A short TTL only forces more silent
-background refreshes; it doesn't add revocation the backend doesn't
-already have.
+in the architecture doc for the full picture). In practice that residual
+window is bounded and no replacement token can be minted for it — the
+refresh token dies with the sign-out — but it is not "immediately
+worthless." A short TTL only forces more silent background refreshes; it
+doesn't add revocation the backend doesn't already have.
 
-## 9. Wire it into the backend
+## 10. Wire it into the backend
 
 `config.yaml`:
 

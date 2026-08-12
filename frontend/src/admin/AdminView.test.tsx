@@ -173,6 +173,46 @@ describe('AdminView', () => {
     await screen.findByText(en.adminChangeFailed('POST /api/admin/users failed: 422'))
   })
 
+  it('with invites unavailable, an empty password keeps the create button disabled (rider, finding 1 triage #4)', async () => {
+    vi.mocked(getAdminUsers).mockResolvedValue([])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+    const u = userEvent.setup()
+
+    render(<AdminView />)
+    await screen.findByText('basic')
+
+    await u.type(screen.getByLabelText(en.adminEmail), 'new@example.com')
+    const button = screen.getByRole('button', { name: en.adminCreate }) as HTMLButtonElement
+    expect(button.disabled).toBe(true) // no password, and authFeatures defaults to no invites
+    expect(postAdminUser).not.toHaveBeenCalled()
+  })
+
+  it('with invites available, an empty password enables create and posts password: undefined (rider, finding 1 triage #4)', async () => {
+    useStore.setState({ authFeatures: { password_reset: true, invites: true } })
+    vi.mocked(getAdminUsers).mockResolvedValue([])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+    vi.mocked(postAdminUser).mockResolvedValue(
+      adminUser({ id: 9, email: 'invitee@example.com' }),
+    )
+    const u = userEvent.setup()
+
+    render(<AdminView />)
+    await screen.findByText('basic')
+
+    await u.type(screen.getByLabelText(en.adminEmail), 'invitee@example.com')
+    const button = screen.getByRole('button', { name: en.adminCreate }) as HTMLButtonElement
+    expect(button.disabled).toBe(false) // empty password is fine: invites cover it
+    await u.click(button)
+
+    await screen.findByText('invitee@example.com')
+    expect(postAdminUser).toHaveBeenCalledWith({
+      email: 'invitee@example.com',
+      password: undefined,
+      tier: 'basic',
+      is_admin: false,
+    })
+  })
+
   it('admin checkbox in the create form is disabled with a hint while allow_additional_admins is false', () => {
     useStore.setState({ user: user({ allow_additional_admins: false }) })
     vi.mocked(getAdminUsers).mockResolvedValue([])
