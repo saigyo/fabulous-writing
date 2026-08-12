@@ -353,6 +353,19 @@ alongside the related config-only knobs (`mode`, `ephemeral_secret`,
 session is available via the operator CLI: `uv run python -m app.manage
 --help` (from `backend/`).
 
+### Hosted authentication (Supabase)
+
+Setting `auth.mode: supabase` in `config.yaml` replaces the backend's own
+password storage and token signing with a [supabase.com](https://supabase.com)
+project: Supabase owns credentials, password resets, and admin-invite email;
+this backend still owns authorization (tier, admin flag, active/deactivated)
+and independently rejects anonymous or unconfirmed Supabase tokens on their
+claims, not just via dashboard configuration. `FW_AUTH_SECRET` is not needed
+in this mode. See
+[docs/supabase-auth-setup.md](docs/supabase-auth-setup.md) for the full
+dashboard walkthrough — project creation, the JWT key rotation this mode
+requires, and the environment variables that replace `FW_AUTH_SECRET`.
+
 ### Configuration
 
 All configuration is optional. Copy `backend/config.example.yaml` to

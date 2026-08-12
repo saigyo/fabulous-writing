@@ -1027,7 +1027,8 @@ anonymously (not just registered unauthenticated by omission).
 
 `app/services/users.py` adds two SQLite tables via the same idempotent
 `CREATE TABLE IF NOT EXISTS` pattern every other store uses: `users` (`id`,
-`external_id` — reserved for the future Supabase subject UUID, `email
+`external_id` — the Supabase subject UUID in supabase mode, `UNIQUE`, `NULL`
+in local mode — `email
 UNIQUE COLLATE NOCASE`, `display_name`, `password_hash`, `tier` (a free-form
 string, validated at the API layer rather than a DB `CHECK` — SQLite cannot
 alter a `CHECK` without rebuilding the table, so a constraint would turn
@@ -1094,10 +1095,11 @@ the claim is actually numeric before comparing it.
 
 **`TokenVerifier` is a `Protocol`, and every implementation returns the
 local `users.id`** — never an external subject id. That return value is the
-seam: when Supabase Auth arrives (sub-project 2), its verifier resolves a
-Supabase subject UUID to `users.external_id` internally and fails closed if
-unlinked, so nothing on the request path — `get_current_user`, any handler
-reading `CurrentUser.id` — changes shape when the auth mode changes.
+seam that let Supabase Auth (`auth.mode: supabase`, below) arrive without
+touching the request path: `SupabaseTokenVerifier` resolves a Supabase
+subject UUID to `users.external_id` internally and fails closed if
+unlinked, so nothing downstream — `get_current_user`, any handler reading
+`CurrentUser.id` — changes shape between the two modes.
 
 ### `app/api/deps.py` — per-request identity
 
@@ -1143,35 +1145,59 @@ instant as the old token's `iat`, in the pathological same-second case) is
 freshly issued *after* `set_password` has already bumped `token_epoch`, so
 it always carries the new epoch and is correctly accepted, while every
 other outstanding token — including one from that same wall-clock second —
-still carries the old epoch and is rejected. `epoch is None` is the reserved
-fallback path for a verifier with no epoch concept at all (the future
-Supabase verifier — pinned in the roadmap's Cross-milestone interfaces
-section): only then does `get_current_user` fall back to the
-`password_changed_at` comparison described above, same-second residual and
-all. A pre-M3 database's `users` rows are backfilled to `token_epoch = 0` by
+still carries the old epoch and is rejected. `epoch is None` is the fallback
+path for a verifier with no epoch concept at all — `SupabaseTokenVerifier`
+always returns `epoch=None` (below): only then does `get_current_user` fall
+back to the `password_changed_at` comparison described above, same-second
+residual and all. A pre-M3 database's `users` rows are backfilled to
+`token_epoch = 0` by
 the same idempotent `migrate_columns` pattern every other store uses — see
 [Ownership](#ownership) below for the deploy-time consequence (every
 existing session signs out once, since a pre-M3 token carries no `epoch`
 claim at all and the JWT's own `required` claims list now rejects it
 outright).
 
-### `app/api/auth.py` — login, me, password change
+### `app/api/auth.py` — login, me, password change, and (supabase mode) refresh/logout/reset
 
-`/api/auth/login|me|password`, all local-mode only — `_require_local_mode`
-404s in `supabase` mode, so a leaked `FW_AUTH_SECRET` could never forge
-tokens against a Supabase-mode deployment. Login failures are uniformly
-`401 "Invalid email or password"`: unknown email, wrong password, and
-deactivated account are indistinguishable to the caller.
+Three routes serve **both** auth modes behind one URL, dispatching on
+`settings.auth.mode` inside the handler: `POST /api/auth/login`, `POST
+/api/auth/password`, and (Task 5) `POST /api/admin/users`. Each has a
+`_local` implementation and a `_supabase` implementation; the local branch
+runs `store.verify_credentials`/bcrypt, so it is dispatched through
+`run_in_threadpool` to keep bcrypt (~173 ms in production) off the event
+loop — the supabase branch is `async def` end to end and never touches
+bcrypt, so it runs inline. Every other route in this file —
+`/api/auth/refresh`, `/api/auth/logout`, `/api/auth/reset-request`,
+`/api/auth/reset-confirm` — exists **only** in supabase mode: there is no
+Supabase session to refresh, revoke, or reset a password against in local
+mode, so `_require_supabase_mode` 404s them there. `/api/auth/me` is the one
+route that needs no dispatch at all — it just re-reads the local user row,
+identically in both modes. Login failures are uniformly `401 "Invalid email
+or password"` in both modes: unknown email, wrong password, deactivated
+account, and (supabase mode) a verified Supabase session that
+`resolve_supabase_user` cannot map to a local row are all indistinguishable
+to the caller.
 
 `LoginThrottle` is exponential backoff keyed on `(email, client IP)` —
 `client_ip` is `request.client.host`; `X-Forwarded-For`/`Forwarded` are
 deliberately ignored, since trusting them unverified would let an attacker
-mint a fresh spoofed IP per request and bypass the throttle entirely. It is
-in-process state (correct for this single-process deployment; Supabase's own
-rate limiting replaces it in sub-project 2) and thread-safe because FastAPI
-runs sync ("def") handlers in a threadpool — one `threading.Lock` guards
-every read/write of the attempts table. Its size cap (`max_entries=4096`) is
-a **soft** ceiling: an entry whose block is currently active is exempt from
+mint a fresh spoofed IP per request and bypass the throttle entirely. **One**
+`LoginThrottle` instance (`app.state.login_throttle`) guards `/auth/login`
+in both modes — a failed Supabase sign-in records a throttle failure exactly
+like a failed local `verify_credentials` call, so a Supabase-mode deployment
+is not relying on Supabase's own rate limiting to protect this endpoint. A
+**second, separate** instance (`app.state.reset_throttle`) guards only
+`/auth/reset-request`, with a smaller `threshold` (3) and a longer
+`base_delay`/`max_delay` (60s / 900s): sharing one table between the two
+routes would let five free reset-request POSTs block a legitimate login for
+the same `(email, ip)`, and would break the throttle's own
+bcrypt-cost argument for why its exempt-entry set stays bounded (reset
+requests pay no bcrypt at all — `record_failure` runs unconditionally on
+every non-blocked attempt). Both instances are in-process state, correct
+for this single-process deployment, and thread-safe because FastAPI runs
+sync (`def`) handlers in a threadpool — one `threading.Lock` guards every
+read/write of the attempts table. Its size cap (`max_entries=4096`) is a
+**soft** ceiling: an entry whose block is currently active is exempt from
 eviction via an explicit check in `_evict_to_cap_locked`, so the table can
 briefly exceed the cap. It is also, in effect, exempt from the TTL sweep,
 but not via any explicit check — `_prune_locked` never inspects
@@ -1182,24 +1208,132 @@ reaches it. That exemption closes a bypass rather than opening one — without i
 attacker who already triggered a block on a victim key could spray
 disposable throwaway emails from the same IP to evict the victim's entry and
 reset its accumulated backoff. What actually bounds the exempt set's growth
-is bcrypt cost, not the cap: reaching a blocked state costs `threshold` (5)
-failed logins per entry, each paying full bcrypt time. See the class
-docstring for the complete argument.
+is bcrypt cost, not the cap for `login_throttle` — reaching a blocked state
+costs `threshold` (5) failed logins per entry, each paying full bcrypt time
+— and `entry_ttl` for `reset_throttle`, which pays no such cost. See the
+class docstring for the complete argument.
 
-### `app/api/admin.py` — admin user management
+`POST /api/auth/refresh` deliberately carries **no** throttle: a refresh
+token is 256-bit random (not guessable the way a password is), GoTrue
+applies its own server-side rate limiting, and an IP-keyed throttle here
+would let one NAT (many callers behind one address) starve every legitimate
+refresh behind it — a denial of service the login throttle doesn't risk,
+since it's keyed on `(email, ip)` rather than `ip` alone.
 
-`/api/admin/users` (list/create/patch) and `/api/admin/tiers` (list) attach
-`require_admin` at **router level** (`APIRouter(..., dependencies=[Depends(require_admin)])`),
-not on individual endpoints, so an admin endpoint added later inherits the check by
-construction — it cannot ship unauthenticated by omission. Every changed
-field on a patch writes one `admin_audit` row (never the password's value or
-even its length, only that it changed). `auth.allow_additional_admins` gates
-minting or promoting a *second* admin; it is config-only, read from
-`Settings`, and never reachable through the API — a stolen admin session
-could still do damage before being deactivated, but it must not be able to
-create a fresh admin account that survives that response. An admin can never
-remove their own `is_admin`/`is_active` through this API (409) — the
-deliberate version of that action lives only in the operator CLI.
+### `app/core/supabase_auth.py` — the Supabase verifier
+
+`resolve_supabase_credentials` is the fail-closed startup gate for supabase
+mode: it requires `auth.supabase.url` in config plus both
+`FW_SUPABASE_PUBLISHABLE_KEY` and `FW_SUPABASE_SECRET_KEY` in the
+environment, and its error messages name the missing variable, never a
+value — a config-error log line must never become a credential at rest.
+
+`SupabaseTokenVerifier.verify()` fetches the project's JWKS **lazily**, on
+first use (`jwt.PyJWKClient`, cached for 600 seconds — Supabase's own
+edge-cache guidance), rather than prefetching it at startup: a misconfigured
+URL or a transient Supabase outage then surfaces as a 401 on the first login
+attempt, in the server log, instead of wedging every container restart.
+Requests fail closed until the key set is reachable. Verification pins
+`algorithms=["ES256", "RS256"]` — asymmetric only, never `HS256` — checks
+`iss`/`aud` against the project's `/auth/v1` issuer and the fixed audience
+`"authenticated"`, and requires `sub`/`exp`/`iat`/`iss`/`aud` to be present.
+Two claims checks exist specifically because the dashboard toggles in
+[the setup guide](supabase-auth-setup.md) are not the actual control: a
+token with `is_anonymous: true`, or any `role` other than `"authenticated"`,
+is rejected regardless of what "allow anonymous sign-ins" is set to in the
+Supabase dashboard — a drive-by anonymous session must never be able to
+reach `resolve_supabase_user` and provision a local row. `iat` gets the same
+hand-rolled leeway check as `LocalTokenVerifier` (`IAT_LEEWAY_SECONDS`,
+shared between both verifiers).
+
+`resolve_supabase_user(store, *, subject, email)` maps a verified Supabase
+subject UUID to the local `users` row, in a fixed order that matters:
+**external_id first** (the common case — an already-linked account),
+**then adopt-by-email** (a pre-Supabase local account signing in through
+Supabase for the first time links by matching email), **then JIT-create**
+(an invited user's first successful login creates the local row on the
+spot). An email already owned by a row linked to a *different* subject
+fails closed (`InvalidToken`) rather than silently re-linking — one local
+account never serves two Supabase identities. `SupabaseTokenVerifier.verify`
+always returns `VerifiedToken(..., epoch=None)` — it has no epoch concept at
+all, which is what routes `get_current_user` (`app/api/deps.py`, above) to
+its `password_changed_at` fallback instead of the epoch-equality check
+local tokens use.
+
+### `app/services/supabase_gateway.py` — the Supabase gateway
+
+`SupabaseAuthGateway` wraps the `supabase_auth` (GoTrue) client library and
+is the only code in this backend that talks to Supabase over the network.
+Every method builds its **own** short-lived `httpx.AsyncClient` and GoTrue
+client around it, rather than holding one pooled client on `app.state`: auth
+operations are rare enough that the per-call handshake cost is irrelevant
+next to bcrypt, and `seed_admin` drives the gateway from its own
+`asyncio.run()` event loop at startup (before uvicorn's loop exists), so no
+connection pool may outlive a single operation or get reused across loops.
+Two client kinds, built by two private context managers:
+
+- `_user_client()` — authenticates with the **publishable** key, for
+  operations a signed-in (or signing-in) user performs themselves:
+  `sign_in`, `refresh`, `send_reset_email`, `confirm_with_token_hash`.
+- `_admin_client()` — authenticates with the **secret** key, for operations
+  only an admin session or the backend itself may perform: `sign_out`,
+  `global_sign_out`, `change_password`, `create_user`, `invite_user`,
+  `get_user_id_by_email`.
+
+`sign_out` and `global_sign_out` are the same GoTrue call
+(`admin.sign_out(access_token, scope)`) with a different `scope` string —
+`"local"` revokes only the session tied to that one access token (ordinary
+logout); `"global"` revokes every session for that user, which is what a
+password change (`_change_password_supabase`, `reset_confirm`) calls after
+updating the credential, as the second eviction layer alongside the local
+`password_changed_at` backdate (see the table below). Every GoTrue error is
+mapped to exactly two backend-facing exception types, in an order that
+matters (`AuthRetryableError` is itself an `AuthError`, so it must be caught
+first): `SupabaseAuthError` (bad credentials, expired/invalid link — a
+`401`/`422` to the caller) and `SupabaseUnavailableError` (network failure,
+5xx, timeout, or a retryable GoTrue error — a `503`).
+
+### Admin invites (`app/api/admin.py`, supabase mode)
+
+`POST /api/admin/users` with no `password` field only makes sense in
+supabase mode — local mode has no way to authenticate an account with no
+credential, so it 422s (`password_required`) there instead. In supabase
+mode, an admin creating a user with no password calls
+`gateway.invite_user(email)` (GoTrue's `invite_user_by_email`), links the
+returned Supabase subject UUID to a new local row via `external_id`, and
+returns `AdminUserCreated(..., invited=True)` — `invited` is an event of
+that one API call, never durable user state, so it is a response-only field
+that never appears on `User` itself or leaks into `GET /api/admin/users`.
+The invited user's local row exists from that moment (with no password of
+its own — Supabase owns the credential), but the account only becomes
+usable once the invite email's link is followed: `POST
+/api/auth/reset-confirm` with `type: "invite"` is the invite-acceptance
+step, and it is the point where `resolve_supabase_user`'s JIT path would
+also apply, though in the invite case the local row already exists from the
+`invite_user` call above, so it resolves by `external_id` on the first hit
+instead of creating a fresh row.
+
+### Revocation and eviction across auth modes
+
+Both modes end up needing to invalidate outstanding tokens without a
+blocklist, but the mechanism differs because a local mode token carries a
+server-issued `epoch` claim and a Supabase token does not:
+
+| Trigger | Local mode | Supabase mode |
+|---|---|---|
+| Deactivation / de-admin | `get_current_user` re-reads the user row every request; takes effect immediately, no token action needed | same |
+| Password change (self-service or admin reset) | `set_password` bumps `users.token_epoch`; every outstanding token carries the old epoch and fails `get_current_user`'s equality check | `mark_password_changed` backdates `users.password_changed_at` by `IAT_LEEWAY_SECONDS` (below) **and** `token_epoch += 1`; `get_current_user` falls back to the `password_changed_at` comparison since `epoch=None`; the gateway's `global_sign_out` is called as a second, Supabase-side layer |
+| Comparison used | Exact equality (`epoch == token_epoch`) — no clock coupling | `issued_at < password_changed_at` — clock-coupled, second granularity |
+
+The `IAT_LEEWAY_SECONDS` backdate on `mark_password_changed` is not
+cosmetic: `password_changed_at` is compared against `iat` values from
+**Supabase's** clock, not this server's, so without the allowance a
+trailing Supabase clock would reject the fresh session minted moments after
+the change — specifically the frontend's own silent re-login
+(`docs/frontend-architecture.md`'s reset/invite flow). Tokens issued in the
+final `IAT_LEEWAY_SECONDS` window before the change stay valid at this
+backend's own layer for the remainder of that window; `global_sign_out` is
+what actually closes that residual gap, at Supabase's layer, immediately.
 
 ### Startup bootstrap
 
@@ -1209,15 +1343,30 @@ deliberate version of that action lives only in the operator CLI.
 for this — an unauthenticated bootstrap endpoint either stays open forever
 or depends on someone remembering to close it — so once any user exists, the
 two env vars are inert: they can never serve as a standing password reset.
+In supabase mode, `seed_admin` is passed a `SupabaseAuthGateway` and creates
+the admin **in Supabase** (`gateway.create_user`, falling back to
+`get_user_id_by_email` if the email is already registered — a re-run
+against an existing project links instead of failing) before writing the
+local row with that `external_id`; in local mode it writes the password
+hash locally, unchanged from before this milestone.
 
-`create_app()` (`app/main.py`) wires all of this in a fixed order: it checks
-`settings.auth.mode == "local"` (raising `AuthConfigError` for `supabase`,
-not yet implemented) **before** `UserStore` creates any table, then resolves
-the secret (`resolve_auth_secret`, fail-closed as above), builds the
-`LocalTokenVerifier` and `LoginThrottle`, and only then calls `seed_admin`.
-Startup fails closed on any of: a missing/short `FW_AUTH_SECRET` (unless
-`ephemeral_secret` is on), a missing/short bootstrap email/password while
-`users` is empty, or a non-`local` `auth.mode`.
+`create_app()` (`app/main.py`) wires all of this by dispatching once on
+`settings.auth.mode`: for `"supabase"`, it calls
+`resolve_supabase_credentials` (fail-closed on missing config/env, above),
+builds the `SupabaseAuthGateway` and `SupabaseTokenVerifier`; for `"local"`
+(the default), it resolves the signing secret (`resolve_auth_secret`,
+fail-closed as before) and builds the `LocalTokenVerifier`. Both branches
+build a `UserStore` and, in either case, only then does `seed_admin` run —
+migrations before bootstrap, in both modes. **`auth.mode: supabase` no
+longer raises `AuthConfigError` by itself** — it only does so when the
+supabase config or secrets are actually missing
+(`resolve_supabase_credentials`), the same fail-closed shape local mode has
+always had for a missing `FW_AUTH_SECRET`. Startup fails closed on any of: a
+missing/short `FW_AUTH_SECRET` in local mode (unless `ephemeral_secret` is
+on), a missing `auth.supabase.url`/`FW_SUPABASE_PUBLISHABLE_KEY`/
+`FW_SUPABASE_SECRET_KEY` in supabase mode, a missing/short bootstrap
+email/password while `users` is empty, or (supabase mode only) a bootstrap
+call to Supabase itself failing.
 
 One deviation from the eager-singleton pattern the rest of `main.py` uses:
 the module-level `app` that `uvicorn app.main:app` needs used to be built
