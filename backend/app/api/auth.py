@@ -16,7 +16,12 @@ from pydantic import BaseModel, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import CurrentUser, get_current_user
-from app.core.auth import SELF_MIN_PASSWORD_LENGTH, issue_token, validate_password
+from app.core.auth import (
+    SELF_MIN_PASSWORD_LENGTH,
+    InvalidToken,
+    issue_token,
+    validate_password,
+)
 from app.core.config import KNOWN_FEATURES, Settings
 from app.core.permissions import features_for, label_for, limits_for, policy_for
 from app.core.supabase_auth import resolve_supabase_user
@@ -489,9 +494,19 @@ async def _login_supabase(request: Request, body: LoginRequest) -> LoginResponse
         raise HTTPException(401, _INVALID_LOGIN) from None
     except SupabaseUnavailableError:
         raise HTTPException(503, "Authentication service unavailable") from None
-    user = resolve_supabase_user(
-        app.state.user_store, subject=session.user_id, email=session.email
-    )
+    try:
+        user = resolve_supabase_user(
+            app.state.user_store, subject=session.user_id, email=session.email
+        )
+    except InvalidToken:
+        # e.g. the session's email belongs to a local row already linked to
+        # a DIFFERENT external_id (resolve_supabase_user's fail-closed
+        # collision guard). A verified Supabase session that cannot be
+        # mapped to a local user is an authentication failure from the
+        # caller's point of view, not a server error -- same generic 401 as
+        # every other login failure, no exception text leaked.
+        app.state.login_throttle.record_failure(key)
+        raise HTTPException(401, _INVALID_LOGIN) from None
     if not user.is_active:
         app.state.login_throttle.record_failure(key)
         raise HTTPException(401, _INVALID_LOGIN)
@@ -517,6 +532,12 @@ async def login(request: Request, body: LoginRequest) -> LoginResponse:
 
 @router.post("/auth/refresh")
 async def refresh(request: Request, body: RefreshRequest) -> LoginResponse:
+    # No throttle here, unlike login: refresh tokens are 256-bit random (not
+    # guessable the way a password is), GoTrue applies its own rate limiting
+    # server-side, and an IP-keyed throttle on this route would let one NAT
+    # (many callers sharing one client IP) starve every legitimate refresh
+    # behind it -- a self-inflicted denial of service login's throttle does
+    # not risk, since login is keyed on (email, ip) rather than ip alone.
     _require_supabase_mode(request)
     app = request.app
     try:
@@ -525,9 +546,12 @@ async def refresh(request: Request, body: RefreshRequest) -> LoginResponse:
         raise HTTPException(401, _INVALID_LOGIN) from None
     except SupabaseUnavailableError:
         raise HTTPException(503, "Authentication service unavailable") from None
-    user = resolve_supabase_user(
-        app.state.user_store, subject=session.user_id, email=session.email
-    )
+    try:
+        user = resolve_supabase_user(
+            app.state.user_store, subject=session.user_id, email=session.email
+        )
+    except InvalidToken:
+        raise HTTPException(401, _INVALID_LOGIN) from None
     if not user.is_active:
         raise HTTPException(401, _INVALID_LOGIN)
     return LoginResponse(
@@ -689,9 +713,16 @@ async def reset_confirm(request: Request, body: ResetConfirm) -> Response:
     # JIT: for an invite-type hash, this IS the invite-acceptance
     # materialization point -- the local row is created here, on first
     # confirm, not at invite time.
-    user = resolve_supabase_user(
-        app.state.user_store, subject=session.user_id, email=session.email
-    )
+    try:
+        user = resolve_supabase_user(
+            app.state.user_store, subject=session.user_id, email=session.email
+        )
+    except InvalidToken:
+        # Same collision guard as login/refresh: the confirmed session's
+        # email belongs to a local row already linked to a DIFFERENT
+        # external_id. Reported as the same "link no good" code as an
+        # expired/invalid token_hash -- never leak the exception text.
+        raise HTTPException(422, {"code": "invalid_or_expired_link"}) from None
     app.state.user_store.mark_password_changed(user.id)
     try:
         await app.state.supabase_gateway.global_sign_out(session.access_token)
