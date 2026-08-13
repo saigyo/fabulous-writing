@@ -3847,3 +3847,43 @@ every guard mutation-verified; full suite 1268, zero warnings; three
 Copilot rounds to a clean 12/12-file read set; CI green throughout.
 Deferred with rulings: parse-loop shell internals clobberable by
 exotic env-file keys; `setup` stays pull-free by design.
+
+## 2026-08-13 — B14: Supabase Auth as a selectable backend (PR #95)
+
+Hosted Supabase Auth behind `auth.mode: "supabase"`; local stack stays
+the default, byte-for-byte. Server-proxied: the frontend only ever talks
+to our FastAPI; the backend speaks GoTrue via the official
+`supabase-auth` package and verifies JWTs locally against the project
+JWKS (ES256/RS256 only). Identity/authorization split: Supabase
+authenticates, the local users table stays the sole authority
+(`external_id` shadow rows, JIT-provisioned inside the verifier — the
+`TokenVerifier` contract and deps.py untouched). Invitation-only entry,
+password-reset emails, session-refresh engine, 7-locale reset/invite UI,
+and the supabase.com setup walkthrough (`docs/supabase-auth-setup.md`).
+
+M2 eviction in supabase mode: rotate at Supabase, revoke refresh tokens
+globally, and bump a backdated `password_changed_at` checked by the
+epoch-less fallback — access tokens older than the 60 s skew window die
+instantly; the residual (tokens from the final window live to their own
+TTL) is documented, not hidden.
+
+Process: spec → Opus plan review (28 findings incl. an unrunnable
+license step, a throttle-poisoning reset design, and a wrong async-test
+convention — all pre-execution) → 8 SDD tasks, one fix round (uncaught
+InvalidToken → 500s) → final whole-branch Opus review: 2 Critical no
+task could see (admin PATCH password bypassed Supabase entirely; logout
+left the refresh pair live in the store) + 5 Important, one fix wave,
+re-review clean. Seven Copilot rounds, every comment real: adoption
+race → atomic conditional link; https-only URL validation (loopback
+exempt for B27); mode-switch invite/create reconciliation, then
+password-rotation and pending-invite-proof hardening of that same
+reconciliation; owner-bound persisted tokens against cross-tab account
+mixing; refresh-response user guard; 30 s refresh floor; token_hash
+moved from query string to URL fragment (server logs/Referer). Parked
+as backlog: offline e2e stack (B27 #94), expired-invite resend (B28
+#96).
+
+Verification: 107 new backend tests + 24 frontend (1375 / 622 passing,
+zero warnings, tsc + oxlint clean), every guard mutation-verified, CI
+green across all eight rounds, all 13 review threads replied and
+resolved.
