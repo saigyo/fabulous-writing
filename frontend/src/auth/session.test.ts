@@ -32,6 +32,7 @@ import {
   readRefreshToken,
   readToken,
   readTokenExpiresAt,
+  readTokenOwner,
   writePrefs,
   writeRefreshToken,
   writeTokenOwner,
@@ -693,6 +694,12 @@ describe('refresh engine (refreshSession/scheduleRefresh)', () => {
 
     // Declined: the store's OWN token is submitted, not storage's.
     expect(postRefresh).toHaveBeenCalledWith('rt-store')
+    // The success path still writes its own token triple unconditionally,
+    // so the owner key must move with it -- otherwise storage is left with
+    // user 2's owner id naming user 1's freshly written triple, and user
+    // 2's tab would adopt user 1's tokens on its next refresh (Copilot
+    // round 5: the mismatch in reverse).
+    expect(readTokenOwner()).toBe('1')
   })
 
   it('a refresh completing after logout() does not commit a stale token', async () => {
