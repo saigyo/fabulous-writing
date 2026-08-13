@@ -65,10 +65,19 @@ def seed_admin(
                 return await gateway.create_user(email, password)
             except SupabaseAuthError:
                 # Already registered (a re-run against an existing project):
-                # link instead of failing.
+                # link instead of failing. The existing identity's credential
+                # is unknown to this operator -- without rotating it to the
+                # just-configured FW_ADMIN_PASSWORD, the old (unknown)
+                # password would keep admin access while the configured one
+                # silently could not log in. Mirrors the admin-create
+                # reconciliation in app/api/admin.py. A rotation failure
+                # propagates out of asyncio.run() below and is mapped to
+                # AuthConfigError by the existing except clause there, same
+                # as any other bootstrap failure.
                 existing = await gateway.get_user_id_by_email(email)
                 if existing is None:
                     raise
+                await gateway.change_password(existing, password)
                 return existing
 
         try:
