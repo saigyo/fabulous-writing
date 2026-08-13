@@ -3887,3 +3887,13 @@ Verification: 107 new backend tests + 24 frontend (1375 / 622 passing,
 zero warnings, tsc + oxlint clean), every guard mutation-verified, CI
 green across all eight rounds, all 13 review threads replied and
 resolved.
+
+Acceptance-test addendum (same evening): live run against a hosted
+project + AWS SES surfaced two ops findings now in the setup guide —
+SES Mail Manager SMTP accepts mail at the ingress (GoTrue reports
+"sent") before its rule set runs, so a sandbox-blocked recipient is
+dropped asynchronously with no visible error; and SES sandbox mode
+requires per-recipient verification until production access lands.
+Diagnosed via Supabase auth logs + ingress CloudWatch logs + SES
+Send/Delivery metrics; guide §8 now carries both flavors and the
+silent-failure checklist.
