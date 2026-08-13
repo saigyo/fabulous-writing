@@ -7,6 +7,7 @@ import {
   clearRefreshToken,
   clearToken,
   clearTokenExpiresAt,
+  readRefreshToken,
   writeRefreshToken,
   writeToken,
   writeTokenExpiresAt,
@@ -184,10 +185,25 @@ export function refreshSession(): Promise<void> {
 
 async function doRefresh(): Promise<void> {
   const startedAt = generation
-  const { refreshToken } = useStore.getState()
+  const { token: currentToken, refreshToken, tokenExpiresAt } = useStore.getState()
   if (!refreshToken) return
+  // Multi-tab mitigation (minimal — NOT full cross-tab coordination): each
+  // tab holds its own in-memory copy of the rotating refresh token, and a
+  // browser-throttled background tab can wake up and submit a token another
+  // tab already rotated past. Re-reading storage right before the call lets
+  // this tab adopt whatever the freshest tab already persisted instead of
+  // resubmitting a token GoTrue may now treat as reused. The residual: true
+  // cross-tab coordination (e.g. electing one tab to own refreshing) is
+  // deferred; two tabs refreshing at nearly the same instant, before either
+  // has persisted its rotation, are covered by GoTrue's own reuse-detection
+  // interval, not by this.
+  const stored = readRefreshToken()
+  const refreshTokenToUse = stored !== null && stored !== refreshToken ? stored : refreshToken
+  if (refreshTokenToUse !== refreshToken && currentToken) {
+    useStore.getState().setSessionTokens(currentToken, refreshTokenToUse, tokenExpiresAt)
+  }
   try {
-    const { token, refresh_token, expires_at } = await postRefresh(refreshToken)
+    const { token, refresh_token, expires_at } = await postRefresh(refreshTokenToUse)
     if (startedAt !== generation) return
     writeToken(token)
     writeRefreshToken(refresh_token ?? null)

@@ -221,6 +221,62 @@ class TestPasswordChange:
         assert resp.status_code == 422
         assert resp.json()["detail"]["code"] == "password_too_short"
 
+    def test_gateway_auth_error_maps_to_422_without_bumping(self, supabase_app):
+        # finding 2 (Copilot round 1): change_password's own gateway call
+        # was unmapped -- a SupabaseAuthError escaped as a 500, and nothing
+        # stopped mark_password_changed from having already run first.
+        app, fake = supabase_app
+        client, body = _login_ok(app, fake)
+        user_id = body["user"]["id"]
+
+        async def boom(_uuid, _password):
+            raise SupabaseAuthError("rejected")
+
+        fake.change_password = boom
+        resp = client.post(
+            "/api/auth/password",
+            json={"current": PASSWORD, "new": "brand-new-password-1"},
+            headers=_bearer(body["token"]),
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "password_change_failed"
+        assert app.state.user_store.get_user(user_id).password_changed_at is None
+
+    def test_gateway_unavailable_maps_to_503_without_bumping(self, supabase_app):
+        app, fake = supabase_app
+        client, body = _login_ok(app, fake)
+        user_id = body["user"]["id"]
+
+        async def boom(_uuid, _password):
+            raise SupabaseUnavailableError("down")
+
+        fake.change_password = boom
+        resp = client.post(
+            "/api/auth/password",
+            json={"current": PASSWORD, "new": "brand-new-password-1"},
+            headers=_bearer(body["token"]),
+        )
+        assert resp.status_code == 503
+        assert app.state.user_store.get_user(user_id).password_changed_at is None
+
+    @pytest.mark.parametrize("gateway_error", [SupabaseAuthError, SupabaseUnavailableError])
+    def test_global_sign_out_failure_is_best_effort_still_204(self, supabase_app, gateway_error):
+        app, fake = supabase_app
+        client, body = _login_ok(app, fake)
+        user_id = body["user"]["id"]
+
+        async def boom(_token):
+            raise gateway_error("down")
+
+        fake.global_sign_out = boom
+        resp = client.post(
+            "/api/auth/password",
+            json={"current": PASSWORD, "new": "brand-new-password-1"},
+            headers=_bearer(body["token"]),
+        )
+        assert resp.status_code == 204
+        assert app.state.user_store.get_user(user_id).password_changed_at is not None
+
 
 class TestResetRequest:
     def test_always_204_including_unknown_email(self, supabase_app):
@@ -652,3 +708,48 @@ class TestAdminPatchPasswordSupabase:
             headers=headers,
         )
         assert resp.status_code == 503
+
+    def test_mixed_patch_with_failing_rotation_leaves_tier_and_audit_untouched(
+        self, supabase_app
+    ):
+        # finding 3 (Copilot round 1): tier + password used to apply the
+        # tier (and its audit row) BEFORE the awaited Supabase rotation --
+        # a {tier, password} PATCH that failed at Supabase still moved the
+        # tier. Rotation must now run first, with no local write on failure.
+        app, fake = supabase_app
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        created = self._make_user(client, headers)
+        assert created["tier"] == "basic"
+        audit_before = len(app.state.user_store.list_audit())
+
+        async def boom(_user_id, _password):
+            raise SupabaseAuthError("rejected")
+
+        fake.change_password = boom
+        resp = client.patch(
+            f"/api/admin/users/{created['id']}",
+            json={"tier": "premium", "password": self.NEW_PASSWORD},
+            headers=headers,
+        )
+        assert resp.status_code == 422
+        after = app.state.user_store.get_user(created["id"])
+        assert after.tier == "basic"
+        assert after.password_changed_at is None
+        assert len(app.state.user_store.list_audit()) == audit_before
+
+    def test_mixed_patch_happy_path_applies_both(self, supabase_app):
+        app, _fake = supabase_app
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        created = self._make_user(client, headers)
+
+        resp = client.patch(
+            f"/api/admin/users/{created['id']}",
+            json={"tier": "premium", "password": self.NEW_PASSWORD},
+            headers=headers,
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["tier"] == "premium"
+        assert body["password_changed_at"] is not None

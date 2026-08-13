@@ -33,6 +33,7 @@ import {
   readToken,
   readTokenExpiresAt,
   writePrefs,
+  writeRefreshToken,
 } from '../state/prefsStorage'
 import {
   expireSession,
@@ -605,6 +606,25 @@ describe('refresh engine (refreshSession/scheduleRefresh)', () => {
 
     expect(postRefresh).toHaveBeenCalledTimes(1)
     expect(useStore.getState().token).toBe('tok2')
+  })
+
+  it('adopts a refresh token another tab already rotated in storage (multi-tab mitigation)', async () => {
+    const expiresAt = Math.floor(Date.now() / 1000) + 300
+    await loginWithTriple(expiresAt, 'rt-store')
+    // Simulate another tab having already rotated and persisted a newer
+    // refresh token while this tab's in-memory store still holds the old
+    // one -- the scenario a browser-throttled background tab produces.
+    writeRefreshToken('rt-from-other-tab')
+
+    vi.mocked(postRefresh).mockResolvedValue({
+      token: 'tok2',
+      refresh_token: 'rt2',
+      expires_at: expiresAt + 300,
+      user: user(1),
+    })
+    await refreshSession()
+
+    expect(postRefresh).toHaveBeenCalledWith('rt-from-other-tab')
   })
 
   it('a refresh completing after logout() does not commit a stale token', async () => {
