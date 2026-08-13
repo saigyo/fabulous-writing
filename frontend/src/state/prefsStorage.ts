@@ -101,7 +101,11 @@ export function readTokenExpiresAt(): number | null {
     const raw = localStorage.getItem(TOKEN_EXPIRES_KEY)
     if (raw === null) return null
     const n = Number(raw)
-    return Number.isNaN(n) ? null : n
+    // Number.isFinite, not just isNaN: "Infinity"/"-Infinity" parse to a
+    // real, non-NaN number, and scheduleRefresh's delay computation would
+    // clamp an infinite deadline to 0, producing a degenerate refresh loop
+    // (Copilot round 3) instead of being treated as corrupt storage.
+    return Number.isFinite(n) ? n : null
   } catch {
     return null
   }

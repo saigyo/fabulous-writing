@@ -135,7 +135,7 @@ export function expireSession(): void {
 const REFRESH_MARGIN_MS = 120_000
 const REFRESH_RETRY_MS = 60_000
 let refreshTimer: ReturnType<typeof setTimeout> | null = null
-let refreshInFlight: Promise<void> | null = null
+let refreshInFlight: Promise<boolean> | null = null
 
 function cancelScheduledRefresh(): void {
   if (refreshTimer !== null) clearTimeout(refreshTimer)
@@ -171,8 +171,18 @@ let refreshInFlightGen = -1
  * runRestore). On a 401 the refresh token is dead — the session ends
  * through the same expireSession() path as any other credential failure.
  * Any other failure (offline laptop waking up) retries on a fixed cadence;
- * a request-level 401 in the meantime ends the session anyway. */
-export function refreshSession(): Promise<void> {
+ * a request-level 401 in the meantime ends the session anyway.
+ *
+ * Resolves `true` when the token is rotated (or no refresh was needed —
+ * e.g. superseded by a generation change, or local mode with no refresh
+ * token at all) and `false` on a retryable failure, so a caller like
+ * runRestore can tell "the session is fine, proceed" apart from "this
+ * attempt failed, don't proceed as if it succeeded" (Copilot round 3). The
+ * 401 branch still ends the session through expireSession() exactly as
+ * before; its own return value is moot for every current caller, since
+ * expireSession() bumps `generation` and every caller re-checks that first.
+ */
+export function refreshSession(): Promise<boolean> {
   if (!refreshInFlight || refreshInFlightGen !== generation) {
     refreshInFlightGen = generation
     const run = doRefresh().finally(() => {
@@ -183,10 +193,10 @@ export function refreshSession(): Promise<void> {
   return refreshInFlight
 }
 
-async function doRefresh(): Promise<void> {
+async function doRefresh(): Promise<boolean> {
   const startedAt = generation
   const { token: currentToken, refreshToken, tokenExpiresAt } = useStore.getState()
-  if (!refreshToken) return
+  if (!refreshToken) return true
   // Multi-tab mitigation (minimal — NOT full cross-tab coordination): each
   // tab holds its own in-memory copy of the rotating refresh token, and a
   // browser-throttled background tab can wake up and submit a token another
@@ -204,19 +214,21 @@ async function doRefresh(): Promise<void> {
   }
   try {
     const { token, refresh_token, expires_at } = await postRefresh(refreshTokenToUse)
-    if (startedAt !== generation) return
+    if (startedAt !== generation) return true
     writeToken(token)
     writeRefreshToken(refresh_token ?? null)
     writeTokenExpiresAt(expires_at ?? null)
     useStore.getState().setSessionTokens(token, refresh_token ?? null, expires_at ?? null)
     scheduleRefresh()
+    return true
   } catch (error) {
-    if (startedAt !== generation) return
+    if (startedAt !== generation) return true
     if (error instanceof HttpError && error.status === 401) {
       expireSession()
-      return
+      return false
     }
     scheduleRefresh(REFRESH_RETRY_MS)
+    return false
   }
 }
 
@@ -253,8 +265,22 @@ async function runRestore(): Promise<void> {
     refreshToken &&
     tokenExpiresAt * 1000 - Date.now() < REFRESH_MARGIN_MS
   ) {
-    await refreshSession()
+    const refreshed = await refreshSession()
     if (startedAt !== generation) return
+    if (!refreshed) {
+      // The pre-restore refresh failed transiently (network/5xx) rather
+      // than with a 401 -- a 401 already ended the session via
+      // expireSession() and returned above through the generation guard.
+      // Calling getMe() now would 401 on the still-expired token and clear
+      // an otherwise still-usable refresh token (Copilot round 3).
+      // doRefresh()'s own catch already armed a retry timer
+      // (scheduleRefresh(REFRESH_RETRY_MS)), so leave the token pair alone
+      // and let that retry -- or a later restoreSession() call -- resume
+      // normally; restoreInFlight below still clears via its .finally(),
+      // so this run does not block a subsequent one.
+      useStore.setState({ restoreFailed: true })   // authStatus stays 'unknown'
+      return
+    }
   }
   // Captured AFTER the refresh above: a stale-expiry restore may have
   // rotated the token, and both the generation guard below and the

@@ -765,6 +765,58 @@ describe('restoreSession', () => {
     expect(state.refreshToken).toBe('rt2')
     expect(state.authStatus).toBe('authenticated')
   })
+
+  it('a transient failure refreshing a stale-expiry token skips getMe() and sets restoreFailed, keeping the refresh token (Copilot round 3)', async () => {
+    const expiresAt = Math.floor(Date.now() / 1000) + 60 // inside the 120s margin
+    writeRefreshToken('rt')
+    useStore.setState({
+      token: 'old-tok',
+      refreshToken: 'rt',
+      tokenExpiresAt: expiresAt,
+      authStatus: 'unknown',
+      restoreFailed: false,
+    })
+    vi.mocked(postRefresh).mockRejectedValue(new TypeError('offline'))
+
+    await restoreSession()
+
+    // Calling getMe() here would 401 on the still-expired old-tok and clear
+    // an otherwise still-usable refresh token -- the exact bug this fix
+    // closes.
+    expect(getMe).not.toHaveBeenCalled()
+    const state = useStore.getState()
+    expect(state.authStatus).toBe('unknown')
+    expect(state.restoreFailed).toBe(true)
+    expect(state.refreshToken).toBe('rt')
+    expect(readRefreshToken()).toBe('rt')
+    // A later restoreSession() call is not blocked by this one.
+    vi.mocked(postRefresh).mockResolvedValue({
+      token: 'new-tok', refresh_token: 'rt2', expires_at: expiresAt + 300, user: user(1),
+    })
+    vi.mocked(getMe).mockResolvedValue(user(1))
+    await restoreSession()
+    expect(useStore.getState().authStatus).toBe('authenticated')
+  })
+
+  it('a 401 refreshing a stale-expiry token ends the session via expireSession(), never calling getMe()', async () => {
+    const expiresAt = Math.floor(Date.now() / 1000) + 60 // inside the 120s margin
+    useStore.setState({
+      token: 'old-tok',
+      refreshToken: 'rt',
+      tokenExpiresAt: expiresAt,
+      authStatus: 'unknown',
+    })
+    vi.mocked(postRefresh).mockRejectedValue(new HttpError(401, 'refresh token revoked'))
+
+    await restoreSession()
+
+    expect(getMe).not.toHaveBeenCalled()
+    const state = useStore.getState()
+    expect(state.authStatus).toBe('anonymous')
+    expect(state.sessionExpired).toBe(true)
+    expect(state.token).toBeNull()
+    expect(state.refreshToken).toBeNull()
+  })
 })
 
 describe('refreshUser', () => {

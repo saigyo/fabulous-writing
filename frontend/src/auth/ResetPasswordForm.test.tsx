@@ -93,7 +93,52 @@ describe('ResetPasswordForm', () => {
     await waitFor(() => screen.getByText(en.resetLinkInvalid))
   })
 
-  it('any other error falls back to the generic sign-in-failed message', async () => {
+  it('a 422 password_too_short shows the same message the password-change form uses for it', async () => {
+    vi.mocked(postResetConfirm).mockRejectedValue(
+      new HttpError(422, 'POST /api/auth/reset-confirm failed: 422', 'password_too_short'),
+    )
+    render(<ResetPasswordForm tokenHash="abc123" type="recovery" onDone={() => {}} />)
+    const u = userEvent.setup()
+
+    // Long enough to pass the client-side pre-check (>= 8) so the request
+    // actually fires and the server's rejection is what's under test.
+    await u.type(screen.getByLabelText(en.resetNewPassword), 'newpassword1')
+    await u.type(screen.getByLabelText(en.resetRepeatPassword), 'newpassword1')
+    await u.click(screen.getByRole('button', { name: en.resetSubmit }))
+
+    await waitFor(() => screen.getByText(en.passwordTooShort(8)))
+  })
+
+  it('a 422 password_too_long shows the neutral password-change fallback, not a sign-in message', async () => {
+    vi.mocked(postResetConfirm).mockRejectedValue(
+      new HttpError(422, 'POST /api/auth/reset-confirm failed: 422', 'password_too_long'),
+    )
+    render(<ResetPasswordForm tokenHash="abc123" type="recovery" onDone={() => {}} />)
+    const u = userEvent.setup()
+
+    await u.type(screen.getByLabelText(en.resetNewPassword), 'newpassword1')
+    await u.type(screen.getByLabelText(en.resetRepeatPassword), 'newpassword1')
+    await u.click(screen.getByRole('button', { name: en.resetSubmit }))
+
+    await waitFor(() => screen.getByText(en.passwordFailed))
+  })
+
+  it('a 503 falls back to the neutral password-change message, not the sign-in-failed one (Copilot round 3)', async () => {
+    vi.mocked(postResetConfirm).mockRejectedValue(
+      new HttpError(503, 'Authentication service unavailable'),
+    )
+    render(<ResetPasswordForm tokenHash="abc123" type="recovery" onDone={() => {}} />)
+    const u = userEvent.setup()
+
+    await u.type(screen.getByLabelText(en.resetNewPassword), 'newpassword1')
+    await u.type(screen.getByLabelText(en.resetRepeatPassword), 'newpassword1')
+    await u.click(screen.getByRole('button', { name: en.resetSubmit }))
+
+    await waitFor(() => screen.getByText(en.passwordFailed))
+    expect(screen.queryByText(en.signInFailed)).toBeNull()
+  })
+
+  it('any other unrecognised error also falls back to the neutral password-change message', async () => {
     vi.mocked(postResetConfirm).mockRejectedValue(new HttpError(500, 'Internal error'))
     render(<ResetPasswordForm tokenHash="abc123" type="recovery" onDone={() => {}} />)
     const u = userEvent.setup()
@@ -102,6 +147,6 @@ describe('ResetPasswordForm', () => {
     await u.type(screen.getByLabelText(en.resetRepeatPassword), 'newpassword1')
     await u.click(screen.getByRole('button', { name: en.resetSubmit }))
 
-    await waitFor(() => screen.getByText(en.signInFailed))
+    await waitFor(() => screen.getByText(en.passwordFailed))
   })
 })

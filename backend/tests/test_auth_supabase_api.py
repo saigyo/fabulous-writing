@@ -688,6 +688,99 @@ class TestAdminCreateModeSwitch:
         assert fake.create_user_calls == before
 
 
+class TestAdminCreateReconciliation:
+    """Copilot round 3: a duplicate-email rejection from create_user or
+    invite_user is ambiguous -- it can mean a genuine pre-existing account,
+    but it can also mean THIS admin's own earlier attempt already succeeded
+    at Supabase and only the following local write then failed transiently,
+    leaving no local row. A retry must reconcile onto the existing remote
+    identity (mirroring seed_admin's create-or-link fallback) instead of
+    permanently stranding it behind a 422. supabase/auth#2180 confirms
+    invite_user_by_email rejects a retry against an already-invited,
+    still-unconfirmed email the same way create_user rejects a duplicate,
+    so both branches get the same reconciliation."""
+
+    RETRY_EMAIL = "retry@example.com"
+
+    def test_create_with_password_reconciles_after_prior_success(self, supabase_app):
+        app, fake = supabase_app
+        # A prior attempt's create_user already succeeded at Supabase, but
+        # the local insert that should have followed it failed transiently,
+        # leaving no local row -- this call is the admin's retry.
+        fake.register_user(
+            self.RETRY_EMAIL, "an original password 1", uuid="fake-uuid-retry"
+        )
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        resp = client.post(
+            "/api/admin/users",
+            json={"email": self.RETRY_EMAIL, "password": "a retried password 1"},
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        created = app.state.user_store.get_by_email(self.RETRY_EMAIL)
+        assert created is not None
+        assert created.external_id == "fake-uuid-retry"
+        audit_fields = [r["field"] for r in app.state.user_store.list_audit()]
+        assert "created" in audit_fields
+
+    def test_create_with_password_422_when_gateway_has_no_matching_identity(
+        self, supabase_app
+    ):
+        app, fake = supabase_app
+
+        async def boom(_email, _password):
+            raise SupabaseAuthError("rejected, no matching account exists")
+
+        fake.create_user = boom
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        resp = client.post(
+            "/api/admin/users",
+            json={"email": "nomatch@example.com", "password": "a password here 1"},
+            headers=headers,
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "create_failed"
+        assert app.state.user_store.get_by_email("nomatch@example.com") is None
+
+    def test_invite_reconciles_after_prior_success(self, supabase_app):
+        app, fake = supabase_app
+        # Same shape as the create-with-password case above, but for the
+        # invite branch: a prior invite already succeeded remotely, the
+        # local write failed transiently, and this is the retry.
+        fake.register_user(self.RETRY_EMAIL, "", uuid="fake-uuid-retry-invite")
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        resp = client.post(
+            "/api/admin/users", json={"email": self.RETRY_EMAIL}, headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["invited"] is True
+        created = app.state.user_store.get_by_email(self.RETRY_EMAIL)
+        assert created is not None
+        assert created.external_id == "fake-uuid-retry-invite"
+        audit_fields = [r["field"] for r in app.state.user_store.list_audit()]
+        assert "invite" in audit_fields
+
+    def test_invite_422_when_gateway_has_no_matching_identity(self, supabase_app):
+        app, fake = supabase_app
+
+        async def boom(_email):
+            raise SupabaseAuthError("rejected, no matching account exists")
+
+        fake.invite_user = boom
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        resp = client.post(
+            "/api/admin/users", json={"email": "noinvitematch@example.com"},
+            headers=headers,
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "invite_failed"
+        assert app.state.user_store.get_by_email("noinvitematch@example.com") is None
+
+
 class TestAdminPatchPasswordSupabase:
     """PATCH /admin/users/{id} with a password, in supabase mode (finding 1,
     final review): must rotate the credential at Supabase, kill the

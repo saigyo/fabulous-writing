@@ -183,10 +183,19 @@ class FakeSupabaseGateway:
         return uuid
 
     async def invite_user(self, email: str) -> str:
+        if email in self._users:
+            # Mirrors real GoTrue: a retry of /invite against an email that
+            # already has a Supabase identity -- even one from an earlier,
+            # still-unconfirmed invite -- is rejected the same way
+            # admin.create_user rejects a duplicate (supabase/auth#2180),
+            # not silently resent. Lets a test simulate "the first invite
+            # succeeded remotely but the local write then failed" by
+            # pre-registering the email before the call under test.
+            raise SupabaseAuthError(f"{email} already registered")
         uuid = self._mint_uuid()
-        self._users.setdefault(email, ("", uuid))
+        self._users[email] = ("", uuid)
         self.invites.append(email)
-        return self._users[email][1]
+        return uuid
 
     async def get_user_id_by_email(self, email: str) -> str | None:
         stored = self._users.get(email)
