@@ -359,9 +359,13 @@ Setting `auth.mode: supabase` in `config.yaml` replaces the backend's own
 password storage and token signing with a [supabase.com](https://supabase.com)
 project: Supabase owns credentials, password resets, and admin-invite email;
 this backend still owns authorization (tier, admin flag, active/deactivated)
-and independently rejects anonymous or unconfirmed Supabase tokens on their
-claims, not just via dashboard configuration. `FW_AUTH_SECRET` is not needed
-in this mode. See
+and independently rejects anonymous Supabase tokens on their claims, not just
+via dashboard configuration. Email confirmation is enforced structurally
+instead: admin-created and invited accounts are created with `email_confirm`
+set, and the reset/invite flows themselves prove control of the mailbox
+before a session is issued — public signup stays off, so there is no path to
+an account the backend would need to distrust on that basis. `FW_AUTH_SECRET`
+is not needed in this mode. See
 [docs/supabase-auth-setup.md](docs/supabase-auth-setup.md) for the full
 dashboard walkthrough — project creation, the JWT key rotation this mode
 requires, and the environment variables that replace `FW_AUTH_SECRET`.

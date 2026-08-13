@@ -151,6 +151,26 @@ def _create_user_local(store, body: UserCreate) -> User:
     )
 
 
+def _adopt_existing_row(store, existing: User, external_id: str) -> User:
+    """Mode-switch: attach `external_id` to a local row that predates (or is
+    otherwise unlinked from) supabase mode, instead of colliding with it on
+    a fresh `create_user` insert.
+
+    `link_external_id` is the atomic conditional UPDATE (see UserStore) --
+    on a False return, re-reading tells "some other request already linked
+    THIS subject" (a same-uuid race, treated as success) apart from "linked
+    to something else" (a genuine conflict, 409).
+    """
+    if store.link_external_id(existing.id, external_id):
+        linked = store.get_user(existing.id)
+        if linked is not None:
+            return linked
+    relinked = store.get_user(existing.id)
+    if relinked is not None and relinked.external_id == external_id:
+        return relinked
+    raise HTTPException(409, {"code": "duplicate_email"})
+
+
 @router.post("/users", status_code=201)
 async def create_user(
     request: Request, body: UserCreate, actor: CurrentUser = Depends(require_admin)
@@ -164,6 +184,13 @@ async def create_user(
     if body.password is None:
         if not supabase:
             raise HTTPException(422, {"code": "password_required"})
+        # Pre-check BEFORE the remote call: a row already linked to a
+        # Supabase identity is a genuine duplicate and must fail closed
+        # without ever inviting a second Supabase account for the same
+        # email. An unlinked row is the mode-switch case, handled below.
+        existing = store.get_by_email(body.email)
+        if existing is not None and existing.external_id is not None:
+            raise HTTPException(422, {"code": "duplicate_email"})
         gateway = request.app.state.supabase_gateway
         try:
             external_id = await gateway.invite_user(body.email)
@@ -171,17 +198,26 @@ async def create_user(
             raise HTTPException(422, {"code": "invite_failed"}) from exc
         except SupabaseUnavailableError as exc:
             raise HTTPException(503, "Authentication service unavailable") from exc
-        try:
-            user = store.create_user(
-                body.email,
-                None,
-                display_name=body.display_name,
-                tier=body.tier,
-                is_admin=body.is_admin,
-                external_id=external_id,
-            )
-        except (DuplicateEmailError, InvalidEmailError) as exc:
-            raise HTTPException(422, str(exc)) from exc
+        # Accepted residual: a transient local failure from this point on
+        # (adoption or insert) has already invited a Supabase account/user
+        # that this response reports as failed. A compensating deletion is
+        # deliberately not attempted -- the admin can re-run the request,
+        # which the pre-check above and create_user's duplicate handling
+        # both make idempotent.
+        if existing is not None:
+            user = _adopt_existing_row(store, existing, external_id)
+        else:
+            try:
+                user = store.create_user(
+                    body.email,
+                    None,
+                    display_name=body.display_name,
+                    tier=body.tier,
+                    is_admin=body.is_admin,
+                    external_id=external_id,
+                )
+            except (DuplicateEmailError, InvalidEmailError) as exc:
+                raise HTTPException(422, str(exc)) from exc
         store.record_audit(
             actor_id=actor.id, target_id=user.id, field="invite", new_value=user.email
         )
@@ -189,6 +225,10 @@ async def create_user(
 
     _check_password_strength(body.password)
     if supabase:
+        # Same pre-check-before-remote-call shape as the invite branch above.
+        existing = store.get_by_email(body.email)
+        if existing is not None and existing.external_id is not None:
+            raise HTTPException(422, {"code": "duplicate_email"})
         gateway = request.app.state.supabase_gateway
         try:
             external_id = await gateway.create_user(body.email, body.password)
@@ -196,20 +236,26 @@ async def create_user(
             raise HTTPException(422, {"code": "create_failed"}) from exc
         except SupabaseUnavailableError as exc:
             raise HTTPException(503, "Authentication service unavailable") from exc
-        try:
-            # Supabase owns the credential -- no local hash written, ever: a
-            # local hash here would resurrect local login semantics for an
-            # account whose password lives with Supabase.
-            user = store.create_user(
-                body.email,
-                None,
-                display_name=body.display_name,
-                tier=body.tier,
-                is_admin=body.is_admin,
-                external_id=external_id,
-            )
-        except (DuplicateEmailError, InvalidEmailError) as exc:
-            raise HTTPException(422, str(exc)) from exc
+        # Same accepted residual as the invite branch: no compensating
+        # deletion on a local failure after this point.
+        if existing is not None:
+            user = _adopt_existing_row(store, existing, external_id)
+        else:
+            try:
+                # Supabase owns the credential -- no local hash written,
+                # ever: a local hash here would resurrect local login
+                # semantics for an account whose password lives with
+                # Supabase.
+                user = store.create_user(
+                    body.email,
+                    None,
+                    display_name=body.display_name,
+                    tier=body.tier,
+                    is_admin=body.is_admin,
+                    external_id=external_id,
+                )
+            except (DuplicateEmailError, InvalidEmailError) as exc:
+                raise HTTPException(422, str(exc)) from exc
     else:
         try:
             # bcrypt stays off the event loop, same rule as login/password

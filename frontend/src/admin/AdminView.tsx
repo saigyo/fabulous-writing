@@ -204,9 +204,14 @@ function CreateForm({
         value={password}
         placeholder={m.adminPassword}
         aria-label={m.adminPassword}
-        title={invitesAvailable ? m.adminPasswordOptionalHint : undefined}
+        aria-describedby={invitesAvailable ? 'admin-password-hint' : undefined}
         onChange={(e) => setPassword(e.target.value)}
       />
+      {invitesAvailable && (
+        <p id="admin-password-hint" className="admin-field-hint">
+          {m.adminPasswordOptionalHint}
+        </p>
+      )}
       <select
         value={tier}
         disabled={!tiers}

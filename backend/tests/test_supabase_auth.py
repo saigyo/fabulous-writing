@@ -78,6 +78,37 @@ class TestResolveCredentials:
                 auth={"mode": "supabase", "supabase": {"url": URL, "tpyo": 1}},
             )
 
+    @pytest.mark.parametrize("loopback_url", [
+        "http://localhost:54321",
+        "http://127.0.0.1:54321",
+        "http://[::1]:54321",
+    ])
+    def test_http_on_loopback_is_permitted(self, tmp_path, loopback_url):
+        # Keeps the offline supabase-CLI e2e stack (B27 #94) viable: the
+        # local stack has no TLS cert, but nothing leaves the machine.
+        creds = resolve_supabase_credentials(
+            supabase_settings(tmp_path, url=loopback_url), env=ENV_OK
+        )
+        assert creds.url == loopback_url
+
+    def test_http_on_a_non_loopback_host_is_rejected(self, tmp_path):
+        with pytest.raises(AuthConfigError, match="auth.supabase.url"):
+            resolve_supabase_credentials(
+                supabase_settings(tmp_path, url="http://evil.example"), env=ENV_OK
+            )
+
+    def test_non_https_scheme_is_rejected(self, tmp_path):
+        with pytest.raises(AuthConfigError, match="auth.supabase.url"):
+            resolve_supabase_credentials(
+                supabase_settings(tmp_path, url="ftp://unit-test-project.invalid"), env=ENV_OK
+            )
+
+    def test_scheme_less_url_is_rejected(self, tmp_path):
+        with pytest.raises(AuthConfigError, match="auth.supabase.url"):
+            resolve_supabase_credentials(
+                supabase_settings(tmp_path, url="unit-test-project.invalid"), env=ENV_OK
+            )
+
 
 class TestUserStoreExternalId:
     def test_create_and_get_by_external_id(self, tmp_path):

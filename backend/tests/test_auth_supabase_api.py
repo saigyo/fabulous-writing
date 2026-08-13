@@ -198,6 +198,14 @@ class TestPasswordChange:
         user = app.state.user_store.get_user(user_id)
         assert user.password_changed_at is not None
         assert fake.global_sign_out_calls
+        # Round-2 finding E: global_sign_out must actually revoke the
+        # pre-change refresh token at the fake, not just record the call --
+        # otherwise a stale refresh token would still mint fresh sessions
+        # after a password change the eviction is supposed to end.
+        stale_refresh = client.post(
+            "/api/auth/refresh", json={"refresh_token": body["refresh_token"]}
+        )
+        assert stale_refresh.status_code == 401
 
     def test_wrong_current_password_422(self, supabase_app):
         app, fake = supabase_app
@@ -305,6 +313,7 @@ class TestResetConfirm:
         client = TestClient(app)
         login = client.post("/api/auth/login", json={"email": EMAIL, "password": PASSWORD})
         user_id = login.json()["user"]["id"]
+        pre_change_refresh = login.json()["refresh_token"]
         fake.valid_token_hashes["good-hash"] = (uuid, EMAIL)
         resp = client.post(
             "/api/auth/reset-confirm",
@@ -315,6 +324,13 @@ class TestResetConfirm:
         )
         assert resp.status_code == 204
         assert fake.stored_password(EMAIL) == "another-new-pw-1"
+        # Round-2 finding E: the refresh token from BEFORE the reset must be
+        # dead at the fake, same eviction contract as the password-change
+        # route (TestPasswordChange.test_happy_path_204_and_effects).
+        stale_refresh = client.post(
+            "/api/auth/refresh", json={"refresh_token": pre_change_refresh}
+        )
+        assert stale_refresh.status_code == 401
         user = app.state.user_store.get_user(user_id)
         assert user.password_changed_at is not None
         assert fake.global_sign_out_calls
@@ -569,6 +585,107 @@ class TestAdminCreateSupabase:
         listing = client.get("/api/admin/users", headers=headers).json()
         assert listing
         assert all("invited" not in item for item in listing)
+
+
+class TestAdminCreateModeSwitch:
+    """The email-already-exists-locally paths (Copilot round 2 finding D):
+    an UNLINKED existing row adopts the Supabase identity (mode switch); a
+    row already linked to a DIFFERENT Supabase identity is rejected BEFORE
+    any remote call is made, so the admin API never reports failure after
+    already provisioning Supabase-side access."""
+
+    UNLINKED_EMAIL = "preexisting@example.com"
+    LINKED_EMAIL = "already-linked@example.com"
+
+    def _seed_unlinked(self, app) -> int:
+        row = app.state.user_store.create_user(
+            self.UNLINKED_EMAIL, "a local password 1", tier="premium",
+        )
+        assert row.external_id is None
+        return row.id
+
+    def _seed_linked(self, app) -> int:
+        row = app.state.user_store.create_user(
+            self.LINKED_EMAIL, "a local password 1", external_id="fake-uuid-already-there",
+        )
+        assert row.external_id is not None
+        return row.id
+
+    def test_invite_on_unlinked_existing_row_links_and_invites(self, supabase_app):
+        app, fake = supabase_app
+        client = TestClient(app)
+        row_id = self._seed_unlinked(app)
+        headers = _admin_bearer(client)
+        resp = client.post(
+            "/api/admin/users", json={"email": self.UNLINKED_EMAIL}, headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["invited"] is True
+        assert body["id"] == row_id
+        assert fake.invites == [self.UNLINKED_EMAIL]
+        linked = app.state.user_store.get_user(row_id)
+        assert linked.external_id is not None
+        # The row's existing local settings (tier) are preserved, not
+        # overwritten by the create request's defaults.
+        assert linked.tier == "premium"
+
+    def test_create_with_password_on_unlinked_existing_row_links_no_local_hash(
+        self, supabase_app
+    ):
+        app, fake = supabase_app
+        client = TestClient(app)
+        row_id = self._seed_unlinked(app)
+        headers = _admin_bearer(client)
+        resp = client.post(
+            "/api/admin/users",
+            json={"email": self.UNLINKED_EMAIL, "password": "a fresh password 1"},
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["invited"] is False
+        assert (self.UNLINKED_EMAIL, "a fresh password 1") in fake.create_user_calls
+        linked = app.state.user_store.get_user(row_id)
+        assert linked.external_id is not None
+        # No hash is written for the NEW password: adoption only links
+        # external_id, it never touches password_hash (the pre-existing
+        # local row's own hash, from before the switch, is untouched too --
+        # out of scope for this fix).
+        assert app.state.user_store.verify_credentials(
+            self.UNLINKED_EMAIL, "a fresh password 1"
+        ) is None
+
+    def test_invite_on_linked_existing_row_is_422_with_no_remote_call(self, supabase_app):
+        app, fake = supabase_app
+        client = TestClient(app)
+        self._seed_linked(app)
+        headers = _admin_bearer(client)
+        resp = client.post(
+            "/api/admin/users", json={"email": self.LINKED_EMAIL}, headers=headers,
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "duplicate_email"
+        assert fake.invites == []
+
+    def test_create_with_password_on_linked_existing_row_is_422_with_no_remote_call(
+        self, supabase_app
+    ):
+        app, fake = supabase_app
+        client = TestClient(app)
+        self._seed_linked(app)
+        headers = _admin_bearer(client)
+        # Bootstrap already used create_user for the seeded admin; the
+        # assertion below is that THIS request added no further call, not
+        # that the fake's history is empty.
+        before = list(fake.create_user_calls)
+        resp = client.post(
+            "/api/admin/users",
+            json={"email": self.LINKED_EMAIL, "password": "another password 1"},
+            headers=headers,
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "duplicate_email"
+        assert fake.create_user_calls == before
 
 
 class TestAdminPatchPasswordSupabase:
