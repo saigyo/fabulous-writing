@@ -7,10 +7,13 @@ import {
   clearRefreshToken,
   clearToken,
   clearTokenExpiresAt,
+  clearTokenOwner,
   readRefreshToken,
+  readTokenOwner,
   writeRefreshToken,
   writeToken,
   writeTokenExpiresAt,
+  writeTokenOwner,
 } from '../state/prefsStorage'
 import { resetSessionState, useStore } from '../state/store'
 import { setRefreshUserHandler } from './refreshSlot'
@@ -61,6 +64,7 @@ export async function login(email: string, password: string): Promise<boolean> {
   writeToken(token)
   writeRefreshToken(refresh_token ?? null)
   writeTokenExpiresAt(expires_at ?? null)
+  writeTokenOwner(String(user.id))
   useStore.setState({ sessionExpired: false, restoreFailed: false })
   useStore.getState().setAuth(token, user)
   useStore.getState().setSessionTokens(token, refresh_token ?? null, expires_at ?? null)
@@ -101,6 +105,7 @@ export function logout(): void {
   clearLegacyText()
   clearRefreshToken()
   clearTokenExpiresAt()
+  clearTokenOwner()
   // setAuth(null, null) above sets token/user/authStatus/restoreFailed only
   // -- resetSessionState()'s INITIAL_DATA deliberately omits refreshToken/
   // tokenExpiresAt (see its own comment), so without this line they would
@@ -126,6 +131,7 @@ export function expireSession(): void {
   useStore.setState({ sessionExpired: true })
   clearRefreshToken()
   clearTokenExpiresAt()
+  clearTokenOwner()
   // See logout()'s identical line: the store fields survive setAuth()/
   // resetSessionState() otherwise.
   useStore.setState({ refreshToken: null, tokenExpiresAt: null })
@@ -134,6 +140,14 @@ export function expireSession(): void {
 
 const REFRESH_MARGIN_MS = 120_000
 const REFRESH_RETRY_MS = 60_000
+// A floor under the timer-armed refresh delay only. Without it, a rotated
+// expiry that already falls inside REFRESH_MARGIN_MS (e.g. a short-TTL
+// deployment, ~60s tokens) computes a delay at or near 0 -- the timer fires
+// almost immediately, refreshes again, and the same near-zero delay repeats:
+// a tight rotation loop. This does not apply to the restore-time refresh
+// (runRestore calls refreshSession()/doRefresh() directly, never through
+// this delay computation), which is meant to run immediately.
+const MIN_REFRESH_DELAY_MS = 30_000
 let refreshTimer: ReturnType<typeof setTimeout> | null = null
 let refreshInFlight: Promise<boolean> | null = null
 
@@ -155,7 +169,10 @@ function scheduleRefresh(delayMs?: number): void {
   }
   const { tokenExpiresAt, refreshToken } = useStore.getState()
   if (!refreshToken || tokenExpiresAt === null) return  // local mode: never
-  const delay = Math.max(tokenExpiresAt * 1000 - Date.now() - REFRESH_MARGIN_MS, 0)
+  const delay = Math.max(
+    tokenExpiresAt * 1000 - Date.now() - REFRESH_MARGIN_MS,
+    MIN_REFRESH_DELAY_MS,
+  )
   refreshTimer = setTimeout(() => { void refreshSession() }, delay)
 }
 
@@ -195,7 +212,7 @@ export function refreshSession(): Promise<boolean> {
 
 async function doRefresh(): Promise<boolean> {
   const startedAt = generation
-  const { token: currentToken, refreshToken, tokenExpiresAt } = useStore.getState()
+  const { token: currentToken, refreshToken, tokenExpiresAt, user } = useStore.getState()
   if (!refreshToken) return true
   // Multi-tab mitigation (minimal — NOT full cross-tab coordination): each
   // tab holds its own in-memory copy of the rotating refresh token, and a
@@ -207,8 +224,24 @@ async function doRefresh(): Promise<boolean> {
   // deferred; two tabs refreshing at nearly the same instant, before either
   // has persisted its rotation, are covered by GoTrue's own reuse-detection
   // interval, not by this.
+  //
+  // localStorage is shared across every tab in the profile, not just tabs
+  // on the same account: another tab logging in as a different user leaves
+  // THIS tab's in-memory user unchanged but overwrites the shared refresh
+  // token with the other account's (Copilot round 4). Adopting it blindly
+  // would run this tab's subsequent requests as that other user under its
+  // original user's UI state. `user` is null only during the pre-getMe()
+  // leg of a fresh page load (store-init/restoreSession) — not a switch,
+  // just this tab not having committed to an identity yet — so the owner
+  // check is skipped then and existing initialization behavior is
+  // unchanged. Once a user IS established, adoption requires the persisted
+  // token's owner to match it; a mismatch keeps this tab's own (now stale)
+  // token, whose eventual 401 correctly routes through expireSession().
   const stored = readRefreshToken()
-  const refreshTokenToUse = stored !== null && stored !== refreshToken ? stored : refreshToken
+  const storedOwner = readTokenOwner()
+  const ownerMismatch = user !== null && storedOwner !== String(user.id)
+  const refreshTokenToUse =
+    stored !== null && stored !== refreshToken && !ownerMismatch ? stored : refreshToken
   if (refreshTokenToUse !== refreshToken && currentToken) {
     useStore.getState().setSessionTokens(currentToken, refreshTokenToUse, tokenExpiresAt)
   }

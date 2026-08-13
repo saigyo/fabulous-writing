@@ -4,16 +4,19 @@ import {
   clearRefreshToken,
   clearToken,
   clearTokenExpiresAt,
+  clearTokenOwner,
   deleteLegacyBlob,
   prefsKey,
   readPrefs,
   readRefreshToken,
   readToken,
   readTokenExpiresAt,
+  readTokenOwner,
   writePrefs,
   writeRefreshToken,
   writeToken,
   writeTokenExpiresAt,
+  writeTokenOwner,
   type Prefs,
 } from './prefsStorage'
 
@@ -56,6 +59,17 @@ describe('refresh-token accessors', () => {
     writeRefreshToken(null)
     expect(localStorage.getItem('fabulous-writing-refresh-token')).toBeNull()
     expect(readRefreshToken()).toBeNull()
+  })
+})
+
+describe('token-owner accessors', () => {
+  it('round-trips under the token-owner key and clears', () => {
+    expect(readTokenOwner()).toBeNull()
+    writeTokenOwner('42')
+    expect(localStorage.getItem('fabulous-writing-token-owner')).toBe('42')
+    expect(readTokenOwner()).toBe('42')
+    clearTokenOwner()
+    expect(readTokenOwner()).toBeNull()
   })
 })
 

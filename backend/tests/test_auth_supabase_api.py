@@ -723,6 +723,59 @@ class TestAdminCreateReconciliation:
         assert created.external_id == "fake-uuid-retry"
         audit_fields = [r["field"] for r in app.state.user_store.list_audit()]
         assert "created" in audit_fields
+        # Copilot round 4: reconciliation resolved the pre-existing UUID but
+        # used to stop there, leaving the fake's stored credential at
+        # "an original password 1" (the prior attempt's password) instead of
+        # the one just submitted -- a 201 for a password that cannot log in.
+        assert fake.stored_password(self.RETRY_EMAIL) == "a retried password 1"
+
+    def test_create_with_password_maps_gateway_failure_during_reconciled_password_set(
+        self, supabase_app
+    ):
+        app, fake = supabase_app
+        # Same prior-success-then-retry setup as above, but the
+        # change_password call that must follow reconciliation fails at the
+        # gateway (Copilot round 4).
+        fake.register_user(
+            self.RETRY_EMAIL, "an original password 1", uuid="fake-uuid-retry"
+        )
+
+        async def boom(_user_id, _password):
+            raise SupabaseAuthError("rejected")
+
+        fake.change_password = boom
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        resp = client.post(
+            "/api/admin/users",
+            json={"email": self.RETRY_EMAIL, "password": "a retried password 1"},
+            headers=headers,
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "create_failed"
+        assert app.state.user_store.get_by_email(self.RETRY_EMAIL) is None
+
+    def test_create_with_password_maps_gateway_unavailable_during_reconciled_password_set(
+        self, supabase_app
+    ):
+        app, fake = supabase_app
+        fake.register_user(
+            self.RETRY_EMAIL, "an original password 1", uuid="fake-uuid-retry"
+        )
+
+        async def boom(_user_id, _password):
+            raise SupabaseUnavailableError("down")
+
+        fake.change_password = boom
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        resp = client.post(
+            "/api/admin/users",
+            json={"email": self.RETRY_EMAIL, "password": "a retried password 1"},
+            headers=headers,
+        )
+        assert resp.status_code == 503
+        assert app.state.user_store.get_by_email(self.RETRY_EMAIL) is None
 
     def test_create_with_password_422_when_gateway_has_no_matching_identity(
         self, supabase_app
@@ -779,6 +832,36 @@ class TestAdminCreateReconciliation:
         assert resp.status_code == 422
         assert resp.json()["detail"]["code"] == "invite_failed"
         assert app.state.user_store.get_by_email("noinvitematch@example.com") is None
+
+    def test_create_with_password_503_when_the_reconciliation_lookup_is_unavailable(
+        self, supabase_app
+    ):
+        # Copilot round 4: _resolve_after_duplicate_rejection's own
+        # get_user_id_by_email call ran unwrapped inside the caller's
+        # `except SupabaseAuthError` block, so a SupabaseUnavailableError
+        # raised by the LOOKUP itself (as opposed to the original
+        # create_user call) escaped both routes' except clauses entirely
+        # and surfaced as an unhandled 500 instead of the generic 503 every
+        # other gateway-unavailable case maps to.
+        app, fake = supabase_app
+
+        async def create_boom(_email, _password):
+            raise SupabaseAuthError("rejected, ambiguous duplicate")
+
+        async def lookup_boom(_email):
+            raise SupabaseUnavailableError("down")
+
+        fake.create_user = create_boom
+        fake.get_user_id_by_email = lookup_boom
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        resp = client.post(
+            "/api/admin/users",
+            json={"email": "lookupdown@example.com", "password": "a password here 1"},
+            headers=headers,
+        )
+        assert resp.status_code == 503
+        assert app.state.user_store.get_by_email("lookupdown@example.com") is None
 
 
 class TestAdminPatchPasswordSupabase:
