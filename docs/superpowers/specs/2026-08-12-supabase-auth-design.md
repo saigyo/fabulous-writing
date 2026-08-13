@@ -173,13 +173,18 @@ Files: `frontend/src/auth/session.ts`, `LoginGate.tsx`, `LoginForm.tsx`,
   which the anonymous state may call — it is already public). Submitting
   it calls `reset-request` and always shows the same neutral
   confirmation.
-- `LoginGate` recognizes `token_hash` + `type` query parameters on load
-  and renders `ResetPasswordForm` (set-new-password) in the anonymous
-  state; the same form serves `recovery` and `invite`. On success it
-  clears the URL parameters and returns to the sign-in form with a
-  success notice (no auto-login: the confirm-time session was minted
-  before `password_changed_at`, so the eviction fallback rightly rejects
-  it — the user signs in with the new password).
+- `LoginGate` recognizes `token_hash` + `type` in the URL **fragment** on
+  load (never the query string: fragments are not sent in HTTP requests,
+  so the one-time credential cannot reach server access logs or Referer
+  headers — PR #95 review round 7) and renders `ResetPasswordForm`
+  (set-new-password); the reset branch precedes the auth-state branching,
+  so a link opened in an authenticated or still-restoring tab is not
+  silently burned. The same form serves `recovery` and `invite`. The
+  fragment is stripped immediately after capture; on success the gate
+  returns to the sign-in form with a success notice (no auto-login: the
+  confirm-time session was minted before `password_changed_at`, so the
+  eviction fallback rightly rejects it — the user signs in with the new
+  password).
 - UI copy follows the informal register rule (Du/tu/tú) for all new
   strings.
 
