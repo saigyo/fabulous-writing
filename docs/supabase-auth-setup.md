@@ -92,10 +92,10 @@ generic Supabase page.
 Supabase's stock "Reset Password" and "Invite user" templates link to
 `{{ .ConfirmationURL }}`, which routes through Supabase's own
 `/auth/v1/verify` endpoint and lands back on your Site URL with the tokens
-in the URL **fragment** (`#access_token=...&type=recovery`) — not a
-`token_hash` query parameter. This backend's frontend
+in a differently-shaped URL **fragment** (`#access_token=...&type=recovery`)
+— not the `token_hash` fragment this app expects. This backend's frontend
 (`LoginGate.tsx`'s `readResetParams()`) only recognizes
-`?token_hash=...&type=recovery|invite` in the query string, because the
+`#token_hash=...&type=recovery|invite` in the URL fragment, because the
 backend verifies the link server-side via `verify_otp({token_hash, type})`
 (`supabase_gateway.py`) rather than trusting a client-side session GoTrue's
 verify page hands back. With the stock templates, the link opens the
@@ -104,8 +104,14 @@ ordinary login form with no error — both flows fail closed, silently.
 For **each** of the "Reset Password" and "Invite user" templates (**Auth →
 Email Templates**), replace the link with:
 
-- Reset Password: `{{ .SiteURL }}/?token_hash={{ .TokenHash }}&type=recovery`
-- Invite user: `{{ .SiteURL }}/?token_hash={{ .TokenHash }}&type=invite`
+- Reset Password: `{{ .SiteURL }}/#token_hash={{ .TokenHash }}&type=recovery`
+- Invite user: `{{ .SiteURL }}/#token_hash={{ .TokenHash }}&type=invite`
+
+The credential goes in the fragment, not the query string: a URL fragment
+is never sent in the HTTP request (browsers strip it before the initial
+navigation and any same-origin asset fetch), so this one-time token cannot
+reach uvicorn/reverse-proxy access logs or leak via a `Referer` header the
+way a query parameter would.
 
 `{{ .SiteURL }}` resolves to the Site URL set in §6 above, so this only
 works once that field is filled in.

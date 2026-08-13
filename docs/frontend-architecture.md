@@ -1216,8 +1216,10 @@ a real 401 hasn't yet.
 
 Both a self-service password reset and an admin-created invite land the same way: an
 email from Supabase carrying a link back to this app's origin
-(`docs/supabase-auth-setup.md`'s Site URL / redirect URL setup) with `?token_hash=...
-&type=recovery` or `&type=invite` in the query string — that query-param shape is not
+(`docs/supabase-auth-setup.md`'s Site URL / redirect URL setup) with `#token_hash=...
+&type=recovery` or `&type=invite` in the URL fragment — a fragment, not a query
+parameter, because a fragment is never sent in an HTTP request and so cannot leak the
+one-time credential into server access logs or a `Referer` header. That shape is not
 what Supabase's stock email templates produce, so the dashboard's "Reset Password" and
 "Invite user" templates must be repointed per the setup guide's §7, or both flows fail
 closed with no visible error. `LoginGate.tsx`'s

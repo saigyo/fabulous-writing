@@ -326,7 +326,7 @@ describe('LoginGate', () => {
   })
 
   it('renders ResetPasswordForm when the URL carries a recovery link, and strips the URL after mount', () => {
-    window.history.pushState({}, '', '/?token_hash=abc123&type=recovery')
+    window.history.pushState({}, '', '/#token_hash=abc123&type=recovery')
     useStore.setState({ authStatus: 'anonymous' })
     render(
       <LoginGate>
@@ -336,12 +336,12 @@ describe('LoginGate', () => {
     screen.getByText(en.resetHeading)
     expect(screen.queryByLabelText(en.signInEmail)).toBeNull()
     // Mutation pin (b): dropping the gate's history.replaceState() call
-    // would leave this query string in place.
-    expect(window.location.search).toBe('')
+    // would leave this fragment in place.
+    expect(window.location.hash).toBe('')
   })
 
   it('renders ResetPasswordForm instead of the children when the tab is already authenticated (finding 7)', () => {
-    window.history.pushState({}, '', '/?token_hash=abc123&type=recovery')
+    window.history.pushState({}, '', '/#token_hash=abc123&type=recovery')
     useStore.setState({ token: 'tok', user: user(), authStatus: 'authenticated' })
     render(
       <LoginGate>
@@ -355,7 +355,7 @@ describe('LoginGate', () => {
   })
 
   it('ignores an unrecognised `type` value on the URL and shows the ordinary login form', () => {
-    window.history.pushState({}, '', '/?token_hash=abc123&type=bogus')
+    window.history.pushState({}, '', '/#token_hash=abc123&type=bogus')
     useStore.setState({ authStatus: 'anonymous' })
     render(
       <LoginGate>
@@ -367,7 +367,7 @@ describe('LoginGate', () => {
   })
 
   it('a successful reset confirm shows the success message, then returns to sign-in via its button', async () => {
-    window.history.pushState({}, '', '/?token_hash=abc123&type=recovery')
+    window.history.pushState({}, '', '/#token_hash=abc123&type=recovery')
     useStore.setState({ authStatus: 'anonymous' })
     vi.mocked(postResetConfirm).mockResolvedValue(undefined)
     render(
@@ -391,7 +391,7 @@ describe('LoginGate', () => {
   })
 
   it('a mismatched confirm shows resetMismatch without calling the API', async () => {
-    window.history.pushState({}, '', '/?token_hash=abc123&type=recovery')
+    window.history.pushState({}, '', '/#token_hash=abc123&type=recovery')
     useStore.setState({ authStatus: 'anonymous' })
     render(
       <LoginGate>
@@ -408,7 +408,7 @@ describe('LoginGate', () => {
   })
 
   it('a 422 invalid_or_expired_link on confirm shows resetLinkInvalid', async () => {
-    window.history.pushState({}, '', '/?token_hash=abc123&type=invite')
+    window.history.pushState({}, '', '/#token_hash=abc123&type=invite')
     useStore.setState({ authStatus: 'anonymous' })
     vi.mocked(postResetConfirm).mockRejectedValue(
       new HttpError(422, 'POST /api/auth/reset-confirm failed: 422', 'invalid_or_expired_link'),
@@ -428,7 +428,7 @@ describe('LoginGate', () => {
   })
 
   it('a non-invalid-link error on confirm falls back to the neutral password-change message, not sign-in-failed (Copilot round 3)', async () => {
-    window.history.pushState({}, '', '/?token_hash=abc123&type=recovery')
+    window.history.pushState({}, '', '/#token_hash=abc123&type=recovery')
     useStore.setState({ authStatus: 'anonymous' })
     vi.mocked(postResetConfirm).mockRejectedValue(new HttpError(500, 'Internal error'))
     render(
