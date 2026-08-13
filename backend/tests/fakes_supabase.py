@@ -40,12 +40,17 @@ class FakeSupabaseGateway:
     Mints deterministic tokens (`fake-access-<n>` / `fake-refresh-<n>`) and
     records every issued access token's (uuid, email, issued_at) in
     `sessions`, which `FakeSupabaseVerifier` reads back instead of decoding a
-    JWT. `global_sign_out`/`sign_out` deliberately do NOT remove a token from
-    `sessions` -- unlike real GoTrue, this fake models no independent
-    Supabase-side revocation, only the calls being made; the eviction
-    integration test's "residual window" assertion depends on a
-    already-issued token staying resolvable here even after the route layer
-    calls global_sign_out on some other token.
+    JWT. `sign_out` deliberately does NOT remove a token from `sessions` --
+    unlike real GoTrue, this fake models no independent Supabase-side
+    revocation of ACCESS tokens, only the calls being made; the eviction
+    integration test's "residual window" assertion depends on an
+    already-issued access token staying resolvable here even after the
+    route layer calls global_sign_out on some other token -- that residual
+    (an access token stays valid until its own expiry) is the documented
+    contract, not a fake gap. `global_sign_out` DOES revoke every refresh
+    token belonging to the same subject as the given access token (mirrors
+    GoTrue's `/logout?scope=global`), so a stale refresh token correctly
+    fails at `/api/auth/refresh` after a password change or reset-confirm.
     """
 
     def __init__(self) -> None:
@@ -129,6 +134,13 @@ class FakeSupabaseGateway:
 
     async def global_sign_out(self, access_token: str) -> None:
         self.global_sign_out_calls.append(access_token)
+        session = self.sessions.get(access_token)
+        if session is None:
+            return
+        uuid, _email, _issued_at = session
+        for token, (rt_uuid, _rt_email) in list(self._refresh_tokens.items()):
+            if rt_uuid == uuid:
+                del self._refresh_tokens[token]
 
     async def change_password(self, user_id: str, new_password: str) -> None:
         for email, (_password, uuid) in list(self._users.items()):

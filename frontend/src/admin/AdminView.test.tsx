@@ -213,6 +213,38 @@ describe('AdminView', () => {
     })
   })
 
+  it('with invites available, the password-optional hint is a visible, described-by element (round-2 finding F)', async () => {
+    useStore.setState({ authFeatures: { password_reset: true, invites: true } })
+    vi.mocked(getAdminUsers).mockResolvedValue([])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+
+    render(<AdminView />)
+    await screen.findByText('basic')
+
+    const hint = screen.getByText(en.adminPasswordOptionalHint)
+    const input = screen.getByLabelText(en.adminPassword)
+    // Visible text, not a title-only tooltip: touch/keyboard/screen-reader
+    // users must be able to see it without hovering.
+    expect(hint.tagName).toBe('P')
+    expect(input.getAttribute('aria-describedby')).toBe(hint.id)
+  })
+
+  it('with invites unavailable, the password-optional hint is absent', async () => {
+    // Explicit false, not reliance on the beforeEach default: an earlier
+    // test in this file may have left authFeatures.invites true on the
+    // shared store singleton.
+    useStore.setState({ authFeatures: { password_reset: false, invites: false } })
+    vi.mocked(getAdminUsers).mockResolvedValue([])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+
+    render(<AdminView />)
+    await screen.findByText('basic')
+
+    expect(screen.queryByText(en.adminPasswordOptionalHint)).toBeNull()
+    const input = screen.getByLabelText(en.adminPassword)
+    expect(input.hasAttribute('aria-describedby')).toBe(false)
+  })
+
   it('admin checkbox in the create form is disabled with a hint while allow_additional_admins is false', () => {
     useStore.setState({ user: user({ allow_additional_admins: false }) })
     vi.mocked(getAdminUsers).mockResolvedValue([])

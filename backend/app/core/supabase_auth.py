@@ -10,6 +10,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from urllib.parse import urlsplit
 
 import jwt
 
@@ -21,6 +22,11 @@ logger = logging.getLogger(__name__)
 
 SUPABASE_PUBLISHABLE_KEY_ENV = "FW_SUPABASE_PUBLISHABLE_KEY"
 SUPABASE_SECRET_KEY_ENV = "FW_SUPABASE_SECRET_KEY"
+
+# Loopback hostnames only: what the offline supabase-CLI e2e stack (B27 #94)
+# actually binds to. Not a general "private network" allowance -- a plain
+# http:// URL anywhere else would send FW_SUPABASE_SECRET_KEY unencrypted.
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
 @dataclass(frozen=True)
@@ -46,6 +52,17 @@ def resolve_supabase_credentials(
         raise AuthConfigError(
             "auth.mode is 'supabase' but auth.supabase.url is not configured"
         )
+    url = supabase.url.strip().rstrip("/")
+    parsed = urlsplit(url)
+    is_loopback_http = parsed.scheme == "http" and parsed.hostname in _LOOPBACK_HOSTS
+    if not (parsed.scheme and parsed.netloc) or not (parsed.scheme == "https" or is_loopback_http):
+        # The URL itself is not a secret (it's public knowledge — see
+        # SupabaseSettings.url) and is safe to echo; only the two
+        # FW_SUPABASE_* env vars are credential material.
+        raise AuthConfigError(
+            f"auth.supabase.url must be an https URL (http allowed only for"
+            f" localhost/127.0.0.1/::1, for the offline e2e stack): {url!r}"
+        )
     environ = os.environ if env is None else env
     publishable = environ.get(SUPABASE_PUBLISHABLE_KEY_ENV, "")
     secret = environ.get(SUPABASE_SECRET_KEY_ENV, "")
@@ -54,7 +71,7 @@ def resolve_supabase_credentials(
     if not secret:
         raise AuthConfigError(f"{SUPABASE_SECRET_KEY_ENV} is unset")
     return SupabaseCredentials(
-        url=supabase.url.strip().rstrip("/"),
+        url=url,
         publishable_key=publishable,
         secret_key=secret,
     )

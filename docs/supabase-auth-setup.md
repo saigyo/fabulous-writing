@@ -170,5 +170,13 @@ bootstrap against a project that already has one) and records a local row
 pointing at it. Once any user exists — admin or not — those two variables
 are read no further: they can never serve as a standing password reset, in
 this mode any more than in local mode. If you need to change the bootstrap
-admin's password after the fact, do it through the Supabase dashboard or
-the admin API, not by changing the environment variables and restarting.
+admin's password after the fact, do it through the **application** — the
+account menu's password-change form, or another admin's PATCH on this
+account through the admin API — not by changing the environment variables
+and restarting. Both of those rotate the credential at Supabase *and* evict
+this backend's own outstanding sessions (`mark_password_changed`) in the
+same request. Changing the password directly in the Supabase dashboard
+still revokes the account's refresh tokens at Supabase, but any access
+token already issued stays valid here until it expires on its own —
+`mark_password_changed` never runs, since the dashboard has no way to call
+back into this backend.

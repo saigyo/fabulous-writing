@@ -1032,14 +1032,17 @@ flipped to match. `LoginGate` keeps the `authStatus` branching — which state r
 at all — while `GateShell` is pure layout, applied identically to both branches that
 render something.
 
-**The gate** (`auth/LoginGate.tsx`) renders `LoginForm` (or, with a reset/invite link in
-the URL, `ResetPasswordForm` — below) only while `authStatus` is `'anonymous'`, and the
-app (children) only once it is `'authenticated'`. While `'unknown'` it renders
-**nothing** (`LoginGate.tsx:137`) — deliberately, and this is the reason that state
-exists: showing the login form during the restore round-trip would flash it at an
-already-authenticated user on every reload, and mounting the app would fire its mount
-effects unauthenticated. `authStatus` starts `'unknown'`; `restoreSession()` (called
-once at mount) resolves it before anything else renders. With no stored token,
+**The gate** (`auth/LoginGate.tsx`) renders `ResetPasswordForm`, ahead of everything
+else, whenever a reset/invite link is present in the URL — regardless of `authStatus`,
+including `'authenticated'` (see the reset/invite gate flow below for why). Absent such
+a link, it renders `LoginForm` only while `authStatus` is `'anonymous'`, and the app
+(children) only once it is `'authenticated'`. While `'unknown'` — and no reset/invite
+link is present — it renders **nothing** (`LoginGate.tsx:137`) — deliberately, and this
+is the reason that state exists: showing the login form during the restore round-trip
+would flash it at an already-authenticated user on every reload, and mounting the app
+would fire its mount effects unauthenticated. `authStatus` starts `'unknown'`;
+`restoreSession()` (called once at mount) resolves it before anything else renders.
+With no stored token,
 `restoreSession()` returns immediately without calling `/api/auth/me` at all. With a
 stored token it calls `GET /api/auth/me` — one request — and sets `authStatus` from the
 result: `ok` → `'authenticated'`, a 401 → `'anonymous'` (via `expireSession()`, which
