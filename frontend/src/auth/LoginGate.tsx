@@ -13,17 +13,20 @@ interface ResetParams {
   type: 'recovery' | 'invite'
 }
 
-/** Reads a reset/invite link's params from the current URL, once. Only
- * "recovery"/"invite" are accepted `type` values — anything else (missing
- * param, typo, a stray query string from something unrelated) is treated as
- * no link at all, and the gate falls through to the ordinary login form.
- * This query-param shape (not Supabase's stock-template fragment link) is
- * only what the emailed link carries if the dashboard's email templates
- * were pointed at the app the way `docs/supabase-auth-setup.md` §7
- * describes — otherwise the tokens arrive as a URL fragment this function
- * never sees, and both flows fail closed here, silently. */
+/** Reads a reset/invite link's params from the current URL's fragment,
+ * once. Only "recovery"/"invite" are accepted `type` values — anything else
+ * (missing param, typo, a stray fragment from something unrelated) is
+ * treated as no link at all, and the gate falls through to the ordinary
+ * login form. The fragment (not the query string) is deliberate: a URL
+ * fragment is never sent in an HTTP request, so this one-time credential
+ * cannot reach server access logs or leak via a `Referer` header. This
+ * shape is only what the emailed link carries if the dashboard's email
+ * templates were pointed at the app the way `docs/supabase-auth-setup.md`
+ * §7 describes — otherwise the tokens arrive in Supabase's own stock
+ * fragment shape, which this function does not recognize, and both flows
+ * fail closed here, silently. */
 function readResetParams(): ResetParams | null {
-  const params = new URLSearchParams(window.location.search)
+  const params = new URLSearchParams(window.location.hash.slice(1))
   const tokenHash = params.get('token_hash')
   const type = params.get('type')
   if (!tokenHash || (type !== 'recovery' && type !== 'invite')) return null
@@ -87,11 +90,16 @@ export function LoginGate({ children }: { children: ReactNode }) {
   }, [setAuthFeatures])
 
   useEffect(() => {
-    // Strips a burned token_hash/type pair from the URL right after the
-    // params above are captured into state, so a reload of this same tab
-    // does not resubmit it. Runs once, after the initial paint the
+    // Strips a burned token_hash/type pair from the URL's fragment right
+    // after the params above are captured into state, so a reload of this
+    // same tab does not resubmit it. Runs once, after the initial paint the
     // useState(readResetParams) initializer already covered.
-    if (resetParams) window.history.replaceState(null, '', window.location.pathname)
+    if (resetParams)
+      window.history.replaceState(
+        null,
+        '',
+        window.location.pathname + window.location.search,
+      )
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- resetParams is captured once via useState's lazy initializer and never changes after mount
   }, [])
 
