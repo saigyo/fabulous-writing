@@ -151,6 +151,24 @@ def _create_user_local(store, body: UserCreate) -> User:
     )
 
 
+async def _resolve_after_duplicate_rejection(
+    gateway, email: str, exc: SupabaseAuthError, error_code: str
+) -> str:
+    """A GoTrue duplicate-email rejection from create_user/invite_user is
+    ambiguous: it can mean a genuine pre-existing account, but it can also
+    mean THIS admin's own earlier attempt already succeeded remotely and
+    only the following local step failed transiently -- a retry then lands
+    here with the remote identity otherwise permanently stranded (Copilot
+    round 3). Mirrors seed_admin's create-or-link fallback: look the email
+    up at Supabase and reconcile onto it. Only a real "no such user" is a
+    genuine failure.
+    """
+    existing_id = await gateway.get_user_id_by_email(email)
+    if existing_id is None:
+        raise HTTPException(422, {"code": error_code}) from exc
+    return existing_id
+
+
 def _adopt_existing_row(store, existing: User, external_id: str) -> User:
     """Mode-switch: attach `external_id` to a local row that predates (or is
     otherwise unlinked from) supabase mode, instead of colliding with it on
@@ -195,7 +213,9 @@ async def create_user(
         try:
             external_id = await gateway.invite_user(body.email)
         except SupabaseAuthError as exc:
-            raise HTTPException(422, {"code": "invite_failed"}) from exc
+            external_id = await _resolve_after_duplicate_rejection(
+                gateway, body.email, exc, "invite_failed"
+            )
         except SupabaseUnavailableError as exc:
             raise HTTPException(503, "Authentication service unavailable") from exc
         # Accepted residual: a transient local failure from this point on
@@ -233,7 +253,9 @@ async def create_user(
         try:
             external_id = await gateway.create_user(body.email, body.password)
         except SupabaseAuthError as exc:
-            raise HTTPException(422, {"code": "create_failed"}) from exc
+            external_id = await _resolve_after_duplicate_rejection(
+                gateway, body.email, exc, "create_failed"
+            )
         except SupabaseUnavailableError as exc:
             raise HTTPException(503, "Authentication service unavailable") from exc
         # Same accepted residual as the invite branch: no compensating

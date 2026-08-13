@@ -427,7 +427,7 @@ describe('LoginGate', () => {
     await waitFor(() => screen.getByText(en.resetLinkInvalid))
   })
 
-  it('a non-invalid-link error on confirm falls back to the generic sign-in-failed message', async () => {
+  it('a non-invalid-link error on confirm falls back to the neutral password-change message, not sign-in-failed (Copilot round 3)', async () => {
     window.history.pushState({}, '', '/?token_hash=abc123&type=recovery')
     useStore.setState({ authStatus: 'anonymous' })
     vi.mocked(postResetConfirm).mockRejectedValue(new HttpError(500, 'Internal error'))
@@ -441,7 +441,7 @@ describe('LoginGate', () => {
     await u.type(screen.getByLabelText(en.resetRepeatPassword), 'newpassword123')
     await u.click(screen.getByRole('button', { name: en.resetSubmit }))
 
-    await waitFor(() => screen.getByText(en.signInFailed))
+    await waitFor(() => screen.getByText(en.passwordFailed))
   })
 
   it('shows the forgot-password link when authFeatures.password_reset is true', () => {

@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { HttpError, MIN_PASSWORD_LENGTH, postResetConfirm } from '../api/client'
-import { useMessages } from '../i18n'
+import { useMessages, type Messages } from '../i18n'
 
 interface ResetPasswordFormProps {
   tokenHash: string
@@ -9,6 +9,23 @@ interface ResetPasswordFormProps {
   // auto-login: the link only proves control of the mailbox at the moment
   // it was sent, not that this browser tab should inherit a session now.
   onDone: () => void
+}
+
+// Mirrors AccountMenu.tsx's mapChangeError: `wrong_current_password` has no
+// counterpart here (this flow never sees the old password), so only the two
+// codes reset-confirm can actually raise are handled specifically.
+// Copilot round 3: previously every non-`invalid_or_expired_link` error --
+// including password_too_long and a 503 -- fell back to m.signInFailed, a
+// message about a sign-in attempt that never happened on this screen.
+function mapResetError(err: unknown, m: Messages): string {
+  if (err instanceof HttpError) {
+    if (err.code === 'invalid_or_expired_link') return m.resetLinkInvalid
+    if (err.code === 'password_too_short') return m.passwordTooShort(MIN_PASSWORD_LENGTH)
+  }
+  // password_too_long, any other 422 code, a 503, and a network failure all
+  // land here — the same neutral fallback AccountMenu's mapChangeError uses
+  // for password_too_long, and one that never mentions signing in.
+  return m.passwordFailed
 }
 
 /** Rendered by LoginGate in place of LoginForm while anonymous and the URL
@@ -39,13 +56,7 @@ export function ResetPasswordForm({ tokenHash, type, onDone }: ResetPasswordForm
     setPending(true)
     postResetConfirm(tokenHash, type, password)
       .then(() => setSuccess(true))
-      .catch((err: unknown) => {
-        setError(
-          err instanceof HttpError && err.code === 'invalid_or_expired_link'
-            ? m.resetLinkInvalid
-            : m.signInFailed,
-        )
-      })
+      .catch((err: unknown) => setError(mapResetError(err, m)))
       .finally(() => setPending(false))
   }
 

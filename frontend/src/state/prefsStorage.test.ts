@@ -80,6 +80,17 @@ describe('token-expiry accessors', () => {
     localStorage.setItem('fabulous-writing-token-expires', 'not-a-number')
     expect(readTokenExpiresAt()).toBeNull()
   })
+
+  it('treats a non-finite stored value (Infinity/-Infinity) as absent', () => {
+    // "Infinity" parses to a real, non-NaN number -- Number.isNaN alone lets
+    // it through, and scheduleRefresh's delay computation would then clamp
+    // an infinite deadline to 0, producing a degenerate refresh loop
+    // (Copilot round 3) instead of being treated as corrupt storage.
+    localStorage.setItem('fabulous-writing-token-expires', 'Infinity')
+    expect(readTokenExpiresAt()).toBeNull()
+    localStorage.setItem('fabulous-writing-token-expires', '-Infinity')
+    expect(readTokenExpiresAt()).toBeNull()
+  })
 })
 
 describe('readPrefs / writePrefs', () => {
