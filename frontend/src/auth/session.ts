@@ -251,6 +251,17 @@ async function doRefresh(): Promise<boolean> {
     writeToken(token)
     writeRefreshToken(refresh_token ?? null)
     writeTokenExpiresAt(expires_at ?? null)
+    // Keep the owner key in lockstep with the triple it now names: leaving
+    // it pointing at whatever account last wrote it (Copilot round 5) is
+    // the same inconsistent-pair hazard the ownerMismatch check above
+    // guards against, just created here instead of read there. `user` is
+    // re-read fresh (not the pre-await destructure) since this runs after
+    // the network round trip; if it's null this is the pre-getMe() restore
+    // leg (see the ownerMismatch comment above) where the storage owner
+    // key already belongs to this same profile's own prior login, so it's
+    // left untouched rather than written with no user to attribute it to.
+    const currentUser = useStore.getState().user
+    if (currentUser) writeTokenOwner(String(currentUser.id))
     useStore.getState().setSessionTokens(token, refresh_token ?? null, expires_at ?? null)
     scheduleRefresh()
     return true
