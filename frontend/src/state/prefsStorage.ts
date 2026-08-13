@@ -31,6 +31,13 @@ export const PREFS_VERSION = 2
 const TOKEN_KEY = 'fabulous-writing-token'
 const REFRESH_TOKEN_KEY = 'fabulous-writing-refresh-token'
 const TOKEN_EXPIRES_KEY = 'fabulous-writing-token-expires'
+// Which user the persisted refresh token belongs to (decimal user id).
+// localStorage is shared across every tab in the browser profile, so a
+// persisted refresh token alone doesn't say whose session it is -- this
+// lets doRefresh's storage-adoption branch (session.ts) tell "a newer
+// rotation for the user I'm already signed in as" apart from "another
+// account entirely, left behind by a switch in a different tab."
+const TOKEN_OWNER_KEY = 'fabulous-writing-token-owner'
 // The pre-B1 single blob that mixed the token with the last user's
 // preferences. Deleted once at boot (see prefsPersistence.ts), never read.
 const LEGACY_KEY = 'fabulous-writing-settings'
@@ -127,6 +134,30 @@ export function writeTokenExpiresAt(expiresAt: number | null): void {
 export function clearTokenExpiresAt(): void {
   try {
     localStorage.removeItem(TOKEN_EXPIRES_KEY)
+  } catch {
+    // Nothing to clear if storage itself is unavailable.
+  }
+}
+
+export function readTokenOwner(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_OWNER_KEY)
+  } catch {
+    return null
+  }
+}
+
+export function writeTokenOwner(userId: string): void {
+  try {
+    localStorage.setItem(TOKEN_OWNER_KEY, userId)
+  } catch {
+    // Without storage the session just won't survive a reload.
+  }
+}
+
+export function clearTokenOwner(): void {
+  try {
+    localStorage.removeItem(TOKEN_OWNER_KEY)
   } catch {
     // Nothing to clear if storage itself is unavailable.
   }

@@ -163,7 +163,19 @@ async def _resolve_after_duplicate_rejection(
     up at Supabase and reconcile onto it. Only a real "no such user" is a
     genuine failure.
     """
-    existing_id = await gateway.get_user_id_by_email(email)
+    try:
+        existing_id = await gateway.get_user_id_by_email(email)
+    except SupabaseAuthError:
+        # The lookup itself failed at the gateway -- treated the same as "no
+        # such user": fall through to the ORIGINAL rejection below rather
+        # than letting this second, unrelated error escape (Copilot round
+        # 4). This call runs inside the caller's `except SupabaseAuthError`
+        # block, so an unwrapped exception here is not caught by any
+        # sibling `except SupabaseUnavailableError` clause at the call site
+        # -- it would propagate out of the route as an unhandled 500.
+        existing_id = None
+    except SupabaseUnavailableError as unavailable_exc:
+        raise HTTPException(503, "Authentication service unavailable") from unavailable_exc
     if existing_id is None:
         raise HTTPException(422, {"code": error_code}) from exc
     return existing_id
@@ -256,6 +268,20 @@ async def create_user(
             external_id = await _resolve_after_duplicate_rejection(
                 gateway, body.email, exc, "create_failed"
             )
+            # The reconciled UUID belongs to a pre-existing Supabase
+            # identity (most likely this admin's own earlier attempt,
+            # already created remotely) whose credential was never set to
+            # the password just submitted -- create_user() above only sets
+            # it on the happy path. Without this, the response is 201 for a
+            # password that cannot log in (Copilot round 4). Same
+            # 422/503 mapping as the rotation in patch_user, and this runs
+            # BEFORE any local row is created or linked below.
+            try:
+                await gateway.change_password(external_id, body.password)
+            except SupabaseAuthError as pw_exc:
+                raise HTTPException(422, {"code": "create_failed"}) from pw_exc
+            except SupabaseUnavailableError as pw_exc:
+                raise HTTPException(503, "Authentication service unavailable") from pw_exc
         except SupabaseUnavailableError as exc:
             raise HTTPException(503, "Authentication service unavailable") from exc
         # Same accepted residual as the invite branch: no compensating

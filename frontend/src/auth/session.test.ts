@@ -34,6 +34,7 @@ import {
   readTokenExpiresAt,
   writePrefs,
   writeRefreshToken,
+  writeTokenOwner,
 } from '../state/prefsStorage'
 import {
   expireSession,
@@ -459,6 +460,44 @@ describe('refresh engine (refreshSession/scheduleRefresh)', () => {
     }
   })
 
+  it('clamps the rescheduled delay to a floor when the rotated expiry is still inside the margin (short-TTL deployments)', async () => {
+    vi.useFakeTimers()
+    try {
+      // Deliberately far out, same reasoning as the test above: only a
+      // reschedule keyed off the rotated (near) expiry set below can fire
+      // inside this test's window.
+      const farExpiresAt = Math.floor(Date.now() / 1000) + 100_000
+      await loginWithTriple(farExpiresAt)
+
+      // The rotated expiry is only 60s out -- inside REFRESH_MARGIN_MS
+      // (120s) -- so the naive computed delay (expiry - now - margin) would
+      // be negative, clamping to 0 without the floor: an immediate refresh
+      // that reschedules itself immediately again, a tight rotation loop.
+      const shortExpiresAt = Math.floor(Date.now() / 1000) + 60
+      vi.mocked(postRefresh).mockResolvedValue({
+        token: 'tok2',
+        refresh_token: 'rt2',
+        expires_at: shortExpiresAt,
+        user: user(1),
+      })
+      await refreshSession()
+
+      vi.mocked(postRefresh).mockClear()
+      vi.mocked(postRefresh).mockResolvedValue({
+        token: 'tok3',
+        refresh_token: 'rt3',
+        expires_at: shortExpiresAt + 60,
+        user: user(1),
+      })
+      await vi.advanceTimersByTimeAsync(29_999) // MIN_REFRESH_DELAY_MS - 1
+      expect(postRefresh).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1) // MIN_REFRESH_DELAY_MS
+      expect(postRefresh).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('a 401 on refresh ends the session through expireSession()', async () => {
     const expiresAt = Math.floor(Date.now() / 1000) + 300
     await loginWithTriple(expiresAt)
@@ -612,9 +651,15 @@ describe('refresh engine (refreshSession/scheduleRefresh)', () => {
     const expiresAt = Math.floor(Date.now() / 1000) + 300
     await loginWithTriple(expiresAt, 'rt-store')
     // Simulate another tab having already rotated and persisted a newer
-    // refresh token while this tab's in-memory store still holds the old
-    // one -- the scenario a browser-throttled background tab produces.
+    // refresh token for the SAME user while this tab's in-memory store
+    // still holds the old one -- the scenario a browser-throttled
+    // background tab produces. The owner key travels with every rotation
+    // (session.ts writes it on login, never touches it on refresh), so a
+    // same-user rotation leaves it unchanged -- written explicitly here so
+    // the test states the "same owner" precondition rather than relying on
+    // login()'s write as an implicit given.
     writeRefreshToken('rt-from-other-tab')
+    writeTokenOwner('1')
 
     vi.mocked(postRefresh).mockResolvedValue({
       token: 'tok2',
@@ -625,6 +670,29 @@ describe('refresh engine (refreshSession/scheduleRefresh)', () => {
     await refreshSession()
 
     expect(postRefresh).toHaveBeenCalledWith('rt-from-other-tab')
+  })
+
+  it('declines adoption of a persisted refresh token belonging to a different user (account switch across tabs)', async () => {
+    const expiresAt = Math.floor(Date.now() / 1000) + 300
+    await loginWithTriple(expiresAt, 'rt-store')
+    // Simulate another tab having logged out and back in as a DIFFERENT
+    // user in the same browser profile -- localStorage now holds user 2's
+    // refresh token and owner id, while this tab's in-memory store is
+    // still user 1 (Copilot round 4). Adopting the storage token would run
+    // this tab's subsequent requests as user 2 under user 1's UI state.
+    writeRefreshToken('rt-from-user-2')
+    writeTokenOwner('2')
+
+    vi.mocked(postRefresh).mockResolvedValue({
+      token: 'tok2',
+      refresh_token: 'rt2',
+      expires_at: expiresAt + 300,
+      user: user(1),
+    })
+    await refreshSession()
+
+    // Declined: the store's OWN token is submitted, not storage's.
+    expect(postRefresh).toHaveBeenCalledWith('rt-store')
   })
 
   it('a refresh completing after logout() does not commit a stale token', async () => {
