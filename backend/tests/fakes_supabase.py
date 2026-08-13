@@ -7,7 +7,11 @@ import jwt
 
 from app.core.auth import InvalidToken, VerifiedToken
 from app.core.supabase_auth import resolve_supabase_user
-from app.services.supabase_gateway import SupabaseAuthError, SupabaseSession
+from app.services.supabase_gateway import (
+    SupabaseAuthError,
+    SupabaseSession,
+    SupabaseUserSummary,
+)
 
 
 class StaticJWKSClient:
@@ -56,6 +60,10 @@ class FakeSupabaseGateway:
     def __init__(self) -> None:
         # email -> (password, uuid)
         self._users: dict[str, tuple[str, str]] = {}
+        # email -> invite_pending (True: invited_at set, never signed in;
+        # mirrors the real gateway's GoTrue-derived flag). Missing means
+        # False, same as an identity GoTrue never marked invited.
+        self._invite_pending: dict[str, bool] = {}
         self._next_uuid = 1
         self._next_token = 1
         # access_token -> (uuid, email, issued_at epoch seconds)
@@ -95,11 +103,22 @@ class FakeSupabaseGateway:
         stored = self._users.get(email)
         return stored[0] if stored else None
 
-    def register_user(self, email: str, password: str, *, uuid: str | None = None) -> str:
+    def register_user(
+        self,
+        email: str,
+        password: str,
+        *,
+        uuid: str | None = None,
+        invite_pending: bool = False,
+    ) -> str:
         """Test setup: register an email/password pair, as if already
-        signed up with Supabase. Returns the (possibly generated) uuid."""
+        signed up with Supabase. Returns the (possibly generated) uuid.
+        `invite_pending` simulates an identity minted by an unfinished
+        invite (GoTrue's invited_at set, never signed in); the default
+        (False) matches a directly created/active account."""
         uuid = uuid or self._mint_uuid()
         self._users[email] = (password, uuid)
+        self._invite_pending[email] = invite_pending
         return uuid
 
     def issue_session(
@@ -194,12 +213,21 @@ class FakeSupabaseGateway:
             raise SupabaseAuthError(f"{email} already registered")
         uuid = self._mint_uuid()
         self._users[email] = ("", uuid)
+        self._invite_pending[email] = True
         self.invites.append(email)
         return uuid
 
-    async def get_user_id_by_email(self, email: str) -> str | None:
+    async def get_user_by_email(self, email: str) -> SupabaseUserSummary | None:
         stored = self._users.get(email)
-        return stored[1] if stored else None
+        if stored is None:
+            return None
+        return SupabaseUserSummary(
+            id=stored[1], invite_pending=self._invite_pending.get(email, False)
+        )
+
+    async def get_user_id_by_email(self, email: str) -> str | None:
+        summary = await self.get_user_by_email(email)
+        return summary.id if summary is not None else None
 
 
 class FakeSupabaseVerifier:

@@ -702,6 +702,38 @@ describe('refresh engine (refreshSession/scheduleRefresh)', () => {
     expect(readTokenOwner()).toBe('1')
   })
 
+  it('discards a refresh response naming a different user and ends the session (closes the separate-writes race behind the owner-key check)', async () => {
+    const expiresAt = Math.floor(Date.now() / 1000) + 300
+    await loginWithTriple(expiresAt)
+
+    // Models what the owner-key check (above) cannot fully close: the
+    // token and owner-key localStorage writes are two separate operations,
+    // so a response can still arrive naming a DIFFERENT user even though
+    // the owner-key precondition passed -- postRefresh resolves
+    // successfully (no 401), but its own user is user 2 while this tab's
+    // store still holds user 1.
+    vi.mocked(postRefresh).mockResolvedValue({
+      token: 'tok-user-2',
+      refresh_token: 'rt-user-2',
+      expires_at: expiresAt + 300,
+      user: user(2),
+    })
+    const result = await refreshSession()
+
+    expect(result).toBe(false)
+    // Nothing from the mismatched response was committed to store or
+    // storage -- the session instead ends through expireSession(), exactly
+    // like the 401 case above.
+    const state = useStore.getState()
+    expect(state.sessionExpired).toBe(true)
+    expect(state.token).toBeNull()
+    expect(state.authStatus).toBe('anonymous')
+    expect(readToken()).toBeNull()
+    expect(readRefreshToken()).toBeNull()
+    expect(readTokenExpiresAt()).toBeNull()
+    expect(readToken()).not.toBe('tok-user-2')
+  })
+
   it('a refresh completing after logout() does not commit a stale token', async () => {
     const expiresAt = Math.floor(Date.now() / 1000) + 300
     await loginWithTriple(expiresAt)

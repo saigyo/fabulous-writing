@@ -31,6 +31,24 @@ class SupabaseSession:
     email: str | None
 
 
+@dataclass(frozen=True)
+class SupabaseUserSummary:
+    """A GoTrue admin user, reduced to what reconciliation needs to decide
+    whether an email match proves a pending invitation was accepted rather
+    than an unrelated pre-existing account (e.g. dashboard-created)."""
+
+    id: str
+    # True only for an identity this app's own invite flow created and that
+    # has not yet been accepted: GoTrue sets `invited_at` when
+    # admin.invite_user_by_email mints the identity, and clears it to a
+    # sign-in only via `last_sign_in_at` once the invitee actually logs in
+    # -- `invited_at` itself is never cleared. An account created any other
+    # way (admin.create_user, the Supabase dashboard, a direct signup) has
+    # `invited_at` unset, so it reads as NOT pending regardless of
+    # `last_sign_in_at`.
+    invite_pending: bool
+
+
 class SupabaseAuthError(Exception):
     """Invalid credentials, token, or link."""
 
@@ -194,8 +212,8 @@ class SupabaseAuthGateway:
 
         return await self._execute("invite_user", call())
 
-    async def get_user_id_by_email(self, email: str) -> str | None:
-        async def call() -> str | None:
+    async def get_user_by_email(self, email: str) -> SupabaseUserSummary | None:
+        async def call() -> SupabaseUserSummary | None:
             target = email.lower()
             async with self._admin_client() as admin:
                 page = 1
@@ -205,7 +223,15 @@ class SupabaseAuthGateway:
                         return None
                     for user in users:
                         if user.email is not None and user.email.lower() == target:
-                            return user.id
+                            return SupabaseUserSummary(
+                                id=user.id,
+                                invite_pending=user.invited_at is not None
+                                and user.last_sign_in_at is None,
+                            )
                     page += 1
 
-        return await self._execute("get_user_id_by_email", call())
+        return await self._execute("get_user_by_email", call())
+
+    async def get_user_id_by_email(self, email: str) -> str | None:
+        summary = await self.get_user_by_email(email)
+        return summary.id if summary is not None else None

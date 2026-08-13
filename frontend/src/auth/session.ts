@@ -246,8 +246,23 @@ async function doRefresh(): Promise<boolean> {
     useStore.getState().setSessionTokens(currentToken, refreshTokenToUse, tokenExpiresAt)
   }
   try {
-    const { token, refresh_token, expires_at } = await postRefresh(refreshTokenToUse)
+    const response = await postRefresh(refreshTokenToUse)
     if (startedAt !== generation) return true
+    // Second line of defence behind the owner-key check above: the token
+    // and owner-key localStorage writes at the end of THIS function are two
+    // separate operations, so a cross-tab race can still land another tab's
+    // rotated token here between them, past the ownerMismatch guard, before
+    // its own owner key catches up. The response body names its own user
+    // authoritatively; a mismatch against this tab's current user means the
+    // token just received does not belong to this session, so nothing is
+    // committed and the tab's now-untrustworthy session context ends
+    // outright instead (closes the separate-writes race, Copilot round 6).
+    const storeUser = useStore.getState().user
+    if (storeUser !== null && response.user.id !== storeUser.id) {
+      expireSession()
+      return false
+    }
+    const { token, refresh_token, expires_at } = response
     writeToken(token)
     writeRefreshToken(refresh_token ?? null)
     writeTokenExpiresAt(expires_at ?? null)

@@ -525,6 +525,10 @@ class TestSeedAdminSupabase:
         # create_user was attempted (and rejected as a duplicate) before the
         # fallback lookup linked the existing account.
         assert fake.create_user_calls == [(TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD)]
+        # The existing identity's old (operator-unknown) credential must not
+        # survive the bootstrap: linking rotates it to the configured
+        # FW_ADMIN_PASSWORD, or the operator would have no way to log in.
+        assert fake.stored_password(TEST_ADMIN_EMAIL) == TEST_ADMIN_PASSWORD
 
     def test_bootstrap_failure_aborts_create_app(self, tmp_path, monkeypatch):
         fake = FakeSupabaseGateway()
@@ -800,9 +804,12 @@ class TestAdminCreateReconciliation:
     def test_invite_reconciles_after_prior_success(self, supabase_app):
         app, fake = supabase_app
         # Same shape as the create-with-password case above, but for the
-        # invite branch: a prior invite already succeeded remotely, the
-        # local write failed transiently, and this is the retry.
-        fake.register_user(self.RETRY_EMAIL, "", uuid="fake-uuid-retry-invite")
+        # invite branch: a prior invite already succeeded remotely (still
+        # pending -- never accepted), the local write failed transiently,
+        # and this is the retry.
+        fake.register_user(
+            self.RETRY_EMAIL, "", uuid="fake-uuid-retry-invite", invite_pending=True
+        )
         client = TestClient(app)
         headers = _admin_bearer(client)
         resp = client.post(
@@ -815,6 +822,29 @@ class TestAdminCreateReconciliation:
         assert created.external_id == "fake-uuid-retry-invite"
         audit_fields = [r["field"] for r in app.state.user_store.list_audit()]
         assert "invite" in audit_fields
+
+    def test_invite_against_active_preexisting_identity_is_422_duplicate_email(
+        self, supabase_app
+    ):
+        app, fake = supabase_app
+        # An identity that already exists at Supabase but was never created
+        # by this app's own invite flow (e.g. dashboard-created, or an
+        # invite already accepted) -- invite_pending is False. Reconciling
+        # onto it would let its old, operator-unknown password in without
+        # ever proving the invitation was accepted, so this must fail
+        # closed instead of linking.
+        fake.register_user(
+            "active-account@example.com", "an old password 1", uuid="fake-uuid-active"
+        )
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        resp = client.post(
+            "/api/admin/users", json={"email": "active-account@example.com"}, headers=headers,
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "duplicate_email"
+        assert app.state.user_store.get_by_email("active-account@example.com") is None
+        assert fake.invites == []
 
     def test_invite_422_when_gateway_has_no_matching_identity(self, supabase_app):
         app, fake = supabase_app
@@ -837,7 +867,7 @@ class TestAdminCreateReconciliation:
         self, supabase_app
     ):
         # Copilot round 4: _resolve_after_duplicate_rejection's own
-        # get_user_id_by_email call ran unwrapped inside the caller's
+        # get_user_by_email call ran unwrapped inside the caller's
         # `except SupabaseAuthError` block, so a SupabaseUnavailableError
         # raised by the LOOKUP itself (as opposed to the original
         # create_user call) escaped both routes' except clauses entirely
@@ -852,7 +882,7 @@ class TestAdminCreateReconciliation:
             raise SupabaseUnavailableError("down")
 
         fake.create_user = create_boom
-        fake.get_user_id_by_email = lookup_boom
+        fake.get_user_by_email = lookup_boom
         client = TestClient(app)
         headers = _admin_bearer(client)
         resp = client.post(

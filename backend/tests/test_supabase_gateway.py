@@ -11,6 +11,7 @@ from app.services.supabase_gateway import (
     SupabaseAuthGateway,
     SupabaseSession,
     SupabaseUnavailableError,
+    SupabaseUserSummary,
 )
 
 CREDS = SupabaseCredentials(
@@ -117,6 +118,52 @@ class TestAdminCalls:
             return httpx.Response(200, json={"users": [], "aud": "authenticated"})
 
         assert await gateway_with(handler).get_user_id_by_email("a@example.com") is None
+
+    async def test_get_user_by_email_pending_invite_true(self):
+        # GoTrue sets invited_at when admin.invite_user_by_email mints the
+        # identity, and last_sign_in_at stays unset until the invitee
+        # actually logs in -- exactly the "invited, not yet accepted" state
+        # reconciliation must require proof of.
+        def handler(request):
+            user = {
+                **SESSION_JSON["user"],
+                "invited_at": "2026-01-01T00:00:00Z",
+                "last_sign_in_at": None,
+            }
+            return httpx.Response(200, json={"users": [user], "aud": "authenticated"})
+
+        found = await gateway_with(handler).get_user_by_email("a@example.com")
+        assert found == SupabaseUserSummary(id=USER_UUID, invite_pending=True)
+
+    async def test_get_user_by_email_already_signed_in_is_not_pending(self):
+        # invited_at set but the invitee has since signed in at least once
+        # -- the invitation was already accepted, not stranded.
+        def handler(request):
+            user = {
+                **SESSION_JSON["user"],
+                "invited_at": "2026-01-01T00:00:00Z",
+                "last_sign_in_at": "2026-01-02T00:00:00Z",
+            }
+            return httpx.Response(200, json={"users": [user], "aud": "authenticated"})
+
+        found = await gateway_with(handler).get_user_by_email("a@example.com")
+        assert found == SupabaseUserSummary(id=USER_UUID, invite_pending=False)
+
+    async def test_get_user_by_email_never_invited_is_not_pending(self):
+        # No invited_at at all: created directly (admin.create_user, the
+        # dashboard, a direct signup), never through this app's invite flow.
+        def handler(request):
+            user = {**SESSION_JSON["user"], "invited_at": None, "last_sign_in_at": None}
+            return httpx.Response(200, json={"users": [user], "aud": "authenticated"})
+
+        found = await gateway_with(handler).get_user_by_email("a@example.com")
+        assert found == SupabaseUserSummary(id=USER_UUID, invite_pending=False)
+
+    async def test_get_user_by_email_exhausts_to_none(self):
+        def handler(request):
+            return httpx.Response(200, json={"users": [], "aud": "authenticated"})
+
+        assert await gateway_with(handler).get_user_by_email("a@example.com") is None
 
     async def test_malformed_uuid_maps_to_auth_error_not_500(self):
         # The library's validate_uuid raises a bare ValueError before any

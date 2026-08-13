@@ -13,7 +13,11 @@ from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import CurrentUser, require_admin
 from app.core.auth import ADMIN_SET_MIN_PASSWORD_LENGTH, validate_password
-from app.services.supabase_gateway import SupabaseAuthError, SupabaseUnavailableError
+from app.services.supabase_gateway import (
+    SupabaseAuthError,
+    SupabaseUnavailableError,
+    SupabaseUserSummary,
+)
 from app.services.users import DuplicateEmailError, InvalidEmailError, User
 
 router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_admin)])
@@ -153,7 +157,7 @@ def _create_user_local(store, body: UserCreate) -> User:
 
 async def _resolve_after_duplicate_rejection(
     gateway, email: str, exc: SupabaseAuthError, error_code: str
-) -> str:
+) -> SupabaseUserSummary:
     """A GoTrue duplicate-email rejection from create_user/invite_user is
     ambiguous: it can mean a genuine pre-existing account, but it can also
     mean THIS admin's own earlier attempt already succeeded remotely and
@@ -164,7 +168,7 @@ async def _resolve_after_duplicate_rejection(
     genuine failure.
     """
     try:
-        existing_id = await gateway.get_user_id_by_email(email)
+        existing = await gateway.get_user_by_email(email)
     except SupabaseAuthError:
         # The lookup itself failed at the gateway -- treated the same as "no
         # such user": fall through to the ORIGINAL rejection below rather
@@ -173,12 +177,12 @@ async def _resolve_after_duplicate_rejection(
         # block, so an unwrapped exception here is not caught by any
         # sibling `except SupabaseUnavailableError` clause at the call site
         # -- it would propagate out of the route as an unhandled 500.
-        existing_id = None
+        existing = None
     except SupabaseUnavailableError as unavailable_exc:
         raise HTTPException(503, "Authentication service unavailable") from unavailable_exc
-    if existing_id is None:
+    if existing is None:
         raise HTTPException(422, {"code": error_code}) from exc
-    return existing_id
+    return existing
 
 
 def _adopt_existing_row(store, existing: User, external_id: str) -> User:
@@ -225,9 +229,18 @@ async def create_user(
         try:
             external_id = await gateway.invite_user(body.email)
         except SupabaseAuthError as exc:
-            external_id = await _resolve_after_duplicate_rejection(
+            existing_identity = await _resolve_after_duplicate_rejection(
                 gateway, body.email, exc, "invite_failed"
             )
+            if not existing_identity.invite_pending:
+                # A real pre-existing Supabase account (e.g. dashboard-
+                # created), not this app's own stranded invite: linking it
+                # would let its old, operator-unknown password in without
+                # ever proving the invitation was accepted. No link, no
+                # local row -- the admin must use the CREATE-with-password
+                # path (which rotates the credential) instead.
+                raise HTTPException(422, {"code": "duplicate_email"}) from exc
+            external_id = existing_identity.id
         except SupabaseUnavailableError as exc:
             raise HTTPException(503, "Authentication service unavailable") from exc
         # Accepted residual: a transient local failure from this point on
@@ -265,9 +278,10 @@ async def create_user(
         try:
             external_id = await gateway.create_user(body.email, body.password)
         except SupabaseAuthError as exc:
-            external_id = await _resolve_after_duplicate_rejection(
+            existing_identity = await _resolve_after_duplicate_rejection(
                 gateway, body.email, exc, "create_failed"
             )
+            external_id = existing_identity.id
             # The reconciled UUID belongs to a pre-existing Supabase
             # identity (most likely this admin's own earlier attempt,
             # already created remotely) whose credential was never set to
