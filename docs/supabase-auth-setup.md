@@ -124,6 +124,40 @@ or reset requests will start bouncing). For a production deployment,
 configure **custom SMTP** here before you rely on invite or reset emails
 actually arriving.
 
+### AWS SES: two SMTP flavors, and a silent-failure trap
+
+SES offers two SMTP credential methods, and they debug very differently
+(learned the hard way during this app's acceptance test):
+
+- **IAM SMTP credentials** (classic): the console creates an
+  `ses-smtp-user.*` IAM user; the SMTP password is *derived* from the
+  secret key and is **region-specific** — pasting a raw IAM secret key, or
+  using credentials against another region's endpoint, fails with
+  `535 5.7.8 Authentication Credentials Invalid`. A send failure happens
+  **synchronously**: GoTrue reports the error and the Supabase auth logs
+  carry the SMTP status line.
+- **Mail Manager SMTP** (managed, no IAM user): you get an *ingress
+  endpoint* (`…mail-manager-smtp.amazonaws.com`) with a Secrets-Manager
+  password, and mail is processed by a **traffic policy + rule set** whose
+  `Send` action performs the actual SES outbound send. The trap: the
+  ingress **accepts the message and GoTrue reports success before the
+  rule set runs**. If the Send action then fails — most commonly SES
+  **sandbox mode** with an unverified recipient — the mail is dropped
+  *asynchronously* and nothing in Supabase ever shows an error. A
+  "sent" invite that never arrives is this, until proven otherwise.
+
+Diagnosis checklist for "GoTrue says sent, nothing arrives" on Mail
+Manager: (1) `aws sesv2 get-account` — `ProductionAccessEnabled: false`
+means sandbox: every recipient must be a verified identity until you
+request production access; (2) enable CloudWatch log delivery on the
+ingress point (Mail Manager → Ingress endpoints → your endpoint →
+logging) and check the application log for the message reaching the rule
+set; (3) compare the ingress log against the `AWS/SES` `Send`/`Delivery`
+CloudWatch metrics — an ingress entry *without* a matching `Send`
+datapoint means the rule-set action failed. Note the metrics can lag a
+few minutes. In both flavors, request **production access** before real
+users: sandbox delivery works only to individually verified addresses.
+
 ## 9. Access-token TTL
 
 The default access-token lifetime (1 hour) is fine as-is — there's no need
