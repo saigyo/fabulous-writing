@@ -195,6 +195,25 @@ class UserStore:
             ).fetchone()
         return _row_to_user(row) if row is not None else None
 
+    def link_external_id(self, user_id: int, external_id: str) -> bool:
+        """Atomically adopt an unlinked row for a Supabase subject.
+
+        Used only by resolve_supabase_user's adopt-by-email path. The WHERE
+        clause's `external_id IS NULL` makes this a single conditional
+        UPDATE rather than the read-then-write pattern it replaces: two
+        concurrent different subjects can no longer both observe the row
+        unlinked and have the second write silently clobber the first,
+        bypassing the collision guard. Returns False whenever the row was
+        already linked (by this or another subject) by the time this
+        UPDATE ran -- the caller re-reads to tell those two cases apart.
+        """
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE users SET external_id = ? WHERE id = ? AND external_id IS NULL",
+                (external_id, user_id),
+            )
+        return cursor.rowcount > 0
+
     def mark_password_changed(self, user_id: int) -> bool:
         # Supabase-mode revocation lever: the password itself lives with
         # Supabase; locally only the timestamp (checked by deps.py's

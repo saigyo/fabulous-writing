@@ -107,18 +107,28 @@ class LoginThrottle:
     accumulated backoff.
 
     What actually limits growth of the exempt set is bcrypt cost, not the
-    cap — for the LOGIN instance only: every entry that becomes exempt
-    first had to reach `threshold` failed logins, and `record_failure` only
-    runs after `verify_credentials` has already spent a full bcrypt hash on
-    that attempt — there is no way to make an entry exempt without paying
-    that cost `threshold` times over. Sustaining a large exempt set means
-    renewing roughly `exempt_entries / max_delay` blocks per second, each a
-    bcrypt call: a rate high enough to pin a large table is a rate the
-    server's own bcrypt throughput cannot absorb anyway. That traffic is
-    still CPU load on an unauthenticated endpoint — true of any
-    bcrypt-backed login endpoint, not a cost this exemption introduces — and
-    it is per-IP or global rate limiting at the deployment layer, not this
-    table, that is meant to address it.
+    cap — for the LOGIN instance in LOCAL mode: every entry that becomes
+    exempt first had to reach `threshold` failed logins, and
+    `record_failure` only runs after `verify_credentials` has already spent
+    a full bcrypt hash on that attempt — there is no way to make an entry
+    exempt without paying that cost `threshold` times over. Sustaining a
+    large exempt set means renewing roughly `exempt_entries / max_delay`
+    blocks per second, each a bcrypt call: a rate high enough to pin a
+    large table is a rate the server's own bcrypt throughput cannot absorb
+    anyway. That traffic is still CPU load on an unauthenticated endpoint —
+    true of any bcrypt-backed login endpoint, not a cost this exemption
+    introduces — and it is per-IP or global rate limiting at the deployment
+    layer, not this table, that is meant to address it.
+
+    In SUPABASE mode there is no local bcrypt hash to pay: `_login_supabase`
+    calls `record_failure` after a rejected `gateway.sign_in`, a full GoTrue
+    round trip, not a local hash. The bound above still holds in kind, not
+    in mechanism — an entry cannot become exempt without paying for
+    `threshold` (5) real remote authentication attempts against Supabase's
+    own endpoint, which enforces its own rate limits on that traffic. This
+    table adds no cost of its own beyond that; `entry_ttl` remains the
+    backstop bounding how long a lower-cost exempt entry can occupy a slot,
+    same as it is for `reset_throttle` below.
 
     `reset_throttle`'s exempt entries cost NOTHING to mint — reset-request
     calls `record_failure` unconditionally on every non-blocked attempt, no
@@ -645,11 +655,18 @@ async def _change_password_supabase(
         raise HTTPException(422, {"code": code}) from exc
     store = app.state.user_store
     user = store.get_user(current.id)
-    await app.state.supabase_gateway.change_password(user.external_id, body.new)
+    try:
+        await app.state.supabase_gateway.change_password(user.external_id, body.new)
+    except SupabaseAuthError:
+        # No local state changed yet: a failed remote rotation must not
+        # bump password_changed_at or the token epoch.
+        raise HTTPException(422, {"code": "password_change_failed"}) from None
+    except SupabaseUnavailableError:
+        raise HTTPException(503, "Authentication service unavailable") from None
     store.mark_password_changed(current.id)
     try:
         await app.state.supabase_gateway.global_sign_out(_bearer_token(request))
-    except SupabaseUnavailableError:
+    except (SupabaseAuthError, SupabaseUnavailableError):
         # Best-effort: the local password_changed_at bump above already
         # revoked every outstanding access token at our own layer.
         logger.warning(

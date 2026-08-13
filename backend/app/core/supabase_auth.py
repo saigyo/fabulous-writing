@@ -73,7 +73,11 @@ def resolve_supabase_user(
     (a pre-Supabase local account logging in through Supabase for the first
     time), then JIT-create (an invited user's first login). An email owned
     by a row already linked to a DIFFERENT subject fails closed — one local
-    account never serves two Supabase identities.
+    account never serves two Supabase identities. Adoption itself goes
+    through `UserStore.link_external_id`'s atomic conditional UPDATE, not a
+    plain read-then-write: two concurrent different subjects racing the
+    same unlinked row must not let the second write silently overwrite the
+    first and bypass the collision guard above.
     """
     user = store.get_by_external_id(subject)
     if user is not None:
@@ -83,10 +87,20 @@ def resolve_supabase_user(
         if existing is not None:
             if existing.external_id is not None:
                 raise InvalidToken("email belongs to a different subject")
-            linked = store.update_user(existing.id, external_id=subject)
-            if linked is None:  # row vanished between the two statements
-                raise InvalidToken("adoption race lost")
-            return linked
+            if store.link_external_id(existing.id, subject):
+                linked = store.get_user(existing.id)
+                if linked is None:  # pragma: no cover - deleted right after our own update
+                    raise InvalidToken("adoption race lost")
+                return linked
+            # Lost the race: some other request linked this row between our
+            # read and our write. If it linked OUR subject, this call is
+            # idempotent (e.g. a retried request) and returns the same
+            # result it would have on a clean win. Any other subject means
+            # the collision guard above simply fired a moment too late.
+            raced = store.get_user(existing.id)
+            if raced is not None and raced.external_id == subject:
+                return raced
+            raise InvalidToken("email belongs to a different subject")
     if not email:
         raise InvalidToken("token carries no email; cannot provision")
     try:
@@ -130,9 +144,17 @@ class SupabaseTokenVerifier:
                     "verify_iat": False,  # explicit leeway check below
                 },
             )
+        except jwt.exceptions.PyJWKClientError as exc:
+            # Unreachable JWKS endpoint or unknown kid: also raised for an
+            # unknown kid (expected during key rotation, not an outage), but
+            # logging both is cheap and an outage is the case this branch
+            # exists to surface -- silently folding it into InvalidToken
+            # left a real Supabase/network outage indistinguishable from an
+            # ordinary bad token, an unexplained wall of 401s with nothing
+            # in the log to explain them. Never log the token itself.
+            logger.warning("JWKS retrieval failed for %s: %s", self._issuer, exc)
+            raise InvalidToken(str(exc)) from exc
         except (jwt.PyJWTError, RecursionError) as exc:
-            # PyJWKClientError (unknown kid, unreachable JWKS) subclasses
-            # PyJWTError, so network failure fails closed right here.
             raise InvalidToken(str(exc)) from exc
         # Fail closed on CLAIMS, not on dashboard configuration: the setup
         # guide says to disable anonymous sign-ins and public signup, but a

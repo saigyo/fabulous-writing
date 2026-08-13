@@ -1,5 +1,6 @@
 """Supabase-mode configuration and token verification (B14 #55)."""
 
+import logging
 import time
 
 import jwt
@@ -15,6 +16,7 @@ from app.core.supabase_auth import (
     SupabaseCredentials,
     SupabaseTokenVerifier,
     resolve_supabase_credentials,
+    resolve_supabase_user,
 )
 from app.services.users import UserStore
 from tests.fakes_supabase import StaticJWKSClient
@@ -122,6 +124,50 @@ class TestUserStoreExternalId:
         assert timedelta(seconds=IAT_LEEWAY_SECONDS - 2) <= offset <= timedelta(
             seconds=IAT_LEEWAY_SECONDS + 2
         )
+
+
+class TestResolveSupabaseUserAdoptionRace:
+    """resolve_supabase_user's adopt-by-email path (finding 1, Copilot round
+    1): the write is now UserStore.link_external_id's atomic conditional
+    UPDATE, not a read-then-write `update_user`. Both cases below simulate a
+    concurrent write landing strictly BETWEEN this call's own read (which
+    sees external_id=None) and its write, by monkeypatching link_external_id
+    to perform that concurrent write itself before reporting the loss."""
+
+    def test_lost_race_to_a_different_subject_fails_closed(self, tmp_path):
+        store = UserStore(tmp_path / "race1.db")
+        existing = store.create_user("a@example.com", "local-password-1")
+        original_link = store.link_external_id
+
+        def racing_link(user_id, external_id):
+            # A concurrent request for a DIFFERENT subject wins the race,
+            # landing between our read and our write.
+            store.link_external_id = original_link
+            original_link(user_id, "uuid-other-winner")
+            return False
+
+        store.link_external_id = racing_link
+        with pytest.raises(InvalidToken):
+            resolve_supabase_user(store, subject="uuid-mine", email="a@example.com")
+        assert store.get_user(existing.id).external_id == "uuid-other-winner"
+
+    def test_lost_race_to_the_same_subject_is_idempotent(self, tmp_path):
+        store = UserStore(tmp_path / "race2.db")
+        existing = store.create_user("a@example.com", "local-password-1")
+        original_link = store.link_external_id
+
+        def racing_link(user_id, external_id):
+            # A concurrent DUPLICATE request for the SAME subject wins the
+            # race first; this call's own write loses but the outcome (this
+            # row linked to our own subject) is exactly what we wanted.
+            store.link_external_id = original_link
+            original_link(user_id, external_id)
+            return False
+
+        store.link_external_id = racing_link
+        resolved = resolve_supabase_user(store, subject="uuid-mine", email="a@example.com")
+        assert resolved.id == existing.id
+        assert resolved.external_id == "uuid-mine"
 
 
 def es256_keypair():
@@ -247,3 +293,24 @@ class TestSupabaseTokenVerifier:
         other_private, _ = es256_keypair()
         with pytest.raises(InvalidToken):
             verifier.verify(mint(other_private))
+
+    def test_jwks_outage_logs_a_warning_and_fails_closed(self, tmp_path, caplog):
+        # finding 4 (Copilot round 1): a JWKS fetch failure (unreachable
+        # endpoint, outage) must not collapse into an unexplained 401 with
+        # nothing in the log to distinguish it from an ordinary bad token.
+        private, _public = es256_keypair()
+        store = UserStore(tmp_path / "jwks-outage.db")
+
+        class BoomJWKSClient:
+            def get_signing_key_from_jwt(self, token):
+                raise jwt.exceptions.PyJWKClientError("JWKS endpoint unreachable")
+
+        verifier = SupabaseTokenVerifier(URL, store, jwks_client=BoomJWKSClient())
+        token = mint(private)
+        with caplog.at_level(logging.WARNING, logger="app.core.supabase_auth"):
+            with pytest.raises(InvalidToken):
+                verifier.verify(token)
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("JWKS retrieval failed" in r.message for r in warnings)
+        # The raw token itself is never written to the log.
+        assert all(token not in r.message for r in caplog.records)
