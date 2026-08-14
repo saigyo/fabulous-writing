@@ -15,14 +15,21 @@ Create a project at [supabase.com](https://supabase.com) and note its URL:
 `https://<ref>.supabase.co`. That's the only piece of project identity the
 backend needs — everything else below is either a key or a dashboard toggle.
 
-Use the **canonical** `https://<ref>.supabase.co` URL, never a vanity or
-custom domain, even if the project has one: GoTrue mints every token's
-`iss` claim with the canonical URL regardless of which domain served the
-request (verify with
+Configure the URL that GoTrue mints as the token **issuer** — nothing
+else works. That is the **canonical** `https://<ref>.supabase.co` URL,
+with exactly one exception: a fully **activated custom domain** (the paid
+add-on, DNS-verified and switched live via `supabase domains activate`),
+after which Supabase Auth uses the custom domain and you configure that
+instead. A **vanity subdomain** (`<name>.supabase.co`) never qualifies —
+it serves requests but the issuer stays canonical. The definitive check
+either way:
 `curl https://<your-domain>/auth/v1/.well-known/openid-configuration` —
-the `issuer` field stays canonical). With a vanity URL configured, tokens
-are perfectly signed yet fail the issuer check, which surfaces as an
-instant post-login 401 loop with no JWKS warning in the log.
+configure whatever the `issuer` field says. With any other URL configured,
+tokens are perfectly signed yet fail the issuer check, which surfaces as
+an instant post-login 401 loop with no JWKS warning in the log. Switching
+domains later bounces every active session to the login form once (old
+tokens carry the old issuer) — do it before real users exist, and update
+the Site URL / redirect URLs (§6) in the same pass.
 
 ## 2. Settings → JWT Keys: rotate off the legacy shared secret
 
