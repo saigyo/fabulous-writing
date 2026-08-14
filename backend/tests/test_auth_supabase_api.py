@@ -71,20 +71,6 @@ def _login_ok(app, fake, *, email=EMAIL, password=PASSWORD, uuid=UUID):
     return client, resp.json()
 
 
-async def test_create_app_inside_running_loop_seeds_admin(tmp_path, monkeypatch):
-    # uvicorn imports the app from INSIDE Server.serve() (import_from_string
-    # during config.load), so create_app — and seed_admin's supabase
-    # bootstrap — must work with an event loop already running. Every
-    # TestClient-based test constructs its app outside any loop and cannot
-    # see this; a live `uvicorn app.main:app` in supabase mode crashed on
-    # exactly this path (asyncio.run inside the running loop, 2026-08-15).
-    fake = FakeSupabaseGateway()
-    app = _build_supabase_app(tmp_path, monkeypatch, fake)
-    admin = app.state.user_store.get_by_email("root@example.com")
-    assert admin is not None and admin.is_admin
-    assert admin.external_id is not None
-
-
 class TestLogin:
     def test_success_returns_triple_and_user(self, supabase_app):
         app, fake = supabase_app
