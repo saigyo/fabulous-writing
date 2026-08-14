@@ -177,3 +177,18 @@ def test_token_epoch_is_not_serialized(tmp_path):
     store = UserStore(tmp_path / "u.db")
     user = store.create_user("epoch2@example.com", "password-one")
     assert "token_epoch" not in user.model_dump()
+
+
+def test_link_external_id_same_subject_different_row_fails_closed_not_500(tmp_path):
+    # Row A is unlinked; the SUBJECT is already linked to row B. The UPDATE's
+    # WHERE clause is satisfied (row A's external_id IS NULL), but the SET
+    # value collides with row B's external_id under the UNIQUE constraint --
+    # a lost race, not a server error. Without the sqlite3.IntegrityError
+    # catch in link_external_id, this raises unhandled and both callers
+    # (resolve_supabase_user, admin._adopt_existing_row) would 500 instead of
+    # failing closed.
+    store = UserStore(tmp_path / "u.db")
+    row_a = store.create_user("a@example.com", "correct horse battery")
+    store.create_user("b@example.com", "correct horse battery", external_id="subject-s")
+    assert store.link_external_id(row_a.id, "subject-s") is False
+    assert store.get_user(row_a.id).external_id is None

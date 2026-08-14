@@ -213,6 +213,16 @@ export const postLogin = (email: string, password: string) =>
     keepSessionOn401: true,
   })
 
+// Without a timeout, a refresh request that never settles pins
+// session.ts's refreshInFlight for the current generation forever — the
+// retry branch in doRefresh's catch only runs on rejection, so a hung
+// request never arms a retry and an otherwise-refreshable session dies
+// silently on the next 401. AbortSignal.timeout(REFRESH_TIMEOUT_MS) below
+// bounds the wait; the resulting abort rejects with a DOMException/
+// TypeError, not an HttpError, which doRefresh's catch already routes
+// through its non-401 retry path (see the comment there).
+const REFRESH_TIMEOUT_MS = 15_000
+
 // keepSessionOn401: a dead refresh token is a 401 here, and must reach the
 // caller as an HttpError rather than clearing auth state directly — the
 // refresh engine (session.ts) is the one that decides to expireSession()
@@ -222,6 +232,7 @@ export const postRefresh = (refreshToken: string) =>
     method: 'POST',
     body: JSON.stringify({ refresh_token: refreshToken }),
     keepSessionOn401: true,
+    signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
   })
 
 // Deliberately uses the public request(): a 401 here can only mean the

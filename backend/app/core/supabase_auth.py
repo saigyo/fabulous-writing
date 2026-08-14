@@ -181,6 +181,22 @@ class SupabaseTokenVerifier:
             raise InvalidToken("anonymous tokens are not accepted")
         if claims.get("role") != "authenticated":
             raise InvalidToken("role is not authenticated")
+        # An OAuth/SSO identity (Google, GitHub, SAML, ...) also carries
+        # role="authenticated" and is_anonymous=false, so it passes both
+        # checks above and would otherwise reach JIT provisioning even with
+        # every OAuth provider turned off in the dashboard (setup guide §4)
+        # -- a toggle is configuration, not a control this verifier can rely
+        # on. `app_metadata` (GoTrue's raw_app_meta_data) is server-controlled
+        # and not user-editable, unlike `user_metadata`; its `provider` field
+        # names which provider minted this session. `.get("app_metadata", {})`
+        # on a missing/non-dict claim yields {} and this falls through to the
+        # `!= "email"` branch, so a token with no app_metadata at all is
+        # rejected rather than silently passing.
+        app_metadata = claims.get("app_metadata")
+        if not isinstance(app_metadata, dict):
+            app_metadata = {}
+        if app_metadata.get("provider") != "email":
+            raise InvalidToken("provider is not email")
         try:
             issued_at = datetime.fromtimestamp(float(claims["iat"]), UTC)
         except (TypeError, ValueError, OverflowError, OSError) as exc:

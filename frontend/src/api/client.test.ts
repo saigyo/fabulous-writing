@@ -15,6 +15,7 @@ import {
   postAdminUser,
   postLogin,
   postPasswordChange,
+  postRefresh,
   request,
   setUnauthorizedHandler,
 } from './client'
@@ -330,6 +331,29 @@ describe('admin endpoints', () => {
 
   it('admin password floor mirrors the backend', () => {
     expect(ADMIN_MIN_PASSWORD_LENGTH).toBe(12)
+  })
+})
+
+describe('postRefresh timeout wiring', () => {
+  // A refresh request that never settles pins session.ts's refreshInFlight
+  // for the current generation forever (auth/session.ts doRefresh's catch
+  // only runs on rejection). This test pins down the wiring that prevents
+  // that: an AbortSignal, freshly minted per call, must reach fetch(). The
+  // 15s countdown itself is not asserted here -- AbortSignal.timeout is not
+  // driven by this repo's fake-timer setup (verified separately), so the
+  // strongest assertion available is that the signal is present and not
+  // already aborted, i.e. it really is fetch's own abort control, not some
+  // unrelated already-fired signal.
+  it('passes a fresh, not-yet-aborted signal through to fetch', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse(200, { token: 't', refresh_token: 'r', expires_at: null, user: user(1) }),
+    )
+
+    await postRefresh('rt')
+
+    const init = fetchMock.mock.calls[0][1] as { signal?: AbortSignal }
+    expect(init.signal).toBeInstanceOf(AbortSignal)
+    expect(init.signal?.aborted).toBe(false)
   })
 })
 

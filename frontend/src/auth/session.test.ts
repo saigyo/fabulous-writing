@@ -541,6 +541,42 @@ describe('refresh engine (refreshSession/scheduleRefresh)', () => {
     }
   })
 
+  it('a timed-out refresh (postRefresh AbortSignal.timeout firing) retries rather than hanging forever', async () => {
+    // client.ts's postRefresh passes AbortSignal.timeout(REFRESH_TIMEOUT_MS)
+    // so a refresh that never settles cannot pin refreshInFlight for the
+    // current generation forever. AbortSignal.timeout is not driven by
+    // vitest's fake timers in this setup (verified separately: advancing
+    // fake time does not fire its abort event), so the timeout itself is
+    // not exercised here -- this test instead pins down the contract that
+    // actually matters for session.ts: whatever error shape the abort
+    // produces (a DOMException, not an HttpError) must land in doRefresh's
+    // non-401 retry branch exactly like any other network failure, the same
+    // assertion as the "network error" test above.
+    vi.useFakeTimers()
+    try {
+      const expiresAt = Math.floor(Date.now() / 1000) + 300
+      await loginWithTriple(expiresAt)
+
+      vi.mocked(postRefresh).mockRejectedValueOnce(
+        new DOMException('The operation was aborted due to timeout', 'TimeoutError'),
+      )
+      await refreshSession()
+      expect(postRefresh).toHaveBeenCalledTimes(1)
+      expect(useStore.getState().sessionExpired).toBe(false)
+
+      vi.mocked(postRefresh).mockResolvedValue({
+        token: 'tok2',
+        refresh_token: 'rt2',
+        expires_at: expiresAt + 300,
+        user: user(1),
+      })
+      await vi.advanceTimersByTimeAsync(60_000) // REFRESH_RETRY_MS
+      expect(postRefresh).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('a second retry cancels the first retry timer instead of leaking it (finding 3)', async () => {
     vi.useFakeTimers()
     try {

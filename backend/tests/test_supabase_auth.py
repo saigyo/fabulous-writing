@@ -200,6 +200,32 @@ class TestResolveSupabaseUserAdoptionRace:
         assert resolved.id == existing.id
         assert resolved.external_id == "uuid-mine"
 
+    def test_subject_adopted_onto_a_different_row_mid_race_fails_closed_not_500(self, tmp_path):
+        # Row A (unlinked) shares its email with the token. A concurrent
+        # request adopts row B onto the SAME subject, landing strictly
+        # between this call's own read (row A, unlinked) and its write. Our
+        # own link_external_id(row_a, S) then satisfies its WHERE clause
+        # (row A IS still unlinked) but collides with row B's external_id
+        # under the UNIQUE constraint -- exactly the sqlite3.IntegrityError
+        # link_external_id's own catch exists for. The outcome must be the
+        # ordinary fail-closed collision (InvalidToken, since row A's own
+        # external_id never becomes "S"), never an unhandled 500.
+        store = UserStore(tmp_path / "adopt-collision.db")
+        row_a = store.create_user("a@example.com", "correct horse battery")
+        row_b = store.create_user("b@example.com", "correct horse battery")
+        original_link = store.link_external_id
+
+        def racing_link(user_id, external_id):
+            store.link_external_id = original_link
+            original_link(row_b.id, external_id)  # concurrent winner
+            return original_link(user_id, external_id)  # our own write: IntegrityError -> False
+
+        store.link_external_id = racing_link
+        with pytest.raises(InvalidToken):
+            resolve_supabase_user(store, subject="S", email="a@example.com")
+        assert store.get_user(row_a.id).external_id is None
+        assert store.get_user(row_b.id).external_id == "S"
+
 
 def es256_keypair():
     private = generate_private_key(SECP256R1())
@@ -216,6 +242,7 @@ def mint(private, *, kid="kid-1", url=URL, sub="uuid-1", email="a@example.com", 
         "aud": "authenticated",
         "role": "authenticated",
         "is_anonymous": False,
+        "app_metadata": {"provider": "email", "providers": ["email"]},
     }
     claims.update(over)
     claims = {k: v for k, v in claims.items() if v is not None}
@@ -292,6 +319,8 @@ class TestSupabaseTokenVerifier:
             {"iat": int(time.time()) + 3600},  # beyond IAT_LEEWAY_SECONDS
             {"is_anonymous": True},   # anonymous sign-ins: rejected on claims
             {"role": "anon"},         # not the authenticated role
+            {"app_metadata": {"provider": "google", "providers": ["google"]}},  # OAuth identity
+            {"app_metadata": None},   # missing app_metadata entirely -- must fail closed
         ],
     )
     def test_bad_claims_rejected(self, verifier_setup, kwargs):
