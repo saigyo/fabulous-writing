@@ -63,16 +63,21 @@ Enable **Email** and turn off **anonymous sign-ins** and every OAuth
 provider. This is the dashboard-level version of the app's identity model:
 one email/password account per user, provisioned by an admin.
 
-Turning these off is worth doing, but it is **not** the control that keeps
-an anonymous or third-party-authenticated caller out. The backend
-independently rejects anonymous tokens by inspecting their claims —
-`SupabaseTokenVerifier.verify()` raises on `is_anonymous: true` and on any
-`role` other than `"authenticated"` — regardless of what the dashboard is
-set to. If Supabase ever shipped a project with anonymous sign-ins on by
-mistake (or a future project reuses this checklist incompletely), a
-drive-by anonymous session still cannot mint a local user row. Think of the
-dashboard toggle as defence in depth on top of that check, not the
-mechanism itself.
+Turning these off is worth doing, and it genuinely is defence in depth here,
+not the sole control: the backend independently rejects anonymous **and**
+non-email-provider (OAuth/SSO) tokens by inspecting their claims —
+`SupabaseTokenVerifier.verify()` raises on `is_anonymous: true`, on any
+`role` other than `"authenticated"`, and on any `app_metadata.provider`
+other than `"email"` — regardless of what the dashboard is set to.
+`app_metadata` is GoTrue's server-controlled `raw_app_meta_data` (not the
+user-editable `user_metadata`), and its `provider` field names whichever
+identity provider minted the session — `"google"`, `"github"`, etc. for an
+OAuth/SSO login, `"email"` only for the email/password flow this app uses.
+If Supabase ever shipped a project with anonymous sign-ins or an OAuth
+provider on by mistake (or a future project reuses this checklist
+incompletely), a drive-by anonymous session or an OAuth-authenticated
+caller still cannot mint a local user row. Think of the dashboard toggles
+as defence in depth on top of that check, not the mechanism itself.
 
 ## 5. Auth → Settings: invitation-only signup
 

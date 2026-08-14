@@ -286,6 +286,11 @@ async function doRefresh(): Promise<boolean> {
       expireSession()
       return false
     }
+    // Also the landing spot for postRefresh's AbortSignal.timeout() firing
+    // (client.ts): a timed-out fetch rejects with a DOMException/TypeError,
+    // never an HttpError, so it falls straight through to this same retry
+    // branch as any other network failure — a hung refresh request no
+    // longer pins refreshInFlight forever (see REFRESH_TIMEOUT_MS's comment).
     scheduleRefresh(REFRESH_RETRY_MS)
     return false
   }

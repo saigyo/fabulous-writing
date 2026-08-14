@@ -206,12 +206,24 @@ class UserStore:
         bypassing the collision guard. Returns False whenever the row was
         already linked (by this or another subject) by the time this
         UPDATE ran -- the caller re-reads to tell those two cases apart.
+
+        Also returns False -- instead of letting sqlite3.IntegrityError
+        propagate -- when the SUBJECT (not the target row) is already linked
+        to a DIFFERENT row: the UNIQUE constraint on external_id rejects the
+        UPDATE in that case. A uniqueness conflict IS a lost race, exactly
+        like the target-row-already-linked case above; the caller's re-read
+        already exists to resolve who owns the subject, so surfacing this as
+        an unhandled 500 instead of routing through that same resolution
+        would be a distinction without a difference.
         """
         with self._connect() as conn:
-            cursor = conn.execute(
-                "UPDATE users SET external_id = ? WHERE id = ? AND external_id IS NULL",
-                (external_id, user_id),
-            )
+            try:
+                cursor = conn.execute(
+                    "UPDATE users SET external_id = ? WHERE id = ? AND external_id IS NULL",
+                    (external_id, user_id),
+                )
+            except sqlite3.IntegrityError:
+                return False
         return cursor.rowcount > 0
 
     def mark_password_changed(self, user_id: int) -> bool:
