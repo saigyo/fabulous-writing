@@ -1,6 +1,7 @@
 """Bootstrap the first admin account (auth.mode: local or supabase)."""
 
 import asyncio
+import concurrent.futures
 import logging
 import os
 from collections.abc import Mapping
@@ -56,9 +57,6 @@ def seed_admin(
         )
     else:
         # Supabase owns the credential; the local row owns authority.
-        # asyncio.run is safe here: create_app runs before uvicorn's loop
-        # exists, and the gateway builds per-operation clients (no pool
-        # crosses loops).
 
         async def _bootstrap() -> str:
             try:
@@ -81,7 +79,18 @@ def seed_admin(
                 return existing
 
         try:
-            external_id = asyncio.run(_bootstrap())
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                external_id = asyncio.run(_bootstrap())
+            else:
+                # uvicorn imports the app from inside its already-running loop
+                # (import_from_string during Server.serve), where asyncio.run()
+                # is forbidden. A private loop on a worker thread is safe: the
+                # gateway builds per-operation clients, so no client or pool
+                # crosses loops (the invariant that motivated per-op clients).
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    external_id = pool.submit(asyncio.run, _bootstrap()).result()
         except (SupabaseAuthError, SupabaseUnavailableError) as exc:
             raise AuthConfigError(
                 f"Supabase admin bootstrap failed: {type(exc).__name__}"

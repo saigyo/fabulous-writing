@@ -71,6 +71,20 @@ def _login_ok(app, fake, *, email=EMAIL, password=PASSWORD, uuid=UUID):
     return client, resp.json()
 
 
+async def test_create_app_inside_running_loop_seeds_admin(tmp_path, monkeypatch):
+    # uvicorn imports the app from INSIDE Server.serve() (import_from_string
+    # during config.load), so create_app — and seed_admin's supabase
+    # bootstrap — must work with an event loop already running. Every
+    # TestClient-based test constructs its app outside any loop and cannot
+    # see this; a live `uvicorn app.main:app` in supabase mode crashed on
+    # exactly this path (asyncio.run inside the running loop, 2026-08-15).
+    fake = FakeSupabaseGateway()
+    app = _build_supabase_app(tmp_path, monkeypatch, fake)
+    admin = app.state.user_store.get_by_email("root@example.com")
+    assert admin is not None and admin.is_admin
+    assert admin.external_id is not None
+
+
 class TestLogin:
     def test_success_returns_triple_and_user(self, supabase_app):
         app, fake = supabase_app
@@ -531,6 +545,31 @@ class TestSeedAdminSupabase:
         assert fake.stored_password(TEST_ADMIN_EMAIL) == TEST_ADMIN_PASSWORD
 
     def test_bootstrap_failure_aborts_create_app(self, tmp_path, monkeypatch):
+        fake = FakeSupabaseGateway()
+
+        async def boom(_email, _password):
+            raise SupabaseUnavailableError("down")
+
+        fake.create_user = boom
+        with pytest.raises(AuthConfigError):
+            _build_supabase_app(tmp_path, monkeypatch, fake)
+
+    async def test_create_app_from_a_running_loop_still_seeds_admin(self, tmp_path, monkeypatch):
+        """Reproduces the uvicorn startup path: uvicorn's import_from_string
+        calls create_app() from inside Server.serve()'s already-running
+        event loop, not before it. seed_admin's supabase branch must not
+        rely on asyncio.run() being callable at that point (#93 live-run
+        finding: it crashed every real supabase-mode deployment)."""
+        fake = FakeSupabaseGateway()
+        app = _build_supabase_app(tmp_path, monkeypatch, fake)
+        admin = app.state.user_store.get_by_email(TEST_ADMIN_EMAIL)
+        assert admin is not None
+        assert fake.create_user_calls == [(TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD)]
+        assert admin.is_admin is True
+
+    async def test_create_app_from_a_running_loop_still_maps_bootstrap_failure(
+        self, tmp_path, monkeypatch
+    ):
         fake = FakeSupabaseGateway()
 
         async def boom(_email, _password):

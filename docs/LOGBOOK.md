@@ -3896,4 +3896,10 @@ dropped asynchronously with no visible error; and SES sandbox mode
 requires per-recipient verification until production access lands.
 Diagnosed via Supabase auth logs + ingress CloudWatch logs + SES
 Send/Delivery metrics; guide §8 now carries both flavors and the
-silent-failure checklist.
+silent-failure checklist. A later live run against `uv run uvicorn
+app.main:app --reload` found `seed_admin`'s supabase-mode bootstrap
+crashing every real deployment at startup (`asyncio.run()` inside
+uvicorn's already-running loop, since `import_from_string` imports the
+app from *inside* `Server.serve()`, not before it as the removed
+comment claimed); fixed by running the bootstrap coroutine on a private
+worker-thread loop when a loop is already running.
