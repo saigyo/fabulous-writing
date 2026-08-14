@@ -13,6 +13,15 @@ import { useCrudError } from '../hooks/useCrudError'
 import { useMessages } from '../i18n'
 import { useStore } from '../state/store'
 
+// The create-row inputs live inside a <tr> (table content model forbids a
+// <form> there — it cannot wrap or sit inside thead/tbody), so association
+// runs the other way: an empty <form> sits beside the <table> and every
+// input/select/button points at it via the `form` attribute. That keeps a
+// single native submission path — the form's onSubmit — reachable from
+// both a button click and an Enter key press in any text field, exactly
+// like a normal wrapped form.
+const CREATE_FORM_ID = 'admin-create-form'
+
 export function AdminView() {
   const me = useStore((s) => s.user)
   const authFeatures = useStore((s) => s.authFeatures)
@@ -43,6 +52,12 @@ export function AdminView() {
   }, [])
 
   const allowMoreAdmins = me?.allow_additional_admins ?? false
+  // authFeatures.invites (Task 7): when true, the password field becomes
+  // optional — an empty submission sends { password: undefined } and the
+  // backend invites the new user through Supabase instead of setting a
+  // credential directly.
+  const invitesAvailable = authFeatures?.invites ?? false
+  const usersLoaded = users !== null
 
   // Returns whether the change actually committed: run() swallows the
   // rejection into the error banner, so callers that must react to the
@@ -59,83 +74,13 @@ export function AdminView() {
     return committed
   }
 
-  return (
-    <div className="admin-view">
-      <h2>{m.adminUsersTitle}</h2>
-      {error && <p className="admin-error" role="alert">{error}</p>}
-      <CreateForm
-        tiers={tiers}
-        usersLoaded={users !== null}
-        allowMoreAdmins={allowMoreAdmins}
-        invitesAvailable={authFeatures?.invites ?? false}
-        onCreated={(user) => setUsers((current) => [...(current ?? []), user])}
-        run={run}
-        fail={fail}
-      />
-      <table className="admin-users">
-        <thead>
-          <tr>
-            <th>{m.adminEmail}</th>
-            <th>{m.adminDisplayName}</th>
-            <th>{m.adminTier}</th>
-            <th>{m.adminIsAdmin}</th>
-            <th>{m.adminIsActive}</th>
-            <th>{m.adminResetPassword}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {(users ?? []).map((user) => (
-            <UserRow
-              // Key stays user.id: folding display_name in would remount the
-              // row after a name save and silently erase a password already
-              // typed in its reset field. The name input instead uses a
-              // draft-or-prop pattern (see UserRow) so it needs no remount
-              // to resync.
-              key={user.id}
-              user={user}
-              isSelf={user.id === me?.id}
-              tiers={tiers ?? []}
-              allowMoreAdmins={allowMoreAdmins}
-              onSave={save}
-              fail={fail}
-            />
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-interface CreateFormProps {
-  tiers: string[] | null
-  usersLoaded: boolean
-  allowMoreAdmins: boolean
-  // authFeatures.invites (Task 7): when true, the password field becomes
-  // optional — an empty submission sends { password: undefined } and the
-  // backend invites the new user through Supabase instead of setting a
-  // credential directly.
-  invitesAvailable: boolean
-  onCreated: (user: AdminUser) => void
-  run: (action: () => Promise<void>) => Promise<void>
-  fail: (message: string) => void
-}
-
-function CreateForm({
-  tiers,
-  usersLoaded,
-  allowMoreAdmins,
-  invitesAvailable,
-  onCreated,
-  run,
-  fail,
-}: CreateFormProps) {
-  const m = useMessages()
+  // ---- create-user row state ----
   const [email, setEmail] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [password, setPassword] = useState('')
   const [tier, setTier] = useState('basic')
   const [isAdmin, setIsAdmin] = useState(false)
-  // Double-click guard: the second submit of the same form would create the
+  // Double-click guard: a second submit of the same form would create the
   // user twice or turn a success into a misleading duplicate-email banner.
   const [pending, setPending] = useState(false)
 
@@ -146,13 +91,14 @@ function CreateForm({
     if (tiers && tiers.length > 0 && !tiers.includes(tier)) setTier(tiers[0])
   }, [tiers, tier])
 
-  async function create() {
+  const createDisabled =
+    !tiers || !usersLoaded || pending || !email.trim() || (!password && !invitesAvailable)
+
+  async function createUser() {
     // Without invites, an empty password still fails this guard exactly as
     // before — invitesAvailable is false and the byte-identical behaviour
     // the brief requires falls straight out of that.
-    if (!tiers || !usersLoaded || pending || !email.trim() || (!password && !invitesAvailable)) {
-      return
-    }
+    if (createDisabled) return
     // A non-empty short password still fails this check regardless of
     // invites — only an empty field (the invited-user path) skips it.
     if (password && password.length < ADMIN_MIN_PASSWORD_LENGTH) {
@@ -177,7 +123,7 @@ function CreateForm({
         setDisplayName('')
         setPassword('')
         setIsAdmin(false)
-        onCreated(created)
+        setUsers((current) => [...(current ?? []), created])
       })
     } finally {
       setPending(false)
@@ -185,60 +131,114 @@ function CreateForm({
   }
 
   return (
-    <div className="admin-create">
-      <input
-        type="email"
-        value={email}
-        placeholder={m.adminEmail}
-        aria-label={m.adminEmail}
-        onChange={(e) => setEmail(e.target.value)}
+    <div className="admin-view">
+      <h2>{m.adminUsersTitle}</h2>
+      {error && <p className="admin-error" role="alert">{error}</p>}
+      <form
+        id={CREATE_FORM_ID}
+        onSubmit={(e) => {
+          e.preventDefault()
+          void createUser()
+        }}
       />
-      <input
-        value={displayName}
-        placeholder={m.adminDisplayName}
-        aria-label={m.adminDisplayName}
-        onChange={(e) => setDisplayName(e.target.value)}
-      />
-      <input
-        type="password"
-        value={password}
-        placeholder={m.adminPassword}
-        aria-label={m.adminPassword}
-        aria-describedby={invitesAvailable ? 'admin-password-hint' : undefined}
-        onChange={(e) => setPassword(e.target.value)}
-      />
-      {invitesAvailable && (
-        <p id="admin-password-hint" className="admin-field-hint">
-          {m.adminPasswordOptionalHint}
-        </p>
-      )}
-      <select
-        value={tier}
-        disabled={!tiers}
-        aria-label={m.adminTier}
-        onChange={(e) => setTier(e.target.value)}
-      >
-        {(tiers ?? []).map((name) => (
-          <option key={name} value={name}>{name}</option>
-        ))}
-      </select>
-      <label title={allowMoreAdmins ? undefined : m.adminGrantDisabledHint}>
-        <input
-          type="checkbox"
-          checked={isAdmin}
-          disabled={!allowMoreAdmins}
-          onChange={(e) => setIsAdmin(e.target.checked)}
-        />
-        {m.adminIsAdmin}
-      </label>
-      <button
-        onClick={() => void create()}
-        disabled={
-          !tiers || !usersLoaded || pending || !email.trim() || (!password && !invitesAvailable)
-        }
-      >
-        {m.adminCreate}
-      </button>
+      <table className="admin-users">
+        <thead>
+          <tr>
+            <th>{m.adminEmail}</th>
+            <th>{m.adminDisplayName}</th>
+            <th>{m.adminTier}</th>
+            <th>{m.adminIsAdmin}</th>
+            <th>{m.adminIsActive}</th>
+            <th>{m.adminResetPassword}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr className="admin-create-row">
+            <td>
+              <input
+                type="email"
+                form={CREATE_FORM_ID}
+                value={email}
+                placeholder={m.adminEmail}
+                aria-label={m.adminEmail}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </td>
+            <td>
+              <input
+                form={CREATE_FORM_ID}
+                value={displayName}
+                placeholder={m.adminDisplayName}
+                aria-label={m.adminDisplayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+              />
+            </td>
+            <td>
+              <select
+                form={CREATE_FORM_ID}
+                value={tier}
+                disabled={!tiers}
+                aria-label={m.adminTier}
+                onChange={(e) => setTier(e.target.value)}
+              >
+                {(tiers ?? []).map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            </td>
+            <td>
+              <label title={allowMoreAdmins ? undefined : m.adminGrantDisabledHint}>
+                <input
+                  type="checkbox"
+                  form={CREATE_FORM_ID}
+                  checked={isAdmin}
+                  disabled={!allowMoreAdmins}
+                  onChange={(e) => setIsAdmin(e.target.checked)}
+                />
+                {m.adminIsAdmin}
+              </label>
+            </td>
+            <td>{'—'}</td>
+            <td>
+              <div className="admin-create-cell">
+                <input
+                  type="password"
+                  form={CREATE_FORM_ID}
+                  value={password}
+                  placeholder={m.adminPassword}
+                  aria-label={m.adminPassword}
+                  aria-describedby={invitesAvailable ? 'admin-password-hint' : undefined}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+                {invitesAvailable && (
+                  <p id="admin-password-hint" className="admin-field-hint">
+                    {m.adminPasswordOptionalHint}
+                  </p>
+                )}
+                <button type="submit" form={CREATE_FORM_ID} disabled={createDisabled}>
+                  {m.adminCreate}
+                </button>
+              </div>
+            </td>
+          </tr>
+          {(users ?? []).map((user) => (
+            <UserRow
+              // Key stays user.id: folding display_name in would remount the
+              // row after a name save and silently erase a password already
+              // typed in its reset field. The name input instead uses a
+              // draft-or-prop pattern (see UserRow) so it needs no remount
+              // to resync.
+              key={user.id}
+              user={user}
+              isSelf={user.id === me?.id}
+              tiers={tiers ?? []}
+              allowMoreAdmins={allowMoreAdmins}
+              onSave={save}
+              fail={fail}
+            />
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }

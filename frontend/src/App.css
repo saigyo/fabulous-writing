@@ -2161,7 +2161,6 @@ dialog.app-dialog h2 {
 /* ---- admin view ---- */
 
 .admin-view { padding: 1rem 1.5rem; overflow-y: auto; }
-.admin-create { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; }
 .admin-users { border-collapse: collapse; }
 .admin-users th, .admin-users td { padding: 0.3rem 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
 .admin-error { color: #e5484d; }
@@ -2172,9 +2171,11 @@ dialog.app-dialog h2 {
   font-size: 0.78rem;
   color: var(--text-dim);
 }
+/* create-user row: muted panel background distinguishes it from data rows */
+.admin-create-row td { background: var(--panel); vertical-align: top; }
+.admin-create-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 0.3rem; }
 .admin-field-hint {
   font-size: 0.78rem;
   color: var(--text-dim);
-  flex-basis: 100%;
-  margin: -0.25rem 0 0;
+  margin: 0;
 }
