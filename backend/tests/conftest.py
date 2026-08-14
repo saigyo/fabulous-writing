@@ -28,6 +28,29 @@ PRODUCTION_BCRYPT_ROUNDS = auth._BCRYPT_ROUNDS
 
 
 @pytest.fixture(autouse=True, scope="session")
+def _config_isolation(tmp_path_factory):
+    """A developer's live backend/config.yaml must never leak into the suite.
+
+    load_settings() falls back to backend/config.yaml whenever
+    FW_CONFIG_FILE is unset, and the manage-CLI tests spawn subprocesses
+    that inherit this process's environment — so a local config (e.g.
+    auth.mode: supabase left over from manual acceptance testing) fails
+    tests that build settings without an explicit path. Pinning
+    FW_CONFIG_FILE to a neutral empty config closes both routes; tests
+    that set FW_CONFIG_FILE themselves override it per-test as before.
+    """
+    previous = os.environ.get("FW_CONFIG_FILE")
+    neutral = tmp_path_factory.mktemp("config-isolation") / "config.yaml"
+    neutral.write_text("{}\n", encoding="utf-8")
+    os.environ["FW_CONFIG_FILE"] = str(neutral)
+    yield
+    if previous is None:
+        os.environ.pop("FW_CONFIG_FILE", None)
+    else:
+        os.environ["FW_CONFIG_FILE"] = previous
+
+
+@pytest.fixture(autouse=True, scope="session")
 def _auth_env():
     previous = {
         key: os.environ.get(key)
