@@ -99,7 +99,7 @@ describe('AdminView', () => {
     expect(getAdminUsers).toHaveBeenCalledTimes(1)
     expect(getAdminTiers).toHaveBeenCalledTimes(1)
     expect(screen.getByText('ada@example.com')).toBeTruthy()
-    expect(screen.getAllByRole('row')).toHaveLength(3) // header + 2 users
+    expect(screen.getAllByRole('row')).toHaveLength(4) // header + create row + 2 users
   })
 
   it('load failure shows adminLoadFailed and no rows', async () => {
@@ -109,7 +109,7 @@ describe('AdminView', () => {
     render(<AdminView />)
 
     await screen.findByText(en.adminLoadFailed)
-    expect(screen.getAllByRole('row')).toHaveLength(1) // header only, no data rows
+    expect(screen.getAllByRole('row')).toHaveLength(2) // header + create row, no data rows
   })
 
   it('create submits the form payload and appends the returned user', async () => {
@@ -276,19 +276,14 @@ describe('AdminView', () => {
     const button = screen.getByRole('button', { name: en.adminCreate }) as HTMLButtonElement
     expect(button.disabled).toBe(true) // tiers not loaded yet
 
-    // `button.removeAttribute('disabled')` does not make a click reach
-    // `onClick` here: React suppresses its own synthetic dispatch for
-    // interactive elements (button/input/select/textarea) whenever the
-    // *props* it last rendered say `disabled: true`, regardless of what the
-    // live DOM attribute says (react-dom's getListener special-cases
-    // exactly this). Pulling the handler straight off the fiber and calling
-    // it directly is what actually bypasses the button, the way a stray
-    // Enter-key repeat or a programmatic dispatch could — and is the only
-    // way to exercise create()'s own `!tiers` guard for real.
-    const reactProps = Object.entries(button).find(([key]) =>
-      key.startsWith('__reactProps$'),
-    )?.[1] as { onClick?: () => void } | undefined
-    reactProps?.onClick?.()
+    // The button is form-associated (`form="admin-create-form"`) rather than
+    // a descendant, so a disabled button simply cannot submit it — browsers
+    // block that regardless of React internals. To exercise create()'s own
+    // `!tiers` guard for real (the way a stray Enter-key repeat or a
+    // programmatic submit could reach it), dispatch the submit event on the
+    // form directly.
+    const form = document.getElementById('admin-create-form') as HTMLFormElement
+    fireEvent.submit(form)
     expect(postAdminUser).not.toHaveBeenCalled()
 
     rejectTiers(new Error('tiers unavailable'))
@@ -315,13 +310,11 @@ describe('AdminView', () => {
     const button = screen.getByRole('button', { name: en.adminCreate }) as HTMLButtonElement
     expect(button.disabled).toBe(true) // user list not loaded yet
 
-    // Same fiber-props bypass as the !tiers guard test above: React won't
-    // dispatch a synthetic click to a button it rendered as disabled, so
-    // this is the only way to exercise create()'s own !usersLoaded guard.
-    const reactProps = Object.entries(button).find(([key]) =>
-      key.startsWith('__reactProps$'),
-    )?.[1] as { onClick?: () => void } | undefined
-    reactProps?.onClick?.()
+    // Same form-submit bypass as the !tiers guard test above: a disabled,
+    // form-associated button can't submit its form, so this is the only way
+    // to exercise create()'s own !usersLoaded guard.
+    const form = document.getElementById('admin-create-form') as HTMLFormElement
+    fireEvent.submit(form)
     expect(postAdminUser).not.toHaveBeenCalled()
 
     resolveUsers([])
@@ -566,7 +559,7 @@ describe('AdminView', () => {
     // check could pass merely because the fetch hasn't resolved yet, which
     // would stay green even with the guard deleted.
     await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(screen.getAllByRole('row')).toHaveLength(1) // header only; setUsers was skipped
+    expect(screen.getAllByRole('row')).toHaveLength(2) // header + create row; setUsers was skipped
     expect(screen.queryByText('ada@example.com')).toBeNull()
   })
 
