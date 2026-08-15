@@ -49,7 +49,7 @@ These were all verified against a live local stack during planning; implementers
 - Modify: `.gitignore` (repo root)
 
 **Interfaces:**
-- Produces: a `supabase start`-able stack from the repo root; GoTrue at `http://127.0.0.1:54321/auth/v1`, Mailpit at `http://127.0.0.1:54324`. Later tasks rely on the URLs, the email-only provider set, `refresh_token_reuse_interval = 0`, and the template link shape.
+- Produces: a `supabase start`-able stack from the repo root; GoTrue at `http://127.0.0.1:54321/auth/v1`, Mailpit at `http://127.0.0.1:54324`. Later tasks rely on the URLs, the email-only provider set, the refresh-rotation semantics (hosted-default `refresh_token_reuse_interval = 10`; immediate-parent reuse degenerates to the same family), and the template link shape.
 
 - [ ] **Step 1: Write `supabase/config.toml`**
 
@@ -898,7 +898,7 @@ def test_logout_kills_the_refresh_pair(app_url, admin_creds):
 - [ ] **Step 2: Run the suite via the wrapper**
 
 `scripts/e2e-supabase.sh` — expected: all tests PASS (including Task 3's).
-If `test_refresh_rotates_and_consumed_token_dies` fails on the `again` assertion with 200: verify `refresh_token_reuse_interval = 0` survived in `supabase/config.toml` and restart the stack (`scripts/e2e-supabase.sh --down`, then rerun) — config changes need a stack restart.
+If `test_refresh_rotates_and_reuse_cannot_fork_a_second_family` fails on the `again` assertions: remember config.toml changes need a stack restart (`scripts/e2e-supabase.sh --down`, then rerun), and that the expected reuse behavior is 200 + identical child refresh token (see the config comment at `refresh_token_reuse_interval = 10`).
 
 - [ ] **Step 3: Commit**
 
