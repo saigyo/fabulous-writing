@@ -103,6 +103,27 @@ export function LoginGate({ children }: { children: ReactNode }) {
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- resetParams is captured once via useState's lazy initializer and never changes after mount
   }, [])
 
+  // A recovery/invite link is an explicit intent to change the credential:
+  // checked BEFORE both 'authenticated' AND restoreFailed. The
+  // fragment-stripping effect above burns the URL's token_hash on mount, so
+  // by the time a transient restoreSession() failure sets restoreFailed,
+  // the link survives only in this state -- if restoreFailed were checked
+  // first, a reload (the natural reaction to a connection error) would
+  // permanently lose it. The form has no dependency on auth state, so
+  // nothing is lost by rendering it ahead of that check too (finding 7,
+  // final review; finding 3, delta review).
+  if (resetParams) {
+    return (
+      <GateShell>
+        <ResetPasswordForm
+          tokenHash={resetParams.tokenHash}
+          type={resetParams.type}
+          onDone={() => setResetParams(null)}
+        />
+      </GateShell>
+    )
+  }
+
   if (restoreFailed) {
     return (
       <GateShell>
@@ -122,24 +143,6 @@ export function LoginGate({ children }: { children: ReactNode }) {
             {m.connectionRetry}
           </button>
         </div>
-      </GateShell>
-    )
-  }
-
-  // A recovery/invite link is an explicit intent to change the credential:
-  // checked BEFORE 'authenticated' so a link opened in a tab that still
-  // holds a valid stored token renders the reset form instead of silently
-  // returning to the app with the link burned (finding 7, final review).
-  // This also covers 'unknown' (restore still in flight) — the form does
-  // not depend on auth state, so there is nothing to wait for.
-  if (resetParams) {
-    return (
-      <GateShell>
-        <ResetPasswordForm
-          tokenHash={resetParams.tokenHash}
-          type={resetParams.type}
-          onDone={() => setResetParams(null)}
-        />
       </GateShell>
     )
   }

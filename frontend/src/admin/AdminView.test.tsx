@@ -139,6 +139,33 @@ describe('AdminView', () => {
     })
   })
 
+  it('every non-button create-row control is associated with the create form (finding 7)', async () => {
+    // The create row sits inside <tbody>/<tr> (the table content model
+    // forbids a <form> descendant there), so the empty <form
+    // id={CREATE_FORM_ID}/> above the table is a SIBLING and every control
+    // opts in via its own `form={CREATE_FORM_ID}` attribute rather than DOM
+    // nesting. Every existing create test either clicks the submit button
+    // (which only proves the button's own attribute) or calls
+    // fireEvent.submit(form) directly (bypassing field association
+    // entirely) -- removing `form=` from any of the five non-button
+    // controls broke nothing under either. The browser resolves that
+    // attribute onto the element's `.form` property; asserting it directly
+    // is what actually depends on the attribute being present, unlike a
+    // click or a raw submit dispatch.
+    vi.mocked(getAdminUsers).mockResolvedValue([])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+
+    render(<AdminView />)
+    await screen.findByText('basic')
+
+    const form = document.getElementById('admin-create-form') as HTMLFormElement
+    expect((screen.getByLabelText(en.adminEmail) as HTMLInputElement).form).toBe(form)
+    expect((screen.getByLabelText(en.adminDisplayName) as HTMLInputElement).form).toBe(form)
+    expect((screen.getByLabelText(en.adminTier) as HTMLSelectElement).form).toBe(form)
+    expect((screen.getByLabelText(en.adminIsAdmin) as HTMLInputElement).form).toBe(form)
+    expect((screen.getByLabelText(en.adminPassword) as HTMLInputElement).form).toBe(form)
+  })
+
   it('create pre-validates the 12-char password floor without calling the API', async () => {
     vi.mocked(getAdminUsers).mockResolvedValue([])
     vi.mocked(getAdminTiers).mockResolvedValue(['basic'])

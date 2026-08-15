@@ -354,6 +354,23 @@ describe('LoginGate', () => {
     expect(screen.queryByTestId('app-sentinel')).toBeNull()
   })
 
+  it('renders ResetPasswordForm instead of the connection-failed card when restoreFailed is also set (finding 3, delta review)', () => {
+    // The fragment-stripping effect burns token_hash from the URL on mount,
+    // so once restoreFailed is set the link survives only in resetParams
+    // state -- reloading (the natural reaction to "connection failed") would
+    // permanently lose a one-time recovery/invite link if restoreFailed
+    // were checked first.
+    window.history.pushState({}, '', '/#token_hash=abc123&type=recovery')
+    useStore.setState({ token: 'tok', authStatus: 'unknown', restoreFailed: true })
+    render(
+      <LoginGate>
+        <Sentinel />
+      </LoginGate>,
+    )
+    screen.getByText(en.resetHeading)
+    expect(screen.queryByText(en.connectionFailed)).toBeNull()
+  })
+
   it('ignores an unrecognised `type` value on the URL and shows the ordinary login form', () => {
     window.history.pushState({}, '', '/#token_hash=abc123&type=bogus')
     useStore.setState({ authStatus: 'anonymous' })

@@ -1033,11 +1033,15 @@ at all — while `GateShell` is pure layout, applied identically to both branche
 render something.
 
 **The gate** (`auth/LoginGate.tsx`) renders `ResetPasswordForm`, ahead of everything
-else, whenever a reset/invite link is present in the URL — regardless of `authStatus`,
-including `'authenticated'` (see the reset/invite gate flow below for why). Absent such
-a link, it renders `LoginForm` only while `authStatus` is `'anonymous'`, and the app
-(children) only once it is `'authenticated'`. While `'unknown'` — and no reset/invite
-link is present — it renders **nothing** (`LoginGate.tsx:137`) — deliberately, and this
+else, whenever a reset/invite link is present in the URL — ahead of both `authStatus`
+(including `'authenticated'`) and `restoreFailed` (see the reset/invite gate flow below
+for why the latter matters: the fragment is stripped on mount, so by the time a
+transient restore failure could show the connection-failed card instead, the link
+survives only in this state). Absent such a link, a failed restore shows the
+connection-failed retry card; otherwise it renders `LoginForm` only while `authStatus`
+is `'anonymous'`, and the app (children) only once it is `'authenticated'`. While
+`'unknown'` — no reset/invite link, no restore failure — it renders **nothing**
+(`LoginGate.tsx:164`) — deliberately, and this
 is the reason that state exists: showing the login form during the restore round-trip
 would flash it at an already-authenticated user on every reload, and mounting the app
 would fire its mount effects unauthenticated. `authStatus` starts `'unknown'`;

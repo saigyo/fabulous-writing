@@ -4,16 +4,23 @@ supabase-mode admin bootstrap + invitation-only user entry (Task 5)."""
 
 import time
 
+import jwt
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ec import SECP256R1, generate_private_key
 from fastapi.testclient import TestClient
 
 from app.api.auth import _INVALID_LOGIN
 from app.core.auth import AuthConfigError, IAT_LEEWAY_SECONDS
 from app.core.config import Settings
+from app.core.supabase_auth import SupabaseTokenVerifier
 from app.main import create_app
-from app.services.supabase_gateway import SupabaseAuthError, SupabaseUnavailableError
+from app.services.supabase_gateway import (
+    SupabaseAuthError,
+    SupabaseSession,
+    SupabaseUnavailableError,
+)
 from tests.conftest import TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD, auth_headers
-from tests.fakes_supabase import FakeSupabaseGateway, FakeSupabaseVerifier
+from tests.fakes_supabase import FakeSupabaseGateway, FakeSupabaseVerifier, StaticJWKSClient
 
 EMAIL = "supa-user@example.com"
 PASSWORD = "correct horse battery staple"
@@ -497,6 +504,170 @@ class TestExternalIdCollision:
         assert resp.json()["detail"]["code"] == "invalid_or_expired_link"
 
 
+# The app is always built with this URL (see _build_supabase_app); the
+# verifier below must be pointed at the identical origin, or its issuer
+# check would reject even a genuinely well-formed token for the wrong
+# reason.
+_REAL_VERIFIER_URL = "https://api-test.invalid"
+
+
+def _es256_keypair():
+    private = generate_private_key(SECP256R1())
+    return private, private.public_key()
+
+
+def _mint_oauth_token(private, *, sub: str, email: str, kid: str = "kid-1") -> str:
+    """A real, verifier-checkable JWT carrying a non-`email` provider -- the
+    shape GoTrue mints for an OAuth/SSO identity, and also for an
+    email/password identity whose FIRST provider was OAuth (app_metadata.
+    provider records the first provider an identity ever used, not the
+    grant now in flight -- see finding #0's login-needs-it-too argument)."""
+    claims = {
+        "sub": sub,
+        "email": email,
+        "iat": int(time.time()),
+        "exp": int(time.time()) + 3600,
+        "iss": f"{_REAL_VERIFIER_URL}/auth/v1",
+        "aud": "authenticated",
+        "role": "authenticated",
+        "is_anonymous": False,
+        "app_metadata": {"provider": "google", "providers": ["google", "email"]},
+    }
+    return jwt.encode(claims, private, algorithm="ES256", headers={"kid": kid})
+
+
+class _SignedSessionGateway(FakeSupabaseGateway):
+    """Same in-memory bookkeeping as FakeSupabaseGateway, except every
+    session it mints carries a REAL, verifier-checkable JWT as its access
+    token (signed with `private_key`, `app_metadata.provider: "google"`)
+    instead of the fake's own opaque `fake-access-N` string. This is what
+    lets a test swap in the real `SupabaseTokenVerifier` and exercise its
+    claim guards end to end -- `FakeSupabaseVerifier` cannot stand in for
+    this, since it implements none of them (see finding #0's caveat)."""
+
+    def __init__(self, private_key) -> None:
+        super().__init__()
+        self._private_key = private_key
+
+    def _signed_session(self, uuid: str, email: str) -> SupabaseSession:
+        token = _mint_oauth_token(self._private_key, sub=uuid, email=email)
+        n = self._next_token
+        self._next_token += 1
+        refresh = f"fake-refresh-{n}"
+        self._refresh_tokens[refresh] = (uuid, email)
+        return SupabaseSession(
+            access_token=token, refresh_token=refresh,
+            expires_at=2_000_000_000, user_id=uuid, email=email,
+        )
+
+    async def sign_in(self, email: str, password: str) -> SupabaseSession:
+        self.sign_in_calls.append((email, password))
+        stored = self._users.get(email)
+        if stored is None or stored[0] != password:
+            raise SupabaseAuthError("invalid credentials")
+        return self._signed_session(stored[1], email)
+
+    async def refresh(self, refresh_token: str) -> SupabaseSession:
+        entry = self._refresh_tokens.get(refresh_token)
+        if entry is None:
+            raise SupabaseAuthError("invalid refresh token")
+        uuid, email = entry
+        return self._signed_session(uuid, email)
+
+    async def confirm_with_token_hash(
+        self, token_hash: str, type_: str, new_password: str
+    ) -> SupabaseSession:
+        entry = self.valid_token_hashes.get(token_hash)
+        if entry is None:
+            raise SupabaseAuthError("invalid or expired token_hash")
+        uuid, email = entry
+        self._users[email] = (new_password, uuid)
+        return self._signed_session(uuid, email)
+
+
+class TestGatewaySessionsAreVerifiedNotResolvedDirectly:
+    """Finding #0 (delta review): login/refresh/reset-confirm must route a
+    gateway session's own access token through app.state.token_verifier
+    (which applies is_anonymous/role/app_metadata.provider guards), not
+    call resolve_supabase_user directly (which applies none of them). The
+    existing collision tests (TestExternalIdCollision above) keep using
+    FakeSupabaseVerifier and stay green regardless of whether the fix is
+    in place -- they cannot distinguish the two implementations. Only a
+    REAL SupabaseTokenVerifier, fed a genuinely signed JWT whose provider
+    is not "email", proves the guard actually runs before resolution.
+    `store.count()` unchanged is the load-bearing assertion: without it, a
+    reverted fix would still 401 (the caller's *access token* stays
+    useless either way -- deps.get_current_user rejects it next request),
+    while silently having JIT-provisioned or adopted a local row as a side
+    effect of getting there."""
+
+    EMAIL = "oauth-first@example.com"
+    UUID = "uuid-oauth-first"
+
+    def _build(self, tmp_path, monkeypatch):
+        private, public = _es256_keypair()
+        fake = _SignedSessionGateway(private)
+        app = _build_supabase_app(tmp_path, monkeypatch, fake)
+        jwks = StaticJWKSClient({"kid-1": public})
+        app.state.token_verifier = SupabaseTokenVerifier(
+            _REAL_VERIFIER_URL, app.state.user_store, jwks_client=jwks,
+        )
+        return app, fake
+
+    def test_login_is_rejected_and_creates_no_local_row(self, tmp_path, monkeypatch):
+        app, fake = self._build(tmp_path, monkeypatch)
+        fake.register_user(self.EMAIL, PASSWORD, uuid=self.UUID)
+        store = app.state.user_store
+        before = store.count()
+        client = TestClient(app)
+
+        resp = client.post(
+            "/api/auth/login", json={"email": self.EMAIL, "password": PASSWORD}
+        )
+
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == _INVALID_LOGIN
+        assert store.count() == before
+
+    def test_refresh_is_rejected_and_creates_no_local_row(self, tmp_path, monkeypatch):
+        app, fake = self._build(tmp_path, monkeypatch)
+        fake.register_user(self.EMAIL, PASSWORD, uuid=self.UUID)
+        # A signed session minted directly, mirroring what an earlier
+        # successful sign-in at Supabase would have handed the client; its
+        # refresh_token is what /api/auth/refresh consumes below.
+        session = fake._signed_session(self.UUID, self.EMAIL)
+        store = app.state.user_store
+        before = store.count()
+        client = TestClient(app)
+
+        resp = client.post(
+            "/api/auth/refresh", json={"refresh_token": session.refresh_token}
+        )
+
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == _INVALID_LOGIN
+        assert store.count() == before
+
+    def test_reset_confirm_is_rejected_and_creates_no_local_row(self, tmp_path, monkeypatch):
+        app, fake = self._build(tmp_path, monkeypatch)
+        fake.valid_token_hashes["oauth-hash"] = (self.UUID, self.EMAIL)
+        store = app.state.user_store
+        before = store.count()
+        client = TestClient(app)
+
+        resp = client.post(
+            "/api/auth/reset-confirm",
+            json={
+                "token_hash": "oauth-hash", "type": "recovery",
+                "new_password": "another-new-pw-1",
+            },
+        )
+
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "invalid_or_expired_link"
+        assert store.count() == before
+
+
 class TestSeedAdminSupabase:
     """seed_admin's supabase branch (Task 5, #55): the admin bootstraps
     through the gateway during create_app, before any test code runs."""
@@ -757,6 +928,12 @@ class TestAdminCreateReconciliation:
         # "an original password 1" (the prior attempt's password) instead of
         # the one just submitted -- a 201 for a password that cannot log in.
         assert fake.stored_password(self.RETRY_EMAIL) == "a retried password 1"
+        # Finding #1 (delta review): the rotation above kills the identity's
+        # refresh tokens at Supabase, but a pre-existing ACCESS token is a
+        # stateless JWT that keeps verifying locally until password_changed_at
+        # moves -- without this, it would survive its full TTL and resolve,
+        # via the external_id just linked, to the row this call just created.
+        assert created.password_changed_at is not None
 
     def test_create_with_password_maps_gateway_failure_during_reconciled_password_set(
         self, supabase_app
@@ -1056,6 +1233,37 @@ class TestAdminPatchPasswordSupabase:
             headers=headers,
         )
         assert resp.status_code == 503
+
+    def test_unlinked_row_password_patch_is_422_not_linked_without_calling_the_gateway(
+        self, supabase_app
+    ):
+        # Finding #5 (delta review): a row with no external_id (predates the
+        # mode switch, or was hand-created) has nothing to rotate --
+        # sending user_id=None to GoTrue's admin API used to fail only
+        # incidentally, via _execute's generic (AuthError, ValueError)
+        # mapping. The explicit guard must fire BEFORE any gateway call, not
+        # just produce the same status code the incidental path happened to.
+        app, fake = supabase_app
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        unlinked = app.state.user_store.create_user("unlinked@example.com", None)
+        assert unlinked.external_id is None
+        calls = []
+
+        async def spy(*args):
+            calls.append(args)
+            raise SupabaseAuthError("must not be reached")
+
+        fake.change_password = spy
+
+        resp = client.patch(
+            f"/api/admin/users/{unlinked.id}",
+            json={"password": self.NEW_PASSWORD},
+            headers=headers,
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "not_linked"
+        assert calls == []
 
     def test_mixed_patch_with_failing_rotation_leaves_tier_and_audit_untouched(
         self, supabase_app
