@@ -1,7 +1,11 @@
 """Flow 3+4: refresh-token rotation and logout, against real GoTrue.
 
-refresh_token_reuse_interval = 0 in supabase/config.toml makes consumed-
-token rejection immediate (hosted default is a 10 s grace window).
+Reuse semantics (probed live, Task 4): GoTrue deliberately honors the
+IMMEDIATE parent refresh token as retry tolerance — regardless of
+refresh_token_reuse_interval, 0 included — but degenerates it to the SAME
+session family: the reuse response carries the identical child refresh
+token, never a fork. That no-forking property is the security guarantee
+worth pinning; a 401-on-reuse assertion is unachievable against GoTrue.
 """
 
 import httpx
@@ -19,7 +23,7 @@ def _refresh(app_url: str, refresh_token: str) -> httpx.Response:
     )
 
 
-def test_refresh_rotates_and_consumed_token_dies(app_url, admin_creds):
+def test_refresh_rotates_and_reuse_cannot_fork_a_second_family(app_url, admin_creds):
     session = login(app_url, *admin_creds)
     first = _refresh(app_url, session["refresh_token"])
     assert first.status_code == 200
@@ -31,9 +35,10 @@ def test_refresh_rotates_and_consumed_token_dies(app_url, admin_creds):
         f"{app_url}/api/auth/me", headers=bearer(rotated["token"]), timeout=TIMEOUT
     )
     assert me.status_code == 200
-    # the consumed token is dead (rotation, zero reuse interval)
+    # reusing the consumed parent degenerates to the same family
     again = _refresh(app_url, session["refresh_token"])
-    assert again.status_code == 401
+    assert again.status_code == 200
+    assert again.json()["refresh_token"] == rotated["refresh_token"]
 
 
 def test_logout_kills_the_refresh_pair(app_url, admin_creds):
