@@ -3903,3 +3903,52 @@ uvicorn's already-running loop, since `import_from_string` imports the
 app from *inside* `Server.serve()`, not before it as the removed
 comment claimed); fixed by running the bootstrap coroutine on a private
 worker-thread loop when a loop is already running.
+
+## 2026-08-15 — B27: offline supabase e2e suite (PR #103)
+
+The safety net before the invite/reset resilience bundle (B28/B29/B30):
+an opt-in e2e suite that runs the B14 surface fully offline. Three
+layers: a committed `supabase/` CLI stack definition (postgres, GoTrue,
+Kong, Mailpit; ES256 signing keys; email templates carrying the
+production fragment contract; signups off / invites exempt),
+`scripts/e2e-supabase.sh` (start-if-down, stack reused between runs,
+`--down` to stop, env plumbing, `pytest tests_e2e -q -n0`), and
+`backend/tests_e2e/` — 12 tests over 5 flow files driving a **real
+uvicorn subprocess** on 8001 through login (ES256/kid pinned against
+the live JWKS), refresh, logout, password change with M2 eviction,
+invite acceptance and password reset, with the email clicks done via
+Mailpit's REST API. Run-unique identities (`<role>-<runid>@e2e.local`)
+are the isolation mechanism on a reused stack; the default pytest gate
+stays structurally Docker-free (`testpaths` pinned by a
+mutation-verified guard). Plus a `workflow_dispatch`-only CI job.
+
+The plan phase probed a live stack and pre-pinned what would have been
+execution-time surprises: local GoTrue rejects `sb_secret_…` as an
+admin Bearer (wrapper maps `FW_SUPABASE_SECRET_KEY` to the legacy
+service-role JWT); `config.toml` path bases differ per key
+(`signing_keys_path` supabase/-relative, `content_path` root-relative);
+GoTrue's human-sized IP rate limits would 429 back-to-back runs as fake
+401 regressions (`[auth.rate_limit]` widened); colima only shares
+`$HOME` (bind mounts from outside silently become empty root-owned
+dirs). Execution added two more: with `signing_keys_path` declared,
+`gen signing-key` reads-before-writes and must not be shell-redirected
+(pre-seed `[]` + `--yes`); and GoTrue honors the immediate parent
+refresh token as retry tolerance regardless of
+`refresh_token_reuse_interval` — reuse cannot fork a second session
+family (identical child token returned), so the suite pins that
+no-forking property instead of an unachievable 401 (Markus-approved
+spec amendment; deliberately-not-asserted list also carries the 60 s
+iat-leeway window and the silent-by-design reset throttle).
+
+Process: spec → plan with live probe → Opus plan review (13 findings,
+notably the rate-limit trap and the unpinned `testpaths` invariant;
+executable re-review APPROVE) → 9 SDD tasks, one fix round (the reuse
+semantics) → final whole-branch Opus review APPROVE (1 Important: a
+reused stack keeps boot-time config — a false-green window no
+task-scoped review could see; now documented in wrapper/README/arch
+doc) + 6 minors, one fix wave, re-review clean.
+
+Verification: 12/12 e2e across three runs (two reused-stack, one cold
+start), GoTrue cleanup verified out-of-band via the admin API, default
+gate 1410 passed zero warnings, 10 structural guards each
+mutation-verified. CI workflow validated by dispatch after push.
