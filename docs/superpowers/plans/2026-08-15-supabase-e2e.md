@@ -108,6 +108,18 @@ refresh_token_reuse_interval = 0
 # invites are exempt — verified against this local stack.
 enable_signup = false
 
+# GoTrue's default IP rate limits (30 sign-ins / 5 min) are sized for
+# humans, not a test suite: one run issues ~16 password grants (incl. the
+# internal current-password verification inside the change-password route),
+# so two back-to-back runs would trip 429s that surface as fake 401
+# regressions. email_sent is NOT settable here — the CLI only exports it
+# with a real SMTP config, so GoTrue's default (30 mails/hour) applies;
+# see the Mailpit client's timeout message.
+[auth.rate_limit]
+sign_in_sign_ups = 1000
+token_verifications = 1000
+token_refresh = 1000
+
 [auth.email]
 # The email provider itself stays enabled: the app's provider claim guard
 # and the startup lockout both require 'email' as the only enabled provider.
@@ -213,11 +225,23 @@ These run in the default gate, so they must not need Docker, the supabase
 CLI, or the network: they pin the script's contract, not its behavior.
 """
 
+import os
 import re
 import subprocess
+import tomllib
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "e2e-supabase.sh"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SCRIPT = REPO_ROOT / "scripts" / "e2e-supabase.sh"
+
+
+def test_default_gate_cannot_collect_the_e2e_suite():
+    """The entire Docker-free guarantee of `uv run pytest -q` hangs on
+    testpaths — pin it so a config edit cannot silently widen the gate."""
+    cfg = tomllib.loads(
+        (REPO_ROOT / "backend" / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    assert cfg["tool"]["pytest"]["ini_options"]["testpaths"] == ["tests"]
 
 
 def test_script_exists_and_is_executable():
@@ -254,13 +278,42 @@ def test_down_flag_maps_to_supabase_stop():
 def test_key_values_are_never_echoed():
     """Key NAMES may appear anywhere; VALUES must never reach stdout.
 
-    Pins: no echo/printf line expands a *_KEY variable.
+    Two leak channels are pinned: (a) no echo/printf line expands a *_KEY
+    variable; (b) `supabase start` — which prints the keys on stdout — has
+    its stdout discarded.
     """
     text = SCRIPT.read_text(encoding="utf-8")
     for line in text.splitlines():
         stripped = line.strip()
         if stripped.startswith(("echo", "printf")):
             assert not re.search(r"\$\{?\w*KEY", stripped), stripped
+        if re.match(r"supabase start\b", stripped):
+            assert ">/dev/null" in stripped, "supabase start prints keys on stdout"
+
+
+def test_down_flag_invokes_supabase_stop(tmp_path):
+    """Behavioral: --down dispatches to `supabase stop` and nothing else
+    (stub-binary pattern, as in test_fabulous_sh.py — no Docker needed)."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "calls.log"
+    stub = bin_dir / "supabase"
+    stub.write_text(f'#!/usr/bin/env bash\necho "$@" >> "{log}"\n', encoding="utf-8")
+    stub.chmod(0o755)
+    env = os.environ | {"PATH": f"{bin_dir}:{os.environ['PATH']}"}
+    subprocess.run([str(SCRIPT), "--down"], check=True, env=env, timeout=30)
+    assert log.read_text(encoding="utf-8").strip() == "stop"
+
+
+def test_missing_cli_yields_actionable_error():
+    """Without the supabase CLI on PATH, the pre-flight message names it —
+    for every invocation shape, including --down."""
+    env = os.environ | {"PATH": "/usr/bin:/bin"}
+    result = subprocess.run(
+        [str(SCRIPT), "--down"], capture_output=True, text=True, env=env, timeout=30
+    )
+    assert result.returncode == 1
+    assert "supabase CLI not found" in result.stderr
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -284,45 +337,64 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-if [[ "${1:-}" == "--down" ]]; then
-    supabase stop
-    exit 0
-fi
-
 command -v supabase >/dev/null 2>&1 || {
     echo "error: supabase CLI not found (brew install supabase/tap/supabase)" >&2
     exit 1
 }
+
+if [[ "${1:-}" == "--down" ]]; then
+    # Plain stop (keeps the DB volume as a backup): local reruns therefore
+    # accumulate GoTrue users across stack generations — which is exactly
+    # why run-unique identities, not cleanup, are the correctness mechanism.
+    supabase stop
+    exit 0
+fi
+
 docker info >/dev/null 2>&1 || {
     echo "error: docker daemon not reachable (colima start?)" >&2
     exit 1
 }
 
 # ES256 signing key for local GoTrue. The gen command emits a single JWK
-# object; signing_keys_path requires a JSON array — wrap on first creation.
-if [[ ! -f supabase/signing_keys.json ]]; then
-    supabase gen signing-key --algorithm ES256 > supabase/signing_keys.json
-    python3 - <<'PY'
+# object; signing_keys_path requires a JSON array — wrap before install.
+# Staged through a temp file so a failed generation cannot leave a
+# truncated key file behind (-s: an empty file self-heals by regenerating).
+if [[ ! -s supabase/signing_keys.json ]]; then
+    tmp="$(mktemp)"
+    trap 'rm -f "$tmp"' EXIT
+    supabase gen signing-key --algorithm ES256 > "$tmp"
+    python3 - "$tmp" <<'PY'
 import json
-path = "supabase/signing_keys.json"
+import sys
+
+path = sys.argv[1]
 with open(path) as f:
     keys = json.load(f)
 if not isinstance(keys, list):
     with open(path, "w") as f:
         json.dump([keys], f)
 PY
+    mv "$tmp" supabase/signing_keys.json
+    trap - EXIT
 fi
 
-# Start the stack only if it is not already running.
+# Start the stack only if it is not already running. stdout is discarded:
+# supabase start prints the stack's keys there.
 if ! supabase status >/dev/null 2>&1; then
-    supabase start
+    supabase start >/dev/null
 fi
 
 # Stack coordinates and keys, from the CLI's own env output. SECRET maps to
 # the legacy SERVICE_ROLE_KEY: local GoTrue rejects the sb_secret_ opaque
 # key as a Bearer admin credential (the hosted platform translates it, the
 # local Kong does not) — verified on CLI 2.114.0.
-eval "$(supabase status -o env 2>/dev/null | grep -E '^(API_URL|PUBLISHABLE_KEY|SERVICE_ROLE_KEY|MAILPIT_URL)=')"
+eval "$(supabase status -o env 2>/dev/null | grep -E '^(API_URL|PUBLISHABLE_KEY|SERVICE_ROLE_KEY|MAILPIT_URL)=' || true)"
+for var in API_URL PUBLISHABLE_KEY SERVICE_ROLE_KEY MAILPIT_URL; do
+    [[ -n "${!var:-}" ]] || {
+        echo "error: supabase status did not report $var — is the stack healthy? (supabase status)" >&2
+        exit 1
+    }
+done
 export FW_SUPABASE_E2E_API_URL="$API_URL"
 export FW_SUPABASE_E2E_MAILPIT_URL="$MAILPIT_URL"
 export FW_SUPABASE_PUBLISHABLE_KEY="$PUBLISHABLE_KEY"
@@ -337,11 +409,16 @@ Then: `chmod +x scripts/e2e-supabase.sh`
 - [ ] **Step 4: Run the structural tests to verify they pass**
 
 Run from `backend/`: `uv run pytest tests/test_e2e_supabase_sh.py -n0 -q`
-Expected: PASS (6 tests).
+Expected: PASS (9 tests).
 
-- [ ] **Step 5: Mutation-verify the echo guard**
+- [ ] **Step 5: Mutation-verify the guards**
 
-Temporarily add `echo "$PUBLISHABLE_KEY"` to the script → re-run → `test_key_values_are_never_echoed` must FAIL. Remove the line, re-run, PASS. (Also mutation-check `-n0`: delete it from the pytest line → `test_pytest_invocation_targets_e2e_dir_without_xdist` must FAIL; restore.)
+Each mutation → re-run → named test must FAIL → revert → PASS:
+1. Add `echo "$PUBLISHABLE_KEY"` to the script → `test_key_values_are_never_echoed`.
+2. Change `supabase start >/dev/null` to `supabase start` → `test_key_values_are_never_echoed`.
+3. Delete `-n0` from the pytest line → `test_pytest_invocation_targets_e2e_dir_without_xdist`.
+4. Change `testpaths = ["tests"]` in `backend/pyproject.toml` to `["tests", "tests_e2e"]` → `test_default_gate_cannot_collect_the_e2e_suite`.
+5. Change the `--down` branch to `supabase stop --no-backup` → `test_down_flag_invokes_supabase_stop`.
 
 - [ ] **Step 6: Run the full default gate**
 
@@ -395,6 +472,7 @@ import socket
 import subprocess
 import sys
 import time
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -459,6 +537,7 @@ def mailpit(stack: StackEnv) -> Mailpit:
 
 def _port_in_use(port: int) -> bool:
     with socket.socket() as sock:
+        sock.settimeout(1)
         return sock.connect_ex(("127.0.0.1", port)) == 0
 
 
@@ -518,8 +597,8 @@ def app_url(
                 last_error = exc
             time.sleep(0.5)
         else:
-            proc.terminate()
-            proc.wait(timeout=10)
+            # No terminate here: pytest.exit must emit the diagnostics
+            # first; the finally block below owns process cleanup.
             pytest.exit(
                 f"app did not become healthy within 60s (last error:"
                 f" {last_error!r}); uvicorn log tail:\n"
@@ -541,7 +620,13 @@ def app_url(
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait(timeout=10)
-        assert not _port_in_use(APP_PORT), "scratch app port still bound after teardown"
+        # Bounded poll + warn (never raise from teardown: an assert here
+        # would mask whatever actually ended the run).
+        deadline = time.monotonic() + 5
+        while _port_in_use(APP_PORT) and time.monotonic() < deadline:
+            time.sleep(0.2)
+        if _port_in_use(APP_PORT):
+            warnings.warn(f"scratch app port {APP_PORT} still bound after teardown")
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -600,15 +685,22 @@ class Mailpit:
                 params={"query": f"to:{to}"},
                 timeout=10,
             )
+            resp.raise_for_status()
             messages = resp.json().get("messages", [])
             if messages:
                 msg_id = messages[0]["ID"]
                 detail = httpx.get(
                     f"{self._base}/api/v1/message/{msg_id}", timeout=10
                 )
+                detail.raise_for_status()
                 return detail.json()
             time.sleep(0.5)
-        raise AssertionError(f"no mail for {to!r} within {timeout}s")
+        raise AssertionError(
+            f"no mail for {to!r} within {timeout}s — note GoTrue's default"
+            " email rate limit (30 mails/hour, not configurable on the"
+            " Mailpit-backed local stack) can also cause this: run"
+            " scripts/e2e-supabase.sh --down and restart the stack"
+        )
 
     @staticmethod
     def extract_token(html: str) -> tuple[str, str]:
@@ -682,6 +774,7 @@ live GoTrue settings, seed_admin under a running uvicorn event loop).
 """
 
 import httpx
+import jwt
 
 from .helpers import bearer, expect_login_failure, login
 
@@ -712,16 +805,31 @@ def test_garbage_bearer_token_is_rejected(app_url):
         f"{app_url}/api/auth/me", headers=bearer("not-a-jwt"), timeout=30
     )
     assert resp.status_code == 401
+
+
+def test_session_token_is_es256_with_kid(app_url, admin_creds):
+    """Pins the signing-keys wiring (spec flow 2: 'verified via real JWKS').
+
+    signing_keys_path has a surprising relative base (supabase/-relative,
+    unlike content_path) — if a future config edit breaks it, local GoTrue
+    silently falls back to legacy HS256 and this is the test that says so.
+    """
+    session = login(app_url, *admin_creds)
+    header = jwt.get_unverified_header(session["token"])
+    assert header["alg"] == "ES256"
+    assert header["kid"]
 ```
+
+(`import jwt` at the top of the file — PyJWT is already a backend dependency.)
 
 - [ ] **Step 5: Run the suite via the wrapper (first full loop)**
 
 From the repo root: `scripts/e2e-supabase.sh`
-Expected: stack starts (or reuses), uvicorn boots, 4 tests PASS. If the app fails to boot, the fixture prints the uvicorn log tail — debug from there (this step is precisely where integration bugs surface; that is the suite's purpose).
+Expected: stack starts (or reuses), uvicorn boots, 5 tests PASS. If the app fails to boot, the fixture prints the uvicorn log tail — debug from there (this step is precisely where integration bugs surface; that is the suite's purpose).
 
 - [ ] **Step 6: Verify the default gate still cannot see the suite**
 
-From `backend/`: `uv run pytest -q --collect-only 2>/dev/null | grep -c tests_e2e` → must print `0`. Then run the full default gate: `uv run pytest -q` → green, zero warnings.
+From `backend/`: `uv run pytest -q -n0 --collect-only | grep -c tests_e2e || true` → must print `0`. Then run the full default gate: `uv run pytest -q` → green, zero warnings.
 
 - [ ] **Step 7: Commit**
 
@@ -1081,6 +1189,10 @@ name: Supabase E2E
 on:
   workflow_dispatch:
 
+concurrency:
+  group: e2e-supabase-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
@@ -1105,9 +1217,8 @@ jobs:
         run: uv sync --locked
         working-directory: backend
 
-      - name: Install Hunspell dictionaries
-        run: ./scripts/install-dictionaries.sh en de fr es it
-        working-directory: backend
+      # No Hunspell dictionaries: the e2e suite never runs a spell check,
+      # and dictionaries_dir's contract tolerates missing files.
 
       - name: Run supabase e2e suite
         run: ./scripts/e2e-supabase.sh
@@ -1143,7 +1254,7 @@ git commit -m "ci(e2e): manual workflow_dispatch job for the supabase e2e suite 
 
 - [ ] **Step 1: backend-architecture.md**
 
-Add a subsection to the testing chapter covering, in this order: purpose (integration truth for the B14 surface; catches real-server-boot bugs — cite the `asyncio.run`-under-uvicorn seeding crash as the motivating example); the three layers (stack definition `supabase/`, wrapper `scripts/e2e-supabase.sh`, suite `backend/tests_e2e/`); the env contract (`FW_SUPABASE_E2E_API_URL`, `FW_SUPABASE_E2E_MAILPIT_URL`, `FW_SUPABASE_PUBLISHABLE_KEY`=publishable, `FW_SUPABASE_SECRET_KEY`=legacy service-role JWT — with the local-GoTrue `sb_secret_` rejection fact); isolation model (reused stack, run-unique `<role>-<runid>@e2e.local` identities, tempfile SQLite per run, best-effort GoTrue cleanup); what is deliberately NOT asserted (iat-cutoff eviction — 60 s leeway; throttle blocking — silent by design; adversarial token cases — unit suite); the colima `$HOME`-share caveat (fact 9 above); and the differing config.toml path bases (fact 2). Follow the file's existing prose style, English, no headers deeper than the file already uses.
+Add a subsection to the testing chapter covering, in this order: purpose (integration truth for the B14 surface; catches real-server-boot bugs — cite the `asyncio.run`-under-uvicorn seeding crash as the motivating example); the three layers (stack definition `supabase/`, wrapper `scripts/e2e-supabase.sh`, suite `backend/tests_e2e/`); the env contract (`FW_SUPABASE_E2E_API_URL`, `FW_SUPABASE_E2E_MAILPIT_URL`, `FW_SUPABASE_PUBLISHABLE_KEY`=publishable, `FW_SUPABASE_SECRET_KEY`=legacy service-role JWT — with the local-GoTrue `sb_secret_` rejection fact); isolation model (reused stack, run-unique `<role>-<runid>@e2e.local` identities, tempfile SQLite per run, best-effort GoTrue cleanup); what is deliberately NOT asserted (iat-cutoff eviction — 60 s leeway; throttle blocking — silent by design; adversarial token cases — unit suite); operational limits (GoTrue's email rate limit of 30 mails/hour is NOT configurable on the Mailpit-backed local stack — the CLI only exports `GOTRUE_RATE_LIMIT_EMAIL_SENT` with a real SMTP config — so at 2 mails per run, ~15 runs/hour before `wait_for_message` times out; remedy is `--down` + restart); the colima `$HOME`-share caveat (fact 9 above); and the differing config.toml path bases (fact 2). Follow the file's existing prose style, English, no headers deeper than the file already uses.
 
 - [ ] **Step 2: supabase-auth-setup.md**
 
