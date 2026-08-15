@@ -8,9 +8,7 @@ through POST /api/auth/reset-confirm, which JIT-creates the local row.
 
 import httpx
 
-from .helpers import admin_create_user, login
-
-TIMEOUT = 30.0
+from .helpers import TIMEOUT, admin_create_user, login
 
 
 def test_invite_acceptance_end_to_end(app_url, admin_creds, runid, mailpit):

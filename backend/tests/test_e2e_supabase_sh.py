@@ -84,6 +84,42 @@ def test_down_flag_invokes_supabase_stop(tmp_path):
     assert log.read_text(encoding="utf-8").strip() == "stop"
 
 
+def test_stack_definition_pins_the_production_template_contract():
+    """supabase/config.toml and supabase/templates/*.html encode the
+    production email-link fragment contract from docs/supabase-auth-setup.md
+    (`#token_hash={{ .TokenHash }}&type=<invite|recovery>`) plus the auth
+    settings the live e2e suite relies on. The live suite only re-verifies
+    this when the stack is freshly started (a running stack keeps its
+    boot-time config, per FINDING 1) — this test pins the committed files
+    directly, in the Docker-free default gate, so a template or config
+    regression is caught unconditionally.
+    """
+    config = tomllib.loads(
+        (REPO_ROOT / "supabase" / "config.toml").read_text(encoding="utf-8")
+    )
+    invite_html = (REPO_ROOT / "supabase" / "templates" / "invite.html").read_text(
+        encoding="utf-8"
+    )
+    recovery_html = (REPO_ROOT / "supabase" / "templates" / "recovery.html").read_text(
+        encoding="utf-8"
+    )
+
+    assert "#token_hash={{ .TokenHash }}&type=invite" in invite_html
+    assert "#token_hash={{ .TokenHash }}&type=recovery" in recovery_html
+
+    auth = config["auth"]
+    assert auth["signing_keys_path"] == "./signing_keys.json"
+    assert auth["enable_signup"] is False
+    assert (
+        auth["email"]["template"]["invite"]["content_path"]
+        == "./supabase/templates/invite.html"
+    )
+    assert (
+        auth["email"]["template"]["recovery"]["content_path"]
+        == "./supabase/templates/recovery.html"
+    )
+
+
 def test_missing_cli_yields_actionable_error():
     """Without the supabase CLI on PATH, the pre-flight message names it —
     for every invocation shape, including --down."""

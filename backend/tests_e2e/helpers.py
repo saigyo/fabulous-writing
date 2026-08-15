@@ -21,6 +21,14 @@ def login(app_url: str, email: str, password: str) -> dict:
     return body
 
 
+def refresh(app_url: str, refresh_token: str) -> httpx.Response:
+    return httpx.post(
+        f"{app_url}/api/auth/refresh",
+        json={"refresh_token": refresh_token},
+        timeout=TIMEOUT,
+    )
+
+
 def expect_login_failure(app_url: str, email: str, password: str) -> int:
     resp = httpx.post(
         f"{app_url}/api/auth/login",

@@ -41,6 +41,9 @@ if [[ ! -s supabase/signing_keys.json ]] || [[ "$(cat supabase/signing_keys.json
     supabase gen signing-key --algorithm ES256 --yes >/dev/null
 fi
 
+# NOTE: a running stack keeps its boot-time config — edits to
+# supabase/config.toml or supabase/templates/ require
+# `scripts/e2e-supabase.sh --down` first.
 # Start the stack only if it is not already running. stdout is discarded:
 # supabase start prints the stack's keys there.
 if ! supabase status >/dev/null 2>&1; then

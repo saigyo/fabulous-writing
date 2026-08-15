@@ -2154,8 +2154,8 @@ uvicorn subprocess against a real local Supabase stack.
 
 Three layers: the stack definition (`supabase/config.toml` and
 `supabase/templates/`, a `supabase start`-able local stack with Studio, Realtime,
-Storage and the edge runtime disabled — only `api`, `db`, `auth`, and Mailpit's
-`local_smtp` run); the wrapper (`scripts/e2e-supabase.sh`, which starts the stack
+Storage, Analytics, and the edge runtime disabled — only `api`, `db`, `auth`,
+and Mailpit's `local_smtp` run); the wrapper (`scripts/e2e-supabase.sh`, which starts the stack
 if it is down, exports the env contract below, and execs `pytest tests_e2e -q -n0`
 from `backend/`); and the suite itself (`backend/tests_e2e/`, five flow files —
 boot/login, refresh rotation, password change, invite acceptance, password
@@ -2171,12 +2171,18 @@ rejects `sb_secret_…` as a Bearer admin credential (`bad_jwt`; the hosted
 platform's gateway translates it, local Kong does not).
 
 **Isolation model.** The stack is reused across runs for fast iteration
-(`scripts/e2e-supabase.sh --down` stops it explicitly); within a run, every
-identity is `<role>-<runid>@e2e.local` with an 8-hex-char run id, so concurrent
-or repeated runs against the same reused stack never collide. The scratch app
-gets a fresh tempfile SQLite database per run (`tmp_path_factory`), and a
-session-scoped, best-effort fixture deletes that run's GoTrue users at
-teardown — correctness never depends on this cleanup, only tidiness does.
+(`scripts/e2e-supabase.sh --down` stops it explicitly) — but a running stack
+keeps its boot-time config, so edits to `supabase/config.toml` or
+`supabase/templates/` require `--down` first before a fresh `start` will pick
+them up. Within a run, every identity is `<role>-<runid>@e2e.local` with an
+8-hex-char run id, so repeated runs against the same reused stack never
+collide (a second *concurrent* run is instead refused outright by the
+port-8001 guard in `app_url`). The scratch app gets a fresh tempfile SQLite
+database per run (`tmp_path_factory`), with its `FW_CONFIG_FILE` YAML also
+generated fresh per run by `conftest.py` — which is why no static e2e config
+file is committed. A session-scoped, best-effort fixture deletes that run's
+GoTrue users at teardown — correctness never depends on this cleanup, only
+tidiness does.
 
 **What is deliberately not asserted.** The local iat-based access-token
 eviction on password change backdates `password_changed_at` by a 60 s
@@ -2188,10 +2194,11 @@ stops working — and leaves the iat cutoff itself to the unit suite's
 controlled clocks. Similarly, the password-reset throttle blocks silently
 (always 204, no observable signal) by design, so the e2e suite exercises the
 happy path and defers the throttle's blocking semantics to the unit suite,
-which also owns every adversarial token case (malformed, expired, wrong-type)
-that the unit suite can construct directly but the e2e suite would have to
-wait or forge for. Refresh-token reuse is the fourth such case, but with an
-inverted shape: GoTrue honors the *immediate* parent refresh token as retry
+which owns the bulk of adversarial token cases (malformed, expired,
+wrong-type) that it can construct directly but the e2e suite would have to
+wait or forge for; the e2e suite keeps only two zero-cost smoke cases
+(garbage bearer, stale `token_hash`). Refresh-token reuse is a related case,
+but with an inverted shape: GoTrue honors the *immediate* parent refresh token as retry
 tolerance regardless of `refresh_token_reuse_interval` (0 included) — the
 reuse response carries the identical child refresh token rather than a 401 or
 a forked session — so a 401-on-reuse assertion is unachievable against real
