@@ -1,0 +1,44 @@
+name: Supabase E2E
+
+# Manual only, by design (B27): the suite needs Docker + the supabase CLI
+# and takes minutes — trigger it on a branch before merging auth-flow work.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-supabase-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.114.0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "backend/uv.lock"
+
+      - name: Install dependencies (incl. spaCy models)
+        run: uv sync --locked
+        working-directory: backend
+
+      # No Hunspell dictionaries: the e2e suite never runs a spell check,
+      # and dictionaries_dir's contract tolerates missing files.
+
+      - name: Run supabase e2e suite
+        run: ./scripts/e2e-supabase.sh
+
+      - name: Stop supabase stack
+        if: always()
+        run: supabase stop --no-backup || true
