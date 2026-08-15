@@ -54,6 +54,9 @@ fi
 # the legacy SERVICE_ROLE_KEY: local GoTrue rejects the sb_secret_ opaque
 # key as a Bearer admin credential (the hosted platform translates it, the
 # local Kong does not) — verified on CLI 2.114.0.
+# Unset first: values inherited from the caller's shell must not survive a
+# partially failed status call and masquerade as fresh stack coordinates.
+unset API_URL PUBLISHABLE_KEY SERVICE_ROLE_KEY MAILPIT_URL
 eval "$(supabase status -o env 2>/dev/null | grep -E '^(API_URL|PUBLISHABLE_KEY|SERVICE_ROLE_KEY|MAILPIT_URL)=' || true)"
 for var in API_URL PUBLISHABLE_KEY SERVICE_ROLE_KEY MAILPIT_URL; do
     [[ -n "${!var:-}" ]] || {
@@ -67,4 +70,6 @@ export FW_SUPABASE_PUBLISHABLE_KEY="$PUBLISHABLE_KEY"
 export FW_SUPABASE_SECRET_KEY="$SERVICE_ROLE_KEY"
 
 cd backend
-exec uv run pytest tests_e2e -q -n0 "$@"
+# "$@" before -n0: pytest's last-argument-wins would otherwise let a
+# forwarded -n/--numprocesses re-enable xdist against the single shared app.
+exec uv run pytest tests_e2e -q "$@" -n0

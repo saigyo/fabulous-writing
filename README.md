@@ -484,8 +484,10 @@ or `supabase/templates/` need `scripts/e2e-supabase.sh --down` first before
 they take effect.
 
 It needs Docker (via [colima](https://github.com/abiosoft/colima)) and the
-[supabase CLI](https://supabase.com/docs/guides/cli) locally; the default
-`pytest` gate above never needs either.
+[supabase CLI](https://supabase.com/docs/guides/cli) **≥ 2.114.0** locally
+(the stack's ES256 signing-key handling was verified against that version;
+older CLIs fail on it with opaque errors); the default `pytest` gate above
+never needs either.
 
 To refresh the README screenshots after UI changes (with both dev servers running):
 `cd frontend && npm run screenshots` (needs

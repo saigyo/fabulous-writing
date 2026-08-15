@@ -40,12 +40,16 @@ def test_pytest_invocation_targets_e2e_dir_without_xdist():
     """The suite shares one uvicorn process; parallel workers would race.
 
     -n0 must appear in the pytest line because the repo addopts default is
-    `-n auto` (and `-p no:xdist` is banned by convention).
+    `-n auto` (and `-p no:xdist` is banned by convention) — and it must come
+    AFTER the forwarded "$@": pytest's last-argument-wins would otherwise
+    let a caller's -n/--numprocesses re-enable xdist.
     """
     text = SCRIPT.read_text(encoding="utf-8")
     pytest_lines = [l for l in text.splitlines() if "pytest" in l]
     assert pytest_lines, "script must invoke pytest"
-    assert any("tests_e2e" in l and "-n0" in l for l in pytest_lines)
+    assert any(
+        "tests_e2e" in l and l.rstrip().endswith('"$@" -n0') for l in pytest_lines
+    )
 
 
 def test_down_flag_maps_to_supabase_stop():
