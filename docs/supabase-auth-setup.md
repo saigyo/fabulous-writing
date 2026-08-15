@@ -157,6 +157,11 @@ way a query parameter would.
 `{{ .SiteURL }}` resolves to the Site URL set in §6 above, so this only
 works once that field is filled in.
 
+The committed local-stack templates under `supabase/templates/` carry this
+exact fragment contract and are exercised by the offline e2e suite
+(`scripts/e2e-supabase.sh`), so template-contract drift breaks a test before
+it breaks production.
+
 ## 8. Auth → Email (SMTP)
 
 Supabase's built-in email sender is **rate-limited for development use** —
