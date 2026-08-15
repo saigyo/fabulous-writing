@@ -154,7 +154,7 @@ Flow coverage (one file per flow area, ~15–20 tests):
 |---|------|---------|
 | 1 | Boot & health | App up against live stack; `auth_features: {password_reset: true, invites: true}`; bootstrap admin usable (login proves seeding in both stores) |
 | 2 | Login/session | Admin login → ES256 token verified via real JWKS → `/api/me`; wrong password → 401 |
-| 3 | Refresh | Rotated pair works; consumed refresh token is rejected |
+| 3 | Refresh | Rotated pair works; reusing the consumed parent token cannot fork a second session family — it returns the identical child refresh token. (Amended at execution time, Markus-approved: GoTrue honors the immediate parent as deliberate retry tolerance regardless of `refresh_token_reuse_interval`, so 401-on-reuse is unachievable; the no-forking property is the guarantee actually pinned.) |
 | 4 | Logout | Bearer logout; the session's refresh token is dead at GoTrue afterwards |
 | 5 | Password change + M2 eviction | Two live sessions; change password in one → both refresh tokens rejected (global sign-out), old password dead, new password works. (Amended at plan time: the access-token iat cutoff backdates by a 60 s clock-skew leeway, so a token minted seconds before the change survives it by design — asserting its rejection would need a >60 s wall-clock wait. The iat cutoff stays pinned in the unit suite with controlled clocks.) |
 | 6 | Invite acceptance | Admin create without password → 201 `invited: true` → Mailpit mail → `token_hash` → reset-confirm sets password → invitee login works |

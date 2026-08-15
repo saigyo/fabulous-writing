@@ -101,9 +101,12 @@ jwt_expiry = 3600
 # project-root-relative. Both verified on CLI 2.114.0.
 signing_keys_path = "./signing_keys.json"
 enable_refresh_token_rotation = true
-# Hosted default is 10 s; 0 makes a consumed refresh token rejectable
-# immediately, so the rotation test needs no wall-clock wait.
-refresh_token_reuse_interval = 0
+# Hosted default. Note (Task 4 discovery): GoTrue honors the IMMEDIATE
+# parent refresh token as deliberate retry tolerance regardless of this
+# interval (0 included) — but degenerates it to the same session family
+# (same child refresh token, never a fork). The e2e suite pins that
+# no-forking property; this interval only governs deeper-ancestor reuse.
+refresh_token_reuse_interval = 10
 # Mirror production: project-wide signups off (invitation-only). Admin
 # invites are exempt — verified against this local stack.
 enable_signup = false
@@ -839,8 +842,12 @@ git commit -m "feat(e2e): harness (uvicorn fixture, mailpit client) + boot/login
 ```python
 """Flow 3+4: refresh-token rotation and logout, against real GoTrue.
 
-refresh_token_reuse_interval = 0 in supabase/config.toml makes consumed-
-token rejection immediate (hosted default is a 10 s grace window).
+Reuse semantics (probed live, Task 4): GoTrue deliberately honors the
+IMMEDIATE parent refresh token as retry tolerance — regardless of
+refresh_token_reuse_interval, 0 included — but degenerates it to the SAME
+session family: the reuse response carries the identical child refresh
+token, never a fork. That no-forking property is the security guarantee
+worth pinning; a 401-on-reuse assertion is unachievable against GoTrue.
 """
 
 import httpx
@@ -858,7 +865,7 @@ def _refresh(app_url: str, refresh_token: str) -> httpx.Response:
     )
 
 
-def test_refresh_rotates_and_consumed_token_dies(app_url, admin_creds):
+def test_refresh_rotates_and_reuse_cannot_fork_a_second_family(app_url, admin_creds):
     session = login(app_url, *admin_creds)
     first = _refresh(app_url, session["refresh_token"])
     assert first.status_code == 200
@@ -870,9 +877,10 @@ def test_refresh_rotates_and_consumed_token_dies(app_url, admin_creds):
         f"{app_url}/api/auth/me", headers=bearer(rotated["token"]), timeout=TIMEOUT
     )
     assert me.status_code == 200
-    # the consumed token is dead (rotation, zero reuse interval)
+    # reusing the consumed parent degenerates to the same family
     again = _refresh(app_url, session["refresh_token"])
-    assert again.status_code == 401
+    assert again.status_code == 200
+    assert again.json()["refresh_token"] == rotated["refresh_token"]
 
 
 def test_logout_kills_the_refresh_pair(app_url, admin_creds):
