@@ -748,6 +748,28 @@ async def reset_confirm(request: Request, body: ResetConfirm) -> Response:
         raise HTTPException(422, {"code": "invalid_or_expired_link"}) from None
     except SupabaseUnavailableError:
         raise HTTPException(503, "Authentication service unavailable") from None
+    store = app.state.user_store
+    # confirm_with_token_hash has already rotated the remote password at
+    # this point. Eviction bookkeeping below is therefore keyed ONLY to the
+    # confirmed subject's EXISTING local row -- a plain lookup, never a
+    # JIT-create -- and runs BEFORE the verifier call so it survives a
+    # verification failure (JWKS outage, external-id collision, inactive
+    # check): without it, a completed remote reset would leave any pre-reset
+    # access token for this subject authorizing locally until its natural
+    # TTL. A subject with no local row has nothing to evict; the claim
+    # guards (the verifier, below) still gate all provisioning and the
+    # response itself.
+    existing_row = store.get_by_external_id(session.user_id)
+    if existing_row is not None:
+        store.mark_password_changed(existing_row.id)
+        try:
+            await app.state.supabase_gateway.global_sign_out(session.access_token)
+        except (SupabaseAuthError, SupabaseUnavailableError):
+            logger.warning(
+                "supabase global_sign_out unavailable after reset-confirm"
+                " eviction for user %s",
+                existing_row.id,
+            )
     # JIT: for an invite-type hash, this IS the invite-acceptance
     # materialization point -- verify() calls resolve_supabase_user
     # internally, so the local row is still created here, on first confirm,
@@ -763,14 +785,19 @@ async def reset_confirm(request: Request, body: ResetConfirm) -> Response:
         # the confirmed session's email belongs to a local row already
         # linked to a DIFFERENT external_id. Reported as the same "link no
         # good" code as an expired/invalid token_hash -- never leak the
-        # exception text.
+        # exception text. The eviction above already ran if this subject had
+        # an existing row of its own.
         raise HTTPException(422, {"code": "invalid_or_expired_link"}) from None
-    user = app.state.user_store.get_user(verified.user_id)
+    user = store.get_user(verified.user_id)
     if user is None or not user.is_active:
         raise HTTPException(422, {"code": "invalid_or_expired_link"})
-    app.state.user_store.mark_password_changed(user.id)
-    try:
-        await app.state.supabase_gateway.global_sign_out(session.access_token)
-    except (SupabaseAuthError, SupabaseUnavailableError):
-        pass
+    if existing_row is None:
+        # First mark for this row: it did not exist yet at the pre-verify
+        # lookup above, so it was just JIT-created or adopted-by-email
+        # inside verify() and has never been evicted for this reset.
+        store.mark_password_changed(user.id)
+        try:
+            await app.state.supabase_gateway.global_sign_out(session.access_token)
+        except (SupabaseAuthError, SupabaseUnavailableError):
+            pass
     return Response(status_code=204)

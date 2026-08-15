@@ -153,11 +153,15 @@ export async function request<T>(path: string, init?: RequestOptions): Promise<T
   return requestWithOptions<T>(path, init)
 }
 
-// Mirrors backend/app/api/health.py: password_reset/invites are each true
+// Mirrors backend/app/main.py's /api/health handler: auth_features is
+// ALWAYS present on the wire, in both modes (pinned by
+// test_health_auth_features_false_in_local_mode) — local mode returns it
+// with both flags false, not omitted. password_reset/invites are each true
 // only when the deployment's auth backend actually supports them (Supabase
-// mode with the relevant capability configured) — local mode omits
-// auth_features entirely, which the gate's mount effect (LoginGate.tsx)
-// already treats as "neither flag is on" via the optional-chaining read.
+// mode). The field stays optional here for wire-tolerance only (an older
+// backend or a network layer stripping it); the gate's mount effect
+// (LoginGate.tsx) already treats a missing value the same as "neither flag
+// is on" via its truthy read.
 export interface AuthFeatures {
   password_reset: boolean
   invites: boolean

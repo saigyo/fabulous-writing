@@ -57,8 +57,10 @@ def seed_admin(
         )
     else:
         # Supabase owns the credential; the local row owns authority.
+        rotated_existing = False
 
         async def _bootstrap() -> str:
+            nonlocal rotated_existing
             try:
                 return await gateway.create_user(email, password)
             except SupabaseAuthError:
@@ -76,6 +78,7 @@ def seed_admin(
                 if existing is None:
                     raise
                 await gateway.change_password(existing, password)
+                rotated_existing = True
                 return existing
 
         try:
@@ -95,8 +98,22 @@ def seed_admin(
             raise AuthConfigError(
                 f"Supabase admin bootstrap failed: {type(exc).__name__}"
             ) from exc
-        store.create_user(
+        row = store.create_user(
             email, None, display_name="Administrator", tier="premium",
             is_admin=True, external_id=external_id,
         )
+        if rotated_existing:
+            # Duplicate-account path only (delta-review finding #1, mirrors
+            # the admin-create reconciliation in app/api/admin.py): the
+            # gateway.change_password rotation above already revoked this
+            # identity's REFRESH tokens -- GoTrue's admin password update
+            # logs the user out internally -- but any already-issued ACCESS
+            # token is a stateless JWT this backend verifies locally and
+            # stays valid until its own TTL, and this identity may have
+            # outstanding ones from before the bootstrap ran. Marking
+            # password_changed_at closes that remaining window by making
+            # deps.py's fallback reject them immediately. The fresh-create
+            # branch (gateway.create_user succeeded above) needs no mark: a
+            # brand-new identity has no pre-existing tokens to evict.
+            store.mark_password_changed(row.id)
     logger.info("Seeded the initial admin account (%s)", email)
