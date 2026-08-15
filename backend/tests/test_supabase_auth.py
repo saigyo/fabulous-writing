@@ -11,6 +11,7 @@ from cryptography.hazmat.primitives.asymmetric.ec import SECP256R1, generate_pri
 from app.core.auth import AuthConfigError, InvalidToken
 from app.core.config import Settings
 from app.core.supabase_auth import (
+    _JWKS_CACHE_SECONDS,
     SUPABASE_PUBLISHABLE_KEY_ENV,
     SUPABASE_SECRET_KEY_ENV,
     SupabaseCredentials,
@@ -374,3 +375,26 @@ class TestSupabaseTokenVerifier:
         assert any("JWKS retrieval failed" in r.message for r in warnings)
         # The raw token itself is never written to the log.
         assert all(token not in r.message for r in caplog.records)
+
+
+class TestSupabaseTokenVerifierJWKSConstruction:
+    # A wiring test only: it pins the arguments passed to jwt.PyJWKClient,
+    # not the actual revocation behaviour. Proving a revoked key stops
+    # verifying within the document-cache lifespan needs a live key removed
+    # from a real Supabase project's JWKS — out of scope for a unit test.
+    def test_default_client_disables_the_per_kid_key_cache(self, tmp_path, monkeypatch):
+        captured = {}
+
+        class FakePyJWKClient:
+            def __init__(self, uri, **kwargs):
+                captured["uri"] = uri
+                captured["kwargs"] = kwargs
+
+        monkeypatch.setattr(jwt, "PyJWKClient", FakePyJWKClient)
+        store = UserStore(tmp_path / "jwks-construction.db")
+
+        SupabaseTokenVerifier(URL, store)
+
+        assert captured["uri"] == f"{URL}/auth/v1/.well-known/jwks.json"
+        assert captured["kwargs"]["cache_keys"] is False
+        assert captured["kwargs"]["lifespan"] == _JWKS_CACHE_SECONDS

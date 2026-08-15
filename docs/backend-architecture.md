@@ -1229,11 +1229,16 @@ environment, and its error messages name the missing variable, never a
 value — a config-error log line must never become a credential at rest.
 
 `SupabaseTokenVerifier.verify()` fetches the project's JWKS **lazily**, on
-first use (`jwt.PyJWKClient`, cached for 600 seconds — Supabase's own
-edge-cache guidance), rather than prefetching it at startup: a misconfigured
-URL or a transient Supabase outage then surfaces as a 401 on the first login
-attempt, in the server log, instead of wedging every container restart.
-Requests fail closed until the key set is reachable. Verification pins
+first use (`jwt.PyJWKClient`, document cache lifespan 600 seconds —
+Supabase's own edge-cache guidance), rather than prefetching it at startup:
+a misconfigured URL or a transient Supabase outage then surfaces as a 401 on
+the first login attempt, in the server log, instead of wedging every
+container restart. Requests fail closed until the key set is reachable.
+`cache_keys=False` is passed deliberately: PyJWT's per-kid key cache has no
+TTL of its own, so leaving it enabled would let a key revoked in the
+dashboard keep verifying in this process until restart. With it disabled,
+a revoked key stops verifying within the 600-second document-cache window
+above — no cache in this verifier outlives that lifespan. Verification pins
 `algorithms=["ES256", "RS256"]` — asymmetric only, never `HS256` — checks
 `iss`/`aud` against the project's `/auth/v1` issuer and the fixed audience
 `"authenticated"`, and requires `sub`/`exp`/`iat`/`iss`/`aud` to be present.
