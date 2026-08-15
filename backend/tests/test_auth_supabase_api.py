@@ -340,6 +340,12 @@ class TestResetConfirm:
         assert stale_refresh.status_code == 401
         user = app.state.user_store.get_user(user_id)
         assert user.password_changed_at is not None
+        # Exactly one mark on the success path: the pre-verify eviction
+        # lookup (B14 hardening) finds this row -- it already existed from
+        # the login above -- so the post-verify branch must skip its own
+        # mark rather than double it. token_epoch increments once per
+        # mark_password_changed call, so ==1 (not 2) proves no double.
+        assert user.token_epoch == 1
         assert fake.global_sign_out_calls
 
     def test_invalid_hash_422(self, supabase_app):
@@ -667,6 +673,45 @@ class TestGatewaySessionsAreVerifiedNotResolvedDirectly:
         assert resp.json()["detail"]["code"] == "invalid_or_expired_link"
         assert store.count() == before
 
+    def test_reset_confirm_verification_failure_still_evicts_existing_row(
+        self, tmp_path, monkeypatch
+    ):
+        """B14 hardening: confirm_with_token_hash rotates the remote
+        password BEFORE this route's verification step. If verification
+        then fails (here: the provider guard, same as the sibling test
+        above) for a subject whose LOCAL ROW ALREADY EXISTS, the completed
+        remote reset must still evict that row's pre-reset access tokens --
+        not leave them authorizing locally until their natural TTL just
+        because the post-rotation verification step happened to fail. This
+        is the opposite of the sibling test's no-local-row case: here there
+        IS something to evict, and it must be evicted despite the 422."""
+        app, fake = self._build(tmp_path, monkeypatch)
+        store = app.state.user_store
+        row = store.create_user(self.EMAIL, "old-local-password", external_id=self.UUID)
+        store.mark_password_changed(row.id)
+        before = store.get_user(row.id)
+        assert before.token_epoch == 1
+        fake.valid_token_hashes["oauth-hash"] = (self.UUID, self.EMAIL)
+        client = TestClient(app)
+
+        resp = client.post(
+            "/api/auth/reset-confirm",
+            json={
+                "token_hash": "oauth-hash", "type": "recovery",
+                "new_password": "another-new-pw-1",
+            },
+        )
+
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "invalid_or_expired_link"
+        after = store.get_user(row.id)
+        # token_epoch strictly increments by exactly one per mark_password_
+        # changed call -- a robust "moved, exactly once" signal that does
+        # not depend on wall-clock resolution the way comparing the
+        # password_changed_at strings would.
+        assert after.token_epoch == before.token_epoch + 1
+        assert fake.global_sign_out_calls
+
 
 class TestSeedAdminSupabase:
     """seed_admin's supabase branch (Task 5, #55): the admin bootstraps
@@ -685,6 +730,9 @@ class TestSeedAdminSupabase:
         assert app.state.user_store.verify_credentials(
             TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD
         ) is None
+        # Fresh identity, no pre-existing tokens to evict (asymmetric with
+        # the duplicate-account path below, deliberately -- see seed_admin).
+        assert admin.password_changed_at is None
 
     def test_rerun_against_existing_project_links_existing_uuid(self, tmp_path, monkeypatch):
         fake = FakeSupabaseGateway()
@@ -700,6 +748,10 @@ class TestSeedAdminSupabase:
         # survive the bootstrap: linking rotates it to the configured
         # FW_ADMIN_PASSWORD, or the operator would have no way to log in.
         assert fake.stored_password(TEST_ADMIN_EMAIL) == TEST_ADMIN_PASSWORD
+        # Duplicate-account path: the identity may have pre-existing access
+        # tokens from before this bootstrap ran, so the local mark must
+        # close that window (delta-review finding #1).
+        assert admin.password_changed_at is not None
 
     def test_bootstrap_failure_aborts_create_app(self, tmp_path, monkeypatch):
         fake = FakeSupabaseGateway()
