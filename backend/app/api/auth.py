@@ -24,7 +24,6 @@ from app.core.auth import (
 )
 from app.core.config import KNOWN_FEATURES, Settings
 from app.core.permissions import features_for, label_for, limits_for, policy_for
-from app.core.supabase_auth import resolve_supabase_user
 from app.services.supabase_gateway import SupabaseAuthError, SupabaseUnavailableError
 from app.services.usage import UsageStore
 from app.services.users import User
@@ -504,20 +503,37 @@ async def _login_supabase(request: Request, body: LoginRequest) -> LoginResponse
         raise HTTPException(401, _INVALID_LOGIN) from None
     except SupabaseUnavailableError:
         raise HTTPException(503, "Authentication service unavailable") from None
+    # Route the session's own access token through the configured verifier
+    # rather than resolving it directly: resolve_supabase_user alone applies
+    # none of the verifier's claim guards (is_anonymous / role /
+    # app_metadata.provider). app_metadata.provider records the FIRST
+    # provider an identity ever used, not the grant now in flight -- a user
+    # who signed up via Google and later had a password set by an admin
+    # still carries provider: "google" and can use this password grant, so
+    # even the login route (password-authenticated) needs this check, not
+    # just refresh/reset-confirm. verify() is sync and may block on a JWKS
+    # fetch; run_in_threadpool keeps that off the event loop the same way
+    # deps.get_current_user's sync dependency already does.
     try:
-        user = resolve_supabase_user(
-            app.state.user_store, subject=session.user_id, email=session.email
+        verified = await run_in_threadpool(
+            app.state.token_verifier.verify, session.access_token
         )
     except InvalidToken:
         # e.g. the session's email belongs to a local row already linked to
         # a DIFFERENT external_id (resolve_supabase_user's fail-closed
-        # collision guard). A verified Supabase session that cannot be
-        # mapped to a local user is an authentication failure from the
-        # caller's point of view, not a server error -- same generic 401 as
-        # every other login failure, no exception text leaked.
+        # collision guard, applied inside verify()), or a claim guard
+        # rejected the session outright. A verified Supabase session that
+        # cannot be mapped to a local user is an authentication failure from
+        # the caller's point of view, not a server error -- same generic 401
+        # as every other login failure, no exception text leaked.
         app.state.login_throttle.record_failure(key)
         raise HTTPException(401, _INVALID_LOGIN) from None
-    if not user.is_active:
+    # verified.epoch is always None here (the epoch-less contract of every
+    # Supabase-mode verifier) -- only the is_active check applies, same as
+    # deps.get_current_user without the epoch/password_changed_at fallback,
+    # which cannot fire meaningfully on a token minted seconds ago.
+    user = app.state.user_store.get_user(verified.user_id)
+    if user is None or not user.is_active:
         app.state.login_throttle.record_failure(key)
         raise HTTPException(401, _INVALID_LOGIN)
     app.state.login_throttle.record_success(key)
@@ -556,13 +572,18 @@ async def refresh(request: Request, body: RefreshRequest) -> LoginResponse:
         raise HTTPException(401, _INVALID_LOGIN) from None
     except SupabaseUnavailableError:
         raise HTTPException(503, "Authentication service unavailable") from None
+    # Same reasoning as _login_supabase above: verify() applies the claim
+    # guards resolve_supabase_user alone does not, and this route is
+    # unauthenticated and unthrottled, so an accidentally-enabled OAuth/SSO
+    # provider must not reach JIT provisioning or email-adoption at all.
     try:
-        user = resolve_supabase_user(
-            app.state.user_store, subject=session.user_id, email=session.email
+        verified = await run_in_threadpool(
+            app.state.token_verifier.verify, session.access_token
         )
     except InvalidToken:
         raise HTTPException(401, _INVALID_LOGIN) from None
-    if not user.is_active:
+    user = app.state.user_store.get_user(verified.user_id)
+    if user is None or not user.is_active:
         raise HTTPException(401, _INVALID_LOGIN)
     return LoginResponse(
         token=session.access_token,
@@ -728,18 +749,25 @@ async def reset_confirm(request: Request, body: ResetConfirm) -> Response:
     except SupabaseUnavailableError:
         raise HTTPException(503, "Authentication service unavailable") from None
     # JIT: for an invite-type hash, this IS the invite-acceptance
-    # materialization point -- the local row is created here, on first
-    # confirm, not at invite time.
+    # materialization point -- verify() calls resolve_supabase_user
+    # internally, so the local row is still created here, on first confirm,
+    # not at invite time. Routed through the verifier for the same reason as
+    # login/refresh: the claim guards must run before resolution, not be
+    # bypassed by resolving the session directly.
     try:
-        user = resolve_supabase_user(
-            app.state.user_store, subject=session.user_id, email=session.email
+        verified = await run_in_threadpool(
+            app.state.token_verifier.verify, session.access_token
         )
     except InvalidToken:
-        # Same collision guard as login/refresh: the confirmed session's
-        # email belongs to a local row already linked to a DIFFERENT
-        # external_id. Reported as the same "link no good" code as an
-        # expired/invalid token_hash -- never leak the exception text.
+        # Same collision guard as login/refresh (applied inside verify()):
+        # the confirmed session's email belongs to a local row already
+        # linked to a DIFFERENT external_id. Reported as the same "link no
+        # good" code as an expired/invalid token_hash -- never leak the
+        # exception text.
         raise HTTPException(422, {"code": "invalid_or_expired_link"}) from None
+    user = app.state.user_store.get_user(verified.user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(422, {"code": "invalid_or_expired_link"})
     app.state.user_store.mark_password_changed(user.id)
     try:
         await app.state.supabase_gateway.global_sign_out(session.access_token)

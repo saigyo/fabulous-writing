@@ -275,6 +275,7 @@ async def create_user(
         if existing is not None and existing.external_id is not None:
             raise HTTPException(422, {"code": "duplicate_email"})
         gateway = request.app.state.supabase_gateway
+        rotated = False
         try:
             external_id = await gateway.create_user(body.email, body.password)
         except SupabaseAuthError as exc:
@@ -296,6 +297,7 @@ async def create_user(
                 raise HTTPException(422, {"code": "create_failed"}) from pw_exc
             except SupabaseUnavailableError as pw_exc:
                 raise HTTPException(503, "Authentication service unavailable") from pw_exc
+            rotated = True
         except SupabaseUnavailableError as exc:
             raise HTTPException(503, "Authentication service unavailable") from exc
         # Same accepted residual as the invite branch: no compensating
@@ -318,6 +320,15 @@ async def create_user(
                 )
             except (DuplicateEmailError, InvalidEmailError) as exc:
                 raise HTTPException(422, str(exc)) from exc
+        if rotated:
+            # Mirrors patch_user's own rotation (:409): the gateway call
+            # above already killed the identity's refresh tokens, but the
+            # pre-existing access token is a stateless JWT that keeps
+            # verifying locally until password_changed_at moves. Without
+            # this, a session issued before the admin's rotation survives
+            # its full TTL and now resolves -- via the external_id just
+            # written -- to the row this call is creating/adopting.
+            store.mark_password_changed(user.id)
     else:
         try:
             # bcrypt stays off the event loop, same rule as login/password
@@ -361,6 +372,14 @@ async def patch_user(
     if body.password is not None:
         _check_password_strength(body.password)
         if supabase_mode:
+            if existing.external_id is None:
+                # A row that predates the mode switch (or was created without
+                # a Supabase identity) has nothing to rotate: sending
+                # user_id=None to GoTrue's admin API would otherwise fail
+                # only incidentally, via _execute's (AuthError, ValueError)
+                # mapping to a generic 422 -- fail closed here instead, with
+                # a code the caller can actually distinguish.
+                raise HTTPException(422, {"code": "not_linked"})
             # Rotate at Supabase FIRST, before any local field is touched or
             # audited: a mixed {tier, password} PATCH whose rotation fails
             # must return the error with NO local changes at all, not a

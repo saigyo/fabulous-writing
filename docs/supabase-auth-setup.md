@@ -23,10 +23,13 @@ after which Supabase Auth uses the custom domain and you configure that
 instead. A **vanity subdomain** (`<name>.supabase.co`) never qualifies —
 it serves requests but the issuer stays canonical. The definitive check
 either way:
-`curl https://<your-domain>/auth/v1/.well-known/openid-configuration` —
-configure whatever the `issuer` field says. With any other URL configured,
-tokens are perfectly signed yet fail the issuer check, which surfaces as
-an instant post-login 401 loop with no JWKS warning in the log. Switching
+`curl https://<your-domain>/auth/v1/.well-known/openid-configuration` — the
+`issuer` field reads `https://<domain>/auth/v1`. Configure `auth.supabase.url`
+as that value **with the trailing `/auth/v1` removed**: the backend appends
+it itself (`SupabaseTokenVerifier.__init__`), so configuring the full issuer
+string would double the suffix. With any other URL configured, tokens are
+perfectly signed yet fail the issuer check, which surfaces as an instant
+post-login 401 loop with no JWKS warning in the log. Switching
 domains later bounces every active session to the login form once (old
 tokens carry the old issuer) — do it before real users exist, and update
 the Site URL / redirect URLs (§6) in the same pass.

@@ -329,12 +329,17 @@ describe('logout', () => {
       return Promise.resolve()
     })
 
+    writeTokenOwner('1')
+
     logout()
 
     expect(postLogout).toHaveBeenCalledTimes(1)
     expect(tokenAtCallTime).toBe('tok')
     expect(readRefreshToken()).toBeNull()
     expect(readTokenExpiresAt()).toBeNull()
+    // A stale owner key surviving logout is exactly the "inconsistent pair"
+    // hazard the ownerMismatch guard (round-5 fix) exists to prevent.
+    expect(readTokenOwner()).toBeNull()
     // Finding 2 (final review): storage alone is not enough -- the pair
     // must also die in the STORE, or an orphaned refresh timer can still
     // read a live refreshToken back off useStore and rematerialise a
@@ -388,6 +393,7 @@ describe('expireSession', () => {
   it('removes the refresh-token and token-expiry keys', () => {
     localStorage.setItem('fabulous-writing-refresh-token', 'rt')
     localStorage.setItem('fabulous-writing-token-expires', '1900000000')
+    writeTokenOwner('1')
     useStore.setState({
       token: 'tok',
       refreshToken: 'rt',
@@ -398,6 +404,8 @@ describe('expireSession', () => {
     expireSession()
     expect(readRefreshToken()).toBeNull()
     expect(readTokenExpiresAt()).toBeNull()
+    // Same "inconsistent pair" hazard as logout() -- see that test's comment.
+    expect(readTokenOwner()).toBeNull()
     // Finding 2 (final review): same store-level assertion as logout()'s test.
     expect(useStore.getState().refreshToken).toBeNull()
     expect(useStore.getState().tokenExpiresAt).toBeNull()
