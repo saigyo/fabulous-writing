@@ -78,7 +78,13 @@ def resolve_supabase_credentials(
 
 
 SUPABASE_AUDIENCE = "authenticated"
-_JWKS_CACHE_SECONDS = 600  # matches Supabase's own edge-cache guidance
+# Bounds the JWKS *document* cache only (PyJWKClient's cache_jwk_set, on by
+# default) -- matches Supabase's own edge-cache guidance. A key removed in
+# the dashboard stops verifying within this window: cache_keys=False below
+# disables PyJWT's separate per-kid LRU cache, which has no TTL of its own
+# and would otherwise keep a revoked key verifying in this process until
+# restart, well past the document cache expiring.
+_JWKS_CACHE_SECONDS = 600
 
 
 def resolve_supabase_user(
@@ -143,7 +149,13 @@ class SupabaseTokenVerifier:
         self._store = user_store
         self._jwks = jwks_client or jwt.PyJWKClient(
             f"{url}/auth/v1/.well-known/jwks.json",
-            cache_keys=True,
+            # cache_keys=False: PyJWT's per-kid cache is an LRU with no TTL,
+            # so a key revoked in the Supabase dashboard would keep verifying
+            # in this process indefinitely if it were enabled. The document
+            # cache (cache_jwk_set, on by default) still avoids a JWKS fetch
+            # on every request; it just expires on _JWKS_CACHE_SECONDS like
+            # everything else here.
+            cache_keys=False,
             lifespan=_JWKS_CACHE_SECONDS,
         )
 

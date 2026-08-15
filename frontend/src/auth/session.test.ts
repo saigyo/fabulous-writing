@@ -499,6 +499,31 @@ describe('refresh engine (refreshSession/scheduleRefresh)', () => {
     }
   })
 
+  it('clamps an absurdly far-future expiry so the timer does not overflow setTimeout and fire immediately', async () => {
+    // A finite but absurd stored tokenExpiresAt (e.g. a corrupted value)
+    // passes the Number.isFinite guard in prefsStorage.ts, and
+    // tokenExpiresAt * 1000 - now - margin then exceeds setTimeout's 32-bit
+    // signed-int delay range. Browsers treat the overflowed delay as ~0/~1ms
+    // rather than throwing; verified empirically that vitest's fake timers
+    // reproduce this too (a setTimeout scheduled for 1e20ms fires after only
+    // a few minutes of advanceTimersByTime), so without the MAX_TIMEOUT_MS
+    // cap this would fire almost immediately, refresh, and reschedule the
+    // same oversized delay again -- a tight loop. The strongest assertion
+    // here is therefore the behavioral one: advancing fake time by a few
+    // minutes must NOT trigger a refresh.
+    vi.useFakeTimers()
+    try {
+      const absurdExpiresAt = 1e20 // seconds; far beyond any real epoch
+      await loginWithTriple(absurdExpiresAt)
+
+      expect(vi.getTimerCount()).toBe(1) // exactly one timer armed
+      await vi.advanceTimersByTimeAsync(5 * 60_000) // a few minutes
+      expect(postRefresh).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('a 401 on refresh ends the session through expireSession()', async () => {
     const expiresAt = Math.floor(Date.now() / 1000) + 300
     await loginWithTriple(expiresAt)

@@ -148,6 +148,15 @@ const REFRESH_RETRY_MS = 60_000
 // (runRestore calls refreshSession()/doRefresh() directly, never through
 // this delay computation), which is meant to run immediately.
 const MIN_REFRESH_DELAY_MS = 30_000
+// setTimeout's delay is a 32-bit signed int internally; anything beyond
+// 2^31-1 ms overflows and browsers clamp it to ~1ms instead of throwing. A
+// finite but absurd stored tokenExpiresAt (e.g. a corrupted value far in the
+// future) passes the Number.isFinite guard in prefsStorage.ts and would
+// otherwise compute a delay past this limit -- firing almost immediately,
+// refreshing, and rescheduling the same oversized delay again: a tight loop
+// indistinguishable from the short-TTL case MIN_REFRESH_DELAY_MS guards
+// against, but from the opposite direction.
+const MAX_TIMEOUT_MS = 2 ** 31 - 1
 let refreshTimer: ReturnType<typeof setTimeout> | null = null
 let refreshInFlight: Promise<boolean> | null = null
 
@@ -169,9 +178,12 @@ function scheduleRefresh(delayMs?: number): void {
   }
   const { tokenExpiresAt, refreshToken } = useStore.getState()
   if (!refreshToken || tokenExpiresAt === null) return  // local mode: never
-  const delay = Math.max(
-    tokenExpiresAt * 1000 - Date.now() - REFRESH_MARGIN_MS,
-    MIN_REFRESH_DELAY_MS,
+  const delay = Math.min(
+    Math.max(
+      tokenExpiresAt * 1000 - Date.now() - REFRESH_MARGIN_MS,
+      MIN_REFRESH_DELAY_MS,
+    ),
+    MAX_TIMEOUT_MS,
   )
   refreshTimer = setTimeout(() => { void refreshSession() }, delay)
 }
