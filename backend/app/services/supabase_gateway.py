@@ -1,11 +1,14 @@
 """Server-side Supabase Auth gateway (auth.mode: supabase).
 
 Every method builds its own short-lived GoTrue client around a fresh
-httpx.AsyncClient: seed_admin drives this from its own event loop via
-asyncio.run(), so no connection pool may outlive one operation. Auth
-operations are rare; the per-call handshake is irrelevant next to bcrypt.
+httpx.AsyncClient: seed_admin and create_app's startup provider check
+(app/main.py) both drive this from their own event loop via `run_sync`
+below, so no connection pool may outlive one operation. Auth operations are
+rare; the per-call handshake is irrelevant next to bcrypt.
 """
 
+import asyncio
+import concurrent.futures
 import logging
 from collections.abc import AsyncIterator, Coroutine
 from contextlib import asynccontextmanager
@@ -20,6 +23,25 @@ from supabase_auth.types import Session
 from app.core.supabase_auth import SupabaseCredentials
 
 logger = logging.getLogger(__name__)
+
+
+def run_sync(coro: Coroutine[Any, Any, Any]) -> Any:
+    """Runs a single gateway coroutine to completion from synchronous
+    startup code (seed_admin's bootstrap, create_app's provider-policy
+    check) -- shared so both sites make the same loop decision.
+
+    uvicorn imports the app from inside its own already-running event loop
+    (import_from_string during Server.serve), where asyncio.run() raises.
+    A private loop on a worker thread is safe there: every gateway method
+    builds its own per-operation httpx client (module docstring above), so
+    no client or connection pool crosses loops.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
 
 
 @dataclass(frozen=True)
@@ -47,6 +69,13 @@ class SupabaseUserSummary:
     # `invited_at` unset, so it reads as NOT pending regardless of
     # `last_sign_in_at`.
     invite_pending: bool
+    # The provider that minted this identity ("email", "google", ...), read
+    # from the admin user object's `app_metadata.provider` -- the same
+    # server-controlled field SupabaseTokenVerifier checks per-token
+    # (app/core/supabase_auth.py). None if the field is absent, which
+    # reconciliation callers must treat the same as "not email": a missing
+    # value proves nothing.
+    provider: str | None = None
 
 
 class SupabaseAuthError(Exception):
@@ -227,6 +256,7 @@ class SupabaseAuthGateway:
                                 id=user.id,
                                 invite_pending=user.invited_at is not None
                                 and user.last_sign_in_at is None,
+                                provider=user.app_metadata.get("provider"),
                             )
                     page += 1
 
@@ -235,3 +265,41 @@ class SupabaseAuthGateway:
     async def get_user_id_by_email(self, email: str) -> str | None:
         summary = await self.get_user_by_email(email)
         return summary.id if summary is not None else None
+
+    async def get_enabled_external_providers(self) -> list[str]:
+        """The provider configuration GoTrue publishes at GET
+        {url}/auth/v1/settings -- publicly readable with just the
+        publishable `apikey` header, no admin key or signed-in session
+        required (this is the same endpoint supabase-js reads to decide
+        which login buttons to render). Its `external` map covers every
+        provider name, real OAuth/SSO ones (google, github, ...) and the
+        "email"/"phone" pseudo-providers alike, each mapped to whether
+        sign-in through it is enabled.
+
+        Returns every name enabled, sorted, unfiltered -- the caller
+        (create_app's startup gate) decides which names are acceptable for
+        an email-only deployment. supabase_auth's GoTrue clients don't wrap
+        this endpoint, so this is a raw httpx call, built the same
+        per-operation way as every other method here.
+        """
+
+        async def call() -> list[str]:
+            async with httpx.AsyncClient(transport=self._transport) as http_client:
+                response = await http_client.get(
+                    f"{self._auth_url}/settings",
+                    headers={"apikey": self._credentials.publishable_key},
+                )
+                response.raise_for_status()
+                external = response.json().get("external", {})
+                return sorted(name for name, enabled in external.items() if enabled)
+
+        try:
+            return await call()
+        except (httpx.HTTPError, ValueError) as exc:
+            # ValueError alongside HTTPError: response.json() raises
+            # json.JSONDecodeError (a ValueError subclass) on a malformed
+            # body, which is a "can't read the provider config" failure the
+            # same as a network error, not an auth rejection -- there is no
+            # AuthError-shaped failure mode for a raw settings GET.
+            logger.error("supabase gateway: get_enabled_external_providers unavailable")
+            raise SupabaseUnavailableError(str(exc)) from exc

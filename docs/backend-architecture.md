@@ -1375,10 +1375,13 @@ or depends on someone remembering to close it — so once any user exists, the
 two env vars are inert: they can never serve as a standing password reset.
 In supabase mode, `seed_admin` is passed a `SupabaseAuthGateway` and creates
 the admin **in Supabase** (`gateway.create_user`, falling back to
-`get_user_id_by_email` if the email is already registered — a re-run
-against an existing project links instead of failing) before writing the
-local row with that `external_id`; in local mode it writes the password
-hash locally, unchanged from before this milestone.
+`get_user_by_email` if the email is already registered — a re-run against
+an existing project links instead of failing, but only if that identity's
+`app_metadata.provider` is `"email"`; an OAuth-origin identity at the
+bootstrap email fails closed instead of minting an admin row that could
+never authenticate) before writing the local row with that `external_id`;
+in local mode it writes the password hash locally, unchanged from before
+this milestone.
 
 `create_app()` (`app/main.py`) wires all of this by dispatching once on
 `settings.auth.mode`: for `"supabase"`, it calls
@@ -1387,16 +1390,22 @@ builds the `SupabaseAuthGateway` and `SupabaseTokenVerifier`; for `"local"`
 (the default), it resolves the signing secret (`resolve_auth_secret`,
 fail-closed as before) and builds the `LocalTokenVerifier`. Both branches
 build a `UserStore` and, in either case, only then does `seed_admin` run —
-migrations before bootstrap, in both modes. **`auth.mode: supabase` no
-longer raises `AuthConfigError` by itself** — it only does so when the
-supabase config or secrets are actually missing
-(`resolve_supabase_credentials`), the same fail-closed shape local mode has
-always had for a missing `FW_AUTH_SECRET`. Startup fails closed on any of: a
-missing/short `FW_AUTH_SECRET` in local mode (unless `ephemeral_secret` is
-on), a missing `auth.supabase.url`/`FW_SUPABASE_PUBLISHABLE_KEY`/
-`FW_SUPABASE_SECRET_KEY` in supabase mode, a missing/short bootstrap
-email/password while `users` is empty, or (supabase mode only) a bootstrap
-call to Supabase itself failing.
+migrations before bootstrap, in both modes. Between building the gateway
+and the `UserStore`, the supabase branch also calls
+`_enforce_email_only_providers`, which reads GoTrue's own provider
+configuration and fails startup closed if anything other than `"email"` is
+enabled there (logging a warning and continuing instead on a transient
+`SupabaseUnavailableError`, so a Supabase outage cannot brick every
+restart). **`auth.mode: supabase` no longer raises `AuthConfigError` by
+itself** — it only does so when the supabase config or secrets are actually
+missing (`resolve_supabase_credentials`), the same fail-closed shape local
+mode has always had for a missing `FW_AUTH_SECRET`. Startup fails closed on
+any of: a missing/short `FW_AUTH_SECRET` in local mode (unless
+`ephemeral_secret` is on), a missing `auth.supabase.url`/
+`FW_SUPABASE_PUBLISHABLE_KEY`/`FW_SUPABASE_SECRET_KEY` in supabase mode, an
+OAuth/SSO or phone provider enabled in the Supabase project, a
+missing/short bootstrap email/password while `users` is empty, or
+(supabase mode only) a bootstrap call to Supabase itself failing.
 
 One deviation from the eager-singleton pattern the rest of `main.py` uses:
 the module-level `app` that `uvicorn app.main:app` needs used to be built

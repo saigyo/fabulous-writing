@@ -1,7 +1,5 @@
 """Bootstrap the first admin account (auth.mode: local or supabase)."""
 
-import asyncio
-import concurrent.futures
 import logging
 import os
 from collections.abc import Mapping
@@ -11,6 +9,7 @@ from app.services.supabase_gateway import (
     SupabaseAuthError,
     SupabaseAuthGateway,
     SupabaseUnavailableError,
+    run_sync,
 )
 from app.services.users import UserStore
 
@@ -71,29 +70,33 @@ def seed_admin(
                 # password would keep admin access while the configured one
                 # silently could not log in. Mirrors the admin-create
                 # reconciliation in app/api/admin.py. A rotation failure
-                # propagates out of asyncio.run() below and is mapped to
+                # propagates out of run_sync() below and is mapped to
                 # AuthConfigError by the existing except clause there, same
                 # as any other bootstrap failure.
-                existing = await gateway.get_user_id_by_email(email)
+                existing = await gateway.get_user_by_email(email)
                 if existing is None:
                     raise
-                await gateway.change_password(existing, password)
+                if existing.provider != "email":
+                    # A real Supabase identity sits at this email, but it was
+                    # not minted by this app's own email/password flow (an
+                    # OAuth/SSO login, most likely). Rotating its password and
+                    # linking it anyway would produce an admin row that can
+                    # never authenticate: SupabaseTokenVerifier rejects any
+                    # token whose FIRST provider (app_metadata.provider) is
+                    # not "email" (setup guide §4), regardless of what the
+                    # credential is. Fail closed instead of minting a
+                    # permanently-locked-out admin.
+                    raise AuthConfigError(
+                        f"bootstrap email belongs to a non-email identity "
+                        f"(provider {existing.provider}); use a different "
+                        f"FW_ADMIN_EMAIL or remove that identity"
+                    )
+                await gateway.change_password(existing.id, password)
                 rotated_existing = True
-                return existing
+                return existing.id
 
         try:
-            try:
-                asyncio.get_running_loop()
-            except RuntimeError:
-                external_id = asyncio.run(_bootstrap())
-            else:
-                # uvicorn imports the app from inside its already-running loop
-                # (import_from_string during Server.serve), where asyncio.run()
-                # is forbidden. A private loop on a worker thread is safe: the
-                # gateway builds per-operation clients, so no client or pool
-                # crosses loops (the invariant that motivated per-op clients).
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    external_id = pool.submit(asyncio.run, _bootstrap()).result()
+            external_id = run_sync(_bootstrap())
         except (SupabaseAuthError, SupabaseUnavailableError) as exc:
             raise AuthConfigError(
                 f"Supabase admin bootstrap failed: {type(exc).__name__}"

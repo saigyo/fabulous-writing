@@ -1,3 +1,4 @@
+import logging
 import os
 from pathlib import Path
 
@@ -27,7 +28,7 @@ from app.checkers.llm.ollama import OllamaProvider
 from app.checkers.llm.openai_compat import OpenAICompatProvider
 from app.checkers.llm.provider import LLMProvider
 from app.checkers.rules.engine import RuleEngine
-from app.core.auth import LocalTokenVerifier, resolve_auth_secret
+from app.core.auth import AuthConfigError, LocalTokenVerifier, resolve_auth_secret
 from app.core.config import BUILTIN_ENV_KEYS, Settings, load_settings
 from app.core.supabase_auth import SupabaseTokenVerifier, resolve_supabase_credentials
 from app.nlp.registry import NlpRegistry
@@ -38,12 +39,60 @@ from app.services.profiles import ProfileStore
 from app.services.seed import seed_terminology
 from app.services.seed_admin import seed_admin
 from app.services.seed_profiles import seed_profiles
-from app.services.supabase_gateway import SupabaseAuthGateway
+from app.services.supabase_gateway import (
+    SupabaseAuthGateway,
+    SupabaseUnavailableError,
+    run_sync,
+)
 from app.services.terminology import TerminologyStore
 from app.services.usage import UsageStore
 from app.services.users import UserStore
 
 APP_NAME = "Fabulous Writing"
+
+logger = logging.getLogger(__name__)
+
+
+def _enforce_email_only_providers(gateway: SupabaseAuthGateway) -> None:
+    """Startup gate for supabase mode: this app's identity model is
+    email/password only, provisioned by an admin (setup guide §4). GoTrue
+    exposes its provider configuration publicly at GET
+    {url}/auth/v1/settings; if anything other than "email" is enabled --
+    including "phone", which this app's identity model has no place for --
+    the deployment refuses to come up, naming the offending providers.
+
+    SupabaseTokenVerifier already rejects any token whose FIRST provider
+    (app_metadata.provider) is not "email" (app/core/supabase_auth.py), but
+    that only catches a session once GoTrue has already minted it. This
+    check instead means an OAuth/SSO provider left on in the dashboard --
+    by accident, or because a future project reuses this checklist
+    incompletely -- fails the *build*, not just individual logins.
+
+    On SupabaseUnavailableError this logs a warning and continues, rather
+    than raising AuthConfigError: a transient Supabase outage must not
+    brick every restart, the same trade-off SupabaseTokenVerifier makes by
+    fetching JWKS lazily instead of at startup. This check re-runs on every
+    restart, so a genuine misconfiguration is still caught on the very next
+    one, and the per-token provider guard above holds in the meantime
+    regardless.
+    """
+    try:
+        enabled = run_sync(gateway.get_enabled_external_providers())
+    except SupabaseUnavailableError as exc:
+        logger.warning(
+            "Could not verify the Supabase project's provider configuration "
+            "at startup (%s); continuing without the check -- it re-runs on "
+            "every restart.",
+            exc,
+        )
+        return
+    forbidden = sorted(name for name in enabled if name != "email")
+    if forbidden:
+        raise AuthConfigError(
+            "OAuth/SSO providers enabled in the Supabase project: "
+            + ", ".join(forbidden)
+            + " -- this deployment is email-only; disable them in Auth -> Providers"
+        )
 
 
 def make_provider_factory(settings: Settings):
@@ -133,8 +182,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.usage_store = UsageStore(settings.db_path, credit_cost=settings.credit_cost)
     if settings.auth.mode == "supabase":
         credentials = resolve_supabase_credentials(settings)
-        app.state.user_store = UserStore(settings.db_path)
         app.state.supabase_gateway = SupabaseAuthGateway(credentials)
+        _enforce_email_only_providers(app.state.supabase_gateway)
+        app.state.user_store = UserStore(settings.db_path)
         app.state.token_verifier = SupabaseTokenVerifier(
             credentials.url, app.state.user_store
         )

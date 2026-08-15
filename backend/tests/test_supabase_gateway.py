@@ -165,6 +165,30 @@ class TestAdminCalls:
 
         assert await gateway_with(handler).get_user_by_email("a@example.com") is None
 
+    async def test_get_user_by_email_returns_provider_from_app_metadata(self):
+        # app_metadata.provider names whichever identity provider minted
+        # the account -- reconciliation callers (seed_admin, admin.py) need
+        # this to tell an OAuth-origin identity apart from one this app's
+        # own email/password flow created.
+        def handler(request):
+            user = {
+                **SESSION_JSON["user"],
+                "app_metadata": {"provider": "google", "providers": ["google"]},
+            }
+            return httpx.Response(200, json={"users": [user], "aud": "authenticated"})
+
+        found = await gateway_with(handler).get_user_by_email("a@example.com")
+        assert found.provider == "google"
+
+    async def test_get_user_by_email_provider_none_when_absent(self):
+        # No provider key in app_metadata at all -- treated as "not proven
+        # email" by callers, not silently assumed to be email.
+        def handler(request):
+            return httpx.Response(200, json={"users": [SESSION_JSON["user"]], "aud": "authenticated"})
+
+        found = await gateway_with(handler).get_user_by_email("a@example.com")
+        assert found.provider is None
+
     async def test_malformed_uuid_maps_to_auth_error_not_500(self):
         # The library's validate_uuid raises a bare ValueError before any
         # request is made; the mapper must translate it, or a malformed
@@ -194,3 +218,52 @@ class TestConfirm:
         )
         assert order == ["verify", "update"]
         assert session.access_token == "at-1"
+
+
+class TestGetEnabledExternalProviders:
+    async def test_returns_enabled_names_sorted_using_publishable_key(self):
+        seen = {}
+
+        def handler(request):
+            seen["url"] = str(request.url)
+            seen["apikey"] = request.headers.get("apikey")
+            return httpx.Response(200, json={
+                "external": {
+                    "email": True, "phone": False,
+                    "google": True, "github": False,
+                },
+                "disable_signup": False,
+            })
+
+        found = await gateway_with(handler).get_enabled_external_providers()
+        assert found == ["email", "google"]
+        assert seen["url"].endswith("/auth/v1/settings")
+        # Public endpoint: the publishable key, never the secret key.
+        assert seen["apikey"] == "sb_publishable_gw"
+
+    async def test_no_providers_enabled_returns_empty_list(self):
+        def handler(request):
+            return httpx.Response(200, json={"external": {"email": False, "google": False}})
+
+        assert await gateway_with(handler).get_enabled_external_providers() == []
+
+    async def test_network_failure_raises_unavailable(self):
+        def handler(request):
+            raise httpx.ConnectError("boom")
+
+        with pytest.raises(SupabaseUnavailableError):
+            await gateway_with(handler).get_enabled_external_providers()
+
+    async def test_server_error_raises_unavailable(self):
+        def handler(request):
+            return httpx.Response(500, json={"msg": "internal error"})
+
+        with pytest.raises(SupabaseUnavailableError):
+            await gateway_with(handler).get_enabled_external_providers()
+
+    async def test_malformed_body_raises_unavailable(self):
+        def handler(request):
+            return httpx.Response(200, content=b"not json")
+
+        with pytest.raises(SupabaseUnavailableError):
+            await gateway_with(handler).get_enabled_external_providers()
