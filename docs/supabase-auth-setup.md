@@ -82,6 +82,23 @@ incompletely), a drive-by anonymous session or an OAuth-authenticated
 caller still cannot mint a local user row. Think of the dashboard toggles
 as defence in depth on top of that check, not the mechanism itself.
 
+The dashboard toggle also genuinely cannot be enabled accidentally without
+the next restart catching it: on startup, the backend reads GoTrue's own
+provider configuration (`GET {url}/auth/v1/settings`) and refuses to come
+up at all if anything other than **Email** is enabled, naming the
+offending providers. A transient Supabase outage at that check logs a
+warning and lets startup continue rather than bricking every restart — the
+check simply re-runs on the next one.
+
+One honest boundary, worth knowing rather than assuming away: both this
+startup check and the per-token guard above only look at the identity's
+**first** provider (`app_metadata.provider`) — the provider that originally
+created the account. Neither inspects the **session's own** authentication
+method (GoTrue's `amr` claim), so a token minted by a since-added,
+still-enabled provider on an otherwise email-first identity is not
+distinguished from one minted by email/password. Per-session method
+validation is tracked as follow-up work, not shipped here.
+
 ## 5. Auth → Settings: invitation-only signup
 
 Turn **"Allow new users to sign up" OFF**. This app has no self-service

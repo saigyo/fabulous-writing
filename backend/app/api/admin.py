@@ -238,7 +238,12 @@ async def create_user(
                 # would let its old, operator-unknown password in without
                 # ever proving the invitation was accepted. No link, no
                 # local row -- the admin must use the CREATE-with-password
-                # path (which rotates the credential) instead.
+                # path (which rotates the credential) instead. This also
+                # excludes any OAuth-origin identity without a separate
+                # provider check: `invited_at` is only ever set by this
+                # app's own `invite_user_by_email` call, an email-based
+                # flow, so an OAuth identity's `invite_pending` is always
+                # False and lands here too.
                 raise HTTPException(422, {"code": "duplicate_email"}) from exc
             external_id = existing_identity.id
         except SupabaseUnavailableError as exc:
@@ -282,6 +287,20 @@ async def create_user(
             existing_identity = await _resolve_after_duplicate_rejection(
                 gateway, body.email, exc, "create_failed"
             )
+            if existing_identity.provider != "email":
+                # Unlike the invite branch above, this path has no
+                # invite_pending gate to fall back on -- a real Supabase
+                # identity at this email that GoTrue's password rotation
+                # would happily accept is not necessarily one this app can
+                # ever authenticate: SupabaseTokenVerifier rejects any
+                # token whose FIRST provider (app_metadata.provider) isn't
+                # "email" (setup guide §4), regardless of the credential.
+                # Rotating an OAuth-origin identity's password and linking
+                # it would mint an admin row that can never log in. Same
+                # 422 create_failed the "no matching identity" branch
+                # above already returns -- to the caller both are "cannot
+                # honor this as a genuine duplicate."
+                raise HTTPException(422, {"code": "create_failed"}) from exc
             external_id = existing_identity.id
             # The reconciled UUID belongs to a pre-existing Supabase
             # identity (most likely this admin's own earlier attempt,

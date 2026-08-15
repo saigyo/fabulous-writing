@@ -64,6 +64,15 @@ class FakeSupabaseGateway:
         # mirrors the real gateway's GoTrue-derived flag). Missing means
         # False, same as an identity GoTrue never marked invited.
         self._invite_pending: dict[str, bool] = {}
+        # email -> provider (app_metadata.provider). Missing means "email",
+        # the default for every account this fake mints itself
+        # (create_user/invite_user); a test opts an entry into a
+        # non-email/OAuth origin via register_user(..., provider="google").
+        self._provider: dict[str, str] = {}
+        # Provider names GET /auth/v1/settings would report enabled
+        # (get_enabled_external_providers). "email" only, matching a
+        # correctly configured project, unless a test overrides this.
+        self.enabled_providers: list[str] = ["email"]
         self._next_uuid = 1
         self._next_token = 1
         # access_token -> (uuid, email, issued_at epoch seconds)
@@ -110,15 +119,20 @@ class FakeSupabaseGateway:
         *,
         uuid: str | None = None,
         invite_pending: bool = False,
+        provider: str = "email",
     ) -> str:
         """Test setup: register an email/password pair, as if already
         signed up with Supabase. Returns the (possibly generated) uuid.
         `invite_pending` simulates an identity minted by an unfinished
         invite (GoTrue's invited_at set, never signed in); the default
-        (False) matches a directly created/active account."""
+        (False) matches a directly created/active account. `provider`
+        simulates `app_metadata.provider`; the default ("email") matches
+        this app's own flows -- a test opts into an OAuth-origin identity
+        by passing e.g. provider="google"."""
         uuid = uuid or self._mint_uuid()
         self._users[email] = (password, uuid)
         self._invite_pending[email] = invite_pending
+        self._provider[email] = provider
         return uuid
 
     def issue_session(
@@ -222,12 +236,17 @@ class FakeSupabaseGateway:
         if stored is None:
             return None
         return SupabaseUserSummary(
-            id=stored[1], invite_pending=self._invite_pending.get(email, False)
+            id=stored[1],
+            invite_pending=self._invite_pending.get(email, False),
+            provider=self._provider.get(email, "email"),
         )
 
     async def get_user_id_by_email(self, email: str) -> str | None:
         summary = await self.get_user_by_email(email)
         return summary.id if summary is not None else None
+
+    async def get_enabled_external_providers(self) -> list[str]:
+        return list(self.enabled_providers)
 
 
 class FakeSupabaseVerifier:

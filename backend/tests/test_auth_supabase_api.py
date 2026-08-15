@@ -713,6 +713,52 @@ class TestGatewaySessionsAreVerifiedNotResolvedDirectly:
         assert fake.global_sign_out_calls
 
 
+class TestProviderPolicyGate:
+    """create_app's supabase-mode startup gate (#93 follow-up): the backend
+    refuses to start if Supabase's own provider configuration has anything
+    other than "email" enabled, rather than relying solely on the per-token
+    guard (SupabaseTokenVerifier) to reject sessions one at a time after
+    they've already been minted."""
+
+    def test_email_only_providers_start_normally(self, tmp_path, monkeypatch):
+        fake = FakeSupabaseGateway()
+        fake.enabled_providers = ["email"]
+        app = _build_supabase_app(tmp_path, monkeypatch, fake)
+        assert app.state.user_store.get_by_email(TEST_ADMIN_EMAIL) is not None
+
+    def test_oauth_provider_enabled_blocks_startup(self, tmp_path, monkeypatch):
+        fake = FakeSupabaseGateway()
+        fake.enabled_providers = ["email", "google"]
+        with pytest.raises(AuthConfigError, match="google"):
+            _build_supabase_app(tmp_path, monkeypatch, fake)
+
+    def test_phone_provider_enabled_blocks_startup(self, tmp_path, monkeypatch):
+        # "phone" is a pseudo-provider in GoTrue's settings map, not an
+        # OAuth one, but this app's identity model is email/password only --
+        # it must be forbidden exactly like google/github would be.
+        fake = FakeSupabaseGateway()
+        fake.enabled_providers = ["email", "phone"]
+        with pytest.raises(AuthConfigError, match="phone"):
+            _build_supabase_app(tmp_path, monkeypatch, fake)
+
+    def test_unavailable_provider_check_warns_and_starts(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        # A transient Supabase outage at startup must not brick every
+        # restart -- same reasoning as SupabaseTokenVerifier fetching JWKS
+        # lazily instead of at startup.
+        fake = FakeSupabaseGateway()
+
+        async def boom():
+            raise SupabaseUnavailableError("down")
+
+        fake.get_enabled_external_providers = boom
+        with caplog.at_level("WARNING", logger="app.main"):
+            app = _build_supabase_app(tmp_path, monkeypatch, fake)
+        assert app.state.user_store.get_by_email(TEST_ADMIN_EMAIL) is not None
+        assert "provider" in caplog.text.lower()
+
+
 class TestSeedAdminSupabase:
     """seed_admin's supabase branch (Task 5, #55): the admin bootstraps
     through the gateway during create_app, before any test code runs."""
@@ -752,6 +798,22 @@ class TestSeedAdminSupabase:
         # tokens from before this bootstrap ran, so the local mark must
         # close that window (delta-review finding #1).
         assert admin.password_changed_at is not None
+
+    def test_rerun_against_oauth_origin_identity_fails_closed(self, tmp_path, monkeypatch):
+        # The duplicate-account path above links ANY identity found by
+        # email -- but an OAuth-origin identity at the bootstrap email
+        # would yield an admin row that can never authenticate (the
+        # per-token guard rejects any non-"email" provider). Bootstrap must
+        # fail closed instead of silently minting a locked-out admin.
+        fake = FakeSupabaseGateway()
+        fake.register_user(
+            TEST_ADMIN_EMAIL, "unknown-oauth-password",
+            uuid="existing-oauth-uuid", provider="google",
+        )
+        with pytest.raises(AuthConfigError, match="google"):
+            _build_supabase_app(tmp_path, monkeypatch, fake)
+        # No password rotation attempted against the OAuth-origin identity.
+        assert fake.stored_password(TEST_ADMIN_EMAIL) == "unknown-oauth-password"
 
     def test_bootstrap_failure_aborts_create_app(self, tmp_path, monkeypatch):
         fake = FakeSupabaseGateway()
@@ -1054,6 +1116,32 @@ class TestAdminCreateReconciliation:
         assert resp.status_code == 422
         assert resp.json()["detail"]["code"] == "create_failed"
         assert app.state.user_store.get_by_email("nomatch@example.com") is None
+
+    def test_create_with_password_blocks_oauth_origin_identity(self, supabase_app):
+        # Same reconciliation shape as the "prior success" test above, but
+        # the identity GoTrue rejects the create against is OAuth-origin,
+        # not one this app's own email/password flow minted. Rotating its
+        # password and linking it would produce an admin row that can
+        # never authenticate (the per-token guard rejects any non-"email"
+        # provider) -- must fail closed instead, same as seed_admin's
+        # analogous guard.
+        app, fake = supabase_app
+        fake.register_user(
+            self.RETRY_EMAIL, "existing-oauth-password",
+            uuid="fake-uuid-oauth", provider="google",
+        )
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        resp = client.post(
+            "/api/admin/users",
+            json={"email": self.RETRY_EMAIL, "password": "a retried password 1"},
+            headers=headers,
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "create_failed"
+        assert app.state.user_store.get_by_email(self.RETRY_EMAIL) is None
+        # No password rotation attempted against the OAuth-origin identity.
+        assert fake.stored_password(self.RETRY_EMAIL) == "existing-oauth-password"
 
     def test_invite_reconciles_after_prior_success(self, supabase_app):
         app, fake = supabase_app
