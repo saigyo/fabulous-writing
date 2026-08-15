@@ -14,7 +14,7 @@
 
 These were all verified against a live local stack during planning; implementers should not re-litigate them:
 
-1. `supabase gen signing-key --algorithm ES256` emits a **single JWK object**, but `signing_keys_path` requires a **JSON array** — the wrapper wraps it.
+1. `supabase gen signing-key --algorithm ES256` emits a **single JWK object** to stdout, but `signing_keys_path` requires a **JSON array**. Moreover (Task 1 discovery): once `config.toml` declares `signing_keys_path`, the gen command reads the declared file before writing and hard-errors if it is absent — the working recipe is to pre-seed the file with `[]` and run `gen signing-key --algorithm ES256 --yes`, whereupon the CLI writes the declared file itself as a proper array.
 2. Path bases in `config.toml` **differ per key** (yes, really): `signing_keys_path = "./signing_keys.json"` resolves relative to the `supabase/` directory (file lives at `supabase/signing_keys.json`), while `content_path = "./supabase/templates/invite.html"` resolves relative to the **project root** (file lives at `supabase/templates/invite.html`).
 3. `supabase status -o env` emits exactly these fields (among others): `API_URL` (`http://127.0.0.1:54321`), `PUBLISHABLE_KEY` (`sb_publishable_…`), `SECRET_KEY` (`sb_secret_…`), `SERVICE_ROLE_KEY` (legacy JWT), `MAILPIT_URL` (`http://127.0.0.1:54324`).
 4. Local GoTrue **rejects `sb_secret_…` as a Bearer admin credential** (`bad_jwt`; the hosted platform gateway translates it, local Kong does not). Admin calls need the legacy `SERVICE_ROLE_KEY` JWT. `sb_publishable_…` works fine for user-flow headers. Hence: `FW_SUPABASE_PUBLISHABLE_KEY=$PUBLISHABLE_KEY`, `FW_SUPABASE_SECRET_KEY=$SERVICE_ROLE_KEY`.
@@ -164,17 +164,13 @@ supabase/.temp/
 
 - [ ] **Step 4: Generate a signing key and start the stack (live verification)**
 
-From the repo root:
+From the repo root (recipe as executed in Task 1 — with `signing_keys_path`
+declared, the CLI reads the declared file before writing and errors if
+absent, so pre-seed an empty array and let it write the file itself):
 ```bash
-supabase gen signing-key --algorithm ES256 > supabase/signing_keys.json
-python3 -c "
-import json
-p = 'supabase/signing_keys.json'
-k = json.load(open(p))
-if not isinstance(k, list):
-    json.dump([k], open(p, 'w'))
-"
-supabase start
+echo '[]' > supabase/signing_keys.json
+supabase gen signing-key --algorithm ES256 --yes >/dev/null
+supabase start >/dev/null
 ```
 Expected: stack starts; final line is a JSON blob including `"API_URL":"http://127.0.0.1:54321"`.
 
@@ -355,27 +351,17 @@ docker info >/dev/null 2>&1 || {
     exit 1
 }
 
-# ES256 signing key for local GoTrue. The gen command emits a single JWK
-# object; signing_keys_path requires a JSON array — wrap before install.
-# Staged through a temp file so a failed generation cannot leave a
-# truncated key file behind (-s: an empty file self-heals by regenerating).
-if [[ ! -s supabase/signing_keys.json ]]; then
-    tmp="$(mktemp)"
-    trap 'rm -f "$tmp"' EXIT
-    supabase gen signing-key --algorithm ES256 > "$tmp"
-    python3 - "$tmp" <<'PY'
-import json
-import sys
-
-path = sys.argv[1]
-with open(path) as f:
-    keys = json.load(f)
-if not isinstance(keys, list):
-    with open(path, "w") as f:
-        json.dump([keys], f)
-PY
-    mv "$tmp" supabase/signing_keys.json
-    trap - EXIT
+# ES256 signing key for local GoTrue. With signing_keys_path declared in
+# config.toml, `gen signing-key` reads the declared file BEFORE writing and
+# hard-errors if it is absent (discovered in Task 1; the redirect form
+# corrupts the file with a JSON error object). Working recipe: pre-seed an
+# empty array, then let the CLI write the declared file itself (native JSON
+# array; --yes answers the overwrite prompt; stdout discarded — it names
+# the file, not the key, but stay conservative). A failed generation leaves
+# `[]`, which the condition below treats as regenerate-needed: self-healing.
+if [[ ! -s supabase/signing_keys.json ]] || [[ "$(cat supabase/signing_keys.json)" == "[]" ]]; then
+    echo '[]' > supabase/signing_keys.json
+    supabase gen signing-key --algorithm ES256 --yes >/dev/null
 fi
 
 # Start the stack only if it is not already running. stdout is discarded:
