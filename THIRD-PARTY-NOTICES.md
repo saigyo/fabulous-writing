@@ -10394,7 +10394,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### eventsource-parser 3.1.0
+### eventsource-parser 4.0.0
 
 License: MIT
 
