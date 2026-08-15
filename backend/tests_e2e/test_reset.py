@@ -10,9 +10,7 @@ including for an unknown email.
 
 import httpx
 
-from .helpers import admin_create_user, expect_login_failure, login
-
-TIMEOUT = 30.0
+from .helpers import TIMEOUT, admin_create_user, expect_login_failure, login, refresh
 
 
 def test_password_reset_end_to_end_with_eviction(
@@ -47,11 +45,7 @@ def test_password_reset_end_to_end_with_eviction(
     assert confirm.status_code == 204
 
     # pre-reset refresh pair is dead (reset-confirm eviction)
-    after = httpx.post(
-        f"{app_url}/api/auth/refresh",
-        json={"refresh_token": pre_reset_session["refresh_token"]},
-        timeout=TIMEOUT,
-    )
+    after = refresh(app_url, pre_reset_session["refresh_token"])
     assert after.status_code == 401
 
     assert expect_login_failure(app_url, email, old_password) == 401

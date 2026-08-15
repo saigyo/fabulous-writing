@@ -11,9 +11,7 @@ The iat cutoff itself is pinned in the unit suite with controlled clocks.
 
 import httpx
 
-from .helpers import admin_create_user, bearer, expect_login_failure, login
-
-TIMEOUT = 30.0
+from .helpers import TIMEOUT, admin_create_user, bearer, expect_login_failure, login, refresh
 
 
 def test_password_change_rotates_credential_and_kills_other_sessions(
@@ -40,11 +38,7 @@ def test_password_change_rotates_credential_and_kills_other_sessions(
 
     # every outstanding refresh pair is dead (global sign-out) ...
     for refresh_token in (session_a["refresh_token"], session_b["refresh_token"]):
-        after = httpx.post(
-            f"{app_url}/api/auth/refresh",
-            json={"refresh_token": refresh_token},
-            timeout=TIMEOUT,
-        )
+        after = refresh(app_url, refresh_token)
         assert after.status_code == 401
 
     # ... the old credential is dead, the new one works

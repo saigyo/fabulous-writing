@@ -471,13 +471,17 @@ action dependencies current. `backend/scripts/vetting-benchmark.py` reports
 false-reject rates of the suggestion-vetting spell gate.
 
 There is also an offline e2e suite that boots the real backend against a local
-Supabase stack to exercise login, refresh rotation, password change, invite
-acceptance, and password reset end to end:
+Supabase stack to exercise login, refresh rotation, logout, password change,
+invite acceptance, and password reset end to end:
 
 ```sh
 scripts/e2e-supabase.sh        # run the suite (starts the stack if it's down)
 scripts/e2e-supabase.sh --down # stop the local supabase stack
 ```
+
+A running stack keeps its boot-time config, so edits to `supabase/config.toml`
+or `supabase/templates/` need `scripts/e2e-supabase.sh --down` first before
+they take effect.
 
 It needs Docker (via [colima](https://github.com/abiosoft/colima)) and the
 [supabase CLI](https://supabase.com/docs/guides/cli) locally; the default

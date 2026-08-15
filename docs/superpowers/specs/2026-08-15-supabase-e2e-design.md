@@ -62,7 +62,7 @@ email template → token_hash → confirm contract.
   never raw `docker` commands — so it can never touch foreign resources.
 - Services: postgres, GoTrue, Kong (gateway at `http://127.0.0.1:54321`,
   auth under `/auth/v1`), Mailpit. Disabled via config: studio, storage,
-  realtime, edge-runtime, analytics/logflare, pooler. Postgres remains
+  realtime, edge-runtime, analytics/logflare. Postgres remains
   fully usable — B15 (#56) re-enables what it needs; nothing in the
   harness assumes auth-only.
 - `[auth]` mirrors production: `enable_signup = false` (invitation-only;
@@ -160,9 +160,10 @@ Flow coverage (one file per flow area, ~15–20 tests):
 | 6 | Invite acceptance | Admin create without password → 201 `invited: true` → Mailpit mail → `token_hash` → reset-confirm sets password → invitee login works |
 | 7 | Password reset | Reset request → mail → confirm → pre-existing sessions evicted, new password works; reset-request is unenumerable (always 204, unknown email included). (Amended at plan time: the app throttle blocks silently — 204 either way, no gateway call — and GoTrue's own SMTP rate limit can also suppress mail, so "no mail arrived" cannot distinguish the two; throttle blocking stays pinned in the unit suite.) |
 
-Out of scope, deliberately: negative/adversarial token cases (bad
-signatures, claim guards, provider guards, anonymous tokens) — pinned in
-the unit suite with the fake/real-verifier rigs. This suite buys
+Out of scope, deliberately, for the bulk of negative/adversarial token cases
+(bad signatures, claim guards, provider guards, anonymous tokens) — pinned in
+the unit suite with the fake/real-verifier rigs; the e2e suite keeps only two
+zero-cost smoke cases (garbage bearer, stale `token_hash`). This suite buys
 integration truth, not case coverage. Also out of scope: browser flows
 (Vitest owns frontend logic), load/perf, B15 database concerns.
 

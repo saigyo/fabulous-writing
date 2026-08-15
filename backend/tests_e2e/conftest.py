@@ -132,8 +132,10 @@ def app_url(
             if proc.poll() is not None:
                 break
             try:
-                if httpx.get(f"{APP_URL}/api/health", timeout=2).status_code == 200:
+                health = httpx.get(f"{APP_URL}/api/health", timeout=2)
+                if health.status_code == 200:
                     break
+                last_error = f"health returned {health.status_code}"
             except httpx.HTTPError as exc:
                 last_error = exc
             time.sleep(0.5)
@@ -175,7 +177,11 @@ def _gotrue_cleanup(stack: StackEnv, runid: str):
     """Best-effort: delete this run's GoTrue users at session end.
 
     Correctness never depends on this — identities are run-unique — but a
-    reused stack should not accumulate garbage. Errors are swallowed.
+    reused stack should not accumulate garbage. Errors are swallowed. The
+    sweep is page-1-only (per_page=200): on a long-lived stack with more
+    than 200 accumulated users, older runs' users may fall off the first
+    page and simply be left behind — identities, not cleanup, carry
+    correctness, so this is an accepted degradation, not a bug.
     """
     yield
     headers = {
@@ -190,7 +196,8 @@ def _gotrue_cleanup(stack: StackEnv, runid: str):
             timeout=10,
         )
         for user in resp.json().get("users", []):
-            if runid in (user.get("email") or ""):
+            email = user.get("email") or ""
+            if email.endswith("@e2e.local") and runid in email:
                 httpx.delete(
                     f"{stack.api_url}/auth/v1/admin/users/{user['id']}",
                     headers=headers,
