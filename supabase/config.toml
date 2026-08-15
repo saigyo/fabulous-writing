@@ -45,9 +45,12 @@ jwt_expiry = 3600
 # project-root-relative. Both verified on CLI 2.114.0.
 signing_keys_path = "./signing_keys.json"
 enable_refresh_token_rotation = true
-# Hosted default is 10 s; 0 makes a consumed refresh token rejectable
-# immediately, so the rotation test needs no wall-clock wait.
-refresh_token_reuse_interval = 0
+# Hosted default. Note (Task 4 discovery): GoTrue honors the IMMEDIATE
+# parent refresh token as deliberate retry tolerance regardless of this
+# interval (0 included) — but degenerates it to the same session family
+# (same child refresh token, never a fork). The e2e suite pins that
+# no-forking property; this interval only governs deeper-ancestor reuse.
+refresh_token_reuse_interval = 10
 # Mirror production: project-wide signups off (invitation-only). Admin
 # invites are exempt — verified against this local stack.
 enable_signup = false
