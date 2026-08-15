@@ -105,9 +105,11 @@ not start, and manages supabase containers only via the CLI.
 ### 3. App-under-test fixture (pytest session scope, in `tests_e2e/`)
 
 - Launches `uvicorn app.main:app` as a subprocess on `127.0.0.1:8001`
-  with: tempfile SQLite DB and rules dir, `FW_CONFIG_FILE` pointing at
-  the committed e2e config (`tests_e2e/e2e-config.yaml`: `auth.mode:
-  supabase`, `supabase.url: http://127.0.0.1:54321`), per-run-unique
+  with: tempfile SQLite DB and rules dir, `FW_CONFIG_FILE` pointing at a
+  conftest-generated per-run YAML (`auth.mode: supabase`, `supabase.url:
+  http://127.0.0.1:54321`, plus the per-run tempfile `db_path`/`rules_dir`
+  — which is why the file cannot be committed statically; amended at plan
+  time), per-run-unique
   bootstrap admin `FW_ADMIN_EMAIL=admin-<runid>@e2e.local` +
   `FW_ADMIN_PASSWORD`, and the two key vars passed through from the
   wrapper. `FW_AUTH_SECRET` is not set (supabase mode does not use it).
@@ -154,9 +156,9 @@ Flow coverage (one file per flow area, ~15–20 tests):
 | 2 | Login/session | Admin login → ES256 token verified via real JWKS → `/api/me`; wrong password → 401 |
 | 3 | Refresh | Rotated pair works; consumed refresh token is rejected |
 | 4 | Logout | Bearer logout; the session's refresh token is dead at GoTrue afterwards |
-| 5 | Password change + M2 eviction | Two live sessions; change password in one → other session's access token rejected (epoch), its refresh rejected (global sign-out), old password dead, new password works |
+| 5 | Password change + M2 eviction | Two live sessions; change password in one → both refresh tokens rejected (global sign-out), old password dead, new password works. (Amended at plan time: the access-token iat cutoff backdates by a 60 s clock-skew leeway, so a token minted seconds before the change survives it by design — asserting its rejection would need a >60 s wall-clock wait. The iat cutoff stays pinned in the unit suite with controlled clocks.) |
 | 6 | Invite acceptance | Admin create without password → 201 `invited: true` → Mailpit mail → `token_hash` → reset-confirm sets password → invitee login works |
-| 7 | Password reset | Reset request → mail → confirm → pre-existing sessions evicted, new password works; rapid repeat requests trip the reset throttle (exact request count pinned from `reset_throttle`'s threshold at plan time; no wall-clock waits) |
+| 7 | Password reset | Reset request → mail → confirm → pre-existing sessions evicted, new password works; reset-request is unenumerable (always 204, unknown email included). (Amended at plan time: the app throttle blocks silently — 204 either way, no gateway call — and GoTrue's own SMTP rate limit can also suppress mail, so "no mail arrived" cannot distinguish the two; throttle blocking stays pinned in the unit suite.) |
 
 Out of scope, deliberately: negative/adversarial token cases (bad
 signatures, claim guards, provider guards, anonymous tokens) — pinned in
@@ -185,15 +187,22 @@ into PR checks.
   only. The loopback-http URL exception already shipped in B14 and is the
   only accommodation.
 - No new Settings knobs for the harness; e2e configuration lives in the
-  committed e2e config file + env.
+  conftest-generated per-run config file + env.
 
-## Open items to pin during implementation (not design risks)
+## Open items — resolved during planning (live probe, CLI 2.114.0)
 
-- Exact machine-readable field names from `supabase status` for the API
-  URL, anon key, and service-role key on CLI 2.114.0.
-- Mailpit REST endpoint shapes (search vs. list; body encoding).
-- Confirmation that local GoTrue's admin API accepts the service-role JWT
-  for `invite_user_by_email` / `delete_user` identically to a hosted
-  `sb_secret_` key (expected: yes; the gateway code path is identical).
-- Which config.toml `enabled` toggles suffice vs. needing `supabase start
-  -x` exclusions on 2.114.0.
+All four were pinned empirically against a running local stack; the
+detailed values live in the plan's "Empirically verified platform facts"
+section (`docs/superpowers/plans/2026-08-15-supabase-e2e.md`).
+
+- `supabase status -o env` emits `API_URL`, `PUBLISHABLE_KEY`
+  (`sb_publishable_…`), `SECRET_KEY` (`sb_secret_…`), `SERVICE_ROLE_KEY`
+  (legacy JWT), `MAILPIT_URL`.
+- Mailpit REST: `GET /api/v1/search?query=to:<email>` (list) +
+  `GET /api/v1/message/{ID}` (detail incl. `HTML`).
+- Local GoTrue REJECTS `sb_secret_…` as a Bearer admin credential
+  (`bad_jwt`; the hosted platform translates it, local Kong does not) —
+  the legacy `SERVICE_ROLE_KEY` JWT works, so
+  `FW_SUPABASE_SECRET_KEY=$SERVICE_ROLE_KEY` locally.
+- Config `enabled` toggles suffice; no `-x` exclusions needed. Trimmed
+  container set: auth, db, inbucket (Mailpit), kong, rest.
