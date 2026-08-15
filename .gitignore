@@ -25,3 +25,6 @@ coverage/
 backend/config.yaml
 backend/api-keys.sh
 .superpowers/
+supabase/signing_keys.json
+supabase/.temp/
+supabase/.branches/

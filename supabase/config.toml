@@ -1,0 +1,84 @@
+# Supabase CLI local stack for the offline e2e suite (B27, #94).
+# Managed exclusively via `supabase start` / `supabase stop` from the repo
+# root — never via raw docker commands. Container names:
+# supabase_<service>_fabulous-writing-e2e.
+project_id = "fabulous-writing-e2e"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public"]
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 17
+
+[studio]
+enabled = false
+
+[realtime]
+enabled = false
+
+[storage]
+enabled = false
+
+[edge_runtime]
+enabled = false
+
+[analytics]
+enabled = false
+
+# Mailpit: captures all mail the stack would send; REST API on this port.
+[local_smtp]
+enabled = true
+port = 54324
+
+[auth]
+enabled = true
+# Only the fragment contract of the links matters; the host is never
+# dereferenced by the API-level suite.
+site_url = "http://localhost:5173"
+jwt_expiry = 3600
+# NOTE: resolved relative to the supabase/ directory (file lives at
+# supabase/signing_keys.json), UNLIKE content_path below which is
+# project-root-relative. Both verified on CLI 2.114.0.
+signing_keys_path = "./signing_keys.json"
+enable_refresh_token_rotation = true
+# Hosted default is 10 s; 0 makes a consumed refresh token rejectable
+# immediately, so the rotation test needs no wall-clock wait.
+refresh_token_reuse_interval = 0
+# Mirror production: project-wide signups off (invitation-only). Admin
+# invites are exempt — verified against this local stack.
+enable_signup = false
+
+# GoTrue's default IP rate limits (30 sign-ins / 5 min) are sized for
+# humans, not a test suite: one run issues ~16 password grants (incl. the
+# internal current-password verification inside the change-password route),
+# so two back-to-back runs would trip 429s that surface as fake 401
+# regressions. email_sent is NOT settable here — the CLI only exports it
+# with a real SMTP config, so GoTrue's default (30 mails/hour) applies;
+# see the Mailpit client's timeout message.
+[auth.rate_limit]
+sign_in_sign_ups = 1000
+token_verifications = 1000
+token_refresh = 1000
+
+[auth.email]
+# The email provider itself stays enabled: the app's provider claim guard
+# and the startup lockout both require 'email' as the only enabled provider.
+enable_signup = true
+double_confirm_changes = true
+enable_confirmations = false
+secure_password_change = false
+max_frequency = "1s"
+
+# Templates carry the production fragment contract documented in
+# docs/supabase-auth-setup.md. content_path is PROJECT-ROOT-relative.
+[auth.email.template.invite]
+subject = "You are invited"
+content_path = "./supabase/templates/invite.html"
+
+[auth.email.template.recovery]
+subject = "Reset your password"
+content_path = "./supabase/templates/recovery.html"
