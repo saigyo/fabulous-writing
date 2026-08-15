@@ -2138,6 +2138,90 @@ test-only accelerators keep the fixed cost per test low:
 `document_clock` fixture replaces real sleeps for second-precision
 timestamp ordering.
 
+### Offline supabase e2e suite (B27)
+
+`uv run pytest` above never touches a real Supabase stack — every supabase-mode
+unit test drives `create_app()` through `TestClient` with a `FakeSupabaseGateway`.
+That structurally cannot see bugs that only exist under a real server boot: `B14`
+shipped with `seed_admin`'s supabase bootstrap calling `asyncio.run()` unconditionally,
+which crashed every real `uv run uvicorn app.main:app` deployment because uvicorn
+imports the app from *inside* `Server.serve()`'s already-running event loop
+(`import_from_string`), not before it as the removed comment assumed — no
+`TestClient`-based test constructs its app inside a running loop, so none could
+have caught it. The offline e2e suite (`backend/tests_e2e/`) is integration truth
+for the whole B14 surface for exactly this reason: it boots the real app as a
+uvicorn subprocess against a real local Supabase stack.
+
+Three layers: the stack definition (`supabase/config.toml` and
+`supabase/templates/`, a `supabase start`-able local stack with Studio, Realtime,
+Storage and the edge runtime disabled — only `api`, `db`, `auth`, and Mailpit's
+`local_smtp` run); the wrapper (`scripts/e2e-supabase.sh`, which starts the stack
+if it is down, exports the env contract below, and execs `pytest tests_e2e -q -n0`
+from `backend/`); and the suite itself (`backend/tests_e2e/`, five flow files —
+boot/login, refresh rotation, password change, invite acceptance, password
+reset — driving the app over HTTP with no mocking).
+
+**Env contract**, sourced by the wrapper from `supabase status -o env` and
+consumed by `tests_e2e/conftest.py`'s `stack` fixture: `FW_SUPABASE_E2E_API_URL`
+and `FW_SUPABASE_E2E_MAILPIT_URL` (the stack's REST and Mailpit endpoints);
+`FW_SUPABASE_PUBLISHABLE_KEY`, the `sb_publishable_…` key used for user-flow
+headers; and `FW_SUPABASE_SECRET_KEY`, which maps to the CLI's legacy
+`SERVICE_ROLE_KEY` JWT rather than its `sb_secret_…` opaque key — local GoTrue
+rejects `sb_secret_…` as a Bearer admin credential (`bad_jwt`; the hosted
+platform's gateway translates it, local Kong does not).
+
+**Isolation model.** The stack is reused across runs for fast iteration
+(`scripts/e2e-supabase.sh --down` stops it explicitly); within a run, every
+identity is `<role>-<runid>@e2e.local` with an 8-hex-char run id, so concurrent
+or repeated runs against the same reused stack never collide. The scratch app
+gets a fresh tempfile SQLite database per run (`tmp_path_factory`), and a
+session-scoped, best-effort fixture deletes that run's GoTrue users at
+teardown — correctness never depends on this cleanup, only tidiness does.
+
+**What is deliberately not asserted.** The local iat-based access-token
+eviction on password change backdates `password_changed_at` by a 60 s
+clock-skew leeway, so an access token minted seconds before the change
+survives that check by design; asserting it would need a real wall-clock
+wait, so the e2e suite only pins the eviction guarantees it *can* observe
+without waiting — every outstanding refresh token dies and the old password
+stops working — and leaves the iat cutoff itself to the unit suite's
+controlled clocks. Similarly, the password-reset throttle blocks silently
+(always 204, no observable signal) by design, so the e2e suite exercises the
+happy path and defers the throttle's blocking semantics to the unit suite,
+which also owns every adversarial token case (malformed, expired, wrong-type)
+that the unit suite can construct directly but the e2e suite would have to
+wait or forge for. Refresh-token reuse is the fourth such case, but with an
+inverted shape: GoTrue honors the *immediate* parent refresh token as retry
+tolerance regardless of `refresh_token_reuse_interval` (0 included) — the
+reuse response carries the identical child refresh token rather than a 401 or
+a forked session — so a 401-on-reuse assertion is unachievable against real
+GoTrue. `test_sessions.py` pins the property that actually holds instead:
+reuse cannot fork a second session family.
+
+**Operational limits.** GoTrue's default email rate limit (30 mails/hour) is
+not configurable on this Mailpit-backed local stack — the CLI only exports
+`GOTRUE_RATE_LIMIT_EMAIL_SENT` when a real SMTP config is present. At two
+mails per run (invite + reset), that budget is exhausted after roughly 15
+runs in an hour, after which the Mailpit client's `wait_for_message` times
+out waiting for mail that GoTrue silently declined to send; the remedy is
+`scripts/e2e-supabase.sh --down` followed by a fresh `start`, not a retry
+loop. Separately, `[auth.rate_limit]` widens `sign_in_sign_ups`,
+`token_verifications`, and `token_refresh` well past GoTrue's human-sized
+defaults, because one run alone issues on the order of 16 password grants.
+
+**Environment caveats.** colima only shares `$HOME` into its VM; bind-mounting
+from outside it (e.g. `/private/tmp`) silently yields empty root-owned
+directories in the container, so the checkout must stay under `$HOME` for the
+stack's containers to see the repo. And `config.toml`'s path-valued keys do
+not share a base: `signing_keys_path` resolves relative to the `supabase/`
+directory, while `content_path` on the email templates resolves relative to
+the project root — both verified against CLI 2.114.0, not documented
+behavior. That signing-key file also cannot be produced by simple shell
+redirection: once `signing_keys_path` is declared, `supabase gen signing-key`
+reads the declared file before writing and hard-errors if it is absent, so
+the wrapper pre-seeds an empty JSON array and lets the CLI write the file
+itself with `--yes`.
+
 ## Container deployment (B17)
 
 Design source: `docs/superpowers/specs/2026-08-02-single-container-design.md`. The
