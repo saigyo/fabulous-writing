@@ -60,7 +60,7 @@ def connect(
     # rollback); this wrapper also closes the connection afterwards, so
     # `with connect(...) as conn:` cannot leak connections. `timeout`
     # lets the operator CLI (app/manage.py) wait out a busy database
-    # owned by a running server instance instead of failing instantly.
+    # owned by a running server instead of failing instantly.
     raw = _open(db_path, timeout)
     raw.execute("PRAGMA foreign_keys = ON")
     try:
