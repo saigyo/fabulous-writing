@@ -754,7 +754,14 @@ async def _update_password_or_retry_envelope(
     """The retryable update leg. The caller holds a session whose identity
     is already confirmed; ANY failure here must hand back a retry token --
     the one-time link is spent, so retrying is the only useful direction
-    (spec §2; PR #95 round 8 for the transient case)."""
+    (spec §2; PR #95 round 8 for the transient case).
+
+    Honest residual: a retry token replayed after a SUCCESSFUL rotation
+    rotates the password again -- the stateless verifier has no way to
+    revoke an individual otp session, so the window is bounded only by the
+    token's own TTL, and is reachable only by whoever already holds the
+    link's one-time-verified session (never by a stolen ordinary bearer --
+    see the retry leg's amr guard)."""
     try:
         await app.state.supabase_gateway.change_password(
             supabase_user_id, new_password
@@ -777,8 +784,12 @@ async def _update_password_or_retry_envelope(
 async def _finish_confirmed_rotation(app, store, local_id: int, access_token: str) -> None:
     """M2 eviction after a completed remote rotation: unchanged ordering
     from B14 -- mark (backdated) locally, then best-effort global
-    sign-out. Also kills the retry token for API-auth purposes (its iat
-    predates the mark's backdated cutoff)."""
+    sign-out. The backdated mark kills any token OLDER than
+    IAT_LEEWAY_SECONDS -- `access_token` itself (minted seconds earlier, by
+    verify_token_hash or an earlier failed retry) sits INSIDE that leeway
+    window and survives to its natural TTL, same as `test_retry_token_
+    lifecycle_as_bearer` pins (the documented B14 residual). What this DOES
+    revoke here is the session's REFRESH token, via global_sign_out."""
     store.mark_password_changed(local_id)
     try:
         await app.state.supabase_gateway.global_sign_out(access_token)
