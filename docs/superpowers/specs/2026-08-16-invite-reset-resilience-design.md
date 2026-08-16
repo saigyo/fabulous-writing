@@ -140,12 +140,17 @@ eviction bookkeeping for a pre-existing row, `mark_password_changed`
 by tests:
 
 - The route never returns a session in any branch. Honesty note (amended
-  at plan review): the retry token IS a live otp-session bearer until the
-  rotation completes — the same exposure any confirm session has today —
-  and dies at rotation via the backdated mark; a lifecycle test pins
-  both halves. What the retry token can never do is serve as a rotation
-  credential from a password-minted session (the otp-only guard above),
-  and the route itself never hands out a session envelope.
+  at plan review, corrected at re-review): the retry token IS a live
+  otp-session bearer from mint until its NATURAL TTL — minted seconds
+  before the rotation, it sits inside the 60 s iat-leeway window, so the
+  backdated mark cannot kill it (the documented B14 residual, the same
+  exposure any confirm session has today). Rotation kills the session's
+  REFRESH token (global sign-out); a lifecycle test pins all three
+  halves (bearer live pre-rotation, bearer still live post-rotation,
+  refresh dead post-rotation). What the retry token can never do is
+  serve as a rotation credential from a password-minted session (the
+  otp-only guard above), and the route itself never hands out a session
+  envelope.
 - The retry envelope's `retry_token` is never logged.
 
 **Sequencing note**: on the link leg, eviction bookkeeping stays keyed to
