@@ -1,15 +1,12 @@
-from pathlib import Path
-
 import pytest
 
 from app.services import users as users_module
-from app.services.db.sqlite import SqliteDatabase
 from app.services.users import DuplicateEmailError, InvalidEmailError, UserStore
 
 
 @pytest.fixture()
-def store(tmp_path: Path) -> UserStore:
-    return UserStore(SqliteDatabase(tmp_path / "test.db"))
+def store(db) -> UserStore:
+    return UserStore(db)
 
 
 def test_create_and_read_back(store):
@@ -164,8 +161,8 @@ def test_audit_rows_record_the_actor_or_none_for_cli(store):
     assert all(r["created_at"] for r in rows)
 
 
-def test_set_password_bumps_token_epoch(tmp_path):
-    store = UserStore(SqliteDatabase(tmp_path / "u.db"))
+def test_set_password_bumps_token_epoch(db):
+    store = UserStore(db)
     user = store.create_user("epoch@example.com", "password-one")
     assert user.token_epoch == 0
     store.set_password(user.id, "password-two")
@@ -174,13 +171,13 @@ def test_set_password_bumps_token_epoch(tmp_path):
     assert store.get_user(user.id).token_epoch == 2
 
 
-def test_token_epoch_is_not_serialized(tmp_path):
-    store = UserStore(SqliteDatabase(tmp_path / "u.db"))
+def test_token_epoch_is_not_serialized(db):
+    store = UserStore(db)
     user = store.create_user("epoch2@example.com", "password-one")
     assert "token_epoch" not in user.model_dump()
 
 
-def test_link_external_id_same_subject_different_row_fails_closed_not_500(tmp_path):
+def test_link_external_id_same_subject_different_row_fails_closed_not_500(db):
     # Row A is unlinked; the SUBJECT is already linked to row B. The UPDATE's
     # WHERE clause is satisfied (row A's external_id IS NULL), but the SET
     # value collides with row B's external_id under the UNIQUE constraint --
@@ -188,7 +185,7 @@ def test_link_external_id_same_subject_different_row_fails_closed_not_500(tmp_pa
     # catch in link_external_id, this raises unhandled and both callers
     # (resolve_supabase_user, admin._adopt_existing_row) would 500 instead of
     # failing closed.
-    store = UserStore(SqliteDatabase(tmp_path / "u.db"))
+    store = UserStore(db)
     row_a = store.create_user("a@example.com", "correct horse battery")
     store.create_user("b@example.com", "correct horse battery", external_id="subject-s")
     assert store.link_external_id(row_a.id, "subject-s") is False

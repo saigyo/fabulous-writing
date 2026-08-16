@@ -11,7 +11,7 @@ from app.services.users import UserStore
 
 
 @pytest.fixture()
-def db(tmp_path: Path) -> Path:
+def db(tmp_path: Path) -> Path:  # intentionally shadows conftest's parametrized `db`: this module is SQLite/CLI-scoped by design
     path = tmp_path / "test.db"
     store = UserStore(SqliteDatabase(path))
     store.create_user("root@example.com", "bootstrap password", is_admin=True)
