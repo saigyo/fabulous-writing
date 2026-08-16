@@ -29,11 +29,20 @@ const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 export class HttpError extends Error {
   readonly status: number
   readonly code?: string
+  readonly retryToken?: string
+  readonly reasons?: string[]
 
-  constructor(status: number, message: string, code?: string) {
+  constructor(
+    status: number,
+    message: string,
+    code?: string,
+    extra?: { retryToken?: string; reasons?: string[] },
+  ) {
     super(message)
     this.status = status
     this.code = code
+    this.retryToken = extra?.retryToken
+    this.reasons = extra?.reasons
   }
 }
 
@@ -53,7 +62,7 @@ interface RequestOptions extends Omit<RequestInit, 'headers'> {
 // RequestOptions — so it is reachable exclusively through requestWithOptions
 // below. Its callers, kept complete here since this flag is
 // security-relevant and must not go stale: postLogin, postRefresh,
-// postResetRequest, postResetConfirm. Anything importing the public
+// postResetRequest, postResetConfirm, postResetRetry. Anything importing the public
 // request() gets a type that has no such property at all: passing
 // { keepSessionOn401: true } as an object literal to request() is a compile
 // error, not a convention someone has to remember. This is a property of
@@ -69,22 +78,33 @@ interface RequestOptionsInternal extends RequestOptions {
 // A non-OK response is not guaranteed to have a JSON body, let alone one
 // shaped like `{ detail: { code, message } }` — so a parse failure here
 // must not replace the real HTTP status with a parse error; it just leaves
-// `code` undefined and the caller still gets `status`.
-async function extractErrorCode(response: Response): Promise<string | undefined> {
+// every field undefined and the caller still gets `status`. Also carries the
+// reset-confirm envelope's retry_token/reasons (Task 3) when present, so
+// HttpError can expose them to callers like ResetPasswordForm without a
+// second round trip through the response body.
+interface ErrorDetail {
+  code?: string
+  retryToken?: string
+  reasons?: string[]
+}
+
+async function extractErrorDetail(response: Response): Promise<ErrorDetail> {
   try {
     const body: unknown = JSON.parse(await response.text())
     const detail = (body as { detail?: unknown } | null)?.detail
-    if (
-      detail !== null &&
-      typeof detail === 'object' &&
-      typeof (detail as { code?: unknown }).code === 'string'
-    ) {
-      return (detail as { code: string }).code
+    if (detail === null || typeof detail !== 'object') return {}
+    const d = detail as { code?: unknown; retry_token?: unknown; reasons?: unknown }
+    return {
+      code: typeof d.code === 'string' ? d.code : undefined,
+      retryToken: typeof d.retry_token === 'string' ? d.retry_token : undefined,
+      reasons: Array.isArray(d.reasons)
+        ? d.reasons.filter((r): r is string => typeof r === 'string')
+        : undefined,
     }
   } catch {
     // Not JSON, or not the expected shape — status alone still throws below.
+    return {}
   }
-  return undefined
 }
 
 // Shared by request() below and, from Task 5, the SSE reader (which passes
@@ -139,10 +159,12 @@ async function requestWithOptions<T>(path: string, init?: RequestOptionsInternal
     if (response.status === 401 && !keepSessionOn401) {
       handleUnauthorized(token)
     }
+    const detail = await extractErrorDetail(response)
     throw new HttpError(
       response.status,
       `${init?.method ?? 'GET'} ${path} failed: ${response.status}`,
-      await extractErrorCode(response),
+      detail.code,
+      { retryToken: detail.retryToken, reasons: detail.reasons },
     )
   }
   if (response.status === 204) return undefined as T
@@ -265,6 +287,17 @@ export const postResetConfirm = (tokenHash: string, type: 'recovery' | 'invite',
     keepSessionOn401: true,
   })
 
+// keepSessionOn401: the retry leg of the same anonymous flow as
+// postResetConfirm above — same reasoning, same treatment. Called with the
+// retry_token a password_weak/update_failed envelope handed back instead of
+// the original token_hash/type pair.
+export const postResetRetry = (retryToken: string, newPassword: string) =>
+  requestWithOptions<void>('/api/auth/reset-confirm', {
+    method: 'POST',
+    body: JSON.stringify({ retry_token: retryToken, new_password: newPassword }),
+    keepSessionOn401: true,
+  })
+
 export const getMe = () => request<MeResponse>('/api/auth/me')
 
 // The server's SELF_MIN_PASSWORD_LENGTH (backend/app/core/auth.py) is 8, and
@@ -341,6 +374,12 @@ export const patchAdminUser = (id: number, patch: AdminUserPatch) =>
     method: 'PATCH',
     body: JSON.stringify(patch),
   })
+
+// Admin-only and bearer-authenticated like every other admin/* call, so it
+// uses the public request() — a 401 here can only mean the admin's own token
+// was rejected. Task 7 wires up the consumer; this is just the client stub.
+export const postResendInvite = (id: number) =>
+  request<void>(`/api/admin/users/${id}/resend-invite`, { method: 'POST' })
 
 // Injected by auth/session.ts (avoids a module cycle): session.ts imports
 // this module for postLogin/getMe, so this module must not import

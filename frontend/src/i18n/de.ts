@@ -283,6 +283,11 @@ export const de: Messages = {
   resetRequestSubmit: 'Link senden',
   backToSignIn: 'Zurück zur Anmeldung',
   adminPasswordOptionalHint: 'Leer lassen, um eine Einladungs-E-Mail zu senden',
+  pwWeakLength: 'Dieses Passwort ist für die Sicherheitsregeln zu kurz — wähle ein längeres.',
+  pwWeakCharacters: 'Mische Groß- und Kleinbuchstaben und Ziffern, um das Passwort stärker zu machen.',
+  pwWeakPwned: 'Dieses Passwort taucht in bekannten Datenlecks auf — bitte wähle ein anderes.',
+  pwWeakGeneric: 'Dieses Passwort ist zu schwach — wähle ein stärkeres.',
+  resetUpdateFailedRetry: 'Das Speichern hat noch nicht geklappt — versuch es bitte erneut.',
   dialogCancel: 'Abbrechen',
   dialogConfirm: 'Bestätigen',
 }

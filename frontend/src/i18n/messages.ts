@@ -260,6 +260,11 @@ export interface Messages {
   resetRequestSubmit: string
   backToSignIn: string
   adminPasswordOptionalHint: string
+  pwWeakLength: string
+  pwWeakCharacters: string
+  pwWeakPwned: string
+  pwWeakGeneric: string
+  resetUpdateFailedRetry: string
 
   // Dialog
   dialogCancel: string

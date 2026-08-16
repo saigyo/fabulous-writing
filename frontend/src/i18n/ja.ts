@@ -273,6 +273,11 @@ export const ja: Messages = {
   resetRequestSubmit: 'リセットリンクを送信',
   backToSignIn: 'ログイン画面に戻る',
   adminPasswordOptionalHint: '空欄のままにすると招待メールを送信します',
+  pwWeakLength: 'このパスワードはセキュリティ基準に対して短すぎます。もっと長いパスワードを選んでください。',
+  pwWeakCharacters: '大文字・小文字・数字を組み合わせて、より強いパスワードにしてください。',
+  pwWeakPwned: 'このパスワードは既知の漏えいデータに含まれています。別のパスワードを選んでください。',
+  pwWeakGeneric: 'このパスワードは弱すぎます。より強いパスワードを選んでください。',
+  resetUpdateFailedRetry: '保存がまだ完了していません。もう一度お試しください。',
   dialogCancel: 'キャンセル',
   dialogConfirm: '確認',
 }

@@ -267,6 +267,11 @@ export const en: Messages = {
   resetRequestSubmit: 'Send reset link',
   backToSignIn: 'Back to sign-in',
   adminPasswordOptionalHint: 'Leave empty to send an invitation email',
+  pwWeakLength: 'This password is too short for the security rules — pick a longer one.',
+  pwWeakCharacters: 'Mix upper- and lowercase letters and digits to make this password stronger.',
+  pwWeakPwned: 'This password appears in known data breaches — please pick a different one.',
+  pwWeakGeneric: 'This password is too weak — pick a stronger one.',
+  resetUpdateFailedRetry: "Saving didn't work yet — please try again.",
   dialogCancel: 'Cancel',
   dialogConfirm: 'Confirm',
 }

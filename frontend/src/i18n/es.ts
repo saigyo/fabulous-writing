@@ -287,6 +287,11 @@ export const es: Messages = {
   resetRequestSubmit: 'Enviar enlace',
   backToSignIn: 'Volver al inicio de sesión',
   adminPasswordOptionalHint: 'Déjalo vacío para enviar un correo de invitación',
+  pwWeakLength: 'Esta contraseña es demasiado corta para las reglas de seguridad — elige una más larga.',
+  pwWeakCharacters: 'Combina mayúsculas, minúsculas y números para que esta contraseña sea más segura.',
+  pwWeakPwned: 'Esta contraseña aparece en filtraciones de datos conocidas — elige otra.',
+  pwWeakGeneric: 'Esta contraseña es demasiado débil — elige una más segura.',
+  resetUpdateFailedRetry: 'Guardar no funcionó todavía — vuelve a intentarlo.',
   dialogCancel: 'Cancelar',
   dialogConfirm: 'Confirmar',
 }

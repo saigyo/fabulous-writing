@@ -282,6 +282,11 @@ export const it: Messages = {
   resetRequestSubmit: 'Invia link',
   backToSignIn: "Torna all'accesso",
   adminPasswordOptionalHint: "Lascia vuoto per inviare un'e-mail di invito",
+  pwWeakLength: 'Questa password è troppo corta per le regole di sicurezza — scegline una più lunga.',
+  pwWeakCharacters: 'Combina lettere maiuscole, minuscole e numeri per rendere questa password più sicura.',
+  pwWeakPwned: "Questa password compare in violazioni di dati note — scegline un'altra.",
+  pwWeakGeneric: 'Questa password è troppo debole — scegline una più sicura.',
+  resetUpdateFailedRetry: 'Il salvataggio non ha ancora funzionato — riprova.',
   dialogCancel: 'Annulla',
   dialogConfirm: 'Conferma',
 }
