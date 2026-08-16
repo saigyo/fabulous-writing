@@ -7,7 +7,7 @@ be shipped without it.
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
@@ -15,8 +15,10 @@ from app.api.deps import CurrentUser, require_admin
 from app.core.auth import ADMIN_SET_MIN_PASSWORD_LENGTH, validate_password
 from app.services.supabase_gateway import (
     SupabaseAuthError,
+    SupabaseEmailExistsError,
     SupabaseUnavailableError,
     SupabaseUserSummary,
+    SupabaseWeakPasswordError,
 )
 from app.services.users import DuplicateEmailError, InvalidEmailError, User
 
@@ -89,6 +91,11 @@ class AdminUserCreated(User):
     every other `User` consumer."""
 
     invited: bool = False
+    # Like `invited`: an event of THIS call. True only when this request
+    # caused a fresh invitation email; the reconciliation path links a
+    # stale pending identity WITHOUT sending mail (B28, #96) and must not
+    # imply otherwise.
+    invite_emailed: bool = False
 
 
 def _store(request: Request):
@@ -218,136 +225,159 @@ async def create_user(
     if body.password is None:
         if not supabase:
             raise HTTPException(422, {"code": "password_required"})
-        # Pre-check BEFORE the remote call: a row already linked to a
-        # Supabase identity is a genuine duplicate and must fail closed
-        # without ever inviting a second Supabase account for the same
-        # email. An unlinked row is the mode-switch case, handled below.
-        existing = store.get_by_email(body.email)
-        if existing is not None and existing.external_id is not None:
-            raise HTTPException(422, {"code": "duplicate_email"})
-        gateway = request.app.state.supabase_gateway
-        try:
-            external_id = await gateway.invite_user(body.email)
-        except SupabaseAuthError as exc:
-            existing_identity = await _resolve_after_duplicate_rejection(
-                gateway, body.email, exc, "invite_failed"
-            )
-            if not existing_identity.invite_pending:
-                # A real pre-existing Supabase account (e.g. dashboard-
-                # created), not this app's own stranded invite: linking it
-                # would let its old, operator-unknown password in without
-                # ever proving the invitation was accepted. No link, no
-                # local row -- the admin must use the CREATE-with-password
-                # path (which rotates the credential) instead. This also
-                # excludes any OAuth-origin identity without a separate
-                # provider check: `invited_at` is only ever set by this
-                # app's own `invite_user_by_email` call, an email-based
-                # flow, so an OAuth identity's `invite_pending` is always
-                # False and lands here too.
-                raise HTTPException(422, {"code": "duplicate_email"}) from exc
-            external_id = existing_identity.id
-        except SupabaseUnavailableError as exc:
-            raise HTTPException(503, "Authentication service unavailable") from exc
-        # Accepted residual: a transient local failure from this point on
-        # (adoption or insert) has already invited a Supabase account/user
-        # that this response reports as failed. A compensating deletion is
-        # deliberately not attempted -- the admin can re-run the request,
-        # which the pre-check above and create_user's duplicate handling
-        # both make idempotent.
-        if existing is not None:
-            user = _adopt_existing_row(store, existing, external_id)
-        else:
+        async with request.app.state.email_locks.acquire(body.email):
+            # Pre-check BEFORE the remote call: a row already linked to a
+            # Supabase identity is a genuine duplicate and must fail closed
+            # without ever inviting a second Supabase account for the same
+            # email. An unlinked row is the mode-switch case, handled below.
+            existing = store.get_by_email(body.email)
+            if existing is not None and existing.external_id is not None:
+                raise HTTPException(422, {"code": "duplicate_email"})
+            gateway = request.app.state.supabase_gateway
+            # True only if THIS call caused GoTrue to send a fresh
+            # invitation email -- the reconciliation branch below links a
+            # stale pending identity without sending mail (B28, #96).
+            fresh = True
             try:
-                user = store.create_user(
-                    body.email,
-                    None,
-                    display_name=body.display_name,
-                    tier=body.tier,
-                    is_admin=body.is_admin,
-                    external_id=external_id,
+                external_id = await gateway.invite_user(body.email)
+            except SupabaseAuthError as exc:
+                fresh = False
+                existing_identity = await _resolve_after_duplicate_rejection(
+                    gateway, body.email, exc, "invite_failed"
                 )
-            except (DuplicateEmailError, InvalidEmailError) as exc:
-                raise HTTPException(422, str(exc)) from exc
-        store.record_audit(
-            actor_id=actor.id, target_id=user.id, field="invite", new_value=user.email
-        )
-        return AdminUserCreated(**user.model_dump(), invited=True)
+                if not existing_identity.invite_pending:
+                    # A real pre-existing Supabase account (e.g. dashboard-
+                    # created), not this app's own stranded invite: linking it
+                    # would let its old, operator-unknown password in without
+                    # ever proving the invitation was accepted. No link, no
+                    # local row -- the admin must use the CREATE-with-password
+                    # path (which rotates the credential) instead. This also
+                    # excludes any OAuth-origin identity without a separate
+                    # provider check: `invited_at` is only ever set by this
+                    # app's own `invite_user_by_email` call, an email-based
+                    # flow, so an OAuth identity's `invite_pending` is always
+                    # False and lands here too.
+                    raise HTTPException(422, {"code": "duplicate_email"}) from exc
+                external_id = existing_identity.id
+            except SupabaseUnavailableError as exc:
+                raise HTTPException(503, "Authentication service unavailable") from exc
+            # Accepted residual: a transient local failure from this point on
+            # (adoption or insert) has already invited a Supabase account/user
+            # that this response reports as failed. A compensating deletion is
+            # deliberately not attempted -- the admin can re-run the request,
+            # which the pre-check above and create_user's duplicate handling
+            # both make idempotent.
+            if existing is not None:
+                user = _adopt_existing_row(store, existing, external_id)
+            else:
+                try:
+                    user = store.create_user(
+                        body.email,
+                        None,
+                        display_name=body.display_name,
+                        tier=body.tier,
+                        is_admin=body.is_admin,
+                        external_id=external_id,
+                    )
+                except (DuplicateEmailError, InvalidEmailError) as exc:
+                    raise HTTPException(422, str(exc)) from exc
+            store.record_audit(
+                actor_id=actor.id, target_id=user.id, field="invite", new_value=user.email
+            )
+            return AdminUserCreated(**user.model_dump(), invited=True, invite_emailed=fresh)
 
     _check_password_strength(body.password)
     if supabase:
-        # Same pre-check-before-remote-call shape as the invite branch above.
-        existing = store.get_by_email(body.email)
-        if existing is not None and existing.external_id is not None:
-            raise HTTPException(422, {"code": "duplicate_email"})
-        gateway = request.app.state.supabase_gateway
-        rotated = False
-        try:
-            external_id = await gateway.create_user(body.email, body.password)
-        except SupabaseAuthError as exc:
-            existing_identity = await _resolve_after_duplicate_rejection(
-                gateway, body.email, exc, "create_failed"
-            )
-            if existing_identity.provider != "email":
-                # Unlike the invite branch above, this path has no
-                # invite_pending gate to fall back on -- a real Supabase
-                # identity at this email that GoTrue's password rotation
-                # would happily accept is not necessarily one this app can
-                # ever authenticate: SupabaseTokenVerifier rejects any
-                # token whose FIRST provider (app_metadata.provider) isn't
-                # "email" (setup guide §4), regardless of the credential.
-                # Rotating an OAuth-origin identity's password and linking
-                # it would mint an admin row that can never log in. Same
-                # 422 create_failed the "no matching identity" branch
-                # above already returns -- to the caller both are "cannot
-                # honor this as a genuine duplicate."
-                raise HTTPException(422, {"code": "create_failed"}) from exc
-            external_id = existing_identity.id
-            # The reconciled UUID belongs to a pre-existing Supabase
-            # identity (most likely this admin's own earlier attempt,
-            # already created remotely) whose credential was never set to
-            # the password just submitted -- create_user() above only sets
-            # it on the happy path. Without this, the response is 201 for a
-            # password that cannot log in (Copilot round 4). Same
-            # 422/503 mapping as the rotation in patch_user, and this runs
-            # BEFORE any local row is created or linked below.
+        async with request.app.state.email_locks.acquire(body.email):
+            # Same pre-check-before-remote-call shape as the invite branch above.
+            existing = store.get_by_email(body.email)
+            if existing is not None and existing.external_id is not None:
+                raise HTTPException(422, {"code": "duplicate_email"})
+            gateway = request.app.state.supabase_gateway
+            rotated = False
             try:
-                await gateway.change_password(external_id, body.password)
-            except SupabaseAuthError as pw_exc:
-                raise HTTPException(422, {"code": "create_failed"}) from pw_exc
-            except SupabaseUnavailableError as pw_exc:
-                raise HTTPException(503, "Authentication service unavailable") from pw_exc
-            rotated = True
-        except SupabaseUnavailableError as exc:
-            raise HTTPException(503, "Authentication service unavailable") from exc
-        # Same accepted residual as the invite branch: no compensating
-        # deletion on a local failure after this point.
-        if existing is not None:
-            user = _adopt_existing_row(store, existing, external_id)
-        else:
-            try:
-                # Supabase owns the credential -- no local hash written,
-                # ever: a local hash here would resurrect local login
-                # semantics for an account whose password lives with
-                # Supabase.
-                user = store.create_user(
-                    body.email,
-                    None,
-                    display_name=body.display_name,
-                    tier=body.tier,
-                    is_admin=body.is_admin,
-                    external_id=external_id,
+                external_id = await gateway.create_user(body.email, body.password)
+            except SupabaseWeakPasswordError as exc:
+                # Must be caught here, before the generic SupabaseAuthError
+                # handling below: it is a SupabaseAuthError subclass, and
+                # without this it falls into _resolve_after_duplicate_rejection
+                # and surfaces as a bogus create_failed instead of the
+                # reasons GoTrue actually gave. No retry token -- nothing is
+                # burned, the admin just resubmits the form.
+                raise HTTPException(422, {"code": "password_weak", "reasons": exc.reasons}) from None
+            except SupabaseAuthError as exc:
+                existing_identity = await _resolve_after_duplicate_rejection(
+                    gateway, body.email, exc, "create_failed"
                 )
-            except (DuplicateEmailError, InvalidEmailError) as exc:
-                raise HTTPException(422, str(exc)) from exc
-        if rotated:
-            # Mirrors patch_user's own rotation (:409): the gateway call
-            # above already killed the identity's refresh tokens, but the
-            # pre-existing access token is a stateless JWT that keeps
-            # verifying locally until password_changed_at moves. Without
-            # this, a session issued before the admin's rotation survives
-            # its full TTL and now resolves -- via the external_id just
-            # written -- to the row this call is creating/adopting.
-            store.mark_password_changed(user.id)
+                if existing_identity.provider != "email":
+                    # Unlike the invite branch above, this path has no
+                    # invite_pending gate to fall back on -- a real Supabase
+                    # identity at this email that GoTrue's password rotation
+                    # would happily accept is not necessarily one this app can
+                    # ever authenticate: SupabaseTokenVerifier rejects any
+                    # token whose FIRST provider (app_metadata.provider) isn't
+                    # "email" (setup guide §4), regardless of the credential.
+                    # Rotating an OAuth-origin identity's password and linking
+                    # it would mint an admin row that can never log in. Same
+                    # 422 create_failed the "no matching identity" branch
+                    # above already returns -- to the caller both are "cannot
+                    # honor this as a genuine duplicate."
+                    raise HTTPException(422, {"code": "create_failed"}) from exc
+                external_id = existing_identity.id
+                # The reconciled UUID belongs to a pre-existing Supabase
+                # identity (most likely this admin's own earlier attempt,
+                # already created remotely) whose credential was never set to
+                # the password just submitted -- create_user() above only sets
+                # it on the happy path. Without this, the response is 201 for a
+                # password that cannot log in (Copilot round 4). Same
+                # 422/503 mapping as the rotation in patch_user, and this runs
+                # BEFORE any local row is created or linked below.
+                try:
+                    await gateway.change_password(external_id, body.password)
+                except SupabaseWeakPasswordError as pw_exc:
+                    # Same reasoning as the create_user catch above: must
+                    # precede the generic SupabaseAuthError mapping to
+                    # create_failed, or GoTrue's weak-password reasons are
+                    # lost. No retry token here either.
+                    raise HTTPException(
+                        422, {"code": "password_weak", "reasons": pw_exc.reasons}
+                    ) from None
+                except SupabaseAuthError as pw_exc:
+                    raise HTTPException(422, {"code": "create_failed"}) from pw_exc
+                except SupabaseUnavailableError as pw_exc:
+                    raise HTTPException(503, "Authentication service unavailable") from pw_exc
+                rotated = True
+            except SupabaseUnavailableError as exc:
+                raise HTTPException(503, "Authentication service unavailable") from exc
+            # Same accepted residual as the invite branch: no compensating
+            # deletion on a local failure after this point.
+            if existing is not None:
+                user = _adopt_existing_row(store, existing, external_id)
+            else:
+                try:
+                    # Supabase owns the credential -- no local hash written,
+                    # ever: a local hash here would resurrect local login
+                    # semantics for an account whose password lives with
+                    # Supabase.
+                    user = store.create_user(
+                        body.email,
+                        None,
+                        display_name=body.display_name,
+                        tier=body.tier,
+                        is_admin=body.is_admin,
+                        external_id=external_id,
+                    )
+                except (DuplicateEmailError, InvalidEmailError) as exc:
+                    raise HTTPException(422, str(exc)) from exc
+            if rotated:
+                # Mirrors patch_user's own rotation (:409): the gateway call
+                # above already killed the identity's refresh tokens, but the
+                # pre-existing access token is a stateless JWT that keeps
+                # verifying locally until password_changed_at moves. Without
+                # this, a session issued before the admin's rotation survives
+                # its full TTL and now resolves -- via the external_id just
+                # written -- to the row this call is creating/adopting.
+                store.mark_password_changed(user.id)
     else:
         try:
             # bcrypt stays off the event loop, same rule as login/password
@@ -358,6 +388,44 @@ async def create_user(
     store.record_audit(actor_id=actor.id, target_id=user.id, field="created",
                        new_value=user.email)
     return AdminUserCreated(**user.model_dump())
+
+
+@router.post("/users/{user_id}/resend-invite", status_code=204)
+async def resend_invite(
+    request: Request, user_id: int, actor: CurrentUser = Depends(require_admin)
+) -> Response:
+    """Re-issue a pending invitation (B28, #96). GoTrue is the pending-state
+    authority: re-inviting a pending identity re-sends and invalidates the
+    old link; a confirmed identity is rejected with email_exists, which
+    maps to already_active here -- no local pending tracking."""
+    if request.app.state.settings.auth.mode != "supabase":
+        raise HTTPException(404, "Not found")
+    store = _store(request)
+    user = store.get_user(user_id)
+    if user is None:
+        raise HTTPException(404, "Not found")
+    if user.external_id is None:
+        raise HTTPException(422, {"code": "not_linked"})
+    gateway = request.app.state.supabase_gateway
+    async with request.app.state.email_locks.acquire(user.email):
+        try:
+            await gateway.invite_user(user.email)
+        except SupabaseEmailExistsError as exc:
+            # The ONE auth failure that honestly means "already accepted".
+            raise HTTPException(422, {"code": "already_active"}) from exc
+        except SupabaseAuthError as exc:
+            # Rate limits, malformed addresses, misconfig: not the
+            # invitee's state -- never report those as already_active.
+            raise HTTPException(503, "Authentication service unavailable") from exc
+        except SupabaseUnavailableError as exc:
+            raise HTTPException(503, "Authentication service unavailable") from exc
+    store.record_audit(
+        actor_id=actor.id,
+        target_id=user.id,
+        field="invite_resend",
+        new_value=user.email,
+    )
+    return Response(status_code=204)
 
 
 def _set_password_local(store, user_id: int, password: str) -> None:
@@ -411,6 +479,12 @@ async def patch_user(
             gateway = request.app.state.supabase_gateway
             try:
                 await gateway.change_password(existing.external_id, body.password)
+            except SupabaseWeakPasswordError as exc:
+                # Must precede the generic SupabaseAuthError mapping below,
+                # or GoTrue's weak-password reasons are lost behind a bare
+                # password_reset_failed. No retry token: the admin just
+                # resubmits the form, nothing is burned.
+                raise HTTPException(422, {"code": "password_weak", "reasons": exc.reasons}) from None
             except SupabaseAuthError as exc:
                 raise HTTPException(422, {"code": "password_reset_failed"}) from exc
             except SupabaseUnavailableError as exc:

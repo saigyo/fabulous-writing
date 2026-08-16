@@ -2,12 +2,14 @@
 dispatch, the password-change eviction window (B14 Task 4, #55), and
 supabase-mode admin bootstrap + invitation-only user entry (Task 5)."""
 
+import asyncio
 import time
 
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ec import SECP256R1, generate_private_key
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from app.api.auth import _INVALID_LOGIN
 from app.core.auth import AuthConfigError, IAT_LEEWAY_SECONDS
@@ -16,8 +18,10 @@ from app.core.supabase_auth import SupabaseTokenVerifier
 from app.main import create_app
 from app.services.supabase_gateway import (
     SupabaseAuthError,
+    SupabaseEmailExistsError,
     SupabaseSession,
     SupabaseUnavailableError,
+    SupabaseWeakPasswordError,
 )
 from tests.conftest import TEST_ADMIN_EMAIL, TEST_ADMIN_PASSWORD, auth_headers
 from tests.fakes_supabase import FakeSupabaseGateway, FakeSupabaseVerifier, StaticJWKSClient
@@ -1278,11 +1282,11 @@ class TestAdminCreateReconciliation:
     RE-INVITES a PENDING (still-unconfirmed) identity rather than rejecting
     it -- supabase/auth#2180 does not apply. create_user's duplicate
     rejection is untouched by that fact and still needs reconciliation. The
-    two invite-branch tests below opt into the legacy always-raise fake
-    behavior via `fake.invite_rejects_duplicates = True` specifically to
-    keep exercising _resolve_after_duplicate_rejection on that path -- a
-    defensive path real GoTrue rarely takes today, but one older or
-    atypically configured GoTrue instances still might."""
+    invite-branch reconciliation test below opts into the legacy
+    always-raise fake behavior via `fake.invite_rejects_duplicates = True`
+    specifically to keep exercising _resolve_after_duplicate_rejection on
+    that path -- a defensive path real GoTrue rarely takes today, but one
+    older or atypically configured GoTrue instances still might."""
 
     RETRY_EMAIL = "retry@example.com"
 
@@ -1730,3 +1734,320 @@ class TestAdminPatchPasswordSupabase:
         body = resp.json()
         assert body["tier"] == "premium"
         assert body["password_changed_at"] is not None
+
+
+class TestResendInvite:
+    """POST /api/admin/users/{id}/resend-invite (B28, #96): GoTrue is the
+    pending-state authority -- a PENDING identity's re-invite re-sends and
+    invalidates the old link, a CONFIRMED one is rejected with email_exists,
+    which maps to already_active here. No local pending tracking."""
+
+    def _invite(self, client, headers, email="pending@example.com") -> dict:
+        resp = client.post("/api/admin/users", json={"email": email}, headers=headers)
+        assert resp.status_code == 201, resp.text
+        return resp.json()
+
+    def test_pending_invitee_resend_204_and_audited(self, supabase_app):
+        app, fake = supabase_app
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        created = self._invite(client, headers)
+        assert fake.invite_calls["pending@example.com"] == 1
+
+        resp = client.post(
+            f"/api/admin/users/{created['id']}/resend-invite", headers=headers,
+        )
+        assert resp.status_code == 204
+        assert fake.invite_calls["pending@example.com"] == 2  # original + resend
+        audit_fields = [r["field"] for r in app.state.user_store.list_audit()]
+        assert "invite_resend" in audit_fields
+
+    def test_confirmed_identity_maps_to_already_active(self, supabase_app):
+        app, fake = supabase_app
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        created = self._invite(client, headers, email="confirmed@example.com")
+
+        async def boom(_email):
+            raise SupabaseEmailExistsError("confirmed@example.com already registered")
+
+        fake.invite_user = boom
+        resp = client.post(
+            f"/api/admin/users/{created['id']}/resend-invite", headers=headers,
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "already_active"
+
+    def test_generic_auth_failure_is_not_already_active(self, supabase_app):
+        app, fake = supabase_app
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        created = self._invite(client, headers, email="ratelimited@example.com")
+
+        async def boom(_email):
+            raise SupabaseAuthError("rate limited")
+
+        fake.invite_user = boom
+        resp = client.post(
+            f"/api/admin/users/{created['id']}/resend-invite", headers=headers,
+        )
+        assert resp.status_code == 503
+
+    def test_unlinked_row_rejected(self, supabase_app):
+        app, _fake = supabase_app
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        row = app.state.user_store.create_user("unlinked@example.com", "a local password 1")
+        assert row.external_id is None
+
+        resp = client.post(
+            f"/api/admin/users/{row.id}/resend-invite", headers=headers,
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "not_linked"
+
+    def test_local_mode_404(self, tmp_path):
+        settings = Settings(db_path=tmp_path / "local.db", rules_dir=tmp_path / "rules")
+        client = TestClient(create_app(settings))
+        token = client.post(
+            "/api/auth/login",
+            json={"email": TEST_ADMIN_EMAIL, "password": TEST_ADMIN_PASSWORD},
+        ).json()["token"]
+        resp = client.post(
+            "/api/admin/users/1/resend-invite", headers=_bearer(token),
+        )
+        assert resp.status_code == 404
+
+    def test_unknown_user_404(self, supabase_app):
+        app, _fake = supabase_app
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        resp = client.post("/api/admin/users/999999/resend-invite", headers=headers)
+        assert resp.status_code == 404
+
+    def test_non_admin_403(self, supabase_app):
+        app, fake = supabase_app
+        client, body = _login_ok(
+            app, fake,
+            email="regular@example.com", password="a regular password 1",
+            uuid="fake-uuid-regular",
+        )
+        resp = client.post(
+            "/api/admin/users/1/resend-invite", headers=_bearer(body["token"]),
+        )
+        assert resp.status_code == 403
+
+    def test_gateway_down_503(self, supabase_app):
+        app, fake = supabase_app
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        created = self._invite(client, headers, email="down@example.com")
+
+        async def boom(_email):
+            raise SupabaseUnavailableError("down")
+
+        fake.invite_user = boom
+        resp = client.post(
+            f"/api/admin/users/{created['id']}/resend-invite", headers=headers,
+        )
+        assert resp.status_code == 503
+
+
+class TestWeakPasswordSurfacesInAdminRoutes:
+    """SupabaseWeakPasswordError must surface as a 422 password_weak
+    envelope with GoTrue's reasons at every admin site that submits a
+    password to Supabase -- never fall into the generic SupabaseAuthError
+    handling (which would misreport it as create_failed/password_reset_failed
+    or, on the create path, trigger the duplicate-reconciliation fallback).
+    No retry_token: the admin simply resubmits the form; nothing is burned."""
+
+    def test_patch_password_weak_returns_reasons_envelope(self, supabase_app):
+        app, fake = supabase_app
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        created = client.post(
+            "/api/admin/users",
+            json={"email": "weakpatch@example.com", "password": "an initial password 1"},
+            headers=headers,
+        ).json()
+
+        fake.weak_password_reasons = ["length"]
+        resp = client.patch(
+            f"/api/admin/users/{created['id']}",
+            json={"password": "a replacement password 1"},
+            headers=headers,
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"] == {"code": "password_weak", "reasons": ["length"]}
+
+    def test_create_with_password_weak_returns_reasons_envelope(self, supabase_app):
+        app, fake = supabase_app
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+
+        async def boom(_email, _password):
+            raise SupabaseWeakPasswordError(["length", "pwned"])
+
+        fake.create_user = boom
+        resp = client.post(
+            "/api/admin/users",
+            json={"email": "weakcreate@example.com", "password": "a decent password 1"},
+            headers=headers,
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"] == {"code": "password_weak", "reasons": ["length", "pwned"]}
+        assert app.state.user_store.get_by_email("weakcreate@example.com") is None
+
+
+class TestInviteEmailedFlag:
+    """`invite_emailed` (B28, #96): True only when THIS call caused a fresh
+    invitation email -- distinct from `invited`, which is also true for the
+    reconciliation path that links a stale pending identity without sending
+    mail."""
+
+    def test_fresh_invite_reports_emailed(self, supabase_app):
+        app, _fake = supabase_app
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        resp = client.post(
+            "/api/admin/users", json={"email": "freshinvite@example.com"}, headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["invited"] is True
+        assert body["invite_emailed"] is True
+
+    def test_reconciliation_reports_no_email(self, supabase_app):
+        app, fake = supabase_app
+        fake.register_user(
+            "reconcile@example.com", "", uuid="fake-uuid-reconcile-invite",
+            invite_pending=True,
+        )
+        # Legacy always-raise semantics: the only way to force the
+        # reconciliation fallback under the PROBED default (see
+        # fakes_supabase.invite_user); the reconciliation path is otherwise
+        # unreachable now that a pending retry succeeds directly.
+        fake.invite_rejects_duplicates = True
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        resp = client.post(
+            "/api/admin/users", json={"email": "reconcile@example.com"}, headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["invited"] is True
+        assert body["invite_emailed"] is False
+
+    def test_local_mode_create_defaults_false(self, tmp_path):
+        settings = Settings(db_path=tmp_path / "local.db", rules_dir=tmp_path / "rules")
+        client = TestClient(create_app(settings))
+        token = client.post(
+            "/api/auth/login",
+            json={"email": TEST_ADMIN_EMAIL, "password": TEST_ADMIN_PASSWORD},
+        ).json()["token"]
+        resp = client.post(
+            "/api/admin/users",
+            json={"email": "localcreate@example.com", "password": "a local password 1"},
+            headers=_bearer(token),
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["invited"] is False
+        assert body["invite_emailed"] is False
+
+
+class TestEmailLockSerialization:
+    """B31, #101: two concurrent admin create-user requests for the SAME
+    email must serialize through app.state.email_locks, closing the
+    pre-check -> remote call -> local link race."""
+
+    async def test_concurrent_same_email_creates_serialize(self, supabase_app):
+        app, fake = supabase_app
+        # Bearer fetch only -- doesn't touch email_locks, so a plain
+        # TestClient portal here is fine even though the two requests under
+        # test below MUST share one event loop (see EmailLocks' docstring:
+        # a contended asyncio.Lock binds to its loop).
+        sync_client = TestClient(app)
+        headers = _admin_bearer(sync_client)
+        email = "racer@example.com"
+
+        # Per-call gates, indexed by call order: the FIRST caller into
+        # invite_user blocks on release_gate[0] until we let it go; a
+        # SECOND caller (which can only exist if the per-email lock failed
+        # to serialize the two requests, since the pre-check -> gateway
+        # call is entirely inside the lock) would block on release_gate[1].
+        # entered_gateway[i] fires the instant call #i reaches the gateway,
+        # which is the observable proxy for "got past the lock".
+        entered_gateway = [asyncio.Event(), asyncio.Event()]
+        release_gate = [asyncio.Event(), asyncio.Event()]
+        call_order: list[str] = []
+        original_invite = fake.invite_user
+
+        async def instrumented(email_arg):
+            idx = len(call_order)
+            call_order.append(email_arg)
+            if idx < 2:
+                entered_gateway[idx].set()
+                await release_gate[idx].wait()
+            return await original_invite(email_arg)
+
+        fake.invite_user = instrumented
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+
+            async def post():
+                return await client.post(
+                    "/api/admin/users", json={"email": email}, headers=headers,
+                )
+
+            first_task = asyncio.create_task(post())
+            # First now holds the per-email lock and is blocked inside the
+            # gateway call -- the lock cannot be acquired by anyone else
+            # until it releases.
+            await entered_gateway[0].wait()
+
+            second_task = asyncio.create_task(post())
+            # Give the second request every real chance to reach the
+            # gateway while the first is still parked: if the lock is
+            # missing, the second request's own pre-check (nothing
+            # committed yet) sails through immediately and it lands here
+            # well inside this window. If the lock holds, the second
+            # request is stuck awaiting the lock itself (the pre-check is
+            # INSIDE the locked section) and can never set this event while
+            # the first still holds it -- this wait times out instead.
+            second_reached_gateway = False
+            try:
+                await asyncio.wait_for(entered_gateway[1].wait(), timeout=0.2)
+                second_reached_gateway = True
+            except TimeoutError:
+                pass
+
+            release_gate[0].set()
+            if second_reached_gateway:
+                release_gate[1].set()
+            first_resp, second_resp = await asyncio.gather(first_task, second_task)
+
+        # The load-bearing assertion: this is what a missing/mutated lock
+        # actually breaks. Everything below is the resulting HTTP shape,
+        # which a passing lock also produces, but which alone would not
+        # catch a lock removed from the create path (asyncio's own
+        # scheduling can coincidentally produce the same status codes even
+        # unserialized -- this event-based check does not depend on that
+        # coincidence).
+        assert not second_reached_gateway, (
+            "second request reached the gateway while the first still held "
+            "the per-email lock -- the create-user race the lock exists to "
+            "close is open"
+        )
+        assert {first_resp.status_code, second_resp.status_code} == {201, 422}
+        # The second request never reached the gateway at all: by the time
+        # it acquired the (already-held) lock, the first had already
+        # finished -- inserted the local row and released -- so the second
+        # request's own pre-check found a duplicate and short-circuited
+        # before calling invite_user.
+        assert call_order == [email]
+        assert fake.invite_calls[email] == 1
+        duplicate = second_resp if second_resp.status_code == 422 else first_resp
+        assert duplicate.json()["detail"]["code"] == "duplicate_email"
