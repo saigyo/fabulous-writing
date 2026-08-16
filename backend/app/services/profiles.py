@@ -1,12 +1,17 @@
 import json
 import logging
-import sqlite3
-from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field, computed_field
 
 from app.core.models import Language
-from app.services._sqlite import connect, migrate_columns
+from app.services.db import (
+    Database,
+    Row,
+    UniqueViolationError,
+    migrate_columns,
+    table_columns,
+)
 from app.services.ownership import GlobalReadOnlyError
 
 logger = logging.getLogger(__name__)
@@ -67,7 +72,7 @@ class Profile(BaseModel):
         return self.owner_id is None
 
 
-def _row_to_profile(row: sqlite3.Row) -> Profile:
+def _row_to_profile(row: Row) -> Profile:
     return Profile(
         id=row["id"],
         language=Language(row["language"]),
@@ -89,21 +94,20 @@ def _row_to_profile(row: sqlite3.Row) -> Profile:
 class ProfileStore:
     """Checking profiles, stored beside domains/terms in the same SQLite DB."""
 
-    def __init__(self, db_path: Path) -> None:
-        self.db_path = db_path
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, db: Database) -> None:
+        self.db = db
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
             self._migrate(conn)
 
-    def _migrate(self, conn: sqlite3.Connection) -> None:
+    def _migrate(self, conn: Any) -> None:
         # Pre-existing databases lack columns added later; guard by name.
         migrate_columns(
             conn,
             "profiles",
             [("llm_tier", "TEXT"), ("packs_on", "TEXT NOT NULL DEFAULT '[]'")],
         )
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(profiles)")}
+        columns = table_columns(conn, "profiles")
         if "owner_id" not in columns:
             # One-shot backfill against the pre-auth single-owner DB (spec
             # §9 step 3): seed rows (name-matched, since there are no
@@ -155,7 +159,7 @@ class ProfileStore:
         else:
             conn.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_owner_lang_name"
-                " ON profiles(owner_id, language, name COLLATE NOCASE)"
+                " ON profiles(owner_id, language, LOWER(name))"
                 " WHERE owner_id IS NOT NULL"
             )
         global_dupes = conn.execute(
@@ -170,12 +174,12 @@ class ProfileStore:
         else:
             conn.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_global_lang_name"
-                " ON profiles(language, name COLLATE NOCASE)"
+                " ON profiles(language, LOWER(name))"
                 " WHERE owner_id IS NULL"
             )
 
     def _connect(self):  # thin delegate; the shared helper carries the docs
-        return connect(self.db_path)
+        return self.db.connect()
 
     def list_profiles(self, language: Language, *, owner_id: int) -> list[Profile]:
         with self._connect() as conn:
@@ -220,7 +224,7 @@ class ProfileStore:
                        (language, name, is_standard, categories_off, rule_exceptions,
                         packs_on, domain_ids, llm_provider, llm_model, llm_tier,
                         llm_instructions, example_text, owner_id)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id""",
                     (
                         language.value,
                         name,
@@ -237,8 +241,8 @@ class ProfileStore:
                         owner_id,
                     ),
                 )
-                profile_id = cursor.lastrowid
-        except sqlite3.IntegrityError as exc:
+                profile_id = cursor.fetchone()["id"]
+        except UniqueViolationError as exc:
             raise ValueError(f"Profile '{name}' already exists for {language.value}") from exc
         assert profile_id is not None
         # owner_id may be None (a global create): the scoped query's
@@ -294,7 +298,7 @@ class ProfileStore:
                         profile_id,
                     ),
                 )
-        except sqlite3.IntegrityError as exc:
+        except UniqueViolationError as exc:
             raise ValueError(
                 f"Profile '{merged.name}' already exists for {merged.language.value}"
             ) from exc
@@ -341,7 +345,8 @@ class ProfileStore:
     def mark_example_seeded(self, language: Language) -> None:
         with self._connect() as conn:
             conn.execute(
-                "INSERT OR IGNORE INTO profile_seed_markers (language) VALUES (?)",
+                "INSERT INTO profile_seed_markers (language) VALUES (?)"
+                " ON CONFLICT DO NOTHING",
                 (language.value,),
             )
 

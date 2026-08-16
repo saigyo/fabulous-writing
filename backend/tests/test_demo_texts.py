@@ -117,10 +117,11 @@ def test_demo_text_triggers_terminology(
     language: Language, registry: NlpRegistry, tmp_path: Path
 ) -> None:
     from app.checkers.terminology import TerminologyChecker
+    from app.services.db.sqlite import SqliteDatabase
     from app.services.seed import seed_terminology
     from app.services.terminology import TerminologyStore
 
-    store = TerminologyStore(tmp_path / "test.db")
+    store = TerminologyStore(SqliteDatabase(tmp_path / "test.db"))
     seed_terminology(store)
     domain = store.list_domains(owner_id=1)[0]
     checker = TerminologyChecker(store, nlp=registry)

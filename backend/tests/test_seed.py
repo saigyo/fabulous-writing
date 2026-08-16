@@ -1,12 +1,13 @@
 from pathlib import Path
 
 from app.core.models import Language
+from app.services.db.sqlite import SqliteDatabase
 from app.services.seed import DOMAIN_NAME, seed_terminology
 from app.services.terminology import TerminologyStore
 
 
 def make_store(tmp_path: Path) -> TerminologyStore:
-    return TerminologyStore(tmp_path / "test.db")
+    return TerminologyStore(SqliteDatabase(tmp_path / "test.db"))
 
 
 def test_seed_creates_domain_with_terms_for_all_languages(tmp_path: Path) -> None:
