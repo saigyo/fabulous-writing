@@ -8,10 +8,11 @@ race. Single-process deployment assumption, exactly like LoginThrottle's;
 multi-process coordination is explicitly out of scope (spec §4).
 
 Bounded-map hygiene mirrors the throttle: entries expire after
-_ENTRY_TTL_SECONDS and the table is capped at _MAX_ENTRIES -- but a HELD
-lock is never evicted, because losing it would let a concurrent request
-run unserialized (correctness beats the cap; held locks are bounded by
-in-flight requests anyway).
+_ENTRY_TTL_SECONDS and the table is capped at _MAX_ENTRIES. Under cap
+pressure (>1024 live entries) a HELD lock can still be evicted in the
+release-to-reacquire window while a waiter holds a reference, letting a
+third request mint a fresh lock -- reachable only above the cap; the
+practical bound is in-flight admin requests.
 
 Single-EVENT-LOOP assumption on top of the single-process one: a
 contended asyncio.Lock binds to its loop and raises RuntimeError when

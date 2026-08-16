@@ -157,12 +157,16 @@ class SupabaseAuthGateway:
             )
 
     async def _execute(self, operation: str, coro: Coroutine[Any, Any, Any]) -> Any:
-        """Runs a single GoTrue call, mapping its errors to our two types.
+        """Runs a single GoTrue call, mapping its errors to our four types:
+        SupabaseUnavailableError, SupabaseWeakPasswordError,
+        SupabaseEmailExistsError, SupabaseAuthError.
 
         Order is load-bearing: AuthRetryableError is itself an AuthError, so
         it must be caught before the generic AuthError branch, or a
         retryable/unavailable condition would be misreported as an auth
-        failure.
+        failure. The weak-password and email-exists catches must likewise
+        precede the generic AuthError branch, or they'd be swallowed as a
+        plain SupabaseAuthError.
         """
         try:
             return await coro

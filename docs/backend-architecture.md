@@ -1262,8 +1262,8 @@ that started out email/password but is later reachable through a
 since-enabled OAuth/SSO/magiclink provider would mint a session those two
 checks cannot distinguish from an ordinary email/password login, for as
 long as the process keeps running. `verify()` adds a third, per-request
-check on top: GoTrue's `amr` claim (`[{"method": "password"|"otp", ...}],
-...]`, minted fresh for every session this app's own flows produce — the
+check on top: GoTrue's `amr` claim (`[{"method": "password"|"otp", ...}, ...]`,
+minted fresh for every session this app's own flows produce — the
 password grant and the recovery/invite `verify_otp` call — and carried
 through unchanged by a refresh) must be present and every method in it must
 be one of `{"password", "otp"}`; anything else (oauth, sso/saml, magiclink,
@@ -1472,22 +1472,26 @@ invite/create-with-password branches, `resend_invite`) run a
 credential rotation) → local link** sequence. Two concurrent admin requests
 for the **same email** can interleave those steps — the sharpest case: one
 request's `201` response reports a password the other request's rotation
-has already overwritten remotely — so every one of those routes wraps its
-body in `EmailLocks.acquire(email)`, an async context manager handing out
-one `asyncio.Lock` per **normalized** (`.strip().lower()`) email, which
-serializes the whole sequence for that address across concurrent requests.
+has already overwritten remotely — so each route wraps the contended part
+in `EmailLocks.acquire(email)`, an async context manager handing out one
+`asyncio.Lock` per **normalized** (`.strip().lower()`) email. `create_user`
+holds it across the whole pre-check → remote call → local-link sequence;
+`resend_invite` wraps only its remote call (`gateway.invite_user`) — the
+lookup, guard checks, and audit write sit outside the lock, since none of
+them touch shared remote state.
 
 Two bounded-map hygiene rules, and one exception to the second: entries
 expire after 900s (`_ENTRY_TTL_SECONDS`) and the table caps at 1024
-(`_MAX_ENTRIES`), mirroring `LoginThrottle`'s own TTL/cap shape — **but a
-currently-**held** lock is never evicted**, by either rule
-(`_prune` explicitly skips any `lock.locked()` entry in both the TTL sweep
-and the cap eviction). Losing a held lock out from under an in-flight
-request would let a second request start unserialized while the first is
-still mid-sequence — exactly the race this module exists to close —
-so correctness wins over the cap here; a held lock is bounded anyway,
-naturally, by the number of requests actually in flight for that one email,
-which is small.
+(`_MAX_ENTRIES`), mirroring `LoginThrottle`'s own TTL/cap shape —
+`_prune` skips any `lock.locked()` entry in both the TTL sweep and the
+cap eviction, so a lock genuinely held while `_prune` runs survives. That
+check is a snapshot, not a guarantee: in the release-to-reacquire window
+(`lock.locked()` momentarily False while a queued waiter has not yet
+resumed), a cap-pressure prune (>1024 live entries) can still delete the
+entry out from under that waiter, and a third request then mints a fresh
+`Lock` for the same email, running unserialized with the waiter. This
+residual is reachable only above the cap; the practical bound is the
+number of requests actually in flight for that one email, which is small.
 
 **Two stacked scope assumptions, not one.** Like `LoginThrottle`, this is
 in-process state — a **single-process** deployment assumption, out of scope
