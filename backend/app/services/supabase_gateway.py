@@ -17,7 +17,7 @@ from typing import Any
 
 import httpx
 from supabase_auth import AsyncGoTrueAdminAPI, AsyncGoTrueClient
-from supabase_auth.errors import AuthError, AuthRetryableError
+from supabase_auth.errors import AuthError, AuthRetryableError, AuthWeakPasswordError
 from supabase_auth.types import Session
 
 from app.core.supabase_auth import SupabaseCredentials
@@ -80,6 +80,22 @@ class SupabaseUserSummary:
 
 class SupabaseAuthError(Exception):
     """Invalid credentials, token, or link."""
+
+
+class SupabaseWeakPasswordError(SupabaseAuthError):
+    """GoTrue rejected a password on strength grounds (error_code
+    weak_password): dashboard length/character rules or leaked-password
+    detection. `reasons` carries GoTrue's vocabulary (length, characters,
+    pwned) and may be empty when GoTrue omits it."""
+
+    def __init__(self, reasons: list[str]) -> None:
+        super().__init__("password rejected as too weak")
+        self.reasons = reasons
+
+
+class SupabaseEmailExistsError(SupabaseAuthError):
+    """GoTrue's email_exists: the identity is confirmed/active. The one
+    auth failure the resend route may honestly report as already_active."""
 
 
 class SupabaseUnavailableError(Exception):
@@ -156,8 +172,15 @@ class SupabaseAuthGateway:
         except httpx.HTTPError as exc:
             logger.error("supabase gateway: %s unavailable (transport)", operation)
             raise SupabaseUnavailableError(str(exc)) from exc
+        except AuthWeakPasswordError as exc:
+            # fact 1: exc.reasons may be a dict ({}) when GoTrue omits
+            # reasons -- coerce anything non-list.
+            reasons = exc.reasons if isinstance(exc.reasons, list) else []
+            raise SupabaseWeakPasswordError(reasons) from exc
         except (AuthError, ValueError) as exc:
             logger.debug("supabase gateway: %s rejected: %s", operation, exc)
+            if getattr(exc, "code", None) == "email_exists":
+                raise SupabaseEmailExistsError(str(exc)) from exc
             raise SupabaseAuthError(str(exc)) from exc
 
     async def sign_in(self, email: str, password: str) -> SupabaseSession:
@@ -222,6 +245,20 @@ class SupabaseAuthGateway:
             return _to_session(session)
 
         return await self._execute("confirm_with_token_hash", call())
+
+    async def verify_token_hash(self, token_hash: str, type_: str) -> SupabaseSession:
+        """The verify_otp half of confirmation only: burns the one-time
+        link and returns the verified session. The password update is the
+        caller's separate, retryable step (B29, #97)."""
+
+        async def call() -> SupabaseSession:
+            async with self._user_client() as client:
+                response = await client.verify_otp(
+                    {"token_hash": token_hash, "type": type_}
+                )
+            return _to_session(response.session)
+
+        return await self._execute("verify_token_hash", call())
 
     async def create_user(self, email: str, password: str) -> str:
         async def call() -> str:

@@ -9,9 +9,11 @@ from app.core.supabase_auth import SupabaseCredentials
 from app.services.supabase_gateway import (
     SupabaseAuthError,
     SupabaseAuthGateway,
+    SupabaseEmailExistsError,
     SupabaseSession,
     SupabaseUnavailableError,
     SupabaseUserSummary,
+    SupabaseWeakPasswordError,
 )
 
 CREDS = SupabaseCredentials(
@@ -28,6 +30,13 @@ SESSION_JSON = {
     "expires_at": 1_900_000_000, "token_type": "bearer",
     "user": {"id": USER_UUID, "email": "a@example.com", "aud": "authenticated",
              "app_metadata": {}, "user_metadata": {}, "created_at": "2026-01-01T00:00:00Z"},
+}
+
+GOTRUE_WEAK_PASSWORD_BODY = {
+    "code": 422,
+    "error_code": "weak_password",
+    "msg": "Password should be at least 6 characters.",
+    "weak_password": {"reasons": ["length"]},
 }
 
 
@@ -94,6 +103,17 @@ class TestAdminCalls:
             return httpx.Response(200, json=SESSION_JSON["user"])
 
         assert await gateway_with(handler).invite_user("a@example.com") == USER_UUID
+
+    async def test_invite_user_email_exists_maps_to_email_exists_error(self):
+        def handler(request):
+            return httpx.Response(422, json={
+                "code": 422, "error_code": "email_exists",
+                "msg": "A user with this email address has already been registered",
+            })
+
+        with pytest.raises(SupabaseEmailExistsError) as exc_info:
+            await gateway_with(handler).invite_user("a@example.com")
+        assert isinstance(exc_info.value, SupabaseAuthError)  # base still catches it
 
     async def test_get_user_id_by_email_pages_until_found(self):
         calls = []
@@ -200,6 +220,31 @@ class TestAdminCalls:
             await gateway_with(handler).change_password("not-a-uuid", "new-password-1")
 
 
+class TestChangePassword:
+    async def test_change_password_maps_weak_password_with_reasons(self):
+        def handler(request):
+            return httpx.Response(422, json=GOTRUE_WEAK_PASSWORD_BODY)
+
+        gateway = gateway_with(handler)
+        with pytest.raises(SupabaseWeakPasswordError) as exc_info:
+            await gateway.change_password(USER_UUID, "abc")
+        assert exc_info.value.reasons == ["length"]
+        assert isinstance(exc_info.value, SupabaseAuthError)  # base still catches it
+
+    async def test_weak_password_reasons_coerced_to_list_when_absent(self):
+        # Body omits weak_password.reasons entirely: supabase-auth then
+        # passes {} as reasons -- the gateway must coerce to [].
+        body = {**GOTRUE_WEAK_PASSWORD_BODY, "weak_password": {}}
+
+        def handler(request):
+            return httpx.Response(422, json=body)
+
+        gateway = gateway_with(handler)
+        with pytest.raises(SupabaseWeakPasswordError) as exc_info:
+            await gateway.change_password(USER_UUID, "abc")
+        assert exc_info.value.reasons == []
+
+
 class TestConfirm:
     async def test_confirm_verifies_then_updates_password(self):
         order = []
@@ -218,6 +263,25 @@ class TestConfirm:
         )
         assert order == ["verify", "update"]
         assert session.access_token == "at-1"
+
+
+class TestVerifyTokenHash:
+    async def test_verify_token_hash_returns_session_without_touching_password(self):
+        requests = []
+
+        def handler(request):
+            requests.append(request.url.path)
+            assert request.url.path.endswith("/verify")
+            return httpx.Response(200, json=SESSION_JSON)
+
+        session = await gateway_with(handler).verify_token_hash("hash-1", "recovery")
+        assert session == SupabaseSession(
+            access_token="at-1", refresh_token="rt-1",
+            expires_at=1_900_000_000, user_id=USER_UUID, email="a@example.com",
+        )
+        # The old confirm_with_token_hash issued a PUT to admin/users/{id}
+        # afterward -- this must not.
+        assert all("/admin/users/" not in path for path in requests)
 
 
 class TestGetEnabledExternalProviders:
