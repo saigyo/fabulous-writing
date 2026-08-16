@@ -182,7 +182,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.document_store = DocumentStore(db)
     app.state.folder_store = FolderStore(db)
     app.state.profile_store = ProfileStore(db)
-    app.state.usage_store = UsageStore(settings.db_path, credit_cost=settings.credit_cost)
+    app.state.usage_store = UsageStore(db, credit_cost=settings.credit_cost)
     if settings.auth.mode == "supabase":
         credentials = resolve_supabase_credentials(settings)
         app.state.supabase_gateway = SupabaseAuthGateway(credentials)
