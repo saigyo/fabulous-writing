@@ -3952,3 +3952,64 @@ Verification: 12/12 e2e across three runs (two reused-stack, one cold
 start), GoTrue cleanup verified out-of-band via the admin API, default
 gate 1410 passed zero warnings, 10 structural guards each
 mutation-verified. CI workflow validated by dispatch after push.
+
+## 2026-08-16 — B28–B31: invite/reset resilience bundle (PR #105)
+
+The follow-up cluster B14 parked, shipped as one PR against the B27
+safety net: admin invite resend (B28 #96), verify-once-retry-many
+password confirm (B29 #97), per-session amr validation (B30 #100), and
+per-email create serialization (B31 #101). Together they make enabling
+Supabase's leaked-password protection safe — a GoTrue strength or
+breach rejection no longer burns the one-time link.
+
+Design was probe-first: the B27 stack disproved #96's central premise
+before a line was planned (GoTrue happily re-invites pending
+identities — same UUID, fresh mail, old link invalidated; the real
+resend blocker was our own duplicate pre-check), pinned the amr shapes
+(password grant → password, both confirm types → otp, refresh
+inherits), and captured the weak_password error anatomy
+(error_code + reasons: length/characters/pwned). Resend therefore
+collapsed to one endpoint that lets GoTrue stay the pending-state
+authority: only its email_exists maps to "already active"; rate limits
+and misconfig report as 503, never a phantom resend.
+
+The retry flow's two review rounds earned their keep. Round one found
+a privilege escalation in the plan as written: the retry leg accepted
+ANY verified session token as a rotation credential, bypassing the
+account-menu's current-password proof — closed with an otp-only
+session requirement (VerifiedToken now carries the session's amr
+method set; confirm sessions are otp-minted, login sessions are not).
+It also caught a dropped eviction branch (invite acceptances would
+have left the confirm session's tokens alive) and rewrote the fake's
+disproven-premise invite semantics before they could sink two tasks.
+Round two corrected the design's own comfortable overclaim: the retry
+token does NOT die at rotation — minted seconds before it, it sits
+inside the 60 s iat-leeway window and lives to its natural TTL, the
+documented B14 residual; rotation kills the refresh token. Code,
+tests (a three-part lifecycle pin), spec, and architecture docs all
+now state that honestly, including the replay-after-success window.
+
+Execution: 9 SDD tasks, 3 fix rounds (route docstring honesty +
+unpinned no-eviction-on-failure property the task reviewer found by
+running its own mutation; a German quote-pair typo transcribed
+faithfully from the plan's own text; final-wave rig-precision fix —
+the B14 provider-guard test had silently lost its specificity because
+the new amr guard fires first). Two implementer agents were killed
+mid-task by API errors and resumed cleanly from working-tree state;
+one implementer discovered the planned lock-serialization test was
+mutation-insensitive (passed without the lock by scheduling luck) and
+rebuilt it around an explicit event. EmailLocks ships with honest
+bounds documentation (cap-pressure eviction window above 1024 live
+entries) instead of an absolute "never evicted" claim.
+
+Verification: backend gate 1455 zero warnings (55 new tests, every
+guard mutation-verified — several re-verified independently by
+reviewers), frontend 642 + tsc + oxlint, live e2e 14/14 twice
+including a real GoTrue weak_password → retry recovery (the local
+stack now sets password_requirements deliberately to make that
+rejection reachable) and the full resend mail chain via Mailpit.
+Parked with rulings: weak-422 four-site duplication, a
+_finish_confirmed_rotation twin in the account-menu path, an inert
+useCrudError formatter arg, and the stale-retryToken dead-end polish.
+Post-merge operator step: enable leaked password protection in the
+dashboard (new setup-guide subsection).
