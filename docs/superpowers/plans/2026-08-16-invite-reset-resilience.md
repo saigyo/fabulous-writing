@@ -48,8 +48,8 @@ The spec's decision 1 says the resend action lives in the admin per-user "⋯ me
 - Test: `backend/tests/test_supabase_auth.py` (extend `mint` base claims + `test_bad_claims_rejected` matrix + two accept cases)
 
 **Interfaces:**
-- Consumes: existing `SupabaseTokenVerifier.verify`, `InvalidToken`, the `mint`/`verifier_setup` rig.
-- Produces: `verify()` additionally rejects any token whose `amr` is missing, empty, or contains a method outside `{"password", "otp"}`. Later tasks rely on retry tokens (otp-minted) passing.
+- Consumes: existing `SupabaseTokenVerifier.verify`, `InvalidToken`, `VerifiedToken` (`backend/app/core/auth.py`), the `mint`/`verifier_setup` rig.
+- Produces: `verify()` additionally rejects any token whose `amr` is missing, empty, or contains a method outside `{"password", "otp"}`; AND `VerifiedToken` gains `methods: frozenset[str] = frozenset()` — the session's amr method set, populated by the supabase verifier (local-mode token issuance leaves the default). Task 3's retry leg REQUIRES `methods == frozenset({"otp"})` — this is the guard that stops an ordinary stolen login token from being used as a password-rotation credential (plan-review finding: without it, the retry leg bypasses the current-password proof `_change_password_supabase` enforces).
 
 - [ ] **Step 1: Extend the mint rig and write the failing tests**
 
@@ -59,7 +59,7 @@ In `backend/tests/test_supabase_auth.py`, add to `mint`'s base `claims` dict (af
         "amr": [{"method": "password", "timestamp": int(time.time())}],
 ```
 
-Extend the `test_bad_claims_rejected` parametrize list with:
+Extend the `test_bad_claims_rejected` parametrize list with (give the WHOLE parametrize an `ids=` list naming each case, so mutation-verify reports and failures are legible — pytest would otherwise label these `kwargs8`…`kwargs14`):
 
 ```python
             {"amr": [{"method": "oauth", "timestamp": 0}]},       # OAuth session on a linked identity
@@ -122,10 +122,34 @@ In `backend/app/core/supabase_auth.py`, directly after the `provider is not emai
         amr = claims.get("amr")
         if not isinstance(amr, list) or not amr:
             raise InvalidToken("token carries no amr")
+        methods: set[str] = set()
         for entry in amr:
             method = entry.get("method") if isinstance(entry, dict) else None
             if method not in ("password", "otp"):
                 raise InvalidToken("session method is not an email flow")
+            methods.add(method)
+```
+
+and thread `methods=frozenset(methods)` into the `VerifiedToken` this method returns. In `backend/app/core/auth.py`, add to `VerifiedToken`:
+
+```python
+    # The session's amr method set (supabase mode; empty in local mode,
+    # which has no amr concept). Lets routes require a specific
+    # authentication method for sensitive operations -- the reset-confirm
+    # retry leg accepts ONLY otp-minted sessions (B29).
+    methods: frozenset[str] = frozenset()
+```
+
+Add a rig test that `verify()` reports the methods:
+
+```python
+    def test_verified_token_carries_session_methods(self, verifier_setup):
+        private, store, verifier = verifier_setup
+        store.create_user("a@example.com", None, external_id="uuid-1")
+        verified = verifier.verify(
+            mint(private, amr=[{"method": "otp", "timestamp": 0}])
+        )
+        assert verified.methods == frozenset({"otp"})
 ```
 
 - [ ] **Step 4: Run the file, then check the other mint site**
@@ -160,6 +184,7 @@ git commit -m "feat(auth): per-session amr guard in the supabase verifier (B30, 
 - Consumes: existing `_execute` error ladder, `_user_client`, `_to_session`, `change_password`.
 - Produces (Task 3+ rely on these):
   - `class SupabaseWeakPasswordError(SupabaseAuthError)` with `reasons: list[str]`.
+  - `class SupabaseEmailExistsError(SupabaseAuthError)` — mapped from GoTrue's `error_code == "email_exists"` (the AuthApiError `.code` attribute). Task 5's resend route maps ONLY this to `already_active`; every other auth failure (rate limits, malformed addresses, misconfig) must NOT masquerade as "already active".
   - `async def verify_token_hash(self, token_hash: str, type_: str) -> SupabaseSession` — the `verify_otp` half only, no password update.
   - `change_password` (unchanged signature) now raises `SupabaseWeakPasswordError` on GoTrue strength rejections.
   - `confirm_with_token_hash` REMAINS in this task (Task 3 deletes it with the route switch).
@@ -221,7 +246,15 @@ class SupabaseWeakPasswordError(SupabaseAuthError):
         self.reasons = reasons
 ```
 
-In `_execute`'s ladder, add BEFORE the general `(AuthError, ValueError)` catch (order matters — `AuthWeakPasswordError` is an `AuthError` subclass):
+Below it:
+
+```python
+class SupabaseEmailExistsError(SupabaseAuthError):
+    """GoTrue's email_exists: the identity is confirmed/active. The one
+    auth failure the resend route may honestly report as already_active."""
+```
+
+In `_execute`'s ladder, add BEFORE the general `(AuthError, ValueError)` catch (order matters — `AuthWeakPasswordError` is an `AuthError` subclass), and extend the general catch:
 
 ```python
         except AuthWeakPasswordError as exc:
@@ -230,6 +263,15 @@ In `_execute`'s ladder, add BEFORE the general `(AuthError, ValueError)` catch (
             reasons = exc.reasons if isinstance(exc.reasons, list) else []
             raise SupabaseWeakPasswordError(reasons) from exc
 ```
+
+```python
+        except (AuthError, ValueError) as exc:
+            if getattr(exc, "code", None) == "email_exists":
+                raise SupabaseEmailExistsError(str(exc)) from exc
+            raise SupabaseAuthError(str(exc)) from exc
+```
+
+Add a MockTransport test: `invite_user` against a 422 `{"error_code": "email_exists", ...}` body raises `SupabaseEmailExistsError` (and is still a `SupabaseAuthError` for callers catching the base).
 
 Add the method (next to `confirm_with_token_hash`, which stays for now):
 
@@ -265,22 +307,27 @@ git commit -m "feat(gateway): SupabaseWeakPasswordError + verify_token_hash spli
 ### Task 3: B29 — verify-once-retry-many confirm route
 
 **Files:**
-- Modify: `backend/app/api/auth.py` (`ResetConfirm` model `:420-423`, `reset_confirm` route `:730-…`)
+- Modify: `backend/app/api/auth.py` (`ResetConfirm` model `:420-423`, `reset_confirm` route `:730-…`, `_change_password_supabase` `:681-684`; ADD `model_validator` to the pydantic imports — it is absent today)
 - Modify: `backend/app/services/supabase_gateway.py` (DELETE `confirm_with_token_hash`)
-- Modify: `backend/tests/fakes_supabase.py` (`FakeSupabaseGateway`)
-- Test: `backend/tests/test_auth_supabase_api.py`
+- Modify: `backend/tests/fakes_supabase.py` (`FakeSupabaseGateway`, `FakeSupabaseVerifier`)
+- Modify: `backend/tests/test_supabase_gateway.py` (DELETE `TestConfirm` `:203-221` — its verify half is covered by Task 2's no-password-touch test)
+- Test: `backend/tests/test_auth_supabase_api.py` (incl. `_SignedSessionGateway` `:583-591`)
 
 **Interfaces:**
 - Consumes: Task 2's `verify_token_hash`, `change_password`, `SupabaseWeakPasswordError`; Task 1's amr-guarded verifier.
 - Produces: `POST /api/auth/reset-confirm` accepts `{token_hash, type, new_password}` OR `{retry_token, new_password}`; failure envelopes `422 {"code": "password_weak", "reasons": [...], "retry_token": "..."}` and `503 {"code": "update_failed", "retry_token": "..."}`; 204 + M2 eviction on success. Frontend (Task 6) consumes exactly these shapes.
 
-- [ ] **Step 1: Update the fake gateway**
+- [ ] **Step 1: Update the fakes (this step is load-bearing — four existing tests and one rig subclass depend on the exact semantics)**
 
 In `backend/tests/fakes_supabase.py`, `FakeSupabaseGateway`:
-- Replace `confirm_with_token_hash` with `verify_token_hash(token_hash, type_)`: consumes the hash from `valid_token_hashes` (burn: remove on use; unknown/reused → raise `SupabaseAuthError`), returns the session it would have returned before, WITHOUT touching the password.
-- `change_password(user_id, new_password)`: honor a new attribute `weak_password_reasons: list[str] | None = None` — when set, raise `SupabaseWeakPasswordError(self.weak_password_reasons)`; and a new `fail_change_password_once: bool = False` — when True, raise `SupabaseUnavailableError` once then reset the flag (transient-failure modeling). Keep recording successful password sets as before.
-- Add `invite_calls: dict[str, int]` incremented by `invite_user` per email (Task 5's tests consume it).
-- The fake verifier (`FakeSupabaseVerifier`) is claim-agnostic — no change.
+- Replace `confirm_with_token_hash` with `verify_token_hash(token_hash, type_)`: consumes the hash from `valid_token_hashes` (burn: remove on use; unknown/reused → raise `SupabaseAuthError`), returns the session it would have returned before, WITHOUT touching the password — and **materializes the identity on consumption**: `self._users.setdefault(email, ("", uuid))`, mirroring GoTrue (verify_otp confirms an identity that already exists remotely). Without this, `change_password` raises `unknown user_id` for confirm-only rigs and four existing tests flip to spurious 503s (`test_invite_type_unknown_subject_jit_creates_row` `:364`, `test_reset_confirm_collision_is_422_not_500` `:495`, `test_reset_confirm_is_rejected_and_creates_no_local_row` `:657`, `test_reset_confirm_verification_failure_still_evicts_existing_row` `:676`).
+- `change_password(user_id, new_password)`: honor a new attribute `weak_password_reasons: list[str] | None = None` — when set, raise `SupabaseWeakPasswordError(self.weak_password_reasons)`; and a new `fail_change_password_once: bool = False` — when True, raise `SupabaseUnavailableError` once then reset the flag. Keep recording successful password sets as before.
+- `invite_user`: rewrite to GoTrue's PROBED semantics (spec fact 1 — the fake's current always-raise models the disproven premise; delete its stale supabase/auth#2180 comment): a PENDING identity → return the existing uuid, deliver a fresh invite (append to `invites`), bump the new `invite_calls: dict[str, int]`; a CONFIRMED identity → raise `SupabaseEmailExistsError` (Task 2). Unknown email → fresh identity as today. The reconciliation rigs (`test_auth_supabase_api.py:1013`, `:1153-1189`) rely on the OLD always-raise behavior to reach `_resolve_after_duplicate_rejection` — give them an explicit opt-in flag `invite_rejects_duplicates: bool = False` (when True: pending emails raise like today) and set it in exactly those tests; every other test uses the probed semantics.
+- `FakeSupabaseVerifier` / fake sessions: sessions minted by `verify_token_hash` are otp-sessions, login/refresh sessions are password-sessions — the fake verifier's returned `VerifiedToken` must carry `methods=frozenset({"otp"})` resp. `frozenset({"password"})` (track per access token in the fake gateway; the verifier looks it up). Task 3's retry-leg guard depends on this distinction.
+
+In `test_auth_supabase_api.py`, `_SignedSessionGateway` (`:583-591`): rename its override to `verify_token_hash(token_hash, type_)` returning the signed session (and registering `_users` per the materialization rule above) — otherwise `TestGatewaySessionsAreVerifiedNotResolvedDirectly` silently stops testing the provider guard (the base fake would mint an opaque token the real verifier rejects as malformed instead).
+
+Also note for the reconciliation path (`admin.py:232-248`): with fact 1, real GoTrue only rejects invites for CONFIRMED identities — the `invite_pending` reconciliation is now a defensive path for fakes/older GoTrue, near-unreachable in production. Task 5 adds a code comment saying so where `invite_emailed=False` is set.
 
 - [ ] **Step 2: Write the failing route tests**
 
@@ -341,6 +388,26 @@ class TestResetConfirmRetryFlow:
     def test_garbage_retry_token_rejected(self, ...):
         # {"retry_token": "not-a-jwt", "new_password": "x"*12} -> 422
         # invalid_or_expired_link (fake verifier rejects unknown tokens).
+
+    def test_login_session_token_rejected_as_retry_token(self, ...):
+        # SECURITY PIN (plan-review finding 1): a normal login's access
+        # token (password-minted) used as retry_token -> 422
+        # invalid_or_expired_link. Without the otp-only guard, any stolen
+        # bearer would rotate the password with no current-password proof.
+
+    def test_retry_token_lifecycle_as_bearer(self, ...):
+        # HONESTY PIN (plan-review finding 19): the retry token IS a live
+        # otp session until rotation -- GET /api/auth/me with it -> 200
+        # while the update is still failing; after the successful retry
+        # rotation -> 401 (backdated mark kills it). The route-level
+        # invariant is that reset-confirm never RETURNS a session; the
+        # token it echoes back is the same one verify_otp minted.
+
+    def test_account_change_password_weak_maps_to_password_weak(self, ...):
+        # plan-review finding 7: POST /api/auth/password with
+        # weak_password_reasons set on the fake -> 422 detail
+        # {"code": "password_weak", "reasons": [...]} (was: generic
+        # password_change_failed).
 ```
 
 Also update the existing confirm-flow tests that stub `confirm_with_token_hash` to the new fake surface (`verify_token_hash` + recorded `change_password`) — behavior-equivalent, assertions unchanged.
@@ -436,6 +503,12 @@ Replace the `reset_confirm` route body: keep `_require_supabase_mode` + the exis
             )
         except InvalidToken:
             raise HTTPException(422, {"code": "invalid_or_expired_link"}) from None
+        # SECURITY: only confirm-minted sessions may rotate without a
+        # current-password proof. A password-grant session presenting
+        # itself here would bypass _change_password_supabase's sign-in
+        # check -- a stolen bearer must never become a rotation credential.
+        if verified.methods != frozenset({"otp"}):
+            raise HTTPException(422, {"code": "invalid_or_expired_link"})
         user = store.get_user(verified.user_id)
         if user is None or not user.is_active or user.external_id is None:
             raise HTTPException(422, {"code": "invalid_or_expired_link"})
@@ -474,8 +547,27 @@ Replace the `reset_confirm` route body: keep `_require_supabase_mode` + the exis
     user = store.get_user(verified.user_id)
     if user is None or not user.is_active:
         raise HTTPException(422, {"code": "invalid_or_expired_link"})
+    if existing_row is None:
+        # The row verify() just JIT-created/adopted (the invite-acceptance
+        # materialization point): its eviction bookkeeping could not run
+        # above -- without this branch the verify_otp session (and its
+        # refresh token, and the retry token) would outlive the confirm
+        # (plan-review finding 2; shipped B14 behavior at auth.py:794-802
+        # -- do not drop it in the restructure).
+        await _finish_confirmed_rotation(app, store, user.id, session.access_token)
     return Response(status_code=204)
 ```
+
+Also in `_change_password_supabase` (`:681-684`), BEFORE the generic `SupabaseAuthError` catch:
+
+```python
+        except SupabaseWeakPasswordError as exc:
+            raise HTTPException(
+                422, {"code": "password_weak", "reasons": exc.reasons}
+            ) from None
+```
+
+Strengthen the existing `test_invite_type_unknown_subject_jit_creates_row` (`:364`): additionally assert `password_changed_at is not None` on the JIT row and that the fake recorded a `global_sign_out` — this is the covering test for the restored branch and the link-leg mutation target.
 
 Preserve the original route's explanatory comments where they still apply (eviction rationale, JIT-materialization note) — they are load-bearing documentation; adapt, don't discard. Import `SupabaseWeakPasswordError` next to the existing gateway-error imports. Delete `confirm_with_token_hash` from `supabase_gateway.py`.
 
@@ -483,9 +575,13 @@ Preserve the original route's explanatory comments where they still apply (evict
 
 `uv run pytest tests/test_auth_supabase_api.py tests/test_supabase_gateway.py -n0 -q` → PASS. Full gate: `uv run pytest -q` → green, zero warnings.
 
-- [ ] **Step 6: Mutation-verify**
+- [ ] **Step 6: Mutation-verify (both eviction sites)**
 
-Delete the `_finish_confirmed_rotation` call on the retry leg → `test_retry_leg_succeeds_and_evicts` must FAIL → restore → PASS. Record in the report.
+1. Delete the `_finish_confirmed_rotation` call on the retry leg → `test_retry_leg_succeeds_and_evicts` must FAIL → restore → PASS.
+2. Delete the link leg's `if existing_row is None:` branch → the strengthened `test_invite_type_unknown_subject_jit_creates_row` must FAIL → restore → PASS.
+3. Delete the retry leg's `verified.methods != frozenset({"otp"})` guard → `test_login_session_token_rejected_as_retry_token` must FAIL → restore → PASS.
+
+Record all three in the report.
 
 - [ ] **Step 7: Commit**
 
@@ -610,6 +706,12 @@ _ENTRY_TTL_SECONDS and the table is capped at _MAX_ENTRIES -- but a HELD
 lock is never evicted, because losing it would let a concurrent request
 run unserialized (correctness beats the cap; held locks are bounded by
 in-flight requests anyway).
+
+Single-EVENT-LOOP assumption on top of the single-process one: a
+contended asyncio.Lock binds to its loop and raises RuntimeError when
+later contended from a different loop. Production uvicorn runs one loop;
+tests that exercise contention must drive both requests inside one loop
+(httpx.AsyncClient + ASGITransport, or a shared TestClient portal).
 """
 
 import asyncio
@@ -699,10 +801,14 @@ class TestResendInvite:
         # audit row recorded with field == "invite_resend"
 
     def test_confirmed_identity_maps_to_already_active(self, ...):
-        # fake: invite_user raises SupabaseAuthError for this email
-        # (model GoTrue's email_exists on confirmed identities)
+        # fake: invite_user raises SupabaseEmailExistsError (confirmed
+        # identity, per the new fake semantics)
         assert r.status_code == 422
         assert r.json()["detail"]["code"] == "already_active"
+
+    def test_generic_auth_failure_is_not_already_active(self, ...):
+        # fake: invite_user raises plain SupabaseAuthError (rate limit /
+        # misconfig class) -> 503, NOT already_active.
 
     def test_unlinked_row_rejected(self, ...):
         # local-created row (external_id None) -> 422 not_linked
@@ -746,9 +852,10 @@ class TestInviteEmailedFlag:
 class TestEmailLockSerialization:
     async def test_concurrent_same_email_creates_serialize(self, ...):
         # Deterministic interleave: fake gateway's invite_user blocks on an
-        # asyncio.Event for the FIRST caller. Fire two concurrent create
-        # requests (httpx.AsyncClient against the app, or asyncio.gather on
-        # the route coroutine per the file's existing async patterns).
+        # asyncio.Event for the FIRST caller. Both requests MUST run inside
+        # ONE event loop (httpx.AsyncClient + ASGITransport + asyncio.gather
+        # -- see the EmailLocks docstring's single-loop note; two TestClient
+        # portals would bind the lock to different loops).
         # Assert: the second request does NOT reach the gateway before the
         # first completes (record call order in the fake), and exactly one
         # 201 + one 422 duplicate_email results.
@@ -772,15 +879,18 @@ Targeted file with `-n0 -q` — FAIL (route/field missing).
 
 Invite branch: set `invite_emailed=True` on the fresh-`invite_user` path; on the reconciliation path (`existing_identity.invite_pending` accepted) leave it `False`. Return `AdminUserCreated(**user.model_dump(), invited=True, invite_emailed=fresh)` where `fresh` is a local bool.
 
-In the supabase PATCH-password dispatch (`admin.py` ~`:444`) and the create-with-password branch: catch `SupabaseWeakPasswordError` BEFORE the generic `SupabaseAuthError` handling and raise `HTTPException(422, {"code": "password_weak", "reasons": exc.reasons})` — no retry token (nothing is burned; the admin resubmits). Import it next to the other gateway-error imports.
+Weak-password surfacing needs `except SupabaseWeakPasswordError as exc: raise HTTPException(422, {"code": "password_weak", "reasons": exc.reasons}) from None` at THREE exact sites, each BEFORE the enclosing generic `SupabaseAuthError` handling (no retry token — nothing is burned; the admin resubmits):
+1. `admin.py:286` — the create-with-password remote-create catch; without this, the weak error (a `SupabaseAuthError` subclass) falls into `_resolve_after_duplicate_rejection` and surfaces as a bogus `create_failed`.
+2. `admin.py:315` — the credential rotation inside the reconciliation path.
+3. `admin.py:414` — the PATCH-password dispatch.
 
-Wrap BOTH supabase create branches (invite and with-password — from the `existing = store.get_by_email(...)` pre-check through the local insert/adopt and audit) in:
+Import `SupabaseWeakPasswordError` and `SupabaseEmailExistsError` next to the other gateway-error imports, and add `Response` to the fastapi import (`admin.py:10` lacks it; the resend route returns one).
 
-```python
-        async with request.app.state.email_locks.acquire(body.email):
-```
+Wrap BOTH supabase create branches in `async with request.app.state.email_locks.acquire(body.email):` — scopes pinned to the actual code shape (the two branches return differently):
+- invite branch: from its `existing = store.get_by_email(...)` pre-check (`:225`) through its own audit + return (`:274`).
+- with-password branch: from its pre-check (`:279`) through `store.mark_password_changed(user.id)` (`:350`) — NOT including the shared audit/return at `:358-360`, which also serves local mode and stays outside (the row is linked by `:350`, so the race the lock exists for is already closed).
 
-(the local-mode branch stays outside the lock).
+The local-mode branch stays outside the lock.
 
 Resend route (after the create route):
 
@@ -805,8 +915,13 @@ async def resend_invite(
     async with request.app.state.email_locks.acquire(user.email):
         try:
             await gateway.invite_user(user.email)
-        except SupabaseAuthError as exc:
+        except SupabaseEmailExistsError as exc:
+            # The ONE auth failure that honestly means "already accepted".
             raise HTTPException(422, {"code": "already_active"}) from exc
+        except SupabaseAuthError as exc:
+            # Rate limits, malformed addresses, misconfig: not the
+            # invitee's state -- never report those as already_active.
+            raise HTTPException(503, "Authentication service unavailable") from exc
         except SupabaseUnavailableError as exc:
             raise HTTPException(503, "Authentication service unavailable") from exc
     store.record_audit(
@@ -898,7 +1013,9 @@ async function extractErrorDetail(response: Response): Promise<ErrorDetail> {
 }
 ```
 
-`HttpError` gains the two readonly fields (constructor takes the `ErrorDetail`); the `request()` throw site passes the full detail. Existing `err.code` consumers are untouched.
+`HttpError` keeps its `(status, message, code?)` positional constructor — ~30 existing call sites construct it positionally (LoginGate/ResetPasswordForm/autosave tests among them) and must not break — and gains a FOURTH optional parameter: `constructor(status: number, message: string, code?: string, extra?: { retryToken?: string; reasons?: string[] })`, exposing `readonly retryToken?: string` and `readonly reasons?: string[]`. The single throw site (`client.ts:142`) feeds both from `extractErrorDetail`.
+
+Also extend the `keepSessionOn401` caller inventory comment (`client.ts:52-57`) with `postResetRetry` — that list is deliberately complete and security-relevant.
 
 New API functions next to `postResetConfirm` (same `keepSessionOn401` treatment):
 
@@ -1029,8 +1146,8 @@ AdminView PATCH password / create-with-password rejected with
     if (err.code === 'password_weak') return mapWeakPasswordReasons(err.reasons, m)
 ```
 
-`AdminView.tsx`:
-- `UserRow` gains props it needs (`invitesAvailable`, an `onResend(user): Promise<void>` handler owned by the parent, following the `onSave` pattern with the same banner/`run()` machinery). In the reset cell (`admin-reset`), for non-self rows when `invitesAvailable`, render after the reset button:
+`AdminView.tsx` — NOTE (plan-review finding 6): there is NO existing success-banner mechanism and NO existing invite-success message. `useCrudError` provides only `{error, run, fail, clear}` and `createUser()` shows nothing on success. This task therefore ADDS a notice channel: `const [notice, setNotice] = useState<string | null>(null)` in `AdminView`, rendered as `<p className="admin-notice" role="status">{notice}</p>` beside the existing `admin-error` alert, cleared at the start of every mutation (`run` wrapper or explicit `setNotice(null)` alongside `clear()`).
+- `UserRow` gains props (`invitesAvailable`, `onResend(user): Promise<void>` owned by the parent; the parent maps outcomes to the new notice/fail channels). Gate the button on `invitesAvailable && user.external_id !== null` (`AdminUser` already carries `external_id` — `client.ts:296`; the backend's `not_linked` guard stays as defense-in-depth). In the reset cell (`admin-reset`), for gated non-self rows, render after the reset button:
 
 ```tsx
             <button
@@ -1042,21 +1159,23 @@ AdminView PATCH password / create-with-password rejected with
             </button>
 ```
 
-with a `resendPending` state mirroring `resetPending`'s double-click guard, and `resendInvite()` calling the parent handler; the parent maps success → `m.adminResendSent` via the existing ok-banner mechanism and `HttpError.code === 'already_active'` → `m.adminResendAlreadyActive` via the fail banner.
-- Create flow: where the current code surfaces the invite success message, branch on `response.invite_emailed === false` → `m.adminInviteLinkedNoEmail`. Update the `postAdminUser` return type in `client.ts` to `AdminUser & { invited?: boolean; invite_emailed?: boolean }`.
+with a `resendPending` state mirroring `resetPending`'s double-click guard, and `resendInvite()` calling the parent handler; the parent maps 204 → `setNotice(m.adminResendSent)` and `HttpError.code === 'already_active'` → `fail(m.adminResendAlreadyActive)`.
+- Create flow: `createUser()` currently shows nothing on success — add: `invited && invite_emailed` → `setNotice(m.adminInviteSent)`; `invited && !invite_emailed` → `setNotice(m.adminInviteLinkedNoEmail)`; plain create → no notice (unchanged). Update the `postAdminUser` return type in `client.ts` to `AdminUser & { invited?: boolean; invite_emailed?: boolean }`.
 
-- [ ] **Step 3: Add the four i18n keys (7 locales; en+de verbatim)**
+- [ ] **Step 3: Add the five i18n keys (7 locales; en+de verbatim)**
 
 ```ts
 // en
 adminResendInvite: 'Resend invitation',
 adminResendSent: 'Invitation sent again.',
 adminResendAlreadyActive: 'This account is already active — no invitation needed.',
+adminInviteSent: 'Invitation sent.',
 adminInviteLinkedNoEmail: 'Linked an existing pending invitation — no new email was sent. Use "Resend invitation" for a fresh link.',
 // de
 adminResendInvite: 'Einladung erneut senden',
 adminResendSent: 'Einladung erneut gesendet.',
 adminResendAlreadyActive: 'Dieses Konto ist bereits aktiv — keine Einladung nötig.',
+adminInviteSent: 'Einladung gesendet.',
 adminInviteLinkedNoEmail: 'Bestehende offene Einladung verknüpft — es wurde keine neue E-Mail gesendet. Nutze „Einladung erneut senden" für einen frischen Link.',
 ```
 
@@ -1086,7 +1205,7 @@ git commit -m "feat(frontend): admin invite resend + honest weak-password copy (
 
 - [ ] **Step 1: Config + password sweep**
 
-In `supabase/config.toml` `[auth.email]`, under `enable_signup = true`:
+In `supabase/config.toml` — under **`[auth]`** (next to `minimum_password_length`; NOT `[auth.email]`, which has no such key — the CLI would reject or silently ignore it there and the weak-password e2e would degrade to a confusing 204):
 
 ```toml
 # Deliberate deviation from the hosted default ("" = none): a strength
@@ -1097,6 +1216,8 @@ In `supabase/config.toml` `[auth.email]`, under `enable_signup = true`:
 # lowercase letters and digits.
 password_requirements = "lower_upper_letters_digits"
 ```
+
+After editing, verify placement empirically before writing the tests: restart the stack and confirm a lowercase-only 10-char password is rejected on the admin update (`docker exec supabase_auth_fabulous-writing-e2e env | grep -i PASSWORD_REQUIRED` inspection is also acceptable evidence).
 
 Sweep the password literals (fact 7) to compliant values, keeping their runid suffixes (runid supplies digits; add an uppercase letter):
 
@@ -1126,7 +1247,15 @@ verify-once-retry-many weak-password recovery.
 The weak_password rejection is reachable because supabase/config.toml sets
 password_requirements = "lower_upper_letters_digits": an all-lowercase
 >=8-char password passes the app's own pre-validation but fails GoTrue.
+
+Mail budget: these tests add ~3 mails per run to GoTrue's 30/hour ceiling
+(not configurable on the Mailpit-backed stack) -- a rate-limited rerun
+shows up as wait_for_message timeouts, not app bugs. GoTrue's own
+max_frequency (1 s between mails per address) is why the resend below
+waits briefly after the first invite mail.
 """
+
+import time
 
 import httpx
 
@@ -1144,6 +1273,9 @@ def test_invite_resend_end_to_end(app_url, admin_creds, runid, mailpit):
 
     first_mail = mailpit.wait_for_message(email)
     old_hash, _ = mailpit.extract_token(first_mail["HTML"])
+
+    # clear GoTrue's per-address max_frequency (1 s) before resending
+    time.sleep(1.5)
 
     resend = httpx.post(
         f"{app_url}/api/admin/users/{created['id']}/resend-invite",
@@ -1218,7 +1350,7 @@ def test_weak_password_retry_end_to_end(app_url, admin_creds, runid, mailpit):
 
 - [ ] **Step 4: Run live**
 
-`scripts/e2e-supabase.sh --down` then `scripts/e2e-supabase.sh` (config changed → cold start required). Expected: all previous tests + 2 new + the extended claims test = 15 passing. Then `scripts/e2e-supabase.sh --down`.
+`scripts/e2e-supabase.sh --down` then `scripts/e2e-supabase.sh` (config changed → cold start required). Expected: **14 passing** (the current 12 + the 2 new; the amr addition extends an existing test's asserts, it adds no test). Then `scripts/e2e-supabase.sh --down`.
 
 - [ ] **Step 5: Default gate**
 
@@ -1249,7 +1381,7 @@ git commit -m "test(e2e): invite-resend + weak-password-retry live flows (B28 B2
 
 - [ ] **Step 2: architecture docs**
 
-- `backend-architecture.md`: extend the supabase-auth section — amr guard (with the first-provider vs current-session distinction), the two-leg confirm flow + envelopes + retry-token lifecycle (minted pre-rotation, dead post-rotation via the backdated mark), resend semantics (GoTrue authority), `EmailLocks` (bounded, held-locks-never-evicted, single-process assumption).
+- `backend-architecture.md`: extend the supabase-auth section — amr guard (with the first-provider vs current-session distinction), the two-leg confirm flow + envelopes + retry-token lifecycle stated HONESTLY (the retry token is a live otp-session bearer usable against the API until the rotation completes — the same exposure any confirm session has today; what the design guarantees is that the ROUTE never returns a session, the retry leg accepts only otp-minted sessions, and the backdated mark kills the token at rotation), resend semantics (GoTrue authority; `email_exists` is the only failure mapped to already_active), `EmailLocks` (bounded, held-locks-never-evicted, single-process AND single-event-loop assumptions).
 - `frontend-architecture.md`: the reset form's retry state machine, the shared weak-password reason mapper, the admin resend action + `invite_emailed` copy branch.
 
 - [ ] **Step 3: Gates**

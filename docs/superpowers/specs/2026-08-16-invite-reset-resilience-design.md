@@ -122,21 +122,30 @@ Link leg: app-side password pre-validation (unchanged, min 8) →
 
 Retry leg: `retry_token` goes through
 `app.state.token_verifier.verify()` via `run_in_threadpool` — full claim
-guards (including the new amr guard) and normal JIT semantics → load the
-local row (active check as today) → its `external_id` is the update
-target → `change_password(external_id, new_password)` → same failure
-envelopes (the same retry token remains usable; it stays valid until its
-natural TTL).
+guards (including the new amr guard) and normal JIT semantics — **and
+additionally requires an otp-only session** (`VerifiedToken` gains
+`methods: frozenset[str]` populated from `amr`; the retry leg demands
+`methods == {"otp"}`). Amended at plan review: without this, any stolen
+ordinary login token (password-minted) would serve as a rotation
+credential, bypassing the current-password proof the account-menu change
+enforces. Confirm sessions are otp-minted (fact 3), so legitimate
+retries pass. Then: load the local row (active check as today) → its
+`external_id` is the update target → `change_password(external_id,
+new_password)` → same failure envelopes (the same retry token remains
+usable; it stays valid until its natural TTL).
 
 Success (either leg): unchanged M2 ordering — the existing hoisted
 eviction bookkeeping for a pre-existing row, `mark_password_changed`
 (backdated) + best-effort `global_sign_out`, then 204. Invariants pinned
 by tests:
 
-- The route never returns a session in any branch — the retry token
-  authorizes the password update only and can never be exchanged into an
-  app session (the post-success backdated-iat eviction kills it for
-  API-auth purposes).
+- The route never returns a session in any branch. Honesty note (amended
+  at plan review): the retry token IS a live otp-session bearer until the
+  rotation completes — the same exposure any confirm session has today —
+  and dies at rotation via the backdated mark; a lifecycle test pins
+  both halves. What the retry token can never do is serve as a rotation
+  credential from a password-minted session (the otp-only guard above),
+  and the route itself never hands out a session envelope.
 - The retry envelope's `retry_token` is never logged.
 
 **Sequencing note**: on the link leg, eviction bookkeeping stays keyed to
@@ -156,8 +165,12 @@ supabase-only routes):
   pending identities and refreshes the link).
 - 200 from GoTrue → **204**. GoTrue `email_exists` (fact 2) → **422
   `{"code": "already_active"}`** — the invitee has accepted since; honest
-  admin feedback instead of a phantom resend. `SupabaseUnavailableError`
-  → 503.
+  admin feedback instead of a phantom resend. Amended at plan review: the
+  gateway distinguishes `email_exists` as its own error class
+  (`SupabaseEmailExistsError`), and ONLY that maps to `already_active`;
+  any other auth-level failure (GoTrue rate limits, malformed address,
+  misconfiguration) → 503 — never a false "already active".
+  `SupabaseUnavailableError` → 503.
 - Audit-logged like create/invite (`field="invite_resend"`).
 - Runs under the B31 email lock.
 
@@ -202,9 +215,12 @@ transactional).
   supabase link, gated by `auth_features.invites`; toasts for
   204 → "invitation sent", `already_active` → "already accepted".
   Create-flow copy uses `invite_emailed` (§3).
-- **i18n**: ~6 new keys × 7 locales (en de fr es it ja zh), informal
-  register (Du/tu/tú/你), `register.test.ts` conventions (English code
-  comments only).
+- **i18n**: 10 new keys × 7 locales (en de fr es it ja zh) — four weak-
+  password reasons + retryable-update message + five admin keys (resend
+  action/sent/already-active, invite-sent, invite-linked-no-email; the
+  admin view has no pre-existing success channel, so one is added) —
+  informal register (Du/tu/tú/你), `register.test.ts` conventions
+  (English code comments only).
 
 ### 6. Tests
 
