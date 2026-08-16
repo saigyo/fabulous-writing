@@ -179,8 +179,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.jobs = JobManager()
     app.state.nlp = NlpRegistry(settings.nlp.models)
     app.state.provider_factory = make_provider_factory(settings)
-    app.state.document_store = DocumentStore(settings.db_path)
-    app.state.folder_store = FolderStore(settings.db_path)
+    app.state.document_store = DocumentStore(db)
+    app.state.folder_store = FolderStore(db)
     app.state.profile_store = ProfileStore(settings.db_path)
     app.state.usage_store = UsageStore(settings.db_path, credit_cost=settings.credit_cost)
     if settings.auth.mode == "supabase":

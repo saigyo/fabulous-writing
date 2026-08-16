@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from app.core.models import Language
+from app.services.db.sqlite import SqliteDatabase
 from app.services.documents import DocumentStore, RevisionConflictError
 
 # Schema as it existed before the folder_id column was added.
@@ -56,7 +57,7 @@ VALUES ('Old', 'en', '2026-01-01T00:00:00+00:00',
 
 @pytest.fixture()
 def store(tmp_path: Path) -> DocumentStore:
-    return DocumentStore(tmp_path / "test.db")
+    return DocumentStore(SqliteDatabase(tmp_path / "test.db"))
 
 
 def test_create_and_get_document(store):
@@ -150,15 +151,15 @@ def test_delete_document(store):
 
 
 def test_open_twice_is_idempotent(tmp_path: Path):
-    DocumentStore(tmp_path / "d.db")
-    store = DocumentStore(tmp_path / "d.db")
+    DocumentStore(SqliteDatabase(tmp_path / "d.db"))
+    store = DocumentStore(SqliteDatabase(tmp_path / "d.db"))
     assert store.list_documents(owner_id=1) == []
 
 
 def test_connection_is_closed_after_use(tmp_path: Path):
     # `with sqlite3.connect(...)` alone only manages the transaction; the
     # store must also close the connection or every operation leaks one.
-    store = DocumentStore(tmp_path / "documents.db")
+    store = DocumentStore(SqliteDatabase(tmp_path / "documents.db"))
     with store._connect() as conn:
         conn.execute("SELECT 1")
     with pytest.raises(sqlite3.ProgrammingError):
@@ -192,11 +193,11 @@ def test_folder_id_migration_adds_column(tmp_path: Path):
     conn.executescript(_SCHEMA_BEFORE_FOLDERS)
     conn.commit()
     conn.close()
-    migrated = DocumentStore(db)
+    migrated = DocumentStore(SqliteDatabase(db))
     old = migrated.list_documents(owner_id=1)[0]
     assert old.folder_id is None
     # Opening twice must not fail on the ALTER TABLE guard.
-    DocumentStore(db)
+    DocumentStore(SqliteDatabase(db))
 
 
 def test_create_sets_edited_at_and_optional_checked_at(store):
@@ -274,7 +275,7 @@ def test_list_orders_by_edited_at(document_clock, store):
 
 
 def test_documents_are_invisible_across_owners(tmp_path):
-    store = DocumentStore(tmp_path / "d.db")
+    store = DocumentStore(SqliteDatabase(tmp_path / "d.db"))
     doc = store.create_document("Mine", Language.EN, owner_id=1)
     assert store.get_document(doc.id, owner_id=2) is None
     assert store.list_documents(owner_id=2) == []
@@ -293,8 +294,8 @@ def test_timestamp_migration_seeds_from_updated_at(tmp_path: Path):
     conn.executescript(_SCHEMA_BEFORE_TIMESTAMPS)
     conn.commit()
     conn.close()
-    migrated = DocumentStore(db)
+    migrated = DocumentStore(SqliteDatabase(db))
     old = migrated.get_document(1, owner_id=1)
     assert old.edited_at == "2026-02-02T00:00:00+00:00"
     assert old.checked_at == "2026-02-02T00:00:00+00:00"
-    DocumentStore(db)  # reopen-idempotent
+    DocumentStore(SqliteDatabase(db))  # reopen-idempotent

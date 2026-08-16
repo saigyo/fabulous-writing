@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from app.core.models import Language
-from app.services._sqlite import connect
+from app.services.db.sqlite import SqliteDatabase, connect
 from app.services.documents import DocumentStore
 from app.services.folders import FolderStore, FolderDefaults
 
@@ -28,8 +28,8 @@ def db(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def store(db: Path) -> FolderStore:
-    DocumentStore(db)  # folders and documents share the DB in production
-    return FolderStore(db)
+    DocumentStore(SqliteDatabase(db))  # folders and documents share the DB in production
+    return FolderStore(SqliteDatabase(db))
 
 
 def test_create_list_get(store):
@@ -60,8 +60,8 @@ def test_rename(store):
 
 
 def test_delete_moves_members_to_ungrouped(db):
-    docs = DocumentStore(db)
-    folders = FolderStore(db)
+    docs = DocumentStore(SqliteDatabase(db))
+    folders = FolderStore(SqliteDatabase(db))
     folder = folders.create_folder("Project", owner_id=1)
     inside = docs.create_document("In", Language.EN, folder_id=folder.id, owner_id=1)
     outside = docs.create_document("Out", Language.EN, owner_id=1)
@@ -74,15 +74,15 @@ def test_delete_moves_members_to_ungrouped(db):
 
 
 def test_open_twice_is_idempotent(db):
-    FolderStore(db)
-    store = FolderStore(db)
+    FolderStore(SqliteDatabase(db))
+    store = FolderStore(SqliteDatabase(db))
     assert store.list_folders(owner_id=1) == []
 
 
 def test_connection_is_closed_after_use(db):
     # `with sqlite3.connect(...)` alone only manages the transaction; the
     # store must also close the connection or every operation leaks one.
-    store = FolderStore(db)
+    store = FolderStore(SqliteDatabase(db))
     with store._connect() as conn:
         conn.execute("SELECT 1")
     with pytest.raises(sqlite3.ProgrammingError):
@@ -95,8 +95,8 @@ def test_defaults_migration_idempotent(db):
     conn.executescript(_SCHEMA_BEFORE_DEFAULTS)
     conn.commit()
     conn.close()
-    FolderStore(db)  # migrates
-    folder = FolderStore(db).list_folders(owner_id=1)[0]  # opening twice is safe
+    FolderStore(SqliteDatabase(db))  # migrates
+    folder = FolderStore(SqliteDatabase(db)).list_folders(owner_id=1)[0]  # opening twice is safe
     assert folder.name == "Old"
     assert folder.default_language is None
     assert folder.default_profile_id is None
@@ -186,7 +186,7 @@ def test_nocase_index_rejects_case_duplicate_on_create(db):
     )
     conn.commit()
     conn.close()
-    store = FolderStore(db)
+    store = FolderStore(SqliteDatabase(db))
     with pytest.raises(ValueError, match="exists"):
         store.create_folder("blog", owner_id=1)
 
@@ -204,7 +204,7 @@ def test_nocase_index_rejects_case_duplicate_on_rename(db):
     )
     conn.commit()
     conn.close()
-    store = FolderStore(db)
+    store = FolderStore(SqliteDatabase(db))
     blog = [f for f in store.list_folders(owner_id=1) if f.name == "Blog"][0]
     with pytest.raises(ValueError, match="exists"):
         store.rename_folder(blog.id, "NOTES", owner_id=1)
@@ -219,14 +219,14 @@ def test_nocase_index_migration_is_idempotent(db):
     )
     conn.commit()
     conn.close()
-    FolderStore(db)
-    store = FolderStore(db)  # opening twice must not fail on IF NOT EXISTS
+    FolderStore(SqliteDatabase(db))
+    store = FolderStore(SqliteDatabase(db))  # opening twice must not fail on IF NOT EXISTS
     assert [f.name for f in store.list_folders(owner_id=1)] == ["Blog"]
 
 
 def test_legacy_case_duplicates_skip_index_with_warning(db, caplog):
     # A hand-built DB with pre-existing case-duplicates (created before the
-    # NOCASE index existed) must still open; the index is skipped rather
+    # LOWER(name) index existed) must still open; the index is skipped rather
     # than raising on creation, and both rows remain visible.
     conn = sqlite3.connect(db)
     conn.executescript(_SCHEMA_CURRENT_FOLDERS)
@@ -241,7 +241,7 @@ def test_legacy_case_duplicates_skip_index_with_warning(db, caplog):
     conn.commit()
     conn.close()
     with caplog.at_level("WARNING"):
-        store = FolderStore(db)
+        store = FolderStore(SqliteDatabase(db))
     assert "case-duplicate" in caplog.text
     names = sorted(f.name for f in store.list_folders(owner_id=1))
     assert names == ["Blog", "blog"]
@@ -255,7 +255,7 @@ def test_legacy_case_duplicates_skip_index_with_warning(db, caplog):
 
 
 def test_folders_are_invisible_across_owners_and_names_are_per_owner(tmp_path):
-    store = FolderStore(tmp_path / "f.db")
+    store = FolderStore(SqliteDatabase(tmp_path / "f.db"))
     folder = store.create_folder("Projects", owner_id=1)
     assert store.get_folder(folder.id, owner_id=2) is None
     assert store.list_folders(owner_id=2) == []
@@ -269,7 +269,7 @@ def test_folders_are_invisible_across_owners_and_names_are_per_owner(tmp_path):
 
 
 def test_folder_rebuild_drops_inline_unique_and_default(tmp_path):
-    FolderStore(tmp_path / "f.db")
+    FolderStore(SqliteDatabase(tmp_path / "f.db"))
     with connect(tmp_path / "f.db") as conn:
         sql = conn.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='folders'"
@@ -300,11 +300,11 @@ def test_folder_rebuild_migrates_a_legacy_table(tmp_path):
         conn.execute(
             "INSERT INTO folders (name, created_at) VALUES ('Kept', '2026-01-01T00:00:00+00:00')"
         )
-    store = FolderStore(db)
+    store = FolderStore(SqliteDatabase(db))
     kept = store.list_folders(owner_id=1)
     assert [f.name for f in kept] == ["Kept"]
     # Idempotent: a second open must not rebuild again or fail.
-    FolderStore(db)
+    FolderStore(SqliteDatabase(db))
     assert [f.name for f in store.list_folders(owner_id=1)] == ["Kept"]
 
 
@@ -313,8 +313,8 @@ def test_delete_folder_only_unfiles_the_owners_documents(tmp_path):
     # ids are per-table counters, so another owner's folder can share the
     # numeric id and their documents must not be unfiled by our delete.
     db = tmp_path / "d.db"
-    docs = DocumentStore(db)
-    folders = FolderStore(db)
+    docs = DocumentStore(SqliteDatabase(db))
+    folders = FolderStore(SqliteDatabase(db))
     mine = folders.create_folder("Mine", owner_id=1)
     doc = docs.create_document("Doc", Language.EN, owner_id=2)
     docs.set_folder(doc.id, mine.id, owner_id=2)  # same numeric id, owner 2
