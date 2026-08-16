@@ -8,16 +8,14 @@ schema changes.
 """
 
 import logging
-import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Literal, Protocol
 
 from app.core.config import CreditCostSettings, LimitsSettings, TierLimitsSettings
 from app.core.permissions import EffectiveSelection, RequestedLLM
-from app.services._sqlite import connect, migrate_columns
 from app.services.credits import estimate_cost, run_cost
+from app.services.db import Database, Row, migrate_columns
 
 logger = logging.getLogger(__name__)
 
@@ -132,19 +130,16 @@ def _window_start(moment: datetime, window: str) -> datetime:
 class UsageStore:
     def __init__(
         self,
-        db_path: Path,
+        db: Database,
         *,
         credit_cost: CreditCostSettings | None = None,
-        timeout: float | None = None,
     ) -> None:
-        self.db_path = db_path
+        self.db = db
         # Pricing is global and static, unlike per-tier limits -- injected
         # once here so finish_run's signature (and every settle frame that
         # calls it) stays untouched (B6 spec §4).
         self.credit_cost = credit_cost or CreditCostSettings()
-        self.timeout = timeout
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        with connect(db_path, timeout=timeout) as conn:
+        with self.db.connect() as conn:
             conn.executescript(_SCHEMA)
             migrate_columns(
                 conn,
@@ -152,21 +147,6 @@ class UsageStore:
                 [("fail_stage", "TEXT"), ("fail_detail", "TEXT"),
                  ("credits", "INTEGER")],
             )
-
-    def _raw_connect(self) -> sqlite3.Connection:
-        """reserve_llm_run only: it needs explicit commit/rollback on every
-        branch, which _sqlite.connect's auto-committing context manager
-        would fight. The caller closes in a finally. Every other method
-        uses _sqlite.connect, which commits AND closes — sqlite3's own
-        context manager only ends the transaction, so `with
-        sqlite3.connect(...)` would leak a connection per call."""
-        conn = (
-            sqlite3.connect(self.db_path)
-            if self.timeout is None
-            else sqlite3.connect(self.db_path, timeout=self.timeout)
-        )
-        conn.row_factory = sqlite3.Row
-        return conn
 
     def reserve_llm_run(
         self,
@@ -198,7 +178,7 @@ class UsageStore:
             model=effective.model or "", text_chars=text_chars,
             config=self.credit_cost,
         )
-        conn = self._raw_connect()
+        conn = self.db.raw_connect()
         try:
             # The transaction begins with the staleness fallback (spec §6.6):
             # the counts below are then already clean, and no separate
@@ -214,7 +194,8 @@ class UsageStore:
                        llm_tier, provider, model, requested_tier,
                        requested_provider, requested_model, text_chars,
                        source, run_id, credits)
-                   VALUES (?, ?, ?, 'started', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, 'started', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   RETURNING id""",
                 (
                     user.id,
                     day,
@@ -231,7 +212,7 @@ class UsageStore:
                     estimate,
                 ),
             )
-            reservation_id = cursor.lastrowid
+            reservation_id = cursor.fetchone()["id"]
             for window, budget in limits.credit_windows().items():
                 if window == "day":
                     (spent,) = conn.execute(
@@ -306,7 +287,7 @@ class UsageStore:
             fail_detail = None
         if fail_stage is not None and fail_stage not in _FAIL_STAGES:
             raise ValueError(f"unknown fail_stage: {fail_stage!r}")
-        with connect(self.db_path, timeout=self.timeout) as conn:
+        with self.db.connect() as conn:
             row = conn.execute(
                 """SELECT provider, model, source, credits FROM llm_usage
                    WHERE id = ? AND status = 'started'""",
@@ -341,7 +322,7 @@ class UsageStore:
 
     def _settled_credits(
         self,
-        row: sqlite3.Row,
+        row: Row,
         status: str,
         input_tokens: int | None,
         output_tokens: int | None,
@@ -367,7 +348,7 @@ class UsageStore:
         regardless of status (B6 spec §3). /me's data source."""
         moment = now or _utc_now()
         used: dict[str, int] = {}
-        with connect(self.db_path, timeout=self.timeout) as conn:
+        with self.db.connect() as conn:
             # Plain SELECTs run in sqlite3's autocommit mode (no implicit
             # transaction), so without an explicit BEGIN a reservation or
             # settlement could commit between two of this loop's per-window
@@ -397,7 +378,7 @@ class UsageStore:
     def sweep_all_started(self) -> int:
         """Startup sweep (spec §6.6): in a single-process deployment no
         'started' row can belong to a live run once the process is gone."""
-        with connect(self.db_path, timeout=self.timeout) as conn:
+        with self.db.connect() as conn:
             cursor = conn.execute(
                 "UPDATE llm_usage SET status = 'abandoned' WHERE status = 'started'"
             )

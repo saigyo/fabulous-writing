@@ -9,7 +9,7 @@ import pytest
 from app.core.config import CreditCostSettings, LimitsSettings, ProviderCreditSettings, Settings, TierLimitsSettings
 from app.core.permissions import EffectiveSelection, RequestedLLM
 from app.main import create_app
-from app.services._sqlite import connect
+from app.services.db.sqlite import SqliteDatabase, connect
 from app.services.usage import _FAIL_STAGES, UsageStore
 
 
@@ -32,7 +32,7 @@ EFFECTIVE = EffectiveSelection(
 
 @pytest.fixture
 def store(tmp_path):
-    return UsageStore(tmp_path / "usage.db")
+    return UsageStore(SqliteDatabase(tmp_path / "usage.db"))
 
 
 def reserve(store, user=None, *, limits=LIMITS, server=SERVER, run_id="run-1",
@@ -44,7 +44,7 @@ def reserve(store, user=None, *, limits=LIMITS, server=SERVER, run_id="run-1",
 
 
 def rows(store):
-    with connect(store.db_path) as conn:
+    with store.db.connect() as conn:
         return conn.execute("SELECT * FROM llm_usage ORDER BY id").fetchall()
 
 
@@ -75,7 +75,7 @@ class TestReservationRow:
     def test_check_constraint_rejects_unknown_status(self, store):
         # A typo'd terminal status would silently leak a concurrency slot
         # for llm_run_max_age (spec §5.3) — it must fail loudly instead.
-        with connect(store.db_path) as conn:
+        with store.db.connect() as conn:
             with pytest.raises(sqlite3.IntegrityError):
                 conn.execute(
                     """INSERT INTO llm_usage (user_id, day, created_at, status,
@@ -162,7 +162,7 @@ class TestConcurrency:
 
     def test_two_simultaneous_reservations_admit_exactly_one(self, tmp_path):
         # TOCTOU (spec §6.4): insert-first serializes concurrent starts.
-        store = UsageStore(tmp_path / "usage.db")
+        store = UsageStore(SqliteDatabase(tmp_path / "usage.db"))
         limits = budget_limits(credits_per_day=1)
         # Two racing reservations at 1 credit each: the first to insert sums
         # to 1 (not > 1, admitted); the second sums to 2 (> 1, rejected).
@@ -239,7 +239,7 @@ def test_startup_sweeps_started_ledger_rows(tmp_path: Path):
     # create_app tests do (conftest already provides the FW_* env the app
     # factory needs) — the arrange/assert below is the requirement.
     settings = Settings(db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules")
-    store = UsageStore(settings.db_path)
+    store = UsageStore(SqliteDatabase(settings.db_path))
     store.reserve_llm_run(  # leaves a 'started' row
         FakeUser(1), TierLimitsSettings(credits_per_day=1_000_000,
         max_llm_document_chars=1000, concurrent_llm_runs=5),
@@ -300,7 +300,7 @@ class TestFailureColumns:
         assert row["status"] == "started"  # the write never happened
 
     def test_check_constraint_rejects_unknown_stage(self, store):
-        with connect(store.db_path) as conn:
+        with store.db.connect() as conn:
             with pytest.raises(sqlite3.IntegrityError):
                 conn.execute(
                     """INSERT INTO llm_usage (user_id, day, created_at, status,
@@ -335,7 +335,7 @@ class TestFailureColumns:
                    VALUES (1, '2026-07-20', '2026-07-20T00:00:00+00:00',
                            'failed', 'p', 'm', 1, 'check', 'r')"""
             )
-        store = UsageStore(db_path)
+        store = UsageStore(SqliteDatabase(db_path))
         (row,) = rows(store)
         assert row["fail_stage"] is None
         assert row["fail_detail"] is None
@@ -425,7 +425,7 @@ class TestCreditSettlement:
                 output_weight=5.0, default_factor=3.0,
             )},
         )
-        store = UsageStore(store.db_path, credit_cost=config)
+        store = UsageStore(store.db, credit_cost=config)
         effective = EffectiveSelection(
             tier="quality", provider="claude", model="m", degraded=False
         )
@@ -546,7 +546,7 @@ class TestWindowEnforcement:
     def test_null_credit_rows_count_zero(self, store):
         # Pre-B6 rows have credits NULL; they must not poison the SUM.
         limits = budget_limits(credits_per_day=self.EST)
-        with connect(store.db_path) as conn:
+        with store.db.connect() as conn:
             conn.execute(
                 """INSERT INTO llm_usage (user_id, day, created_at, status,
                        provider, model, text_chars, source, run_id)
