@@ -29,7 +29,7 @@ def test_admin_login_returns_full_session_and_me_works(app_url, admin_creds):
 
 def test_wrong_password_is_rejected(app_url, admin_creds):
     email, _ = admin_creds
-    assert expect_login_failure(app_url, email, "definitely-wrong-password-x") == 401
+    assert expect_login_failure(app_url, email, "Definitely-Wrong-Password-1x") == 401
 
 
 def test_garbage_bearer_token_is_rejected(app_url):
@@ -50,3 +50,7 @@ def test_session_token_is_es256_with_kid(app_url, admin_creds):
     header = jwt.get_unverified_header(session["token"])
     assert header["alg"] == "ES256"
     assert header["kid"]
+
+    payload = jwt.decode(session["token"], options={"verify_signature": False})
+    assert payload["amr"], "GoTrue stopped minting amr — the B30 guard would reject everything"
+    assert all(entry["method"] in ("password", "otp") for entry in payload["amr"])

@@ -68,7 +68,7 @@ def runid() -> str:
 
 @pytest.fixture(scope="session")
 def admin_creds(runid: str) -> tuple[str, str]:
-    return (f"admin-{runid}@e2e.local", f"e2e-admin-password-{runid}")
+    return (f"admin-{runid}@e2e.local", f"E2e-Admin-Password-{runid}")
 
 
 @pytest.fixture(scope="session")

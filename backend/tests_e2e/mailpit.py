@@ -12,8 +12,14 @@ class Mailpit:
     def __init__(self, base_url: str) -> None:
         self._base = base_url.rstrip("/")
 
-    def wait_for_message(self, to: str, timeout: float = 20.0) -> dict:
-        """Newest message addressed to `to`, polled every 0.5 s."""
+    def wait_for_message(
+        self, to: str, timeout: float = 20.0, min_count: int = 1
+    ) -> dict:
+        """Newest message addressed to `to`, polled every 0.5 s.
+
+        Waits until at least `min_count` messages have arrived (messages are
+        newest first) before returning the newest one.
+        """
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             resp = httpx.get(
@@ -23,7 +29,7 @@ class Mailpit:
             )
             resp.raise_for_status()
             messages = resp.json().get("messages", [])
-            if messages:
+            if len(messages) >= min_count:
                 msg_id = messages[0]["ID"]
                 detail = httpx.get(
                     f"{self._base}/api/v1/message/{msg_id}", timeout=10

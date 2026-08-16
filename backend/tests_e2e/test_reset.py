@@ -17,8 +17,8 @@ def test_password_reset_end_to_end_with_eviction(
     app_url, admin_creds, runid, mailpit
 ):
     email = f"resetter-{runid}@e2e.local"
-    old_password = f"e2e-reset-old-{runid}-x"
-    new_password = f"e2e-reset-new-{runid}-x"
+    old_password = f"E2e-Reset-Old-{runid}-1x"
+    new_password = f"E2e-Reset-New-{runid}-1x"
 
     admin = login(app_url, *admin_creds)
     admin_create_user(app_url, admin["token"], email, old_password)

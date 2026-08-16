@@ -18,8 +18,8 @@ def test_password_change_rotates_credential_and_kills_other_sessions(
     app_url, admin_creds, runid
 ):
     email = f"changer-{runid}@e2e.local"
-    old_password = f"e2e-old-password-{runid}"
-    new_password = f"e2e-new-password-{runid}"
+    old_password = f"E2e-Old-Password-{runid}"
+    new_password = f"E2e-New-Password-{runid}"
 
     admin = login(app_url, *admin_creds)
     created = admin_create_user(app_url, admin["token"], email, old_password)
