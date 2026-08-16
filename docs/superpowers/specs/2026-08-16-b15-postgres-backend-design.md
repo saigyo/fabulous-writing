@@ -214,8 +214,10 @@ nothing.
 - All new/changed guards mutation-verified per the standing rule.
 - CI: new always-on job in `.github/workflows/backend.yml` with a
   `postgres:17` service container (matches the supabase stack's major
-  version), exporting `FW_TEST_DATABASE_URL` and running the parametrized
-  subset plus the smoke and concurrency modules.
+  version), exporting `FW_TEST_DATABASE_URL` and running the FULL suite —
+  the superset also catches accidental Postgres-dependence outside the
+  parametrized files, at the accepted cost of roughly doubling backend CI
+  wall time.
 - Local recipe (documented): `FW_TEST_DATABASE_URL` pointing at the supabase
   e2e stack's Postgres on port 54322 (stack managed exclusively via
   `supabase start`/`stop` / `scripts/e2e-supabase.sh`).
