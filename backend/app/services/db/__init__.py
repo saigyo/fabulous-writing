@@ -13,15 +13,19 @@ Connection contract — everything a store may rely on:
 - ``executescript(ddl)`` for multi-statement DDL.
 - Rows support mapping access (``row["col"]``) AND positional access /
   tuple unpacking (``row[0]``, ``(x,) = fetchone()``).
-- A violated UNIQUE constraint (column or expression index) raises
-  ``UniqueViolationError``; every other integrity error propagates as the
-  driver's own exception.
+- A violated UNIQUE constraint (column or expression index) on an
+  ``execute()`` call raises ``UniqueViolationError``; every other
+  integrity error propagates as the driver's own exception.
+  ``executescript()`` propagates driver errors as-is, unmapped.
 - An ``INSERT … RETURNING`` cursor must be fetched before the transaction
   ends — an undrained statement makes the following ``COMMIT`` fail
   (``cannot commit transaction - SQL statements in progress``) and
   discards the write.
 - ``connect()`` wraps a transaction: commit on clean exit, rollback on
   exception, and the connection is always released afterwards.
+- ``rowcount`` remains readable after the connection is released — stores
+  read it after the ``connect()`` context manager exits.
+- Cursors are iterable directly, in addition to ``fetchone()``/``fetchall()``.
 - ``raw_connect()`` returns a connection whose transaction the CALLER
   controls (``commit()``/``rollback()``) and closes in a ``finally``;
   needed only by UsageStore.reserve_llm_run.

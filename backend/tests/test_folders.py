@@ -173,7 +173,7 @@ CREATE TABLE folders (
 """
 
 
-def test_nocase_index_rejects_case_duplicate_on_create(db):
+def test_lower_name_index_rejects_case_duplicate_on_create(db):
     conn = sqlite3.connect(db)
     conn.executescript(_SCHEMA_CURRENT_FOLDERS)
     conn.execute(
@@ -191,7 +191,7 @@ def test_nocase_index_rejects_case_duplicate_on_create(db):
         store.create_folder("blog", owner_id=1)
 
 
-def test_nocase_index_rejects_case_duplicate_on_rename(db):
+def test_lower_name_index_rejects_case_duplicate_on_rename(db):
     conn = sqlite3.connect(db)
     conn.executescript(_SCHEMA_CURRENT_FOLDERS)
     conn.execute(
@@ -210,7 +210,7 @@ def test_nocase_index_rejects_case_duplicate_on_rename(db):
         store.rename_folder(blog.id, "NOTES", owner_id=1)
 
 
-def test_nocase_index_migration_is_idempotent(db):
+def test_lower_name_index_migration_is_idempotent(db):
     conn = sqlite3.connect(db)
     conn.executescript(_SCHEMA_CURRENT_FOLDERS)
     conn.execute(
@@ -248,7 +248,7 @@ def test_legacy_case_duplicates_skip_index_with_warning(db, caplog):
     conn = sqlite3.connect(db)
     index_row = conn.execute(
         "SELECT name FROM sqlite_master WHERE type = 'index'"
-        " AND name = 'idx_folders_name_nocase'"
+        " AND name = 'idx_folders_owner_name'"
     ).fetchone()
     conn.close()
     assert index_row is None
