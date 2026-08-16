@@ -17,19 +17,21 @@ class Mailpit:
     ) -> dict:
         """Newest message addressed to `to`, polled every 0.5 s.
 
-        Waits until at least `min_count` messages have arrived (messages are
-        newest first) before returning the newest one.
+        Waits until `messages_count` (Mailpit's total-match count for the
+        query, not the length of the capped `messages` page) reaches
+        `min_count`, then returns `messages[0]` (messages are newest first).
         """
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             resp = httpx.get(
                 f"{self._base}/api/v1/search",
-                params={"query": f"to:{to}", "limit": 200},
+                params={"query": f"to:{to}", "limit": 1},
                 timeout=10,
             )
             resp.raise_for_status()
-            messages = resp.json().get("messages", [])
-            if len(messages) >= min_count:
+            body = resp.json()
+            messages = body.get("messages", [])
+            if body.get("messages_count", 0) >= min_count:
                 msg_id = messages[0]["ID"]
                 detail = httpx.get(
                     f"{self._base}/api/v1/message/{msg_id}", timeout=10
@@ -48,16 +50,19 @@ class Mailpit:
         """Current number of messages addressed to `to` -- the absence
         half of an assertion pair: capture before, compare after a
         deterministic bound (a later mail's arrival) has passed.
-        limit=200 keeps the page size above anything a test run can
-        accumulate (Mailpit's default page is 50 -- len() over a capped
-        page would silently undercount)."""
+        Reads `messages_count`, Mailpit's total-match count for the query,
+        not the length of the returned `messages` page (which is capped by
+        `limit` and would silently undercount once a retained stack holds
+        more than the page size) and not `total` (the whole-mailbox count,
+        unfiltered by the query). limit=1 keeps the response small since
+        only the count is used here."""
         resp = httpx.get(
             f"{self._base}/api/v1/search",
-            params={"query": f"to:{to}", "limit": 200},
+            params={"query": f"to:{to}", "limit": 1},
             timeout=10,
         )
         resp.raise_for_status()
-        return len(resp.json().get("messages", []))
+        return resp.json().get("messages_count", 0)
 
     @staticmethod
     def extract_token(html: str) -> tuple[str, str]:

@@ -148,10 +148,18 @@ def test_deactivated_user_reset_and_resend_guards(app_url, admin_creds, runid, m
     )
     assert resp.status_code == 204
 
-    # The control mail (admin recovery) arriving proves GoTrue processed
-    # requests issued AFTER the dormant one -- the dormant mailbox result
-    # below is therefore final, not just not-yet-delivered.
+    # The control mail (admin recovery) arriving bounds the common delivery
+    # path (routing, request handling) both requests share -- but not the
+    # background-task delivery itself; see the settle window below.
     mailpit.wait_for_message(admin_email, min_count=admin_before + 1)
+
+    # Since 998cb74 delivery runs in a post-response BackgroundTask, so the
+    # control mail's arrival no longer strictly orders a (hypothetical)
+    # dormant delivery before it -- both tasks run concurrently. The
+    # in-flight window is milliseconds (one localhost GoTrue call); 2 s is
+    # a generous upper bound for it, restoring the mutation sensitivity of
+    # the absence assertion below.
+    time.sleep(2.0)
     assert mailpit.count_messages(email) == dormant_before
 
     resend = httpx.post(
