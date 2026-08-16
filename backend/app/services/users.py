@@ -5,20 +5,19 @@ identity provider, so it survives the later switch to Supabase Auth
 unchanged.
 """
 
-import sqlite3
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 from app.core.auth import IAT_LEEWAY_SECONDS, check_password, hash_password
-from app.services._sqlite import connect, migrate_columns
+from app.services.db import Database, Row, UniqueViolationError, migrate_columns
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     external_id TEXT UNIQUE,
-    email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    email TEXT NOT NULL,
     display_name TEXT,
     password_hash TEXT,
     -- No CHECK on tier on purpose: tier names are policy data, defined by
@@ -44,6 +43,12 @@ CREATE TABLE IF NOT EXISTS admin_audit (
     new_value TEXT,
     created_at TEXT NOT NULL
 );
+-- No duplicate pre-scan before this index (unlike folders/domains/
+-- profiles): email has carried UNIQUE COLLATE NOCASE since the table's
+-- first version, and NOCASE ≡ LOWER() on ASCII, so no existing database
+-- can hold a pair this index would reject.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lower
+    ON users (LOWER(email));
 """
 
 # Fields update_user accepts. Anything else is a programming error, not a
@@ -86,7 +91,7 @@ def _utcnow() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def _row_to_user(row: sqlite3.Row) -> User:
+def _row_to_user(row: Row) -> User:
     return User(
         id=row["id"],
         email=row["email"],
@@ -102,18 +107,16 @@ def _row_to_user(row: sqlite3.Row) -> User:
 
 
 class UserStore:
-    def __init__(self, db_path: Path, *, timeout: float | None = None) -> None:
-        self.db_path = db_path
-        self.timeout = timeout
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, db: Database) -> None:
+        self.db = db
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
             self._migrate(conn)
 
     def _connect(self):
-        return connect(self.db_path, timeout=self.timeout)
+        return self.db.connect()
 
-    def _migrate(self, conn: sqlite3.Connection) -> None:
+    def _migrate(self, conn: Any) -> None:
         """Add columns introduced after a database already existed in the
         field. A bare DDL change to `_SCHEMA` only applies via
         `CREATE TABLE IF NOT EXISTS`, which never touches an existing
@@ -137,15 +140,18 @@ class UserStore:
         is_admin: bool = False,
         external_id: str | None = None,
     ) -> User:
-        # Strip only — do NOT lowercase. COLLATE NOCASE on the column already
-        # gives case-insensitive matching; lowercasing here would throw away
-        # the case the user chose before it ever reaches `User.email`.
-        # Stripping keeps this store's notion of "same email" aligned with
-        # `_throttle_key` (`app/api/auth.py`), which normalizes with
-        # `.strip().lower()`: SQLite's NOCASE is ASCII-only casefolding, a
-        # strict subset of Python's `.lower()`, so any two emails the DB
-        # treats as one row already map to the same throttle key once both
-        # sides strip whitespace the same way.
+        # Strip only — do NOT lowercase: the LOWER(email) unique index and
+        # the LOWER() lookups below already give case-insensitive matching,
+        # and lowercasing here would throw away the case the user chose
+        # before it ever reaches `User.email`. Stripping keeps this store's
+        # notion of "same email" aligned with `_throttle_key`
+        # (`app/api/auth.py`), which normalizes with `.strip().lower()`:
+        # SQLite's LOWER() is ASCII-only casefolding, a strict subset of
+        # Python's `.lower()`, so any two emails the DB treats as one row
+        # already map to the same throttle key once both sides strip
+        # whitespace the same way. (Databases created before B15 also
+        # carry the legacy `UNIQUE COLLATE NOCASE` on the column itself —
+        # same ASCII semantics, harmlessly redundant.)
         email = email.strip()
         if not email:
             # Checked before hashing the password: no reason to pay bcrypt's
@@ -158,7 +164,7 @@ class UserStore:
                     "INSERT INTO users"
                     " (email, display_name, password_hash, tier, is_admin, created_at,"
                     " external_id)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    " VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
                     (
                         email,
                         display_name,
@@ -169,10 +175,11 @@ class UserStore:
                         external_id,
                     ),
                 )
-            except sqlite3.IntegrityError as exc:
+                new_id = cursor.fetchone()["id"]
+            except UniqueViolationError as exc:
                 raise DuplicateEmailError(f"A user with email {email} already exists") from exc
             row = conn.execute(
-                "SELECT * FROM users WHERE id = ?", (cursor.lastrowid,)
+                "SELECT * FROM users WHERE id = ?", (new_id,)
             ).fetchone()
         return _row_to_user(row)
 
@@ -184,7 +191,7 @@ class UserStore:
     def get_by_email(self, email: str) -> User | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM users WHERE email = ? COLLATE NOCASE", (email.strip(),)
+                "SELECT * FROM users WHERE LOWER(email) = LOWER(?)", (email.strip(),)
             ).fetchone()
         return _row_to_user(row) if row is not None else None
 
@@ -207,7 +214,7 @@ class UserStore:
         already linked (by this or another subject) by the time this
         UPDATE ran -- the caller re-reads to tell those two cases apart.
 
-        Also returns False -- instead of letting sqlite3.IntegrityError
+        Also returns False -- instead of letting the seam's UniqueViolationError
         propagate -- when the SUBJECT (not the target row) is already linked
         to a DIFFERENT row: the UNIQUE constraint on external_id rejects the
         UPDATE in that case. A uniqueness conflict IS a lost race, exactly
@@ -222,7 +229,7 @@ class UserStore:
                     "UPDATE users SET external_id = ? WHERE id = ? AND external_id IS NULL",
                     (external_id, user_id),
                 )
-            except sqlite3.IntegrityError:
+            except UniqueViolationError:
                 return False
         return cursor.rowcount > 0
 
@@ -259,7 +266,7 @@ class UserStore:
     def list_users(self) -> list[User]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM users ORDER BY email COLLATE NOCASE"
+                "SELECT * FROM users ORDER BY LOWER(email)"
             ).fetchall()
         return [_row_to_user(row) for row in rows]
 
@@ -276,7 +283,7 @@ class UserStore:
         """
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM users WHERE email = ? COLLATE NOCASE", (email.strip(),)
+                "SELECT * FROM users WHERE LOWER(email) = LOWER(?)", (email.strip(),)
             ).fetchone()
         stored = row["password_hash"] if row is not None else None
         # check_password runs unconditionally — even for an unknown email
@@ -349,6 +356,6 @@ class UserStore:
                 (actor_id, target_id, field, old_value, new_value, _utcnow()),
             )
 
-    def list_audit(self) -> list[sqlite3.Row]:
+    def list_audit(self) -> list[Row]:
         with self._connect() as conn:
             return conn.execute("SELECT * FROM admin_audit ORDER BY id").fetchall()

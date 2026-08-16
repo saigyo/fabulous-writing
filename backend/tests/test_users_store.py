@@ -3,12 +3,13 @@ from pathlib import Path
 import pytest
 
 from app.services import users as users_module
+from app.services.db.sqlite import SqliteDatabase
 from app.services.users import DuplicateEmailError, InvalidEmailError, UserStore
 
 
 @pytest.fixture()
 def store(tmp_path: Path) -> UserStore:
-    return UserStore(tmp_path / "test.db")
+    return UserStore(SqliteDatabase(tmp_path / "test.db"))
 
 
 def test_create_and_read_back(store):
@@ -35,8 +36,8 @@ def test_email_lookup_and_uniqueness_are_case_insensitive(store):
 def test_email_whitespace_is_stripped_on_create_and_stored_value(store):
     user = store.create_user("  ada@example.com  ", "correct horse battery")
     # Stored/returned value has no surrounding whitespace, but case is
-    # preserved (COLLATE NOCASE already handles case-insensitivity; the
-    # store must not also lowercase).
+    # preserved (the LOWER(email) unique index already handles
+    # case-insensitivity; the store must not also lowercase).
     assert user.email == "ada@example.com"
 
 
@@ -164,7 +165,7 @@ def test_audit_rows_record_the_actor_or_none_for_cli(store):
 
 
 def test_set_password_bumps_token_epoch(tmp_path):
-    store = UserStore(tmp_path / "u.db")
+    store = UserStore(SqliteDatabase(tmp_path / "u.db"))
     user = store.create_user("epoch@example.com", "password-one")
     assert user.token_epoch == 0
     store.set_password(user.id, "password-two")
@@ -174,7 +175,7 @@ def test_set_password_bumps_token_epoch(tmp_path):
 
 
 def test_token_epoch_is_not_serialized(tmp_path):
-    store = UserStore(tmp_path / "u.db")
+    store = UserStore(SqliteDatabase(tmp_path / "u.db"))
     user = store.create_user("epoch2@example.com", "password-one")
     assert "token_epoch" not in user.model_dump()
 
@@ -183,11 +184,11 @@ def test_link_external_id_same_subject_different_row_fails_closed_not_500(tmp_pa
     # Row A is unlinked; the SUBJECT is already linked to row B. The UPDATE's
     # WHERE clause is satisfied (row A's external_id IS NULL), but the SET
     # value collides with row B's external_id under the UNIQUE constraint --
-    # a lost race, not a server error. Without the sqlite3.IntegrityError
+    # a lost race, not a server error. Without the seam's UniqueViolationError
     # catch in link_external_id, this raises unhandled and both callers
     # (resolve_supabase_user, admin._adopt_existing_row) would 500 instead of
     # failing closed.
-    store = UserStore(tmp_path / "u.db")
+    store = UserStore(SqliteDatabase(tmp_path / "u.db"))
     row_a = store.create_user("a@example.com", "correct horse battery")
     store.create_user("b@example.com", "correct horse battery", external_id="subject-s")
     assert store.link_external_id(row_a.id, "subject-s") is False

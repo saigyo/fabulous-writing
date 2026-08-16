@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from app.core.auth import AuthConfigError
+from app.services.db.sqlite import SqliteDatabase
 from app.services.seed_admin import seed_admin
 from app.services.users import UserStore
 
@@ -11,7 +12,7 @@ ENV = {"FW_ADMIN_EMAIL": "root@example.com", "FW_ADMIN_PASSWORD": "bootstrap pas
 
 @pytest.fixture()
 def store(tmp_path: Path) -> UserStore:
-    return UserStore(tmp_path / "test.db")
+    return UserStore(SqliteDatabase(tmp_path / "test.db"))
 
 
 def test_seeds_the_first_admin_as_id_one(store):

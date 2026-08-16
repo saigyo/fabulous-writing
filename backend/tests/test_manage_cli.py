@@ -6,13 +6,14 @@ import pytest
 
 from app.core.config import Settings
 from app.manage import main
+from app.services.db.sqlite import SqliteDatabase
 from app.services.users import UserStore
 
 
 @pytest.fixture()
 def db(tmp_path: Path) -> Path:
     path = tmp_path / "test.db"
-    store = UserStore(path)
+    store = UserStore(SqliteDatabase(path))
     store.create_user("root@example.com", "bootstrap password", is_admin=True)
     store.create_user("ada@example.com", "an initial password")
     return path
@@ -34,7 +35,7 @@ def test_list_users(db, capsys):
 
 def test_set_password_lets_the_account_log_in_again(db):
     assert run(db, "set-password", "ada@example.com", password="a recovered password") == 0
-    store = UserStore(db)
+    store = UserStore(SqliteDatabase(db))
     assert store.verify_credentials("ada@example.com", "a recovered password") is not None
 
 
@@ -47,7 +48,7 @@ def test_set_password_strips_a_crlf_line_ending_from_a_piped_password(db, monkey
     # survive: only \r and \n are stripped, not "whitespace" generally.
     monkeypatch.setattr("sys.stdin", io.StringIO("a recovered password\r\n"))
     assert main(["--db", str(db), "set-password", "ada@example.com"]) == 0
-    store = UserStore(db)
+    store = UserStore(SqliteDatabase(db))
     assert store.verify_credentials("ada@example.com", "a recovered password") is not None
     assert store.verify_credentials("ada@example.com", "a recovered password\r") is None
 
@@ -114,11 +115,16 @@ def test_set_password_refuses_in_supabase_mode(db, tmp_path, capsys, monkeypatch
     )
     assert run(db, "set-password", "ada@example.com", password="a recovered password") == 1
     assert "supabase" in capsys.readouterr().err.lower()
-    assert UserStore(db).verify_credentials("ada@example.com", "an initial password") is not None
+    assert (
+        UserStore(SqliteDatabase(db)).verify_credentials(
+            "ada@example.com", "an initial password"
+        )
+        is not None
+    )
 
 
 def test_make_admin_grants_and_reactivates(db):
-    store = UserStore(db)
+    store = UserStore(SqliteDatabase(db))
     store.update_user(2, is_active=False)
     assert run(db, "make-admin", "ada@example.com") == 0
     user = store.get_user(2)
@@ -127,14 +133,14 @@ def test_make_admin_grants_and_reactivates(db):
 
 def test_revoke_admin_warns_but_proceeds_when_no_admin_remains(db, capsys):
     assert run(db, "revoke-admin", "root@example.com") == 0
-    assert UserStore(db).get_user(1).is_admin is False
+    assert UserStore(SqliteDatabase(db)).get_user(1).is_admin is False
     # It must not refuse: freezing all admin access and then minting a fresh
     # one with make-admin is a legitimate incident response.
     assert "no admin" in capsys.readouterr().err.lower()
 
 
 def test_deactivate_and_activate(db):
-    store = UserStore(db)
+    store = UserStore(SqliteDatabase(db))
     assert run(db, "deactivate", "ada@example.com") == 0
     assert store.get_user(2).is_active is False
     assert run(db, "activate", "ada@example.com") == 0
@@ -148,7 +154,7 @@ def test_unknown_email_is_an_error(db, capsys):
 
 def test_every_mutation_is_audited_as_an_out_of_band_action(db):
     run(db, "make-admin", "ada@example.com")
-    rows = UserStore(db).list_audit()
+    rows = UserStore(SqliteDatabase(db)).list_audit()
     assert rows, "CLI mutations must be recorded"
     assert all(row["actor_id"] is None for row in rows)
     assert {row["field"] for row in rows} == {"is_admin"}
@@ -208,25 +214,25 @@ def test_a_non_lock_operational_error_in_a_handler_is_not_mislabeled_as_busy(db,
 
 def test_make_admin_on_an_already_active_admin_is_a_true_no_op(db, capsys):
     assert run(db, "make-admin", "root@example.com") == 0
-    assert UserStore(db).list_audit() == []
+    assert UserStore(SqliteDatabase(db)).list_audit() == []
     assert "already" in capsys.readouterr().out.lower()
 
 
 def test_revoke_admin_on_a_non_admin_is_a_true_no_op(db, capsys):
     assert run(db, "revoke-admin", "ada@example.com") == 0
-    assert UserStore(db).list_audit() == []
+    assert UserStore(SqliteDatabase(db)).list_audit() == []
     assert "already" in capsys.readouterr().out.lower()
 
 
 def test_deactivate_an_already_inactive_user_is_a_true_no_op(db, capsys):
-    store = UserStore(db)
+    store = UserStore(SqliteDatabase(db))
     store.update_user(2, is_active=False)
     assert run(db, "deactivate", "ada@example.com") == 0
-    assert UserStore(db).list_audit() == []
+    assert UserStore(SqliteDatabase(db)).list_audit() == []
     assert "already" in capsys.readouterr().out.lower()
 
 
 def test_activate_an_already_active_user_is_a_true_no_op(db, capsys):
     assert run(db, "activate", "ada@example.com") == 0
-    assert UserStore(db).list_audit() == []
+    assert UserStore(SqliteDatabase(db)).list_audit() == []
     assert "already" in capsys.readouterr().out.lower()

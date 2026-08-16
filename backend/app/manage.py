@@ -17,6 +17,7 @@ from typing import NoReturn
 
 from app.core.auth import ADMIN_SET_MIN_PASSWORD_LENGTH, validate_password
 from app.core.config import load_settings
+from app.services.db.sqlite import SqliteDatabase
 from app.services.users import User, UserStore
 
 # Long enough to wait out a running server's write, short enough to fail
@@ -288,7 +289,7 @@ def main(
     # _is_lock_contention (defined above for the same discrimination on the
     # handler path below) to tell the two apart.
     try:
-        store = UserStore(db_path, timeout=_BUSY_TIMEOUT_SECONDS)
+        store = UserStore(SqliteDatabase(db_path, timeout=_BUSY_TIMEOUT_SECONDS))
     except sqlite3.OperationalError as exc:
         if _is_lock_contention(exc):
             print(f"Database is busy ({exc}). Is the server writing right now?", file=sys.stderr)
