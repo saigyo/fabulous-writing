@@ -360,11 +360,13 @@ export const getAdminUsers = () => request<AdminUser[]>('/api/admin/users')
 
 export const getAdminTiers = () => request<string[]>('/api/admin/tiers')
 
-// `invited` is an event of this call, not durable user state (it never
-// appears on AdminUser / GET admin/users) -- see AdminUserCreated in
-// backend/app/api/admin.py.
+// `invited`/`invite_emailed` are events of this call, not durable user state
+// (they never appear on AdminUser / GET admin/users) -- see
+// AdminUserCreated in backend/app/api/admin.py. `invite_emailed` (Task 7)
+// distinguishes a freshly-sent invitation email from linking an existing
+// pending one (which sends nothing new).
 export const postAdminUser = (body: AdminUserCreate) =>
-  request<AdminUser & { invited?: boolean }>('/api/admin/users', {
+  request<AdminUser & { invited?: boolean; invite_emailed?: boolean }>('/api/admin/users', {
     method: 'POST',
     body: JSON.stringify(body),
   })

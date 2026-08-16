@@ -16,6 +16,7 @@ vi.mock('../api/client', async (importOriginal) => ({
   getAdminTiers: vi.fn(),
   postAdminUser: vi.fn(),
   patchAdminUser: vi.fn(),
+  postResendInvite: vi.fn(),
 }))
 // sessionGeneration is mocked so the turnover tests below can move the
 // generation mid-flight without going through a real login()/logout() (which
@@ -29,7 +30,13 @@ vi.mock('../auth/session', async (importOriginal) => ({
   sessionGeneration: vi.fn(() => 0),
 }))
 
-import { getAdminTiers, getAdminUsers, patchAdminUser, postAdminUser } from '../api/client'
+import {
+  getAdminTiers,
+  getAdminUsers,
+  patchAdminUser,
+  postAdminUser,
+  postResendInvite,
+} from '../api/client'
 import { sessionGeneration } from '../auth/session'
 import { AdminView } from './AdminView'
 
@@ -651,5 +658,169 @@ describe('AdminView', () => {
     expect(
       within(row).getByRole('button', { name: en.adminResetPassword }),
     ).toBeTruthy()
+  })
+
+  it('with invites available, every non-self linked user row shows the resend button; clicking it sends a notice on 204', async () => {
+    useStore.setState({ authFeatures: { password_reset: true, invites: true } })
+    vi.mocked(getAdminUsers).mockResolvedValue([
+      adminUser({ id: 1, email: 'ada@example.com', external_id: 'ext-1' }), // self
+      adminUser({ id: 2, email: 'bea@example.com', is_admin: false, external_id: 'ext-2' }),
+    ])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+    vi.mocked(postResendInvite).mockResolvedValue(undefined)
+    const u = userEvent.setup()
+
+    render(<AdminView />)
+    await screen.findByText('bea@example.com')
+
+    // Self row: no resend button at all (own-row reset is replaced entirely
+    // by adminSelfResetHint, same as the reset button).
+    expect(
+      screen.queryByText(en.adminSelfResetHint)?.closest('td'),
+    ).not.toBeNull()
+    expect(
+      within(screen.getByText(en.adminSelfResetHint).closest('td')!).queryByRole('button', {
+        name: en.adminResendInvite,
+      }),
+    ).toBeNull()
+
+    const beaRow = screen.getByText('bea@example.com').closest('tr')!
+    const resendButton = within(beaRow).getByRole('button', { name: en.adminResendInvite })
+    await u.click(resendButton)
+
+    expect(postResendInvite).toHaveBeenCalledWith(2)
+    await screen.findByText(en.adminResendSent)
+  })
+
+  it('a 422 already_active resend response surfaces adminResendAlreadyActive', async () => {
+    useStore.setState({ authFeatures: { password_reset: true, invites: true } })
+    vi.mocked(getAdminUsers).mockResolvedValue([
+      adminUser({ id: 2, email: 'bea@example.com', is_admin: false, external_id: 'ext-2' }),
+    ])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+    vi.mocked(postResendInvite).mockRejectedValue(
+      new HttpError(422, 'POST /api/admin/users/2/resend-invite failed: 422', 'already_active'),
+    )
+    const u = userEvent.setup()
+
+    render(<AdminView />)
+    await screen.findByText('bea@example.com')
+
+    const row = screen.getByText('bea@example.com').closest('tr')!
+    await u.click(within(row).getByRole('button', { name: en.adminResendInvite }))
+
+    await screen.findByText(en.adminResendAlreadyActive)
+  })
+
+  it('with invites unavailable, the resend button is absent', async () => {
+    useStore.setState({ authFeatures: { password_reset: false, invites: false } })
+    vi.mocked(getAdminUsers).mockResolvedValue([
+      adminUser({ id: 2, email: 'bea@example.com', is_admin: false, external_id: 'ext-2' }),
+    ])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+
+    render(<AdminView />)
+    await screen.findByText('bea@example.com')
+
+    expect(screen.queryByRole('button', { name: en.adminResendInvite })).toBeNull()
+  })
+
+  it('with invites available but no external_id (local-credential user), the resend button is absent', async () => {
+    useStore.setState({ authFeatures: { password_reset: true, invites: true } })
+    vi.mocked(getAdminUsers).mockResolvedValue([
+      adminUser({ id: 2, email: 'bea@example.com', is_admin: false, external_id: null }),
+    ])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+
+    render(<AdminView />)
+    await screen.findByText('bea@example.com')
+
+    expect(screen.queryByRole('button', { name: en.adminResendInvite })).toBeNull()
+  })
+
+  it('create with invited=true, invite_emailed=false shows adminInviteLinkedNoEmail (not adminInviteSent)', async () => {
+    useStore.setState({ authFeatures: { password_reset: true, invites: true } })
+    vi.mocked(getAdminUsers).mockResolvedValue([])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+    vi.mocked(postAdminUser).mockResolvedValue({
+      ...adminUser({ id: 9, email: 'invitee@example.com' }),
+      invited: true,
+      invite_emailed: false,
+    })
+    const u = userEvent.setup()
+
+    render(<AdminView />)
+    await screen.findByText('basic')
+
+    await u.type(screen.getByLabelText(en.adminEmail), 'invitee@example.com')
+    await u.click(screen.getByRole('button', { name: en.adminCreate }))
+
+    await screen.findByText(en.adminInviteLinkedNoEmail)
+    expect(screen.queryByText(en.adminInviteSent)).toBeNull()
+  })
+
+  it('create with invited=true, invite_emailed=true shows adminInviteSent', async () => {
+    useStore.setState({ authFeatures: { password_reset: true, invites: true } })
+    vi.mocked(getAdminUsers).mockResolvedValue([])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+    vi.mocked(postAdminUser).mockResolvedValue({
+      ...adminUser({ id: 9, email: 'invitee@example.com' }),
+      invited: true,
+      invite_emailed: true,
+    })
+    const u = userEvent.setup()
+
+    render(<AdminView />)
+    await screen.findByText('basic')
+
+    await u.type(screen.getByLabelText(en.adminEmail), 'invitee@example.com')
+    await u.click(screen.getByRole('button', { name: en.adminCreate }))
+
+    await screen.findByText(en.adminInviteSent)
+  })
+
+  it('a password_weak PATCH rejection (row reset) shows the mapped reason message', async () => {
+    vi.mocked(getAdminUsers).mockResolvedValue([
+      adminUser({ id: 2, email: 'bea@example.com' }),
+    ])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+    vi.mocked(patchAdminUser).mockRejectedValue(
+      new HttpError(422, 'PATCH /api/admin/users/2 failed: 422', 'password_weak', {
+        reasons: ['pwned'],
+      }),
+    )
+    const u = userEvent.setup()
+
+    render(<AdminView />)
+    await screen.findByText('bea@example.com')
+
+    const passwordInput = screen.getByLabelText(
+      `${en.adminResetPassword}: bea@example.com`,
+    ) as HTMLInputElement
+    await u.type(passwordInput, 'a-long-enough-password')
+    await u.click(screen.getByRole('button', { name: en.adminResetPassword }))
+
+    await screen.findByText(en.pwWeakPwned)
+    expect(screen.queryByText(en.adminChangeFailed('PATCH /api/admin/users/2 failed: 422'))).toBeNull()
+  })
+
+  it('a password_weak create-with-password rejection shows the mapped reason message', async () => {
+    vi.mocked(getAdminUsers).mockResolvedValue([])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+    vi.mocked(postAdminUser).mockRejectedValue(
+      new HttpError(422, 'POST /api/admin/users failed: 422', 'password_weak', {
+        reasons: ['length'],
+      }),
+    )
+    const u = userEvent.setup()
+
+    render(<AdminView />)
+    await screen.findByText('basic')
+
+    await u.type(screen.getByLabelText(en.adminEmail), 'new@example.com')
+    await u.type(screen.getByLabelText(en.adminPassword), 'a-long-enough-password')
+    await u.click(screen.getByRole('button', { name: en.adminCreate }))
+
+    await screen.findByText(en.pwWeakLength)
   })
 })

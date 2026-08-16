@@ -260,6 +260,11 @@ export interface Messages {
   resetRequestSubmit: string
   backToSignIn: string
   adminPasswordOptionalHint: string
+  adminResendInvite: string
+  adminResendSent: string
+  adminResendAlreadyActive: string
+  adminInviteSent: string
+  adminInviteLinkedNoEmail: string
   pwWeakLength: string
   pwWeakCharacters: string
   pwWeakPwned: string

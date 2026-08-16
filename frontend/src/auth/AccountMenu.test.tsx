@@ -206,6 +206,20 @@ describe('AccountMenu', () => {
     await waitFor(() => screen.getByText(en.passwordFailed))
   })
 
+  it('a 422 password_weak with reasons ["pwned"] shows pwWeakPwned, not the generic passwordFailed', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      jsonResponse(422, { detail: { code: 'password_weak', reasons: ['pwned'] } }),
+    )
+    const u = userEvent.setup()
+    render(<AccountMenu />)
+    await openPasswordForm(u)
+    await fillPasswordForm(u)
+    await u.click(screen.getByRole('button', { name: en.passwordSubmit }))
+
+    await waitFor(() => screen.getByText(en.pwWeakPwned))
+    expect(screen.queryByText(en.passwordFailed)).toBeNull()
+  })
+
   it('a 422 with bare status and no code shows passwordFailed, not passwordTooShort', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse(422, {}))
     const u = userEvent.setup()
