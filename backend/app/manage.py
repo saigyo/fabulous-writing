@@ -16,8 +16,8 @@ from pathlib import Path
 from typing import NoReturn
 
 from app.core.auth import ADMIN_SET_MIN_PASSWORD_LENGTH, validate_password
-from app.core.config import load_settings
-from app.services.db.sqlite import SqliteDatabase
+from app.core.config import Settings, load_settings
+from app.services.db import create_database
 from app.services.users import User, UserStore
 
 # Long enough to wait out a running server's write, short enough to fail
@@ -245,7 +245,9 @@ class _SilentArgumentParser(argparse.ArgumentParser):
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = _SilentArgumentParser(prog="python -m app.manage")
-    parser.add_argument("--db", type=Path, default=None, help="database path")
+    parser.add_argument(
+        "--db", type=Path, default=None, help="database path (sqlite mode only)"
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
     for name, (_handler, needs_email) in _COMMANDS.items():
         sub = subparsers.add_parser(name)
@@ -276,7 +278,13 @@ def main(
     # process on the machine.
     args = _parse_args(_build_parser(), argv)
     args.read_password = read_password or _prompt_password
-    db_path = args.db or load_settings().db_path
+    if args.db is not None:
+        # --db pins a SQLite file directly and must work without a
+        # loadable config (operator escape hatch); backend defaults
+        # to sqlite in a bare Settings.
+        settings = Settings(db_path=args.db)
+    else:
+        settings = load_settings()
 
     # UserStore.__init__ writes the schema on every invocation, so this is
     # the one place a locked, corrupt, or unopenable database can surface
@@ -287,15 +295,17 @@ def main(
     # of which is lock contention, and mislabeling it "busy" would send an
     # operator to wait out a lock that does not exist. Reuses
     # _is_lock_contention (defined above for the same discrimination on the
-    # handler path below) to tell the two apart.
+    # handler path below) to tell the two apart. A postgres connection
+    # failure escapes these handlers entirely and surfaces as its own
+    # error — fail loudly, the spec's intent for that backend.
     try:
-        store = UserStore(SqliteDatabase(db_path, timeout=_BUSY_TIMEOUT_SECONDS))
+        store = UserStore(create_database(settings, timeout=_BUSY_TIMEOUT_SECONDS))
     except sqlite3.OperationalError as exc:
         if _is_lock_contention(exc):
             print(f"Database is busy ({exc}). Is the server writing right now?", file=sys.stderr)
         else:
             print(
-                f"Could not open the database at {db_path} ({exc}). Check "
+                f"Could not open the database at {settings.db_path} ({exc}). Check "
                 "the path and its permissions.",
                 file=sys.stderr,
             )

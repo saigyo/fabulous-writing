@@ -15,6 +15,8 @@ class SqliteConnection:
     protocol), rowcount — passes through untouched.
     """
 
+    dialect = "sqlite"
+
     def __init__(self, raw: sqlite3.Connection) -> None:
         self._raw = raw
 
@@ -88,3 +90,7 @@ class SqliteDatabase:
         # `_raw_connect` this replaces (llm_usage has no FK constraints);
         # the caller owns commit/rollback and close.
         return SqliteConnection(_open(self.db_path, self.timeout))
+
+    def close(self) -> None:
+        """No-op: sqlite opens a connection per operation (lifespan parity
+        with the Postgres pool's close)."""
