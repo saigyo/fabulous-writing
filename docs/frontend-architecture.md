@@ -1268,8 +1268,10 @@ priority when several reasons arrive together, since a breached password is the 
 actionable thing to tell someone even if it's also too short. `update_failed` (the
 transient-`503` retry envelope) gets its own neutral "saving didn't work yet — please
 try again" (`m.resetUpdateFailedRetry`), distinct from a validation rejection.
-`invalid_or_expired_link` and the client-pinned `password_too_short` get their own
-messages too; everything else — `password_too_long`, any other 422 code, a bare `503`
+`invalid_or_expired_link`, the client-pinned `password_too_short`, and (B32, #106)
+`account_inactive` — a known-but-inactive account, resolved before rotation on
+either leg — get their own messages too, the last via `m.resetAccountInactive`;
+everything else — `password_too_long`, any other 422 code, a bare `503`
 with no retry envelope, a network failure — falls to the same neutral
 `m.passwordFailed` fallback `AccountMenu` uses, deliberately never one that mentions
 signing in (an earlier version of this mapping fell back to a sign-in-failure message
@@ -1655,12 +1657,16 @@ outcome onto the two existing channels: a `204` sets `m.adminResendSent` on `not
 an `already_active` `HttpError` routes to the error banner via `m.adminResendAlreadyActive`
 rather than `notice` — it's the admin's mistake to correct (the invite doesn't need
 resending), not a confirmation of something that just happened — and everything else
-falls through `mapAdminError` (the same `password_weak`-aware formatter `save` uses,
-though resend itself never returns that code). `UserRow` renders the **"Resend
-invitation"** button only when `invitesAvailable && user.external_id !== null` — a
-row with no Supabase identity at all has nothing to resend — guarded by its own
-`resendPending` flag exactly like the reset-password button's `resetPending`, so a
-second click before the first `POST` resolves can't fire a duplicate invitation email.
+falls through `mapAdminError` (the same `password_weak`-aware formatter `save` uses).
+Since B32 (#106), that includes `user_inactive`, which `mapAdminError` maps to
+`m.adminUserInactive`: resend can now return that code, but reaching it is a
+stale-tab race, since the button described below is already disabled for any row
+known inactive at render time. `UserRow` renders the **"Resend invitation"** button
+only when `invitesAvailable && user.external_id !== null` — a row with no Supabase
+identity at all has nothing to resend — and disables it (without hiding it) whenever
+`resendPending || !user.is_active` (the inactive half added by B32, #106), so a
+second click before the first `POST` resolves, or a click on a row already known
+inactive, can't fire a duplicate or dead-end invitation email.
 
 **`invite_emailed` honesty (B28).** `AdminUserCreated` carries two per-call flags:
 `invited` (this create resulted in a Supabase invite, either branch) and

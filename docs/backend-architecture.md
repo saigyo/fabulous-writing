@@ -1413,6 +1413,19 @@ session** to the caller (no auto-login — see the frontend doc for why),
 and **only an otp-minted session** — never an ordinary bearer, stolen or
 otherwise — can ever drive the retry leg at all.
 
+**Deactivated users (B32, #106).** `reset-request` consults the local
+store and silently skips the gateway call for an inactive account (same
+`204`, throttle slot still spent — the surface stays unenumerable). On
+`reset-confirm`, both legs resolve the local row *before* any remote
+rotation — the link still burns, but an inactive account's Supabase
+credential is never rotated, and the response is an honest `422
+account_inactive` (post-mailbox-proof, so nothing is enumerable).
+Deliberate residual: because the guard fires before rotation, the burned
+link's `verify_otp` session is never globally signed out — its GoTrue
+refresh token lives to natural expiry, fail-closed at our layer (every
+local surface rejects inactive rows). `resend-invite` rejects inactive
+targets with `422 user_inactive` before calling GoTrue.
+
 ### Admin invites (`app/api/admin.py`, supabase mode)
 
 `POST /api/admin/users` with no `password` field only makes sense in
@@ -1437,7 +1450,11 @@ instead of creating a fresh row.
 #96) re-issues one already-linked (`external_id is not None`) user's invite
 through the very same `gateway.invite_user` call the create route uses —
 there is no local "pending" tracking at all; **GoTrue is the sole authority**
-on whether an identity is still pending. Calling `invite_user_by_email`
+on whether an identity is still pending. Before any of that, a deactivated
+target short-circuits both the pending-check and the gateway call entirely:
+`422 user_inactive` (B32, #106) fires ahead of the `external_id`-linked
+precondition, so a deactivated invitee is never re-invited into a dead end.
+Calling `invite_user_by_email`
 again on a pending identity re-sends the mail and invalidates whatever link
 was previously outstanding (a Supabase behavior, not something this backend
 implements); calling it on an identity that has already accepted its

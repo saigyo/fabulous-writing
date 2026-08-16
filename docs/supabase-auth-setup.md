@@ -146,6 +146,14 @@ migration step or config flag on the backend side, since the corresponding
 `password_weak`/`reasons` handling has been in place since the retry flow
 landed.
 
+One more thing worth knowing about this flow, unrelated to the toggle
+above: deactivating a user in the app also stops `reset-request` from
+mailing that address and blocks `reset-confirm` from rotating the
+credential via an already-issued link — but only at this app's layer. The
+remote GoTrue identity itself stays active throughout; deactivation is
+app-local state that Supabase never sees (B32, #106; see
+`docs/backend-architecture.md`'s reset-confirm section for the details).
+
 ## 5. Auth → Settings: invitation-only signup
 
 Turn **"Allow new users to sign up" OFF**. This app has no self-service
