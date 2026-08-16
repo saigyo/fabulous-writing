@@ -185,10 +185,19 @@ nothing.
 
 - Default gate `uv run pytest -q` (from `backend/`): unchanged — SQLite,
   Docker- and network-free, green with zero warnings.
-- Store-level test files (the 13 files constructing stores directly) get a
-  backend-parametrized `db` fixture: `["sqlite", "postgres"]`. The postgres
-  parameter skips unless `FW_TEST_DATABASE_URL` is set (skips are visible in
-  the summary but keep the default gate green and warning-free).
+- The store-level test files — `test_users_store`, `test_folders`,
+  `test_documents`, `test_terminology`, `test_profiles`, `test_usage`,
+  `test_seed` — get a backend-parametrized `db` fixture:
+  `["sqlite", "postgres"]`. The postgres parameter skips unless
+  `FW_TEST_DATABASE_URL` is set (skips are visible in the summary but keep
+  the default gate green and warning-free). The remaining files that merely
+  construct stores inside API/CLI fixtures (`test_auth_api`,
+  `test_supabase_auth`, `test_manage_cli`, `test_folders_api`,
+  `test_seed_admin`, `test_demo_texts`) stay SQLite — that is the "full API
+  matrix stays SQLite-only" rule applied consistently. Genuinely
+  SQLite-specific tests inside the parametrized files (legacy-schema
+  migrations, connection-lifecycle assertions, busy-timeout behavior) stay
+  pinned to SQLite with a stated reason.
 - Postgres test isolation: each test runs in a throwaway schema — unique
   name, created by the fixture, selected via `search_path` in the DSN
   options, dropped in teardown. Tests never touch a live database
