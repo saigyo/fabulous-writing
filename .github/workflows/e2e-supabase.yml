@@ -19,7 +19,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: supabase/setup-cli@v1
+      # v3 installs the CLI from npm (github-token input removed) and runs
+      # on Node 24, clearing the runner's Node-20 deprecation annotation.
+      - uses: supabase/setup-cli@v3
         with:
           version: 2.114.0
 
