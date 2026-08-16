@@ -13,7 +13,7 @@ interface ResetPasswordFormProps {
 }
 
 // Mirrors AccountMenu.tsx's mapChangeError: `wrong_current_password` has no
-// counterpart here (this flow never sees the old password), so only the two
+// counterpart here (this flow never sees the old password), so only the
 // codes reset-confirm can actually raise are handled specifically.
 // Copilot round 3: previously every non-`invalid_or_expired_link` error --
 // including password_too_long and a 503 -- fell back to m.signInFailed, a
@@ -23,6 +23,7 @@ function mapResetError(err: unknown, m: Messages): string {
     if (err.code === 'password_weak') return mapWeakPasswordReasons(err.reasons, m)
     if (err.code === 'update_failed') return m.resetUpdateFailedRetry
     if (err.code === 'invalid_or_expired_link') return m.resetLinkInvalid
+    if (err.code === 'account_inactive') return m.resetAccountInactive
     if (err.code === 'password_too_short') return m.passwordTooShort(MIN_PASSWORD_LENGTH)
   }
   // password_too_long, any other 422 code, a 503, and a network failure all

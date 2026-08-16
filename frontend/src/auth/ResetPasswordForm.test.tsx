@@ -94,6 +94,18 @@ describe('ResetPasswordForm', () => {
     await waitFor(() => screen.getByText(en.resetLinkInvalid))
   })
 
+  it('an account_inactive rejection shows the deactivated-account message', async () => {
+    vi.mocked(postResetConfirm).mockRejectedValueOnce(
+      new HttpError(422, 'POST /api/auth/reset-confirm failed: 422', 'account_inactive'),
+    )
+    render(<ResetPasswordForm tokenHash="tok" type="recovery" onDone={() => {}} />)
+    const u = userEvent.setup()
+    await u.type(screen.getByLabelText(en.resetNewPassword), 'newpassword1')
+    await u.type(screen.getByLabelText(en.resetRepeatPassword), 'newpassword1')
+    await u.click(screen.getByRole('button', { name: en.resetSubmit }))
+    await screen.findByText(en.resetAccountInactive)
+  })
+
   it('a 422 password_too_short shows the same message the password-change form uses for it', async () => {
     vi.mocked(postResetConfirm).mockRejectedValue(
       new HttpError(422, 'POST /api/auth/reset-confirm failed: 422', 'password_too_short'),

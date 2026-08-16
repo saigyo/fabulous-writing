@@ -23,6 +23,9 @@ function mapAdminError(err: unknown, m: Messages): string {
   if (err instanceof HttpError && err.code === 'password_weak') {
     return mapWeakPasswordReasons(err.reasons, m)
   }
+  if (err instanceof HttpError && err.code === 'user_inactive') {
+    return m.adminUserInactive
+  }
   return m.adminChangeFailed(err instanceof Error ? err.message : String(err))
 }
 
