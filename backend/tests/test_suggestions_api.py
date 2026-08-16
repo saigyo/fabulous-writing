@@ -10,7 +10,7 @@ from app.checkers.llm.provider import FakeProvider, GenerationResult, LLMProvide
 from app.core.config import CreditCostSettings, LimitsSettings, Settings, TierLimitsSettings
 from app.core.models import Language
 from app.main import create_app
-from app.services._sqlite import connect as sqlite_connect
+from app.services.db.sqlite import connect as sqlite_connect
 from app.services.credits import estimate_cost
 from tests.conftest import auth_headers, second_user_headers
 

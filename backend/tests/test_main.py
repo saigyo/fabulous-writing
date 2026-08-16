@@ -14,7 +14,7 @@ import app.main as main_module
 from app.core.auth import AuthConfigError
 from app.core.config import Settings
 from app.main import create_app
-from app.services._sqlite import connect
+from app.services.db.sqlite import connect
 
 
 def test_lazy_app_attribute_builds_once_and_is_cached(monkeypatch):

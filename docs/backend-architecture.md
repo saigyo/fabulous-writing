@@ -59,7 +59,9 @@ backend/
 │   │       └── vetting.py       # deterministic vetting of LLM fixes
 │   ├── nlp/registry.py          # lazy per-language spaCy pipelines
 │   └── services/
-│       ├── _sqlite.py           # shared connect()/migrate_columns() for all five stores
+│       ├── db/
+│       │   ├── __init__.py      # seam contract: Database/Row protocols, UniqueViolationError, migrate_columns()
+│       │   └── sqlite.py        # SqliteDatabase — the only implementation until B15 PR2
 │       ├── ownership.py         # GlobalReadOnlyError — the one exception every owner-scoped store raises
 │       ├── jobs.py              # in-memory check jobs, scoped to their creator
 │       ├── terminology.py       # SQLite store: domains, terms — owner-scoped, nullable owner_id
@@ -694,19 +696,35 @@ hand-written `INSERT` that forgot the column. What M3 changed is that `owner_id`
 *enforced*: pre-M3 code accepted the column but never scoped a query by it, so every
 document was visible to every logged-in caller regardless of whose id was stored.
 
-All five SQLite-backed stores (`terminology.py`, `profiles.py`, `documents.py`,
-`folders.py`, `users.py` under `app/services/`) share `connect()`, and three of them
-(`documents.py`, `folders.py`, `profiles.py`) also share `migrate_columns()`, from
-`app/services/_sqlite.py` instead of each hand-rolling the same plumbing:
-`connect(db_path)` is a context manager that wraps `sqlite3.connect` with
-`row_factory = sqlite3.Row`, `PRAGMA foreign_keys = ON`, and — unlike sqlite3's own
-context manager, which only commits/rolls back — also guarantees the connection itself
-is closed afterward; `migrate_columns(conn, table, columns)` adds any missing
-`(name, declaration)` columns via `PRAGMA table_info` + `ALTER TABLE ... ADD COLUMN`,
-the same idempotent phased-in-column pattern those three stores already used for things
-like `documents.folder_id` and `profiles.packs_on`/`llm_tier`, now with one
-implementation instead of three copies. Each store keeps a thin `_connect()` delegate for its own
-docstring/type-hint purposes but forwards straight to the shared `connect()`.
+All six SQLite-backed stores (`terminology.py`, `profiles.py`, `documents.py`,
+`folders.py`, `users.py`, `usage.py` under `app/services/`) hold a `Database` (the
+`app/services/db/` seam, spec: docs/superpowers/specs/2026-08-16-b15-postgres-backend-
+design.md) instead of a bare `db_path`. The contract lives in `db/__init__.py`: qmark
+(`?`) placeholders, rows with both mapping and positional access (the `Row` protocol,
+satisfied today by `sqlite3.Row`), a dialect-agnostic `UniqueViolationError` for any
+violated UNIQUE constraint, and two ways to get a connection — `connect()`, a
+transaction-wrapping context manager (commit on clean exit, rollback on exception,
+connection always closed afterward) that every store uses for its ordinary
+read/write methods, and `raw_connect()`, a connection whose transaction the *caller*
+manages (`commit()`/`rollback()`, closed in a `finally`), needed only by
+`UsageStore.reserve_llm_run` (see [The reservation transaction](#the-reservation-transaction)
+below). `db/__init__.py` also keeps `migrate_columns()` (adds any
+missing `(name, declaration)` columns via `table_columns()` — SQLite's
+`PRAGMA table_info`; PR2 adds an `information_schema` branch for Postgres — plus
+`ALTER TABLE ... ADD COLUMN`), the same idempotent phased-in-column pattern used for
+things like `documents.folder_id` and `profiles.packs_on`/`llm_tier`.
+`app/services/db/sqlite.py` is the only implementation of the contract until B15 PR2
+adds a Postgres one behind the same `Database` protocol.
+
+This PR (B15 PR1) also unified three things that used to vary store-by-store:
+every `INSERT` that needs the new row's id uses `RETURNING id` instead of a
+follow-up `SELECT`/`lastrowid`; every "insert or ignore" write uses
+`ON CONFLICT DO NOTHING` instead of `INSERT OR IGNORE`; and every case-insensitive
+comparison or index uses `LOWER()` — on both sides of a lookup (`LOWER(email) =
+LOWER(?)`) and inside expression indexes (`ON folders(owner_id, LOWER(name))`) —
+in place of the `COLLATE NOCASE` column constraint `users.py` used to carry (see the
+rationale comments in `app/services/users.py` for why `LOWER()` and `NOCASE` agree
+on every existing row).
 
 - **Storage** (`app/services/documents.py`): a single `documents` table — `id`, `owner_id`,
   `name`, `name_source` (`fallback|llm|user`), `text`, `language`, `profile_id`,
@@ -2055,10 +2073,10 @@ sources (e.g. `check`, `suggestion`) multiply into the factor chain.
 
 `UsageStore.reserve_llm_run(user, limits, server_limits, requested,
 effective, text_chars, source, run_id, *, now=None) -> QuotaDecision` runs
-on a raw `sqlite3` connection (`_raw_connect()`) with explicit
-commit/rollback on every branch — the only `UsageStore` method that does
-not go through `_sqlite.connect`'s auto-committing context manager, since
-two of its three exit paths need to roll back. `user` is typed as
+on `self.db.raw_connect()` — the seam's caller-managed connection — with
+explicit commit/rollback on every branch — the only `UsageStore` method
+that does not go through `Database.connect()`'s auto-committing context
+manager, since two of its three exit paths need to roll back. `user` is typed as
 `MeteredUser`, a two-property `Protocol` (`id`, `is_admin`) satisfied
 structurally by `app.api.deps.CurrentUser` without this service importing
 from `app.api`; `now` is keyword-only and test-only (defaults to
