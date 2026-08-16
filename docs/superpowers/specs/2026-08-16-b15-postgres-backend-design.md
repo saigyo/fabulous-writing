@@ -67,25 +67,27 @@ The yielded connection is a thin wrapper:
   row factory.
 - One exception map: `sqlite3.IntegrityError` and
   `psycopg.errors.UniqueViolation` surface as a single seam-level
-  `UniqueViolationError`. Store code catches only the seam error
-  (`users.py` `create_user`/`link_external_id` are the current catch sites).
+  `UniqueViolationError`. Store code catches only the seam error (eight
+  current catch sites across `users.py`, `folders.py`, `terminology.py`,
+  and `profiles.py`).
 - `migrate_columns(conn, table, columns)` moves into the seam and goes
   dialect-aware: `PRAGMA table_info` on SQLite, `information_schema.columns`
   on Postgres. The three inline `PRAGMA table_info` uses in
   `documents.py`/`terminology.py`/`profiles.py` route through the same
   helper.
 
-Stores change their constructor from `db_path: Path` to `db: Database` (plus
-the existing optional busy `timeout`, which the SQLite implementation honors
-and Postgres ignores in favor of the pool's checkout timeout). All six stores
-share the one `Database` instance built in `main.py`; `manage.py` builds its
-own via the same factory.
+Stores change their constructor from `db_path: Path` to `db: Database`. The
+optional busy `timeout` moves onto the SQLite `Database` implementation
+(only the operator CLI ever passes one; Postgres uses the pool's checkout
+timeout instead). All six stores share the one `Database` instance built in
+`main.py`; `manage.py` builds its own via the same factory (the factory
+itself lands in PR2 with the `database:` settings block).
 
 ### R2 — Statement unification (both backends run the same SQL)
 
-- `cursor.lastrowid` (5 sites: users, documents, folders, terminology,
-  usage) → `INSERT … RETURNING id`. SQLite ≥ 3.35 supports `RETURNING`;
-  Python 3.13 bundles ≥ 3.45.
+- `cursor.lastrowid` (7 sites: users, documents, folders, terminology ×2,
+  profiles, usage) → `INSERT … RETURNING id`. SQLite ≥ 3.35 supports
+  `RETURNING`; Python 3.13 bundles ≥ 3.45.
 - `INSERT OR IGNORE` (1 site: `profiles.py` seed markers) →
   `INSERT … ON CONFLICT DO NOTHING` (both dialects).
 - DDL: one canonical schema string per store with a single per-dialect
