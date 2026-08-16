@@ -4067,3 +4067,49 @@ wave. Verification: backend 1463 zero warnings, frontend 645 + tsc +
 oxlint, e2e 15/15 locally and green via workflow_dispatch on the
 branch. Parked with ruling: the `inactive_row` naming nit (cosmetic,
 security-critical block already mutation-verified).
+
+## 2026-08-16 — B15 PR1: database seam prep, all stores on the dialect-neutral contract (PR #108)
+
+First of three PRs for B15 (#56): Postgres as a
+configuration-selectable database backend, sequenced ahead of the
+fly.io deployment (B16) so the hosted profile can stay stateless.
+This PR is the behavior-neutral half: `app/services/_sqlite.py` grew
+into the `app/services/db/` seam package — a documented connection
+contract in `__init__.py` (qmark placeholders with the no-literal-`?`
+invariant, mapping+positional `Row` access, `UniqueViolationError`
+for UNIQUE violations only, the RETURNING-drain rule, transaction-
+wrapping `connect()` vs caller-managed `raw_connect()`) with the
+SQLite implementation in `sqlite.py`. All six stores now take a
+shared `Database` instead of a path, and the SQL was unified onto the
+common dialect PR2's Postgres backend will run verbatim: seven
+`lastrowid` sites became `INSERT … RETURNING id`, the seed-marker
+`INSERT OR IGNORE` became `ON CONFLICT DO NOTHING`, and every
+`COLLATE NOCASE` (SQLite-only) became a `LOWER()` expression index or
+lookup — semantics identical on SQLite (both ASCII-only), probed for
+ordering and grouping, with legacy pre-B15 databases verified
+compatible (their embedded NOCASE constraints and old index
+definitions persist harmlessly). `reserve_llm_run`'s insert-first
+TOCTOU discipline survived byte-for-byte apart from connection
+acquisition and the RETURNING fetch, which the seam contract pins
+before any commit/rollback.
+
+Process: brainstorm settled four owner decisions (plain Postgres
+orthogonal to auth mode, always-on CI lane, import tool in scope,
+three-PR phasing); the plan absorbed nine Opus review findings before
+execution and paid off the same way B32's did — all six SDD tasks
+passed review first-try. The final Opus whole-branch review ran its
+own gates and mutation probes (error mapping, email index, legacy
+schemas) and returned APPROVE with a five-minor fix wave, including
+de-vacuousing a pre-existing dead assertion in `test_folders.py` that
+queried an index name renamed months ago — it now genuinely pins the
+skip-with-warning migration guard. Two PR2 landmines went into the
+spec instead of the code: plain `ORDER BY name` collates BINARY on
+SQLite but by locale on Postgres, and `CREATE UNIQUE INDEX IF NOT
+EXISTS` never replaces a legacy index definition. Copilot reviewed
+31/31 files and returned zero comments, none suppressed — the first
+fully clean round on a substantive PR. Verification: backend 1474
+zero warnings (eleven new seam tests, mutation-verified error
+mapping), frontend untouched and green (645 + tsc + oxlint). One
+process footnote: the Task 2 implementer died mid-task on an API
+connection error; resuming the same agent finished cleanly — the
+ledger-and-report discipline made the recovery a non-event.
