@@ -508,3 +508,19 @@ class TestCreditWindows:
             Settings.model_validate({"tiers": {"basic": {"limits": {
                 "max_llm_document_chars": 100000, "concurrent_llm_runs": 5,
             }}}})
+
+
+class TestDatabaseSettings:
+    def test_default_backend_is_sqlite(self):
+        assert Settings().database.backend == "sqlite"
+
+    def test_postgres_backend_accepted(self):
+        assert Settings(database={"backend": "postgres"}).database.backend == "postgres"
+
+    def test_unknown_backend_rejected(self):
+        with pytest.raises(ValidationError):
+            Settings(database={"backend": "mysql"})
+
+    def test_unknown_key_rejected(self):
+        with pytest.raises(ValidationError):
+            Settings(database={"backend": "sqlite", "pool_size": 3})

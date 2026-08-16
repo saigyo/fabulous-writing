@@ -1,11 +1,13 @@
 """Seam-level tests for app/services/db: transaction wrapping, error
 mapping, and column introspection on the SQLite implementation."""
 
+import logging
 import sqlite3
 
 import pytest
 
-from app.services.db import UniqueViolationError, migrate_columns, table_columns
+from app.core.config import Settings
+from app.services.db import UniqueViolationError, create_database, migrate_columns, table_columns
 from app.services.db.sqlite import SqliteDatabase
 
 _DDL = (
@@ -118,3 +120,37 @@ def test_foreign_keys_enforced_via_connect(db):
     with db.connect() as conn:
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute("INSERT INTO child (pid) VALUES (999)")
+
+
+class TestCreateDatabase:
+    def test_sqlite_mode_returns_sqlite_database(self, tmp_path):
+        settings = Settings(db_path=tmp_path / "t.db")
+        database = create_database(settings, env={})
+        assert isinstance(database, SqliteDatabase)
+        assert database.dialect == "sqlite"
+
+    def test_sqlite_mode_passes_timeout_through(self, tmp_path):
+        settings = Settings(db_path=tmp_path / "t.db")
+        database = create_database(settings, timeout=7.5, env={})
+        assert database.timeout == 7.5
+
+    def test_postgres_mode_without_env_fails_loudly(self, tmp_path):
+        settings = Settings(db_path=tmp_path / "t.db", database={"backend": "postgres"})
+        with pytest.raises(RuntimeError, match="FW_DATABASE_URL"):
+            create_database(settings, env={})
+
+    def test_postgres_mode_blank_env_fails_loudly(self, tmp_path):
+        settings = Settings(db_path=tmp_path / "t.db", database={"backend": "postgres"})
+        with pytest.raises(RuntimeError, match="FW_DATABASE_URL"):
+            create_database(settings, env={"FW_DATABASE_URL": "   "})
+
+    def test_sqlite_mode_with_env_set_warns_and_ignores(self, tmp_path, caplog):
+        settings = Settings(db_path=tmp_path / "t.db")
+        with caplog.at_level(logging.WARNING):
+            database = create_database(
+                settings, env={"FW_DATABASE_URL": "postgresql://user:s3cret@h/db"}
+            )
+        assert isinstance(database, SqliteDatabase)
+        assert any("FW_DATABASE_URL" in r.message for r in caplog.records)
+        # The VALUE must never be logged.
+        assert not any("s3cret" in r.message for r in caplog.records)
