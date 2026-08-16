@@ -174,14 +174,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     db = SqliteDatabase(settings.db_path)
     app.state.settings = settings
-    app.state.terminology_store = TerminologyStore(settings.db_path)
+    app.state.terminology_store = TerminologyStore(db)
     app.state.rule_engine = RuleEngine(settings.rules_dir)
     app.state.jobs = JobManager()
     app.state.nlp = NlpRegistry(settings.nlp.models)
     app.state.provider_factory = make_provider_factory(settings)
     app.state.document_store = DocumentStore(db)
     app.state.folder_store = FolderStore(db)
-    app.state.profile_store = ProfileStore(settings.db_path)
+    app.state.profile_store = ProfileStore(db)
     app.state.usage_store = UsageStore(settings.db_path, credit_cost=settings.credit_cost)
     if settings.auth.mode == "supabase":
         credentials = resolve_supabase_credentials(settings)

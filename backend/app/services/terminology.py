@@ -1,12 +1,11 @@
 import json
 import logging
-import sqlite3
-from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field, computed_field
 
 from app.core.models import Language
-from app.services._sqlite import connect
+from app.services.db import Database, Row, UniqueViolationError, table_columns
 from app.services.ownership import GlobalReadOnlyError
 
 logger = logging.getLogger(__name__)
@@ -57,7 +56,7 @@ class Term(BaseModel):
     case_sensitive: bool = False
 
 
-def _row_to_domain(row: sqlite3.Row) -> Domain:
+def _row_to_domain(row: Row) -> Domain:
     return Domain(
         id=row["id"],
         name=row["name"],
@@ -66,7 +65,7 @@ def _row_to_domain(row: sqlite3.Row) -> Domain:
     )
 
 
-def _row_to_term(row: sqlite3.Row) -> Term:
+def _row_to_term(row: Row) -> Term:
     return Term(
         id=row["id"],
         domain_id=row["domain_id"],
@@ -79,15 +78,14 @@ def _row_to_term(row: sqlite3.Row) -> Term:
 
 
 class TerminologyStore:
-    def __init__(self, db_path: Path) -> None:
-        self.db_path = db_path
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, db: Database) -> None:
+        self.db = db
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
             self._migrate(conn)
 
-    def _migrate(self, conn: sqlite3.Connection) -> None:
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(domains)")}
+    def _migrate(self, conn: Any) -> None:
+        columns = table_columns(conn, "domains")
         if "owner_id" not in columns:
             # One-shot backfill (spec §9 step 3): the seed domain (matched
             # by name — seed.DOMAIN_NAME, asserted equal by a test) becomes
@@ -111,8 +109,7 @@ class TerminologyStore:
         else:
             conn.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_domains_owner_name"
-                " ON domains(owner_id, name COLLATE NOCASE)"
-                " WHERE owner_id IS NOT NULL"
+                " ON domains(owner_id, LOWER(name)) WHERE owner_id IS NOT NULL"
             )
         global_dupes = conn.execute(
             "SELECT name FROM domains WHERE owner_id IS NULL"
@@ -126,12 +123,11 @@ class TerminologyStore:
         else:
             conn.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_domains_global_name"
-                " ON domains(name COLLATE NOCASE)"
-                " WHERE owner_id IS NULL"
+                " ON domains(LOWER(name)) WHERE owner_id IS NULL"
             )
 
     def _connect(self):  # thin delegate; the shared helper carries the docs
-        return connect(self.db_path)
+        return self.db.connect()
 
     # -- domains ---------------------------------------------------------
 
@@ -160,11 +156,11 @@ class TerminologyStore:
             with self._connect() as conn:
                 cursor = conn.execute(
                     "INSERT INTO domains (name, description, owner_id)"
-                    " VALUES (?, ?, ?)",
+                    " VALUES (?, ?, ?) RETURNING id",
                     (name, description, owner_id),
                 )
-                domain_id = cursor.lastrowid
-        except sqlite3.IntegrityError as exc:
+                domain_id = cursor.fetchone()["id"]
+        except UniqueViolationError as exc:
             raise ValueError(f"Domain '{name}' already exists") from exc
         assert domain_id is not None
         return Domain(id=domain_id, name=name, description=description, owner_id=owner_id)
@@ -198,7 +194,7 @@ class TerminologyStore:
                     "UPDATE domains SET name = ?, description = ? WHERE id = ?",
                     (new_name, new_description, domain_id),
                 )
-        except sqlite3.IntegrityError as exc:
+        except UniqueViolationError as exc:
             raise ValueError(f"Domain '{new_name}' already exists") from exc
         return current.model_copy(update={"name": new_name, "description": new_description})
 
@@ -215,8 +211,8 @@ class TerminologyStore:
     # -- terms -----------------------------------------------------------
 
     def _visible_domain_row(
-        self, conn: sqlite3.Connection, domain_id: int, owner_id: int
-    ) -> sqlite3.Row | None:
+        self, conn: Any, domain_id: int, owner_id: int
+    ) -> Row | None:
         return conn.execute(
             "SELECT * FROM domains WHERE id = ?"
             " AND (owner_id IS NULL OR owner_id = ?)",
@@ -268,7 +264,7 @@ class TerminologyStore:
             cursor = conn.execute(
                 """INSERT INTO terms
                    (domain_id, language, preferred, forbidden_variants, definition, case_sensitive)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?) RETURNING id""",
                 (
                     domain_id,
                     language.value,
@@ -278,7 +274,7 @@ class TerminologyStore:
                     int(case_sensitive),
                 ),
             )
-            term_id = cursor.lastrowid
+            term_id = cursor.fetchone()["id"]
         assert term_id is not None
         return Term(
             id=term_id,

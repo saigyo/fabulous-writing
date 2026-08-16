@@ -5,7 +5,7 @@ import pytest
 
 from app.checkers.terminology import TerminologyChecker
 from app.core.models import Category, Language, Severity, Source
-from app.services._sqlite import connect
+from app.services.db.sqlite import SqliteDatabase, connect
 from app.services.ownership import GlobalReadOnlyError
 from app.services.seed import DOMAIN_NAME, seed_terminology
 from app.services.terminology import TerminologyStore
@@ -13,7 +13,7 @@ from app.services.terminology import TerminologyStore
 
 @pytest.fixture
 def store(tmp_path: Path) -> TerminologyStore:
-    return TerminologyStore(tmp_path / "test.db")
+    return TerminologyStore(SqliteDatabase(tmp_path / "test.db"))
 
 
 class TestStore:
@@ -163,7 +163,7 @@ class TestChecker:
 
 
 def test_domain_visibility_and_admin_rule(tmp_path):
-    store = TerminologyStore(tmp_path / "t.db")
+    store = TerminologyStore(SqliteDatabase(tmp_path / "t.db"))
     shared = store.create_domain("Shared", owner_id=None)
     mine = store.create_domain("Mine", owner_id=1)
     store.create_domain("Theirs", owner_id=2)
@@ -177,18 +177,18 @@ def test_domain_visibility_and_admin_rule(tmp_path):
 
 
 def test_domain_names_unique_per_owner(tmp_path):
-    store = TerminologyStore(tmp_path / "t.db")
+    store = TerminologyStore(SqliteDatabase(tmp_path / "t.db"))
     store.create_domain("Docs", owner_id=1)
     store.create_domain("docs", owner_id=2)      # other owner: fine
     store.create_domain("Docs", owner_id=None)   # global partition: fine
     with pytest.raises(ValueError):
-        store.create_domain("DOCS", owner_id=1)  # own duplicate, NOCASE
+        store.create_domain("DOCS", owner_id=1)  # own duplicate, case-insensitive (LOWER)
     with pytest.raises(ValueError):
         store.create_domain("docs", owner_id=None)
 
 
 def test_terms_inherit_domain_ownership(tmp_path):
-    store = TerminologyStore(tmp_path / "t.db")
+    store = TerminologyStore(SqliteDatabase(tmp_path / "t.db"))
     shared = store.create_domain("Shared", owner_id=None)
     theirs = store.create_domain("Theirs", owner_id=2)
     term = store.create_term(
@@ -229,15 +229,15 @@ def test_migration_backfills_domain_ownership(tmp_path):
         )
         conn.execute("INSERT INTO domains (name) VALUES ('Product docs')")
         conn.execute("INSERT INTO domains (name) VALUES ('My own domain')")
-    store = TerminologyStore(db)
+    store = TerminologyStore(SqliteDatabase(db))
     by_name = {d.name: d for d in store.list_domains(owner_id=1)}
     assert by_name["Product docs"].is_global is True   # seed-name match
     assert by_name["My own domain"].is_global is False # -> admin (1)
-    TerminologyStore(db)  # idempotent
+    TerminologyStore(SqliteDatabase(db))  # idempotent
 
 
 def test_seeder_presence_check_is_global_only(tmp_path):
-    store = TerminologyStore(tmp_path / "t.db")
+    store = TerminologyStore(SqliteDatabase(tmp_path / "t.db"))
     store.create_domain("User domain", owner_id=1)
     assert store.has_global_domains() is False   # a user domain must not
     assert seed_terminology(store) is True       # ...suppress seeding: it runs
