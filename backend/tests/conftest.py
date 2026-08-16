@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from app.core import auth
 from app.core.config import Settings
 from app.main import create_app
+from app.services.db.sqlite import SqliteDatabase
 
 TEST_SECRET = "test-secret-value-that-is-long-enough-32"
 TEST_ADMIN_EMAIL = "root@example.com"
@@ -163,6 +164,19 @@ def authed_client(tmp_path: Path) -> TestClient:
     client = TestClient(create_app(settings))
     client.headers.update(auth_headers(client))
     return client
+
+
+@pytest.fixture(params=["sqlite", "postgres"])
+def db(request, tmp_path):
+    """One Database per test, parametrized over both backends (spec §R7).
+
+    The postgres parameter skips without FW_TEST_DATABASE_URL, keeping the
+    default gate Docker- and network-free.
+    """
+    if request.param == "sqlite":
+        yield SqliteDatabase(tmp_path / "test.db")
+        return
+    yield request.getfixturevalue("pg_database")
 
 
 @pytest.fixture

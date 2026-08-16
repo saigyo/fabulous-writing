@@ -56,8 +56,8 @@ VALUES ('Old', 'en', '2026-01-01T00:00:00+00:00',
 
 
 @pytest.fixture()
-def store(tmp_path: Path) -> DocumentStore:
-    return DocumentStore(SqliteDatabase(tmp_path / "test.db"))
+def store(db) -> DocumentStore:
+    return DocumentStore(db)
 
 
 def test_create_and_get_document(store):
@@ -150,16 +150,16 @@ def test_delete_document(store):
     assert store.list_documents(owner_id=1) == []
 
 
-def test_open_twice_is_idempotent(tmp_path: Path):
-    DocumentStore(SqliteDatabase(tmp_path / "d.db"))
-    store = DocumentStore(SqliteDatabase(tmp_path / "d.db"))
+def test_open_twice_is_idempotent(db):
+    DocumentStore(db)
+    store = DocumentStore(db)
     assert store.list_documents(owner_id=1) == []
 
 
 def test_connection_is_closed_after_use(tmp_path: Path):
     # `with sqlite3.connect(...)` alone only manages the transaction; the
     # store must also close the connection or every operation leaks one.
-    store = DocumentStore(SqliteDatabase(tmp_path / "documents.db"))
+    store = DocumentStore(SqliteDatabase(tmp_path / "documents.db"))  # sqlite-only: asserts sqlite3.ProgrammingError after close
     with store._connect() as conn:
         conn.execute("SELECT 1")
     with pytest.raises(sqlite3.ProgrammingError):
@@ -193,11 +193,11 @@ def test_folder_id_migration_adds_column(tmp_path: Path):
     conn.executescript(_SCHEMA_BEFORE_FOLDERS)
     conn.commit()
     conn.close()
-    migrated = DocumentStore(SqliteDatabase(db))
+    migrated = DocumentStore(SqliteDatabase(db))  # sqlite-only: hand-built legacy schema
     old = migrated.list_documents(owner_id=1)[0]
     assert old.folder_id is None
     # Opening twice must not fail on the ALTER TABLE guard.
-    DocumentStore(SqliteDatabase(db))
+    DocumentStore(SqliteDatabase(db))  # sqlite-only: hand-built legacy schema
 
 
 def test_create_sets_edited_at_and_optional_checked_at(store):
@@ -274,8 +274,8 @@ def test_list_orders_by_edited_at(document_clock, store):
     assert listing[0].created_at == a.created_at
 
 
-def test_documents_are_invisible_across_owners(tmp_path):
-    store = DocumentStore(SqliteDatabase(tmp_path / "d.db"))
+def test_documents_are_invisible_across_owners(db):
+    store = DocumentStore(db)
     doc = store.create_document("Mine", Language.EN, owner_id=1)
     assert store.get_document(doc.id, owner_id=2) is None
     assert store.list_documents(owner_id=2) == []
@@ -294,8 +294,8 @@ def test_timestamp_migration_seeds_from_updated_at(tmp_path: Path):
     conn.executescript(_SCHEMA_BEFORE_TIMESTAMPS)
     conn.commit()
     conn.close()
-    migrated = DocumentStore(SqliteDatabase(db))
+    migrated = DocumentStore(SqliteDatabase(db))  # sqlite-only: hand-built legacy schema
     old = migrated.get_document(1, owner_id=1)
     assert old.edited_at == "2026-02-02T00:00:00+00:00"
     assert old.checked_at == "2026-02-02T00:00:00+00:00"
-    DocumentStore(SqliteDatabase(db))  # reopen-idempotent
+    DocumentStore(SqliteDatabase(db))  # sqlite-only: hand-built legacy schema (reopen-idempotent)

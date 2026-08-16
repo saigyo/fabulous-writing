@@ -20,7 +20,7 @@ _DDL = (
 
 
 @pytest.fixture
-def db(tmp_path):
+def db(tmp_path):  # intentionally shadows conftest's parametrized `db`: this module is seam-scoped by design
     database = SqliteDatabase(tmp_path / "seam.db")
     with database.connect() as conn:
         conn.executescript(_DDL)
