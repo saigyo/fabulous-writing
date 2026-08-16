@@ -287,7 +287,7 @@ export const de: Messages = {
   adminResendSent: 'Einladung erneut gesendet.',
   adminResendAlreadyActive: 'Dieses Konto ist bereits aktiv — keine Einladung nötig.',
   adminInviteSent: 'Einladung gesendet.',
-  adminInviteLinkedNoEmail: 'Bestehende offene Einladung verknüpft — es wurde keine neue E-Mail gesendet. Nutze „Einladung erneut senden" für einen frischen Link.',
+  adminInviteLinkedNoEmail: 'Bestehende offene Einladung verknüpft — es wurde keine neue E-Mail gesendet. Nutze „Einladung erneut senden“ für einen frischen Link.',
   pwWeakLength: 'Dieses Passwort ist für die Sicherheitsregeln zu kurz — wähle ein längeres.',
   pwWeakCharacters: 'Mische Groß- und Kleinbuchstaben und Ziffern, um das Passwort stärker zu machen.',
   pwWeakPwned: 'Dieses Passwort taucht in bekannten Datenlecks auf — bitte wähle ein anderes.',
