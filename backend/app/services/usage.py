@@ -23,6 +23,13 @@ logger = logging.getLogger(__name__)
 # open against the very pressure the cap relieves.
 RETRY_AFTER_SECONDS = 5
 
+# One global advisory lock for the reservation transaction (spec §R4):
+# SQLite serializes all writers globally, and the server-wide concurrency
+# count spans users, so a per-user key would not close the write skew.
+# Any stable 64-bit constant works; this one spells "fw-reser" in ASCII
+# hex (8 bytes, fits signed BIGINT).
+_RESERVATION_LOCK_KEY = 0x66772D7265736572
+
 # The single source for the fresh-schema CHECK and finish_run's code-level
 # enforcement (migrated databases have no CHECK): _SCHEMA interpolates
 # _FAIL_STAGE_CHECK below, so the two can never drift apart.
@@ -180,6 +187,13 @@ class UsageStore:
         )
         conn = self.db.raw_connect()
         try:
+            if self.db.dialect == "postgres":
+                # Must be the transaction's first statement: it serializes
+                # the whole insert-then-count sequence, restoring the
+                # single-writer property the SQLite path gets for free.
+                conn.execute(
+                    "SELECT pg_advisory_xact_lock(?)", (_RESERVATION_LOCK_KEY,)
+                )
             # The transaction begins with the staleness fallback (spec §6.6):
             # the counts below are then already clean, and no separate
             # scheduler is needed. Staleness is measured on created_at,
@@ -355,7 +369,16 @@ class UsageStore:
             # SELECTs and mix ledger snapshots across windows in one /me
             # payload. BEGIN pins every window's sum to one snapshot; the
             # `connect()` context manager's commit on exit ends it.
-            conn.execute("BEGIN")
+            if self.db.dialect == "sqlite":
+                conn.execute("BEGIN")
+            else:
+                # psycopg already opened a transaction implicitly (a second
+                # BEGIN would draw a server warning) — but Postgres READ
+                # COMMITTED takes a NEW snapshot per statement, so the
+                # multi-window sums would not be pinned to one instant.
+                # REPEATABLE READ gives this read-only transaction the same
+                # single-snapshot guarantee the SQLite BEGIN provides.
+                conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
             for window in windows:
                 if window == "day":
                     (total,) = conn.execute(

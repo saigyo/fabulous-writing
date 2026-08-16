@@ -642,3 +642,41 @@ CREATE TABLE IF NOT EXISTS llm_usage (
     CHECK (status IN ('started','completed','failed','cancelled','abandoned'))
 );
 """
+
+
+class TestPostgresReservationConcurrency:
+    def test_concurrent_reservations_admit_exactly_one(self, pg_database):
+        """Write-skew regression pin (spec §R4): under READ COMMITTED every
+        racing insert-first reservation sees only its own uncommitted row
+        (spent = 1, not > 1) and ALL of them pass the budget check — the
+        SQLite write lock that made insert-first TOCTOU-safe does not
+        exist here. pg_advisory_xact_lock serializes the transactions;
+        with it, exactly one of these eight is admitted, deterministically.
+        Mutation contract: with the lock removed this fails on the first
+        round with a multi-admission overshoot."""
+        store = UsageStore(pg_database)
+        limits = budget_limits(credits_per_day=1)
+        barrier = threading.Barrier(8)
+        decisions = []
+        record = threading.Lock()
+
+        def attempt(run_id):
+            barrier.wait()
+            decision = store.reserve_llm_run(
+                FakeUser(1), limits, SERVER, REQUESTED, EFFECTIVE,
+                1, "check", run_id,
+            )
+            with record:
+                decisions.append(decision)
+
+        threads = [threading.Thread(target=attempt, args=(f"race{i}",))
+                   for i in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        admitted = [d for d in decisions if d.kind == "admitted"]
+        assert len(admitted) == 1, (
+            f"budget overshoot: {len(admitted)} admissions against a"
+            " one-credit day window"
+        )

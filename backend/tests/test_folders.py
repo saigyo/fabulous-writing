@@ -6,7 +6,7 @@ import pytest
 from app.core.models import Language
 from app.services.db.sqlite import SqliteDatabase, connect
 from app.services.documents import DocumentStore
-from app.services.folders import FolderStore, FolderDefaults
+from app.services.folders import FolderStore, FolderDefaults, _SCHEMA
 
 # Schema as it existed before the phase-3 per-folder defaults columns.
 _SCHEMA_BEFORE_DEFAULTS = """
@@ -251,6 +251,35 @@ def test_legacy_case_duplicates_skip_index_with_warning(db, caplog):
         " AND name = 'idx_folders_owner_name'"
     ).fetchone()
     conn.close()
+    assert index_row is None
+
+
+def test_postgres_case_duplicates_skip_index_with_warning(pg_database, caplog):
+    # The Postgres sibling of test_legacy_case_duplicates_skip_index_with_
+    # warning above: exercises the portable GROUP BY pre-scan's PG grammar
+    # (bare-column-under-lower() GROUP BY raises GroupingError on PG unless
+    # aggregated). Hand-built shape, no store constructed yet.
+    with pg_database.connect() as conn:
+        conn.executescript(_SCHEMA)
+        conn.execute(
+            "INSERT INTO folders (owner_id, name, created_at) VALUES (?, ?, ?)",
+            (1, "Blog", "2026-01-01T00:00:00+00:00"),
+        )
+        conn.execute(
+            "INSERT INTO folders (owner_id, name, created_at) VALUES (?, ?, ?)",
+            (1, "blog", "2026-01-01T00:00:00+00:00"),
+        )
+    with caplog.at_level("WARNING"):
+        store = FolderStore(pg_database)
+    assert "case-duplicate" in caplog.text
+    names = sorted(f.name for f in store.list_folders(owner_id=1))
+    assert names == ["Blog", "blog"]
+    with pg_database.connect() as conn:
+        index_row = conn.execute(
+            "SELECT indexname FROM pg_indexes"
+            " WHERE indexname = 'idx_folders_owner_name'"
+            " AND schemaname = current_schema()"
+        ).fetchone()
     assert index_row is None
 
 
