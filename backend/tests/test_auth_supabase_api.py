@@ -316,6 +316,23 @@ class TestResetRequest:
         assert resp.status_code == 204
         assert fake.reset_emails == before
 
+    def test_inactive_local_user_silent_204_without_gateway_call(self, supabase_app):
+        app, fake = supabase_app
+        client, body = _login_ok(app, fake)
+        app.state.user_store.update_user(body["user"]["id"], is_active=False)
+        before = list(fake.reset_emails)
+        resp = client.post("/api/auth/reset-request", json={"email": EMAIL})
+        assert resp.status_code == 204
+        # The unenumerable contract: same 204, but no mail was requested.
+        assert fake.reset_emails == before
+
+    def test_active_local_user_still_mails(self, supabase_app):
+        app, fake = supabase_app
+        client, _body = _login_ok(app, fake)
+        resp = client.post("/api/auth/reset-request", json={"email": EMAIL})
+        assert resp.status_code == 204
+        assert EMAIL in fake.reset_emails
+
 
 class TestResetConfirm:
     def test_valid_recovery_hash_204_updates_password_and_signs_out(self, supabase_app):
