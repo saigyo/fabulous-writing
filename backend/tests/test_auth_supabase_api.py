@@ -1944,6 +1944,21 @@ class TestResendInvite:
         )
         assert resp.status_code == 503
 
+    def test_inactive_user_422_user_inactive_without_gateway_call(self, supabase_app):
+        app, fake = supabase_app
+        client = TestClient(app)
+        headers = _admin_bearer(client)
+        created = self._invite(client, headers, email="dormant-invitee@example.com")
+        app.state.user_store.update_user(created["id"], is_active=False)
+        calls_before = fake.invite_calls["dormant-invitee@example.com"]
+
+        resp = client.post(
+            f"/api/admin/users/{created['id']}/resend-invite", headers=headers,
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "user_inactive"
+        assert fake.invite_calls["dormant-invitee@example.com"] == calls_before
+
 
 class TestWeakPasswordSurfacesInAdminRoutes:
     """SupabaseWeakPasswordError must surface as a 422 password_weak
