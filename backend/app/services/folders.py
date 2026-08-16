@@ -1,13 +1,12 @@
 import json
 import logging
-import sqlite3
 from datetime import UTC, datetime
-from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel
 
 from app.core.models import Language
-from app.services._sqlite import connect, migrate_columns
+from app.services.db import Database, Row, UniqueViolationError, migrate_columns
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +55,7 @@ def _utcnow() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def _row_to_folder(row: sqlite3.Row) -> Folder:
+def _row_to_folder(row: Row) -> Folder:
     return Folder(
         id=row["id"],
         owner_id=row["owner_id"],
@@ -87,17 +86,16 @@ class FolderStore:
     like the profiles/documents stores.
     """
 
-    def __init__(self, db_path: Path) -> None:
-        self.db_path = db_path
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, db: Database) -> None:
+        self.db = db
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
             self._migrate(conn)
 
     def _connect(self):  # thin delegate; the shared helper carries the docs
-        return connect(self.db_path)
+        return self.db.connect()
 
-    def _migrate(self, conn: sqlite3.Connection) -> None:
+    def _migrate(self, conn: Any) -> None:
         # Pre-existing databases lack columns added later; guard by name.
         migrate_columns(
             conn,
@@ -132,7 +130,7 @@ class FolderStore:
             )
             conn.execute("DROP TABLE folders")
             conn.execute("ALTER TABLE folders_new RENAME TO folders")
-        # Per-owner NOCASE uniqueness, with the house duplicate pre-scan.
+        # Per-owner LOWER(name) uniqueness, with the house duplicate pre-scan.
         duplicates = conn.execute(
             "SELECT owner_id, name FROM folders"
             " GROUP BY owner_id, lower(name) HAVING count(*) > 1"
@@ -146,7 +144,7 @@ class FolderStore:
         else:
             conn.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_folders_owner_name "
-                "ON folders(owner_id, name COLLATE NOCASE)"
+                "ON folders(owner_id, LOWER(name))"
             )
 
     def set_defaults(
@@ -185,7 +183,7 @@ class FolderStore:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM folders WHERE owner_id = ?"
-                " ORDER BY name COLLATE NOCASE, id",
+                " ORDER BY LOWER(name), id",
                 (owner_id,),
             ).fetchall()
         return [_row_to_folder(row) for row in rows]
@@ -202,11 +200,12 @@ class FolderStore:
         try:
             with self._connect() as conn:
                 cursor = conn.execute(
-                    "INSERT INTO folders (owner_id, name, created_at) VALUES (?, ?, ?)",
+                    "INSERT INTO folders (owner_id, name, created_at) VALUES (?, ?, ?)"
+                    " RETURNING id",
                     (owner_id, name, _utcnow()),
                 )
-                folder_id = cursor.lastrowid
-        except sqlite3.IntegrityError as exc:
+                folder_id = cursor.fetchone()["id"]
+        except UniqueViolationError as exc:
             raise ValueError(f"Folder '{name}' already exists") from exc
         assert folder_id is not None
         folder = self.get_folder(folder_id, owner_id=owner_id)
@@ -224,7 +223,7 @@ class FolderStore:
                     "UPDATE folders SET name = ? WHERE id = ? AND owner_id = ?",
                     (name, folder_id, owner_id),
                 )
-        except sqlite3.IntegrityError as exc:
+        except UniqueViolationError as exc:
             raise ValueError(f"Folder '{name}' already exists") from exc
         return self.get_folder(folder_id, owner_id=owner_id)
 

@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from app.core.config import Settings
 from app.main import create_app
+from app.services.db.sqlite import SqliteDatabase
 from app.services.folders import FolderStore
 from tests.conftest import auth_headers, second_user_headers
 
@@ -155,9 +156,9 @@ def test_defaults_pruning_is_read_time_only(authed_client: TestClient):
     assert listed["default_language"] == "de"
     assert listed["default_domain_ids"] == [d1["id"]]
     # The DB row itself is untouched (read-time view, like documents GET).
-    raw = FolderStore(authed_client.app.state.settings.db_path).get_folder(
-        folder["id"], owner_id=1
-    )
+    raw = FolderStore(
+        SqliteDatabase(authed_client.app.state.settings.db_path)
+    ).get_folder(folder["id"], owner_id=1)
     assert raw.default_profile_id == profile["id"]
     assert raw.default_domain_ids == [d1["id"], d2["id"]]
 

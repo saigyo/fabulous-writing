@@ -1,13 +1,11 @@
 import json
-import sqlite3
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from app.core.models import Language
-from app.services._sqlite import connect, migrate_columns
+from app.services.db import Database, Row, migrate_columns, table_columns
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS documents (
@@ -81,7 +79,7 @@ def _utcnow() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def _row_to_document(row: sqlite3.Row) -> Document:
+def _row_to_document(row: Row) -> Document:
     return Document(
         id=row["id"],
         owner_id=row["owner_id"],
@@ -109,19 +107,18 @@ def _row_to_document(row: sqlite3.Row) -> Document:
 class DocumentStore:
     """User documents with per-document settings and check-state snapshots."""
 
-    def __init__(self, db_path: Path) -> None:
-        self.db_path = db_path
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, db: Database) -> None:
+        self.db = db
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
             self._migrate(conn)
 
     def _connect(self):  # thin delegate; the shared helper carries the docs
-        return connect(self.db_path)
+        return self.db.connect()
 
-    def _migrate(self, conn: sqlite3.Connection) -> None:
+    def _migrate(self, conn: Any) -> None:
         # Pre-existing databases lack columns added later; guard by name.
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(documents)")}
+        columns = table_columns(conn, "documents")
         missing = {"folder_id", "edited_at", "checked_at"} - columns
         migrate_columns(
             conn,
@@ -162,7 +159,8 @@ class DocumentStore:
                    (owner_id, name, name_source, text, language, profile_id, domain_ids,
                     llm_provider, llm_model, llm_tier, llm_auto, last_findings,
                     scorecard, folder_id, edited_at, checked_at, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   RETURNING id""",
                 (
                     owner_id,
                     name,
@@ -184,7 +182,7 @@ class DocumentStore:
                     now,
                 ),
             )
-            document_id = cursor.lastrowid
+            document_id = cursor.fetchone()["id"]
         assert document_id is not None
         document = self.get_document(document_id, owner_id=owner_id)
         assert document is not None
