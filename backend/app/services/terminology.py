@@ -98,7 +98,7 @@ class TerminologyStore:
         # domains never had a uniqueness guarantee, so legal duplicates may
         # exist: pre-scan and skip-with-warning before each partial index.
         owner_dupes = conn.execute(
-            "SELECT owner_id, name FROM domains WHERE owner_id IS NOT NULL"
+            "SELECT owner_id, MIN(name) AS name FROM domains WHERE owner_id IS NOT NULL"
             " GROUP BY owner_id, lower(name) HAVING count(*) > 1"
         ).fetchall()
         if owner_dupes:
@@ -112,7 +112,7 @@ class TerminologyStore:
                 " ON domains(owner_id, LOWER(name)) WHERE owner_id IS NOT NULL"
             )
         global_dupes = conn.execute(
-            "SELECT name FROM domains WHERE owner_id IS NULL"
+            "SELECT MIN(name) AS name FROM domains WHERE owner_id IS NULL"
             " GROUP BY lower(name) HAVING count(*) > 1"
         ).fetchall()
         if global_dupes:

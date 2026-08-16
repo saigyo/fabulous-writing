@@ -128,26 +128,31 @@ class ProfileStore:
         # Rebuild, guarded by shape: the legacy table-level
         # UNIQUE(language, name) enforces global cross-owner uniqueness and
         # SQLite cannot drop it without the documented table rebuild.
-        sql = conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='profiles'"
-        ).fetchone()[0]
-        if "UNIQUE" in sql.upper():
-            cols = (
-                "id, language, name, is_standard, categories_off,"
-                " rule_exceptions, packs_on, domain_ids, llm_provider,"
-                " llm_model, llm_tier, llm_instructions, example_text, owner_id"
-            )
-            conn.execute(_SCHEMA_TABLE.replace("IF NOT EXISTS profiles", "profiles_new"))
-            conn.execute(
-                f"INSERT INTO profiles_new ({cols}) SELECT {cols} FROM profiles"
-            )
-            conn.execute("DROP TABLE profiles")
-            conn.execute("ALTER TABLE profiles_new RENAME TO profiles")
+        # Legacy rebuild reads sqlite_master; pre-B15 databases are SQLite
+        # by definition — Postgres only ever sees fresh schemas.
+        if self.db.dialect == "sqlite":
+            sql = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='profiles'"
+            ).fetchone()[0]
+            if "UNIQUE" in sql.upper():
+                cols = (
+                    "id, language, name, is_standard, categories_off,"
+                    " rule_exceptions, packs_on, domain_ids, llm_provider,"
+                    " llm_model, llm_tier, llm_instructions, example_text, owner_id"
+                )
+                conn.execute(
+                    _SCHEMA_TABLE.replace("IF NOT EXISTS profiles", "profiles_new")
+                )
+                conn.execute(
+                    f"INSERT INTO profiles_new ({cols}) SELECT {cols} FROM profiles"
+                )
+                conn.execute("DROP TABLE profiles")
+                conn.execute("ALTER TABLE profiles_new RENAME TO profiles")
         # Two partial unique indexes (SQLite treats NULLs as distinct, so a
         # single composite index would let duplicate global names pass),
         # each preceded by the house duplicate pre-scan.
         user_dupes = conn.execute(
-            "SELECT owner_id, language, name FROM profiles"
+            "SELECT owner_id, language, MIN(name) AS name FROM profiles"
             " WHERE owner_id IS NOT NULL"
             " GROUP BY owner_id, language, lower(name) HAVING count(*) > 1"
         ).fetchall()
@@ -163,7 +168,7 @@ class ProfileStore:
                 " WHERE owner_id IS NOT NULL"
             )
         global_dupes = conn.execute(
-            "SELECT language, name FROM profiles WHERE owner_id IS NULL"
+            "SELECT language, MIN(name) AS name FROM profiles WHERE owner_id IS NULL"
             " GROUP BY language, lower(name) HAVING count(*) > 1"
         ).fetchall()
         if global_dupes:

@@ -115,24 +115,27 @@ class FolderStore:
         # per-user) and a DEFAULT 1 on owner_id (would let an INSERT that
         # forgets the owner silently file under the admin). SQLite cannot
         # drop either without the documented table rebuild.
-        sql = conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='folders'"
-        ).fetchone()[0]
-        if "UNIQUE" in sql.upper() or "DEFAULT 1" in sql:
-            columns = (
-                "id, owner_id, name, created_at, default_language,"
-                " default_profile_id, default_domain_ids, default_llm_provider,"
-                " default_llm_model, default_llm_tier, default_llm_auto"
-            )
-            conn.execute(_SCHEMA.replace("IF NOT EXISTS folders", "folders_new"))
-            conn.execute(
-                f"INSERT INTO folders_new ({columns}) SELECT {columns} FROM folders"
-            )
-            conn.execute("DROP TABLE folders")
-            conn.execute("ALTER TABLE folders_new RENAME TO folders")
+        # Legacy rebuild reads sqlite_master; pre-B15 databases are SQLite
+        # by definition — Postgres only ever sees fresh schemas.
+        if self.db.dialect == "sqlite":
+            sql = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='folders'"
+            ).fetchone()[0]
+            if "UNIQUE" in sql.upper() or "DEFAULT 1" in sql:
+                columns = (
+                    "id, owner_id, name, created_at, default_language,"
+                    " default_profile_id, default_domain_ids, default_llm_provider,"
+                    " default_llm_model, default_llm_tier, default_llm_auto"
+                )
+                conn.execute(_SCHEMA.replace("IF NOT EXISTS folders", "folders_new"))
+                conn.execute(
+                    f"INSERT INTO folders_new ({columns}) SELECT {columns} FROM folders"
+                )
+                conn.execute("DROP TABLE folders")
+                conn.execute("ALTER TABLE folders_new RENAME TO folders")
         # Per-owner LOWER(name) uniqueness, with the house duplicate pre-scan.
         duplicates = conn.execute(
-            "SELECT owner_id, name FROM folders"
+            "SELECT owner_id, MIN(name) AS name FROM folders"
             " GROUP BY owner_id, lower(name) HAVING count(*) > 1"
         ).fetchall()
         if duplicates:
