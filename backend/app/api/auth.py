@@ -740,6 +740,13 @@ async def reset_request(request: Request, body: ResetRequest) -> Response:
     # Each request costs one slot regardless of outcome -- success never
     # resets the count (resets are rare), unlike login's record_success.
     app.state.reset_throttle.record_failure(key)
+    user = app.state.user_store.get_by_email(body.email)
+    if user is not None and not user.is_active:
+        # B32 (#106): deactivation is local-only state -- without this,
+        # GoTrue would mail the still-active REMOTE identity a working
+        # link. Same 204, and the throttle slot above is already spent:
+        # silence stays indistinguishable from delivery.
+        return Response(status_code=204)
     try:
         await app.state.supabase_gateway.send_reset_email(body.email)
     except (SupabaseAuthError, SupabaseUnavailableError):
