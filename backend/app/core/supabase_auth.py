@@ -209,6 +209,25 @@ class SupabaseTokenVerifier:
             app_metadata = {}
         if app_metadata.get("provider") != "email":
             raise InvalidToken("provider is not email")
+        # B30 (#100): the guards above pin the IDENTITY's origin --
+        # app_metadata.provider is the FIRST provider ever linked, not the
+        # method that authenticated THIS session. amr is the per-session
+        # claim: GoTrue mints [{"method": "password"|"otp", ...}] for every
+        # flow this app produces (password grant; invite/recovery confirm)
+        # and refresh inherits the entries. Anything else -- oauth,
+        # sso/saml, magiclink, or a token without amr -- is a session no
+        # flow of this app can mint: fail closed, closing the runtime
+        # window the startup OAuth lockout cannot see (provider enabled at
+        # the dashboard between restarts) and the linked-identity case.
+        amr = claims.get("amr")
+        if not isinstance(amr, list) or not amr:
+            raise InvalidToken("token carries no amr")
+        methods: set[str] = set()
+        for entry in amr:
+            method = entry.get("method") if isinstance(entry, dict) else None
+            if method not in ("password", "otp"):
+                raise InvalidToken("session method is not an email flow")
+            methods.add(method)
         try:
             issued_at = datetime.fromtimestamp(float(claims["iat"]), UTC)
         except (TypeError, ValueError, OverflowError, OSError) as exc:
@@ -224,4 +243,6 @@ class SupabaseTokenVerifier:
         user = resolve_supabase_user(self._store, subject=subject, email=email)
         # epoch=None routes deps.py to its iat-vs-password_changed_at
         # fallback — the revocation contract for this verifier.
-        return VerifiedToken(user_id=user.id, issued_at=issued_at, epoch=None)
+        return VerifiedToken(
+            user_id=user.id, issued_at=issued_at, epoch=None, methods=frozenset(methods)
+        )

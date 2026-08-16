@@ -244,6 +244,7 @@ def mint(private, *, kid="kid-1", url=URL, sub="uuid-1", email="a@example.com", 
         "role": "authenticated",
         "is_anonymous": False,
         "app_metadata": {"provider": "email", "providers": ["email"]},
+        "amr": [{"method": "password", "timestamp": int(time.time())}],
     }
     claims.update(over)
     claims = {k: v for k, v in claims.items() if v is not None}
@@ -322,6 +323,30 @@ class TestSupabaseTokenVerifier:
             {"role": "anon"},         # not the authenticated role
             {"app_metadata": {"provider": "google", "providers": ["google"]}},  # OAuth identity
             {"app_metadata": None},   # missing app_metadata entirely -- must fail closed
+            {"amr": [{"method": "oauth", "timestamp": 0}]},       # OAuth session on a linked identity
+            {"amr": [{"method": "sso/saml", "timestamp": 0}]},
+            {"amr": [{"method": "magiclink", "timestamp": 0}]},
+            {"amr": [{"method": "password", "timestamp": 0}, {"method": "oauth", "timestamp": 0}]},  # mixed
+            {"amr": []},              # empty list fails closed
+            {"amr": None},            # claim absent entirely (mint drops None values)
+            {"amr": [{"note": "no method key"}]},
+        ],
+        ids=[
+            "exp-expired",
+            "iss-wrong",
+            "aud-wrong",
+            "iat-future",
+            "is-anonymous",
+            "role-not-authenticated",
+            "provider-oauth",
+            "app-metadata-missing",
+            "amr-oauth",
+            "amr-sso-saml",
+            "amr-magiclink",
+            "amr-mixed-password-oauth",
+            "amr-empty-list",
+            "amr-absent",
+            "amr-entry-missing-method",
         ],
     )
     def test_bad_claims_rejected(self, verifier_setup, kwargs):
@@ -329,6 +354,38 @@ class TestSupabaseTokenVerifier:
         store.create_user("a@example.com", None, external_id="uuid-1")
         with pytest.raises(InvalidToken):
             verifier.verify(mint(private, **kwargs))
+
+    def test_otp_session_accepted(self, verifier_setup):
+        # B29 retry tokens and invite/recovery confirm sessions are otp-minted.
+        private, store, verifier = verifier_setup
+        user = store.create_user("a@example.com", None, external_id="uuid-1")
+        verified = verifier.verify(
+            mint(private, amr=[{"method": "otp", "timestamp": int(time.time())}])
+        )
+        assert verified.user_id == user.id
+
+    def test_multi_entry_email_flow_amr_accepted(self, verifier_setup):
+        # A refreshed session can carry several inherited entries.
+        private, store, verifier = verifier_setup
+        user = store.create_user("a@example.com", None, external_id="uuid-1")
+        verified = verifier.verify(
+            mint(
+                private,
+                amr=[
+                    {"method": "otp", "timestamp": 0},
+                    {"method": "password", "timestamp": 1},
+                ],
+            )
+        )
+        assert verified.user_id == user.id
+
+    def test_verified_token_carries_session_methods(self, verifier_setup):
+        private, store, verifier = verifier_setup
+        store.create_user("a@example.com", None, external_id="uuid-1")
+        verified = verifier.verify(
+            mint(private, amr=[{"method": "otp", "timestamp": 0}])
+        )
+        assert verified.methods == frozenset({"otp"})
 
     def test_hs256_token_rejected(self, verifier_setup):
         _, store, verifier = verifier_setup

@@ -176,6 +176,11 @@ class VerifiedToken:
                          # epoch concept (the future Supabase verifier), in
                          # which case get_current_user falls back to the
                          # password_changed_at comparison.
+    # The session's amr method set (supabase mode; empty in local mode,
+    # which has no amr concept). Lets routes require a specific
+    # authentication method for sensitive operations -- the reset-confirm
+    # retry leg accepts ONLY otp-minted sessions (B29).
+    methods: frozenset[str] = frozenset()
 
 
 class TokenVerifier(Protocol):
