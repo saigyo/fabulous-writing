@@ -164,9 +164,10 @@ class SupabaseAuthGateway:
         Order is load-bearing: AuthRetryableError is itself an AuthError, so
         it must be caught before the generic AuthError branch, or a
         retryable/unavailable condition would be misreported as an auth
-        failure. The weak-password and email-exists catches must likewise
-        precede the generic AuthError branch, or they'd be swallowed as a
-        plain SupabaseAuthError.
+        failure. The weak-password clause must likewise precede the generic
+        AuthError branch, and within that branch the email_exists
+        discriminator must be checked before falling through to
+        SupabaseAuthError.
         """
         try:
             return await coro
