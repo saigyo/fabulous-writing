@@ -4013,3 +4013,57 @@ _finish_confirmed_rotation twin in the account-menu path, an inert
 useCrudError formatter arg, and the stale-retryToken dead-end polish.
 Post-merge operator step: enable leaked password protection in the
 dashboard (new setup-guide subsection).
+
+## 2026-08-16 — B32: deactivated-user guards for reset and resend (PR #107)
+Commits: `491f3b4`…`caa1564` · Closes #106
+
+Owner testing after PR #105 found that deactivating a user left the
+password-reset flow fully engaged: mail sent, form usable, remote
+credential rotated, and only then a misleading "link invalid or
+expired". Three server-side guards close it. `reset-request` consults
+the local store and answers inactive accounts with the identical
+silent 204 — no gateway call, no mail, throttle slot still spent
+(pinned by a mutation-sensitive test that moves the guard above
+`record_failure` and watches a fourth request leak mail).
+`reset-confirm` resolves the local row before any remote rotation on
+the link leg — the one-time link still burns, but an inactive
+account's Supabase credential is never rotated by this app — and both
+legs answer known-but-inactive accounts with an honest 422
+`account_inactive`: post-mailbox-proof, account state is no longer
+enumerable information. The email fallback covers only adoptable rows
+(`external_id IS NULL`), so a row linked to a different subject is
+never consulted. `resend-invite` rejects inactive targets with 422
+`user_inactive` before the not_linked check, email lock, and gateway
+call. Frontend maps both codes to honest informal-register copy
+(`resetAccountInactive`, `adminUserInactive`, ×7 locales); the
+button-disable half had already shipped with B28 in PR #105.
+
+Copilot earned its keep twice. Round one caught a genuine timing
+side-channel in the shipped guard: the inactive branch answered
+without the GoTrue round-trip, so response latency distinguished
+inactive accounts despite the identical 204. Fixed by decoupling
+delivery into a post-response Starlette BackgroundTask — every branch
+now answers after local work only — with a raw-ASGI ordering test
+pinning response-start before gateway-send. Round two produced zero
+inline comments but three suppressed ones, all real (the read-set
+lesson from PR #105 held): the Mailpit helpers' page-capped counts
+(now `messages_count`, the query-scoped total, verified empirically
+against the stack) and the sharp observation that the round-one fix
+itself had weakened the e2e test's control-mail barrier — the
+absence assertion could pass vacuously with the guard removed — now
+covered by a bounded settle window.
+
+Documented residual, deliberate: the guard fires pre-rotation, so a
+burned link's verify_otp session is not globally signed out and its
+GoTrue refresh token lives to natural expiry — fail-closed at our
+layer, every local surface rejects inactive rows.
+
+Process: spec → twice-reviewed plan (9 findings round one, APPROVE on
+re-review) → 6 SDD tasks, all task reviews clean on the first pass —
+a first for this repo, credited to the plan review absorbing the
+defects earlier — final Opus whole-branch review APPROVE (enumeration,
+rotation-site, and collision probes all held) with one 5-minor fix
+wave. Verification: backend 1463 zero warnings, frontend 645 + tsc +
+oxlint, e2e 15/15 locally and green via workflow_dispatch on the
+branch. Parked with ruling: the `inactive_row` naming nit (cosmetic,
+security-critical block already mutation-verified).
