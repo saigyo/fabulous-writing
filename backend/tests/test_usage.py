@@ -1,4 +1,5 @@
 import logging
+import multiprocessing
 import sqlite3
 import threading
 from datetime import UTC, datetime, timedelta
@@ -644,6 +645,29 @@ CREATE TABLE IF NOT EXISTS llm_usage (
 """
 
 
+def _pg_reservation_worker(dsn: str, run_id: str, barrier, queue) -> None:
+    """One racer's whole life cycle, in its own OS process (module level
+    so multiprocessing's spawn start method can pickle a reference to it
+    and re-import this module in the child — see the class docstring
+    below for why a process, not a thread). Reports (kind, reservation_id)
+    on the queue; the parent asserts on the aggregate."""
+    from app.services.db.postgres import PostgresDatabase
+    from app.services.usage import UsageStore
+
+    database = PostgresDatabase(dsn)
+    try:
+        store = UsageStore(database)  # idempotent open; parent already created the schema
+        limits = budget_limits(credits_per_day=1)
+        barrier.wait()
+        decision = store.reserve_llm_run(
+            FakeUser(1), limits, SERVER, REQUESTED, EFFECTIVE,
+            1, "check", run_id,
+        )
+        queue.put((decision.kind, decision.reservation_id))
+    finally:
+        database.close()  # no dangling pool/thread warnings from the child
+
+
 class TestPostgresReservationConcurrency:
     def test_concurrent_reservations_admit_exactly_one(self, pg_database):
         """Write-skew regression pin (spec §R4): under READ COMMITTED every
@@ -652,30 +676,40 @@ class TestPostgresReservationConcurrency:
         SQLite write lock that made insert-first TOCTOU-safe does not
         exist here. pg_advisory_xact_lock serializes the transactions;
         with it, exactly one of these eight is admitted, deterministically.
+
+        Raced via multiprocessing, not threading: CPython's GIL plus a
+        fast loopback Postgres round-trip lets one thread's whole insert-
+        then-count-then-commit sequence finish before a second thread's
+        Python-level dispatch catches up, so a threading.Thread version of
+        this race self-serializes to exactly one admission even with the
+        lock removed — silently defeating the mutation contract below. OS
+        processes have no such GIL hand-off bias and reliably reproduce
+        the write skew (confirmed empirically: see task-3-report.md).
+
         Mutation contract: with the lock removed this fails on the first
-        round with a multi-admission overshoot."""
-        store = UsageStore(pg_database)
-        limits = budget_limits(credits_per_day=1)
-        barrier = threading.Barrier(8)
-        decisions = []
-        record = threading.Lock()
-
-        def attempt(run_id):
-            barrier.wait()
-            decision = store.reserve_llm_run(
-                FakeUser(1), limits, SERVER, REQUESTED, EFFECTIVE,
-                1, "check", run_id,
+        round with a multi-admission overshoot.
+        """
+        UsageStore(pg_database)  # creates the schema once; children just reopen it
+        # No public accessor for the pool's DSN; the schema-scoped DSN
+        # lives on the pool psycopg_pool itself builds, and every child
+        # process needs its own connection to that same schema.
+        dsn = pg_database._pool.conninfo
+        ctx = multiprocessing.get_context("spawn")
+        barrier = ctx.Barrier(8)
+        queue = ctx.Queue()
+        processes = [
+            ctx.Process(
+                target=_pg_reservation_worker, args=(dsn, f"race{i}", barrier, queue)
             )
-            with record:
-                decisions.append(decision)
-
-        threads = [threading.Thread(target=attempt, args=(f"race{i}",))
-                   for i in range(8)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-        admitted = [d for d in decisions if d.kind == "admitted"]
+            for i in range(8)
+        ]
+        for p in processes:
+            p.start()
+        results = [queue.get(timeout=30) for _ in processes]
+        for p in processes:
+            p.join()
+        assert all(p.exitcode == 0 for p in processes), [p.exitcode for p in processes]
+        admitted = [kind for kind, _ in results if kind == "admitted"]
         assert len(admitted) == 1, (
             f"budget overshoot: {len(admitted)} admissions against a"
             " one-credit day window"
