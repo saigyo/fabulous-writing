@@ -444,7 +444,12 @@ function UserRow({
             {invitesAvailable && user.external_id !== null && (
               <button
                 className="admin-resend"
-                disabled={resendPending}
+                // A deactivated user must not be re-invited: the backend
+                // would answer with GoTrue's "already accepted" (absurd
+                // beside a row showing the account deactivated), and
+                // reactivation is the admin's actual next step (B32/#106
+                // adds the server-side guard).
+                disabled={resendPending || !user.is_active}
                 onClick={() => void resendInvite()}
               >
                 {m.adminResendInvite}
