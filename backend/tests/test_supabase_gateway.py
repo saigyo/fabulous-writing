@@ -245,26 +245,6 @@ class TestChangePassword:
         assert exc_info.value.reasons == []
 
 
-class TestConfirm:
-    async def test_confirm_verifies_then_updates_password(self):
-        order = []
-
-        def handler(request):
-            if request.url.path.endswith("/verify"):
-                order.append("verify")
-                return httpx.Response(200, json=SESSION_JSON)
-            order.append("update")
-            assert request.url.path.endswith("/admin/users/" + USER_UUID)
-            assert json.loads(request.content)["password"] == "new-password-1"
-            return httpx.Response(200, json=SESSION_JSON["user"])
-
-        session = await gateway_with(handler).confirm_with_token_hash(
-            "hash-1", "recovery", "new-password-1"
-        )
-        assert order == ["verify", "update"]
-        assert session.access_token == "at-1"
-
-
 class TestVerifyTokenHash:
     async def test_verify_token_hash_returns_session_without_touching_password(self):
         requests = []

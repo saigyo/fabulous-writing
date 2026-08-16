@@ -9,8 +9,11 @@ from app.core.auth import InvalidToken, VerifiedToken
 from app.core.supabase_auth import resolve_supabase_user
 from app.services.supabase_gateway import (
     SupabaseAuthError,
+    SupabaseEmailExistsError,
     SupabaseSession,
+    SupabaseUnavailableError,
     SupabaseUserSummary,
+    SupabaseWeakPasswordError,
 )
 
 
@@ -81,12 +84,38 @@ class FakeSupabaseGateway:
         self._refresh_tokens: dict[str, tuple[str, str]] = {}
         # hash -> (uuid, email); populated by tests via direct assignment.
         self.valid_token_hashes: dict[str, tuple[str, str]] = {}
+        # access_token -> the amr method set that minted it. Parallel to
+        # `sessions` rather than widening its 3-tuple (unpacked elsewhere,
+        # see the class docstring): "password" for sign_in/refresh-minted
+        # sessions, "otp" for verify_token_hash-minted ones. Read by
+        # FakeSupabaseVerifier to populate VerifiedToken.methods.
+        self.session_methods: dict[str, frozenset[str]] = {}
         self.sign_in_calls: list[tuple[str, str]] = []
         self.sign_out_calls: list[str] = []
         self.global_sign_out_calls: list[str] = []
         self.reset_emails: list[str] = []
         self.invites: list[str] = []
         self.create_user_calls: list[tuple[str, str]] = []
+        # email -> number of invites delivered (PROBED semantics: a PENDING
+        # identity gets a fresh invite delivered on every retry, not a
+        # rejection -- see invite_user below).
+        self.invite_calls: dict[str, int] = {}
+        # Set by a test to make change_password raise SupabaseWeakPasswordError
+        # with these reasons instead of succeeding.
+        self.weak_password_reasons: list[str] | None = None
+        # Set by a test to make the NEXT change_password call raise
+        # SupabaseUnavailableError once, then reset itself -- models a
+        # transient remote failure a retry should recover from.
+        self.fail_change_password_once: bool = False
+        # Opt-in for the two reconciliation-rig tests that need invite_user
+        # to reject a duplicate email unconditionally (the pre-fact-1 always-
+        # raise model) so they still reach _resolve_after_duplicate_rejection.
+        # Every other test gets GoTrue's real PROBED semantics (see
+        # invite_user).
+        self.invite_rejects_duplicates: bool = False
+        # Set by a test to make invite_user raise this instead of running
+        # its normal logic (rate-limit/misconfig-class failures).
+        self.invite_failure: Exception | None = None
 
     def _mint_uuid(self) -> str:
         uuid = f"fake-uuid-{self._next_uuid}"
@@ -101,6 +130,7 @@ class FakeSupabaseGateway:
         access = f"fake-access-{n}"
         refresh = f"fake-refresh-{n}"
         self.sessions[access] = (uuid, email, issued_at if issued_at is not None else time.time())
+        self.session_methods[access] = frozenset({"password"})
         self._refresh_tokens[refresh] = (uuid, email)
         return SupabaseSession(
             access_token=access, refresh_token=refresh,
@@ -176,6 +206,11 @@ class FakeSupabaseGateway:
                 del self._refresh_tokens[token]
 
     async def change_password(self, user_id: str, new_password: str) -> None:
+        if self.weak_password_reasons is not None:
+            raise SupabaseWeakPasswordError(self.weak_password_reasons)
+        if self.fail_change_password_once:
+            self.fail_change_password_once = False
+            raise SupabaseUnavailableError("transiently unavailable")
         for email, (_password, uuid) in list(self._users.items()):
             if uuid == user_id:
                 self._users[email] = (new_password, uuid)
@@ -193,15 +228,22 @@ class FakeSupabaseGateway:
     async def send_reset_email(self, email: str) -> None:
         self.reset_emails.append(email)
 
-    async def confirm_with_token_hash(
-        self, token_hash: str, type_: str, new_password: str
-    ) -> SupabaseSession:
-        entry = self.valid_token_hashes.get(token_hash)
+    async def verify_token_hash(self, token_hash: str, type_: str) -> SupabaseSession:
+        # Burn: pop, not get -- a reused or unknown hash raises, mirroring
+        # GoTrue's one-time link. Does NOT touch the password (B29, #97);
+        # that is the caller's separate, retryable step.
+        entry = self.valid_token_hashes.pop(token_hash, None)
         if entry is None:
             raise SupabaseAuthError("invalid or expired token_hash")
         uuid, email = entry
-        self._users[email] = (new_password, uuid)
-        return self._mint_session(uuid, email)
+        # Materialize the identity on consumption, mirroring GoTrue:
+        # verify_otp confirms an identity that already exists remotely, so a
+        # subsequent change_password(uuid, ...) must find it -- without this
+        # a confirm-only rig raises "unknown user_id" here.
+        self._users.setdefault(email, ("", uuid))
+        session = self._mint_session(uuid, email)
+        self.session_methods[session.access_token] = frozenset({"otp"})
+        return session
 
     async def create_user(self, email: str, password: str) -> str:
         self.create_user_calls.append((email, password))
@@ -216,19 +258,29 @@ class FakeSupabaseGateway:
         return uuid
 
     async def invite_user(self, email: str) -> str:
-        if email in self._users:
-            # Mirrors real GoTrue: a retry of /invite against an email that
-            # already has a Supabase identity -- even one from an earlier,
-            # still-unconfirmed invite -- is rejected the same way
-            # admin.create_user rejects a duplicate (supabase/auth#2180),
-            # not silently resent. Lets a test simulate "the first invite
-            # succeeded remotely but the local write then failed" by
-            # pre-registering the email before the call under test.
-            raise SupabaseAuthError(f"{email} already registered")
+        # PROBED semantics (spec fact 1): real GoTrue only rejects a retry
+        # against a CONFIRMED identity -- a PENDING one (invited, never
+        # signed in) gets a fresh invite delivered instead, the same UUID
+        # returned. `invite_rejects_duplicates` is the opt-in for the two
+        # reconciliation-rig tests that need the old always-raise model to
+        # reach _resolve_after_duplicate_rejection.
+        if self.invite_failure is not None:
+            raise self.invite_failure
+        stored = self._users.get(email)
+        if stored is not None:
+            if self.invite_rejects_duplicates:
+                raise SupabaseAuthError(f"{email} already registered")
+            if self._invite_pending.get(email, False):
+                uuid = stored[1]
+                self.invites.append(email)
+                self.invite_calls[email] = self.invite_calls.get(email, 0) + 1
+                return uuid
+            raise SupabaseEmailExistsError(f"{email} already registered")
         uuid = self._mint_uuid()
         self._users[email] = ("", uuid)
         self._invite_pending[email] = True
         self.invites.append(email)
+        self.invite_calls[email] = self.invite_calls.get(email, 0) + 1
         return uuid
 
     async def get_user_by_email(self, email: str) -> SupabaseUserSummary | None:
@@ -272,4 +324,5 @@ class FakeSupabaseVerifier:
             user_id=user.id,
             issued_at=datetime.fromtimestamp(issued_at, UTC),
             epoch=None,
+            methods=self._gateway.session_methods.get(token, frozenset({"password"})),
         )

@@ -377,6 +377,247 @@ class TestResetConfirm:
         created = app.state.user_store.get_by_external_id(new_uuid)
         assert created is not None
         assert created.email == "invitee@example.com"
+        # The restored branch (link leg's own eviction, run for a row that
+        # verify() JIT-created rather than one already on file): without it
+        # the verify_otp session (and its refresh token) would outlive the
+        # confirm.
+        assert created.password_changed_at is not None
+        assert fake.global_sign_out_calls
+
+
+class TestResetConfirmRetryFlow:
+    """B29 (#97): the link leg (token_hash+type) burns the one-time link and
+    hands back a retry_token on any failure AFTER verification; the retry
+    leg (retry_token) is the only useful next step, since the link itself
+    is already spent."""
+
+    def _seeded(self, supabase_app):
+        app, fake = supabase_app
+        uuid = fake.register_user(EMAIL, PASSWORD, uuid=UUID)
+        fake.valid_token_hashes["TH"] = (uuid, EMAIL)
+        return app, fake
+
+    def test_weak_password_returns_envelope_and_link_is_burned(self, supabase_app):
+        app, fake = self._seeded(supabase_app)
+        fake.weak_password_reasons = ["pwned"]
+        client = TestClient(app)
+        r = client.post("/api/auth/reset-confirm", json={
+            "token_hash": "TH", "type": "recovery", "new_password": "x" * 12,
+        })
+        assert r.status_code == 422
+        detail = r.json()["detail"]
+        assert detail["code"] == "password_weak"
+        assert detail["reasons"] == ["pwned"]
+        retry_token = detail["retry_token"]
+        assert retry_token
+        # The link is burned: replaying the token_hash leg now 422s.
+        r2 = client.post("/api/auth/reset-confirm", json={
+            "token_hash": "TH", "type": "recovery", "new_password": "x" * 12,
+        })
+        assert r2.status_code == 422
+        assert r2.json()["detail"]["code"] == "invalid_or_expired_link"
+
+    def test_retry_leg_succeeds_and_evicts(self, supabase_app):
+        app, fake = supabase_app
+        uuid = fake.register_user(EMAIL, PASSWORD, uuid=UUID)
+        client = TestClient(app)
+        login = client.post("/api/auth/login", json={"email": EMAIL, "password": PASSWORD})
+        user_id = login.json()["user"]["id"]
+        pre_change_refresh = login.json()["refresh_token"]
+        fake.valid_token_hashes["TH"] = (uuid, EMAIL)
+        fake.weak_password_reasons = ["pwned"]
+        r = client.post("/api/auth/reset-confirm", json={
+            "token_hash": "TH", "type": "recovery", "new_password": "x" * 12,
+        })
+        assert r.status_code == 422
+        retry_token = r.json()["detail"]["retry_token"]
+        fake.weak_password_reasons = None
+        r2 = client.post("/api/auth/reset-confirm", json={
+            "retry_token": retry_token, "new_password": "y" * 12,
+        })
+        assert r2.status_code == 204
+        assert fake.stored_password(EMAIL) == "y" * 12
+        user = app.state.user_store.get_user(user_id)
+        assert user.password_changed_at is not None
+        assert fake.global_sign_out_calls
+        # Same eviction contract as the other reset-confirm/password-change
+        # routes: the pre-change refresh token must be dead.
+        stale_refresh = client.post(
+            "/api/auth/refresh", json={"refresh_token": pre_change_refresh}
+        )
+        assert stale_refresh.status_code == 401
+
+    def test_retry_leg_weak_again_returns_envelope_again(self, supabase_app):
+        app, fake = self._seeded(supabase_app)
+        fake.weak_password_reasons = ["pwned"]
+        client = TestClient(app)
+        r = client.post("/api/auth/reset-confirm", json={
+            "token_hash": "TH", "type": "recovery", "new_password": "x" * 12,
+        })
+        retry_token = r.json()["detail"]["retry_token"]
+        r2 = client.post("/api/auth/reset-confirm", json={
+            "retry_token": retry_token, "new_password": "z" * 12,
+        })
+        assert r2.status_code == 422
+        detail2 = r2.json()["detail"]
+        assert detail2["code"] == "password_weak"
+        assert detail2["retry_token"]
+
+    def test_transient_update_failure_returns_503_envelope(self, supabase_app):
+        app, fake = self._seeded(supabase_app)
+        fake.fail_change_password_once = True
+        client = TestClient(app)
+        r = client.post("/api/auth/reset-confirm", json={
+            "token_hash": "TH", "type": "recovery", "new_password": "x" * 12,
+        })
+        assert r.status_code == 503
+        detail = r.json()["detail"]
+        assert detail["code"] == "update_failed"
+        retry_token = detail["retry_token"]
+        assert retry_token
+        r2 = client.post("/api/auth/reset-confirm", json={
+            "retry_token": retry_token, "new_password": "x" * 12,
+        })
+        assert r2.status_code == 204
+
+    def test_both_legs_in_one_body_rejected(self, supabase_app):
+        app, _fake = self._seeded(supabase_app)
+        client = TestClient(app)
+        r = client.post("/api/auth/reset-confirm", json={
+            "token_hash": "TH", "type": "recovery",
+            "retry_token": "rt", "new_password": "x" * 12,
+        })
+        assert r.status_code == 422
+
+    def test_neither_leg_rejected(self, supabase_app):
+        app, _fake = self._seeded(supabase_app)
+        client = TestClient(app)
+        r = client.post("/api/auth/reset-confirm", json={"new_password": "x" * 12})
+        assert r.status_code == 422
+
+    def test_partial_link_leg_rejected(self, supabase_app):
+        app, _fake = self._seeded(supabase_app)
+        client = TestClient(app)
+        r = client.post("/api/auth/reset-confirm", json={
+            "token_hash": "TH", "new_password": "x" * 12,
+        })
+        assert r.status_code == 422
+
+    def test_no_branch_ever_returns_a_session(self, supabase_app):
+        app, fake = supabase_app
+        uuid = fake.register_user(EMAIL, PASSWORD, uuid=UUID)
+        client = TestClient(app)
+
+        fake.valid_token_hashes["TH1"] = (uuid, EMAIL)
+        fake.weak_password_reasons = ["pwned"]
+        r1 = client.post("/api/auth/reset-confirm", json={
+            "token_hash": "TH1", "type": "recovery", "new_password": "x" * 12,
+        })
+        assert r1.status_code == 422
+        body1 = r1.json()
+        assert "token" not in body1 and "refresh_token" not in body1
+        retry_token = body1["detail"]["retry_token"]
+
+        fake.weak_password_reasons = None
+        r2 = client.post("/api/auth/reset-confirm", json={
+            "retry_token": retry_token, "new_password": "y" * 12,
+        })
+        assert r2.status_code == 204
+        assert r2.content == b""
+
+        fake.valid_token_hashes["TH2"] = (uuid, EMAIL)
+        fake.fail_change_password_once = True
+        r3 = client.post("/api/auth/reset-confirm", json={
+            "token_hash": "TH2", "type": "recovery", "new_password": "z" * 12,
+        })
+        assert r3.status_code == 503
+        body3 = r3.json()
+        assert "token" not in body3 and "refresh_token" not in body3
+
+    def test_retry_token_never_logged(self, supabase_app, caplog):
+        app, fake = self._seeded(supabase_app)
+        fake.weak_password_reasons = ["pwned"]
+        client = TestClient(app)
+        with caplog.at_level("WARNING"):
+            r = client.post("/api/auth/reset-confirm", json={
+                "token_hash": "TH", "type": "recovery", "new_password": "x" * 12,
+            })
+            retry_token = r.json()["detail"]["retry_token"]
+            fake.weak_password_reasons = None
+            client.post("/api/auth/reset-confirm", json={
+                "retry_token": retry_token, "new_password": "y" * 12,
+            })
+        assert all(retry_token not in record.getMessage() for record in caplog.records)
+
+    def test_garbage_retry_token_rejected(self, supabase_app):
+        app, _fake = self._seeded(supabase_app)
+        client = TestClient(app)
+        r = client.post("/api/auth/reset-confirm", json={
+            "retry_token": "not-a-jwt", "new_password": "x" * 12,
+        })
+        assert r.status_code == 422
+        assert r.json()["detail"]["code"] == "invalid_or_expired_link"
+
+    def test_login_session_token_rejected_as_retry_token(self, supabase_app):
+        # SECURITY PIN (plan-review finding 1): a normal login's access
+        # token (password-minted) used as retry_token must not rotate the
+        # password -- otherwise any stolen bearer becomes a rotation
+        # credential with no current-password proof.
+        app, fake = supabase_app
+        client, body = _login_ok(app, fake)
+        r = client.post("/api/auth/reset-confirm", json={
+            "retry_token": body["token"], "new_password": "x" * 12,
+        })
+        assert r.status_code == 422
+        assert r.json()["detail"]["code"] == "invalid_or_expired_link"
+
+    def test_retry_token_lifecycle_as_bearer(self, supabase_app):
+        # HONESTY PIN (plan-review findings 19 + re-review C): the retry
+        # token IS a live otp session -- GET /api/auth/me with it succeeds
+        # while the update is still failing AND still succeeds after the
+        # successful rotation (minted seconds before the change, it sits
+        # inside the 60s iat-leeway window and lives to its natural TTL --
+        # the documented B14 residual). What rotation DOES kill: the
+        # session's REFRESH token (global_sign_out).
+        app, fake = supabase_app
+        uuid = fake.register_user(EMAIL, PASSWORD, uuid=UUID)
+        client = TestClient(app)
+        login = client.post("/api/auth/login", json={"email": EMAIL, "password": PASSWORD})
+        pre_change_refresh = login.json()["refresh_token"]
+        fake.valid_token_hashes["TH"] = (uuid, EMAIL)
+        fake.fail_change_password_once = True
+        r = client.post("/api/auth/reset-confirm", json={
+            "token_hash": "TH", "type": "recovery", "new_password": "x" * 12,
+        })
+        assert r.status_code == 503
+        retry_token = r.json()["detail"]["retry_token"]
+        me1 = client.get("/api/auth/me", headers=_bearer(retry_token))
+        assert me1.status_code == 200
+        r2 = client.post("/api/auth/reset-confirm", json={
+            "retry_token": retry_token, "new_password": "x" * 12,
+        })
+        assert r2.status_code == 204
+        me2 = client.get("/api/auth/me", headers=_bearer(retry_token))
+        assert me2.status_code == 200
+        stale_refresh = client.post(
+            "/api/auth/refresh", json={"refresh_token": pre_change_refresh}
+        )
+        assert stale_refresh.status_code == 401
+
+    def test_account_change_password_weak_maps_to_password_weak(self, supabase_app):
+        # plan-review finding 7: POST /api/auth/password with
+        # weak_password_reasons set on the fake -> 422 password_weak (was:
+        # generic password_change_failed).
+        app, fake = supabase_app
+        client, body = _login_ok(app, fake)
+        fake.weak_password_reasons = ["pwned"]
+        resp = client.post(
+            "/api/auth/password",
+            json={"current": PASSWORD, "new": "brand-new-password-1"},
+            headers=_bearer(body["token"]),
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"] == {"code": "password_weak", "reasons": ["pwned"]}
 
 
 SUPABASE_ONLY_BODIES = {
@@ -580,14 +821,15 @@ class _SignedSessionGateway(FakeSupabaseGateway):
         uuid, email = entry
         return self._signed_session(uuid, email)
 
-    async def confirm_with_token_hash(
-        self, token_hash: str, type_: str, new_password: str
-    ) -> SupabaseSession:
-        entry = self.valid_token_hashes.get(token_hash)
+    async def verify_token_hash(self, token_hash: str, type_: str) -> SupabaseSession:
+        entry = self.valid_token_hashes.pop(token_hash, None)
         if entry is None:
             raise SupabaseAuthError("invalid or expired token_hash")
         uuid, email = entry
-        self._users[email] = (new_password, uuid)
+        # Same materialization rule as the base fake's verify_token_hash
+        # (fakes_supabase.py): without it, a confirm-only rig's follow-on
+        # change_password call raises "unknown user_id".
+        self._users.setdefault(email, ("", uuid))
         return self._signed_session(uuid, email)
 
 
@@ -1152,6 +1394,12 @@ class TestAdminCreateReconciliation:
         fake.register_user(
             self.RETRY_EMAIL, "", uuid="fake-uuid-retry-invite", invite_pending=True
         )
+        # Opt-in to the pre-fact-1 always-raise model: this test's point is
+        # the reconciliation fallback (_resolve_after_duplicate_rejection),
+        # which only runs if invite_user rejects the retry -- GoTrue's real
+        # PROBED semantics would let a pending identity's retry through
+        # directly (see fakes_supabase.py's invite_user).
+        fake.invite_rejects_duplicates = True
         client = TestClient(app)
         headers = _admin_bearer(client)
         resp = client.post(
@@ -1178,6 +1426,7 @@ class TestAdminCreateReconciliation:
         fake.register_user(
             "active-account@example.com", "an old password 1", uuid="fake-uuid-active"
         )
+        fake.invite_rejects_duplicates = True
         client = TestClient(app)
         headers = _admin_bearer(client)
         resp = client.post(
