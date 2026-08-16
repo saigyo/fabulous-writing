@@ -208,7 +208,7 @@ class TestResolveSupabaseUserAdoptionRace:
         # between this call's own read (row A, unlinked) and its write. Our
         # own link_external_id(row_a, S) then satisfies its WHERE clause
         # (row A IS still unlinked) but collides with row B's external_id
-        # under the UNIQUE constraint -- exactly the sqlite3.IntegrityError
+        # under the UNIQUE constraint -- exactly the seam's UniqueViolationError
         # link_external_id's own catch exists for. The outcome must be the
         # ordinary fail-closed collision (InvalidToken, since row A's own
         # external_id never becomes "S"), never an unhandled 500.
@@ -220,7 +220,7 @@ class TestResolveSupabaseUserAdoptionRace:
         def racing_link(user_id, external_id):
             store.link_external_id = original_link
             original_link(row_b.id, external_id)  # concurrent winner
-            return original_link(user_id, external_id)  # our own write: IntegrityError -> False
+            return original_link(user_id, external_id)  # our own write: UniqueViolationError -> False
 
         store.link_external_id = racing_link
         with pytest.raises(InvalidToken):
