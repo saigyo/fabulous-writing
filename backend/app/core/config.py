@@ -229,6 +229,17 @@ class AuthSettings(BaseModel):
     supabase: SupabaseSettings | None = None
 
 
+class DatabaseSettings(BaseModel):
+    """Database backend selection (B15). The Postgres DSN is NOT config —
+    it carries a password and lives exclusively in the FW_DATABASE_URL
+    environment variable, required iff backend == "postgres"
+    (app/services/db.create_database enforces)."""
+
+    model_config = ConfigDict(extra="forbid")  # a typo'd key must fail loudly
+
+    backend: Literal["sqlite", "postgres"] = "sqlite"
+
+
 # Restricted to the ledger's source values; a typo'd key must fail loudly,
 # not silently price a source at the default.
 _CREDIT_SOURCES = ("check", "suggestion", "name")
@@ -488,6 +499,7 @@ class Settings(BaseModel):
     routing: RoutingSettings = Field(default_factory=RoutingSettings)
     nlp: NlpSettings = Field(default_factory=NlpSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
+    database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     cors: CorsSettings = Field(default_factory=CorsSettings)
     frontend: FrontendSettings = Field(default_factory=FrontendSettings)
 

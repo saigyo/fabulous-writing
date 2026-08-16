@@ -37,6 +37,12 @@ auth:
   # supabase:
   #   url: https://<ref>.supabase.co
 
+# Database backend (B15). Startup-only, like auth: above.
+# database:
+#   backend: sqlite   # sqlite (default) | postgres
+#   # postgres mode requires the connection string in the FW_DATABASE_URL
+#   # environment variable (never here — it carries a password).
+
 # Global, server-level limits (metering). max_document_chars/
 # max_concurrent_llm_runs/llm_run_max_age/concurrency_reject_delay apply to
 # the whole server; `admin:` is the ceiling every admin account is metered

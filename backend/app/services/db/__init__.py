@@ -31,9 +31,14 @@ Connection contract — everything a store may rely on:
   needed only by UsageStore.reserve_llm_run.
 """
 
-from collections.abc import Sequence
+import logging
+import os
+from collections.abc import Mapping, Sequence
 from contextlib import AbstractContextManager
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from app.core.config import Settings
 
 
 class UniqueViolationError(Exception):
@@ -71,3 +76,43 @@ def migrate_columns(
     for name, decl in columns:
         if name not in existing:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+
+
+logger = logging.getLogger(__name__)
+
+DATABASE_URL_ENV = "FW_DATABASE_URL"
+
+
+def create_database(
+    settings: "Settings",
+    *,
+    timeout: float | None = None,
+    env: Mapping[str, str] | None = None,
+) -> Database:
+    """Build the app's one Database from settings (spec §R5/§R6).
+
+    sqlite (default): SqliteDatabase on settings.db_path; `timeout` is the
+    operator CLI's busy timeout. postgres: DSN from FW_DATABASE_URL (env
+    only — it carries a password and must never appear in config or logs);
+    missing/blank -> RuntimeError naming the VARIABLE, never a value.
+    `timeout` is ignored (the pool has its own checkout timeout).
+    """
+    environ = os.environ if env is None else env
+    dsn = environ.get(DATABASE_URL_ENV, "").strip()
+    if settings.database.backend == "postgres":
+        if not dsn:
+            raise RuntimeError(
+                f"database.backend is 'postgres' but {DATABASE_URL_ENV} is not set"
+            )
+        # Imported lazily: sqlite deployments never import psycopg.
+        from app.services.db.postgres import PostgresDatabase
+
+        return PostgresDatabase(dsn)
+    if dsn:
+        logger.warning(
+            "%s is set but database.backend is 'sqlite'; the variable is ignored",
+            DATABASE_URL_ENV,
+        )
+    from app.services.db.sqlite import SqliteDatabase
+
+    return SqliteDatabase(settings.db_path, timeout=timeout)
