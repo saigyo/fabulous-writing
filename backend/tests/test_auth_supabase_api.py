@@ -3,6 +3,7 @@ dispatch, the password-change eviction window (B14 Task 4, #55), and
 supabase-mode admin bootstrap + invitation-only user entry (Task 5)."""
 
 import asyncio
+import json
 import time
 
 import jwt
@@ -343,6 +344,52 @@ class TestResetRequest:
         resp = client.post("/api/auth/reset-request", json={"email": EMAIL})
         assert resp.status_code == 204
         assert EMAIL in fake.reset_emails
+
+    def test_gateway_call_runs_after_response_sent(self, supabase_app):
+        # Copilot finding on PR #107: the inactive branch answers without a
+        # network call, so if the mailing path AWAITED the gateway before
+        # responding, response timing would leak account state. Pin the
+        # decoupling at the ASGI layer: the http.response.start message
+        # must be sent BEFORE the gateway send runs.
+        app, fake = supabase_app
+        fake.register_user(EMAIL, PASSWORD, uuid=UUID)
+        events: list[str] = []
+        orig_send = fake.send_reset_email
+
+        async def recording_send(email):
+            events.append("gateway")
+            await orig_send(email)
+
+        fake.send_reset_email = recording_send
+        body = json.dumps({"email": EMAIL}).encode()
+        scope = {
+            "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
+            "method": "POST", "scheme": "http",
+            "path": "/api/auth/reset-request",
+            "raw_path": b"/api/auth/reset-request", "query_string": b"",
+            "root_path": "",
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+            ],
+            "client": ("testclient", 50000), "server": ("testserver", 80),
+            "state": {},
+        }
+        delivered = False
+
+        async def receive():
+            nonlocal delivered
+            if delivered:
+                return {"type": "http.disconnect"}
+            delivered = True
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        async def send(message):
+            if message["type"] == "http.response.start":
+                events.append(f"response:{message['status']}")
+
+        asyncio.run(app(scope, receive, send))
+        assert events == ["response:204", "gateway"]
 
 
 class TestResetConfirm:
