@@ -325,6 +325,17 @@ class TestResetRequest:
         assert resp.status_code == 204
         # The unenumerable contract: same 204, but no mail was requested.
         assert fake.reset_emails == before
+        # The silent skip must still SPEND a throttle slot (spec R1): two
+        # more requests reach reset_throttle's threshold (3). Reactivating
+        # the account before the 4th call isolates what's actually blocking
+        # it -- if the throttle slots were spent, the 4th call never even
+        # reaches the (now passing) is_active check or the gateway.
+        client.post("/api/auth/reset-request", json={"email": EMAIL})
+        client.post("/api/auth/reset-request", json={"email": EMAIL})
+        app.state.user_store.update_user(body["user"]["id"], is_active=True)
+        resp = client.post("/api/auth/reset-request", json={"email": EMAIL})
+        assert resp.status_code == 204
+        assert fake.reset_emails == before
 
     def test_active_local_user_still_mails(self, supabase_app):
         app, fake = supabase_app

@@ -861,7 +861,7 @@ async def reset_confirm(request: Request, body: ResetConfirm) -> Response:
         await _finish_confirmed_rotation(app, store, user.id, body.retry_token)
         return Response(status_code=204)
 
-    # LINK LEG: verify_otp burns the link; every failure AFTER a
+    # LINK LEG: verify_otp burns the link; every rotation failure after a
     # successful verify returns a retry envelope instead of stranding a
     # confirmed identity behind a dead link.
     try:

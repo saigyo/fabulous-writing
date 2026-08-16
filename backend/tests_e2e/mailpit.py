@@ -24,7 +24,7 @@ class Mailpit:
         while time.monotonic() < deadline:
             resp = httpx.get(
                 f"{self._base}/api/v1/search",
-                params={"query": f"to:{to}"},
+                params={"query": f"to:{to}", "limit": 200},
                 timeout=10,
             )
             resp.raise_for_status()

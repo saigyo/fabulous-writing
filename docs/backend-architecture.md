@@ -1418,7 +1418,7 @@ store and silently skips the gateway call for an inactive account (same
 `204`, throttle slot still spent — the surface stays unenumerable). On
 `reset-confirm`, both legs resolve the local row *before* any remote
 rotation — the link still burns, but an inactive account's Supabase
-credential is never rotated, and the response is an honest `422
+credential is never rotated by this app, and the response is an honest `422
 account_inactive` (post-mailbox-proof, so nothing is enumerable).
 Deliberate residual: because the guard fires before rotation, the burned
 link's `verify_otp` session is never globally signed out — its GoTrue

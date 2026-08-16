@@ -1664,7 +1664,7 @@ stale-tab race, since the button described below is already disabled for any row
 known inactive at render time. `UserRow` renders the **"Resend invitation"** button
 only when `invitesAvailable && user.external_id !== null` — a row with no Supabase
 identity at all has nothing to resend — and disables it (without hiding it) whenever
-`resendPending || !user.is_active` (the inactive half added by B32, #106), so a
+`resendPending || !user.is_active` (the inactive half added by B28, #96), so a
 second click before the first `POST` resolves, or a click on a row already known
 inactive, can't fire a duplicate or dead-end invitation email.
 
