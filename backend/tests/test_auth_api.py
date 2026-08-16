@@ -17,6 +17,7 @@ from app.core.auth import LocalTokenVerifier, VerifiedToken, issue_token
 from app.core.config import Settings
 from app.core.permissions import EffectiveSelection, RequestedLLM
 from app.main import create_app
+from app.services.db.sqlite import SqliteDatabase
 from app.services.users import UserStore
 from tests.conftest import (
     TEST_ADMIN_EMAIL,
@@ -42,7 +43,7 @@ def probe(tmp_path: Path):
     """A minimal app exposing the dependencies, so they are tested directly
     rather than through whichever endpoint happens to use them."""
     app = FastAPI()
-    app.state.user_store = UserStore(tmp_path / "test.db")
+    app.state.user_store = UserStore(SqliteDatabase(tmp_path / "test.db"))
     app.state.token_verifier = LocalTokenVerifier(SECRET)
 
     @app.get("/probe/user")

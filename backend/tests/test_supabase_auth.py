@@ -19,6 +19,7 @@ from app.core.supabase_auth import (
     resolve_supabase_credentials,
     resolve_supabase_user,
 )
+from app.services.db.sqlite import SqliteDatabase
 from app.services.users import UserStore
 from tests.fakes_supabase import StaticJWKSClient
 
@@ -113,7 +114,7 @@ class TestResolveCredentials:
 
 class TestUserStoreExternalId:
     def test_create_and_get_by_external_id(self, tmp_path):
-        store = UserStore(tmp_path / "u.db")
+        store = UserStore(SqliteDatabase(tmp_path / "u.db"))
         created = store.create_user(
             "a@example.com", None, external_id="uuid-1", tier="basic"
         )
@@ -125,7 +126,7 @@ class TestUserStoreExternalId:
         # Created WITH a password so the "touches no hash" contract is
         # actually observable — a password-less row would make the final
         # assertion pass with the whole method deleted.
-        store = UserStore(tmp_path / "u.db")
+        store = UserStore(SqliteDatabase(tmp_path / "u.db"))
         user = store.create_user("a@example.com", "local-password-1", external_id="uuid-1")
         assert user.password_changed_at is None
         assert store.mark_password_changed(user.id) is True
@@ -147,7 +148,7 @@ class TestUserStoreExternalId:
 
         from app.core.auth import IAT_LEEWAY_SECONDS
 
-        store = UserStore(tmp_path / "u.db")
+        store = UserStore(SqliteDatabase(tmp_path / "u.db"))
         user = store.create_user("a@example.com", "local-password-1")
         before = datetime.now(UTC)
         store.mark_password_changed(user.id)
@@ -167,7 +168,7 @@ class TestResolveSupabaseUserAdoptionRace:
     to perform that concurrent write itself before reporting the loss."""
 
     def test_lost_race_to_a_different_subject_fails_closed(self, tmp_path):
-        store = UserStore(tmp_path / "race1.db")
+        store = UserStore(SqliteDatabase(tmp_path / "race1.db"))
         existing = store.create_user("a@example.com", "local-password-1")
         original_link = store.link_external_id
 
@@ -184,7 +185,7 @@ class TestResolveSupabaseUserAdoptionRace:
         assert store.get_user(existing.id).external_id == "uuid-other-winner"
 
     def test_lost_race_to_the_same_subject_is_idempotent(self, tmp_path):
-        store = UserStore(tmp_path / "race2.db")
+        store = UserStore(SqliteDatabase(tmp_path / "race2.db"))
         existing = store.create_user("a@example.com", "local-password-1")
         original_link = store.link_external_id
 
@@ -211,7 +212,7 @@ class TestResolveSupabaseUserAdoptionRace:
         # link_external_id's own catch exists for. The outcome must be the
         # ordinary fail-closed collision (InvalidToken, since row A's own
         # external_id never becomes "S"), never an unhandled 500.
-        store = UserStore(tmp_path / "adopt-collision.db")
+        store = UserStore(SqliteDatabase(tmp_path / "adopt-collision.db"))
         row_a = store.create_user("a@example.com", "correct horse battery")
         row_b = store.create_user("b@example.com", "correct horse battery")
         original_link = store.link_external_id
@@ -254,7 +255,7 @@ def mint(private, *, kid="kid-1", url=URL, sub="uuid-1", email="a@example.com", 
 @pytest.fixture()
 def verifier_setup(tmp_path):
     private, public = es256_keypair()
-    store = UserStore(tmp_path / "v.db")
+    store = UserStore(SqliteDatabase(tmp_path / "v.db"))
     jwks = StaticJWKSClient({"kid-1": public})
     verifier = SupabaseTokenVerifier(URL, store, jwks_client=jwks)
     return private, store, verifier
@@ -420,7 +421,7 @@ class TestSupabaseTokenVerifier:
         # endpoint, outage) must not collapse into an unexplained 401 with
         # nothing in the log to distinguish it from an ordinary bad token.
         private, _public = es256_keypair()
-        store = UserStore(tmp_path / "jwks-outage.db")
+        store = UserStore(SqliteDatabase(tmp_path / "jwks-outage.db"))
 
         class BoomJWKSClient:
             def get_signing_key_from_jwt(self, token):
@@ -451,7 +452,7 @@ class TestSupabaseTokenVerifierJWKSConstruction:
                 captured["kwargs"] = kwargs
 
         monkeypatch.setattr(jwt, "PyJWKClient", FakePyJWKClient)
-        store = UserStore(tmp_path / "jwks-construction.db")
+        store = UserStore(SqliteDatabase(tmp_path / "jwks-construction.db"))
 
         SupabaseTokenVerifier(URL, store)
 

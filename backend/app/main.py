@@ -33,6 +33,7 @@ from app.core.config import BUILTIN_ENV_KEYS, Settings, load_settings
 from app.core.email_locks import EmailLocks
 from app.core.supabase_auth import SupabaseTokenVerifier, resolve_supabase_credentials
 from app.nlp.registry import NlpRegistry
+from app.services.db.sqlite import SqliteDatabase
 from app.services.documents import DocumentStore
 from app.services.folders import FolderStore
 from app.services.jobs import JobManager
@@ -171,6 +172,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    db = SqliteDatabase(settings.db_path)
     app.state.settings = settings
     app.state.terminology_store = TerminologyStore(settings.db_path)
     app.state.rule_engine = RuleEngine(settings.rules_dir)
@@ -185,7 +187,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         credentials = resolve_supabase_credentials(settings)
         app.state.supabase_gateway = SupabaseAuthGateway(credentials)
         _enforce_email_only_providers(app.state.supabase_gateway)
-        app.state.user_store = UserStore(settings.db_path)
+        app.state.user_store = UserStore(db)
         app.state.token_verifier = SupabaseTokenVerifier(
             credentials.url, app.state.user_store
         )
@@ -193,7 +195,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.auth_secret = resolve_auth_secret(
             ephemeral_ok=settings.auth.ephemeral_secret
         )
-        app.state.user_store = UserStore(settings.db_path)
+        app.state.user_store = UserStore(db)
         app.state.token_verifier = LocalTokenVerifier(app.state.auth_secret)
     app.state.login_throttle = LoginThrottle()
     # Separate instance for reset-request: sharing login_throttle would let
