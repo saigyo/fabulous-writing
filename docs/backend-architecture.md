@@ -1415,8 +1415,16 @@ otherwise — can ever drive the retry leg at all.
 
 **Deactivated users (B32, #106).** `reset-request` consults the local
 store and silently skips the gateway call for an inactive account (same
-`204`, throttle slot still spent — the surface stays unenumerable). On
-`reset-confirm`, both legs resolve the local row *before* any remote
+`204`, throttle slot still spent — the surface stays unenumerable). For a
+mailable address (active or unknown), the gateway send runs as a
+post-response `BackgroundTask` rather than being awaited inline — a
+Copilot finding on PR #107: awaiting it would leave the inactive branch
+answering after only local work while the active/unknown branches also
+awaited a network round trip, making the identical `204` distinguishable
+by response timing. Every branch now answers after local work only (the
+throttle write plus the store lookup), so timing stays uniform across
+inactive, active and unknown addresses alike. On `reset-confirm`, both
+legs resolve the local row *before* any remote
 rotation — the link still burns, but an inactive account's Supabase
 credential is never rotated by this app, and the response is an honest `422
 account_inactive` (post-mailbox-proof, so nothing is enumerable).

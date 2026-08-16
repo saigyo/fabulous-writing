@@ -13,6 +13,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field, field_validator, model_validator
+from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import CurrentUser, get_current_user
@@ -747,12 +748,22 @@ async def reset_request(request: Request, body: ResetRequest) -> Response:
         # link. Same 204, and the throttle slot above is already spent:
         # silence stays indistinguishable from delivery.
         return Response(status_code=204)
-    try:
-        await app.state.supabase_gateway.send_reset_email(body.email)
-    except (SupabaseAuthError, SupabaseUnavailableError):
-        # Swallowed: an unknown email must look identical to a known one.
-        pass
-    return Response(status_code=204)
+
+    async def deliver() -> None:
+        try:
+            await app.state.supabase_gateway.send_reset_email(body.email)
+        except (SupabaseAuthError, SupabaseUnavailableError):
+            # Swallowed: an unknown email must look identical to a known one.
+            pass
+
+    # Copilot finding (PR #107): the inactive branch above answers without
+    # a network call, so the mailing path must not AWAIT one -- otherwise
+    # response timing would distinguish inactive accounts despite the
+    # identical 204. BackgroundTask runs after the response bytes are
+    # sent: every branch now answers after local work only. (TestClient
+    # still awaits the task inside the ASGI call, so tests stay
+    # deterministic.)
+    return Response(status_code=204, background=BackgroundTask(deliver))
 
 
 async def _update_password_or_retry_envelope(
