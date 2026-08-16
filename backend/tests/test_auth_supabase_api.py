@@ -392,8 +392,16 @@ class TestResetConfirmRetryFlow:
     is already spent."""
 
     def _seeded(self, supabase_app):
+        # Logs in first so a local row already exists at the reset-confirm
+        # call: the no-eviction-on-failure assertions below need something
+        # concrete to assert was NOT touched (Medium 2, review round 1) --
+        # a pure-JIT "no row at all" case can't distinguish "correctly
+        # skipped eviction" from "mutated to run eviction too early but
+        # there was nothing to evict yet."
         app, fake = supabase_app
         uuid = fake.register_user(EMAIL, PASSWORD, uuid=UUID)
+        client = TestClient(app)
+        client.post("/api/auth/login", json={"email": EMAIL, "password": PASSWORD})
         fake.valid_token_hashes["TH"] = (uuid, EMAIL)
         return app, fake
 
@@ -410,6 +418,12 @@ class TestResetConfirmRetryFlow:
         assert detail["reasons"] == ["pwned"]
         retry_token = detail["retry_token"]
         assert retry_token
+        # MEDIUM 2 (review round 1): a failed update must evict nothing --
+        # _update_password_or_retry_envelope raises BEFORE the route ever
+        # reaches eviction bookkeeping. `_seeded` already logged this row
+        # in, so "untouched" is concrete: no mark, no sign-out.
+        assert fake.global_sign_out_calls == []
+        assert app.state.user_store.get_by_external_id(UUID).password_changed_at is None
         # The link is burned: replaying the token_hash leg now 422s.
         r2 = client.post("/api/auth/reset-confirm", json={
             "token_hash": "TH", "type": "recovery", "new_password": "x" * 12,
@@ -475,6 +489,10 @@ class TestResetConfirmRetryFlow:
         assert detail["code"] == "update_failed"
         retry_token = detail["retry_token"]
         assert retry_token
+        # MEDIUM 2 (review round 1): same no-eviction-on-failure pin as the
+        # weak-password test above, for the transient/503 branch.
+        assert fake.global_sign_out_calls == []
+        assert app.state.user_store.get_by_external_id(UUID).password_changed_at is None
         r2 = client.post("/api/auth/reset-confirm", json={
             "retry_token": retry_token, "new_password": "x" * 12,
         })
@@ -918,15 +936,17 @@ class TestGatewaySessionsAreVerifiedNotResolvedDirectly:
     def test_reset_confirm_verification_failure_still_evicts_existing_row(
         self, tmp_path, monkeypatch
     ):
-        """B14 hardening: confirm_with_token_hash rotates the remote
-        password BEFORE this route's verification step. If verification
-        then fails (here: the provider guard, same as the sibling test
-        above) for a subject whose LOCAL ROW ALREADY EXISTS, the completed
-        remote reset must still evict that row's pre-reset access tokens --
-        not leave them authorizing locally until their natural TTL just
-        because the post-rotation verification step happened to fail. This
-        is the opposite of the sibling test's no-local-row case: here there
-        IS something to evict, and it must be evicted despite the 422."""
+        """B14 hardening, restructured for B29: verify_token_hash burns the
+        link, then _update_password_or_retry_envelope rotates the remote
+        password -- both BEFORE this route's verification step. If
+        verification then fails (here: the provider guard, same as the
+        sibling test above) for a subject whose LOCAL ROW ALREADY EXISTS,
+        the completed remote reset must still evict that row's pre-reset
+        access tokens -- not leave them authorizing locally until their
+        natural TTL just because the post-rotation verification step
+        happened to fail. This is the opposite of the sibling test's
+        no-local-row case: here there IS something to evict, and it must be
+        evicted despite the 422."""
         app, fake = self._build(tmp_path, monkeypatch)
         store = app.state.user_store
         row = store.create_user(self.EMAIL, "old-local-password", external_id=self.UUID)
@@ -1251,10 +1271,18 @@ class TestAdminCreateReconciliation:
     at Supabase and only the following local write then failed transiently,
     leaving no local row. A retry must reconcile onto the existing remote
     identity (mirroring seed_admin's create-or-link fallback) instead of
-    permanently stranding it behind a 422. supabase/auth#2180 confirms
-    invite_user_by_email rejects a retry against an already-invited,
-    still-unconfirmed email the same way create_user rejects a duplicate,
-    so both branches get the same reconciliation."""
+    permanently stranding it behind a 422.
+
+    B29 probed fact 1 disproved the premise this reconciliation was
+    originally written against: real GoTrue's invite_user_by_email actually
+    RE-INVITES a PENDING (still-unconfirmed) identity rather than rejecting
+    it -- supabase/auth#2180 does not apply. create_user's duplicate
+    rejection is untouched by that fact and still needs reconciliation. The
+    two invite-branch tests below opt into the legacy always-raise fake
+    behavior via `fake.invite_rejects_duplicates = True` specifically to
+    keep exercising _resolve_after_duplicate_rejection on that path -- a
+    defensive path real GoTrue rarely takes today, but one older or
+    atypically configured GoTrue instances still might."""
 
     RETRY_EMAIL = "retry@example.com"
 
@@ -1426,7 +1454,11 @@ class TestAdminCreateReconciliation:
         fake.register_user(
             "active-account@example.com", "an old password 1", uuid="fake-uuid-active"
         )
-        fake.invite_rejects_duplicates = True
+        # LOW 4 (review round 1): deliberately left on the PROBED path (no
+        # invite_rejects_duplicates opt-in) -- a CONFIRMED identity raises
+        # SupabaseEmailExistsError under real GoTrue semantics too, so this
+        # is also route-level coverage of that branch reaching the same
+        # duplicate_email outcome via _resolve_after_duplicate_rejection.
         client = TestClient(app)
         headers = _admin_bearer(client)
         resp = client.post(
