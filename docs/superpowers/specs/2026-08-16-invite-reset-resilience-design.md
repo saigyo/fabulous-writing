@@ -69,8 +69,9 @@ gains one guard after the existing claim checks (`is_anonymous`, `role`,
 
 - The payload must carry a **non-empty `amr` array**, and **every** entry's
   `method` must be in `{"password", "otp"}`. Anything else — `oauth`,
-  `sso/saml`, `magiclink`, missing or empty `amr` — raises `InvalidToken`,
-  warning-logged like the other guards (issuer only, never token content).
+  `sso/saml`, `magiclink`, missing or empty `amr` — raises `InvalidToken`
+  silently like the sibling claim guards (the JWKS-failure path and the
+  retry leg's otp-rejection carry the warning logs).
 - Fail-closed rationale: the startup OAuth lockout already prevents
   enabled providers at boot; this closes the runtime window (provider
   enabled at the dashboard mid-flight) and the linked-identity case

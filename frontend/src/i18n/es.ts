@@ -291,7 +291,7 @@ export const es: Messages = {
   adminResendSent: 'Invitación reenviada.',
   adminResendAlreadyActive: 'Esta cuenta ya está activa — no se necesita invitación.',
   adminInviteSent: 'Invitación enviada.',
-  adminInviteLinkedNoEmail: 'Se vinculó una invitación pendiente existente — no se envió un correo nuevo. Usa "Reenviar invitación" para obtener un enlace nuevo.',
+  adminInviteLinkedNoEmail: 'Se vinculó una invitación pendiente existente — no se envió un correo nuevo. Usa «Reenviar invitación» para obtener un enlace nuevo.',
   pwWeakLength: 'Esta contraseña es demasiado corta para las reglas de seguridad — elige una más larga.',
   pwWeakCharacters: 'Combina mayúsculas, minúsculas y números para que esta contraseña sea más segura.',
   pwWeakPwned: 'Esta contraseña aparece en filtraciones de datos conocidas — elige otra.',

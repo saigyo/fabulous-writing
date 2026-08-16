@@ -801,6 +801,7 @@ def _mint_oauth_token(private, *, sub: str, email: str, kid: str = "kid-1") -> s
         "role": "authenticated",
         "is_anonymous": False,
         "app_metadata": {"provider": "google", "providers": ["google", "email"]},
+        "amr": [{"method": "password", "timestamp": int(time.time())}],
     }
     return jwt.encode(claims, private, algorithm="ES256", headers={"kid": kid})
 
@@ -852,7 +853,9 @@ class _SignedSessionGateway(FakeSupabaseGateway):
         # (fakes_supabase.py): without it, a confirm-only rig's follow-on
         # change_password call raises "unknown user_id".
         self._users.setdefault(email, ("", uuid))
-        return self._signed_session(uuid, email)
+        session = self._signed_session(uuid, email)
+        self.session_methods[session.access_token] = frozenset({"otp"})
+        return session
 
 
 class TestGatewaySessionsAreVerifiedNotResolvedDirectly:
@@ -1784,10 +1787,7 @@ class TestResendInvite:
         headers = _admin_bearer(client)
         created = self._invite(client, headers, email="ratelimited@example.com")
 
-        async def boom(_email):
-            raise SupabaseAuthError("rate limited")
-
-        fake.invite_user = boom
+        fake.invite_failure = SupabaseAuthError("rate limited")
         resp = client.post(
             f"/api/admin/users/{created['id']}/resend-invite", headers=headers,
         )
@@ -1843,10 +1843,7 @@ class TestResendInvite:
         headers = _admin_bearer(client)
         created = self._invite(client, headers, email="down@example.com")
 
-        async def boom(_email):
-            raise SupabaseUnavailableError("down")
-
-        fake.invite_user = boom
+        fake.invite_failure = SupabaseUnavailableError("down")
         resp = client.post(
             f"/api/admin/users/{created['id']}/resend-invite", headers=headers,
         )
