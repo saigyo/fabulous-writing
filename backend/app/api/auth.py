@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import CurrentUser, get_current_user
@@ -24,7 +24,11 @@ from app.core.auth import (
 )
 from app.core.config import KNOWN_FEATURES, Settings
 from app.core.permissions import features_for, label_for, limits_for, policy_for
-from app.services.supabase_gateway import SupabaseAuthError, SupabaseUnavailableError
+from app.services.supabase_gateway import (
+    SupabaseAuthError,
+    SupabaseUnavailableError,
+    SupabaseWeakPasswordError,
+)
 from app.services.usage import UsageStore
 from app.services.users import User
 
@@ -418,9 +422,22 @@ class ResetRequest(BaseModel):
 
 
 class ResetConfirm(BaseModel):
-    token_hash: str = Field(max_length=1024)
-    type: Literal["recovery", "invite"]
+    """Either the one-time link leg (token_hash + type) or the retry leg
+    (retry_token from a previous failure envelope). Exactly one."""
+
+    token_hash: str | None = Field(default=None, max_length=1024)
+    type: Literal["recovery", "invite"] | None = None
+    retry_token: str | None = Field(default=None, max_length=8192)
     new_password: str
+
+    @model_validator(mode="after")
+    def _exactly_one_leg(self) -> "ResetConfirm":
+        has_link_part = self.token_hash is not None or self.type is not None
+        complete_link = self.token_hash is not None and self.type is not None
+        has_retry = self.retry_token is not None
+        if has_retry == has_link_part or (has_link_part and not complete_link):
+            raise ValueError("provide either token_hash+type or retry_token")
+        return self
 
 
 def _require_supabase_mode(request: Request) -> None:
@@ -678,6 +695,10 @@ async def _change_password_supabase(
     user = store.get_user(current.id)
     try:
         await app.state.supabase_gateway.change_password(user.external_id, body.new)
+    except SupabaseWeakPasswordError as exc:
+        raise HTTPException(
+            422, {"code": "password_weak", "reasons": exc.reasons}
+        ) from None
     except SupabaseAuthError:
         # No local state changed yet: a failed remote rotation must not
         # bump password_changed_at or the token epoch.
@@ -727,6 +748,48 @@ async def reset_request(request: Request, body: ResetRequest) -> Response:
     return Response(status_code=204)
 
 
+async def _update_password_or_retry_envelope(
+    app, supabase_user_id: str, new_password: str, retry_token: str
+) -> None:
+    """The retryable update leg. The caller holds a session whose identity
+    is already confirmed; ANY failure here must hand back a retry token --
+    the one-time link is spent, so retrying is the only useful direction
+    (spec §2; PR #95 round 8 for the transient case)."""
+    try:
+        await app.state.supabase_gateway.change_password(
+            supabase_user_id, new_password
+        )
+    except SupabaseWeakPasswordError as exc:
+        raise HTTPException(
+            422,
+            {
+                "code": "password_weak",
+                "reasons": exc.reasons,
+                "retry_token": retry_token,
+            },
+        ) from None
+    except (SupabaseAuthError, SupabaseUnavailableError):
+        raise HTTPException(
+            503, {"code": "update_failed", "retry_token": retry_token}
+        ) from None
+
+
+async def _finish_confirmed_rotation(app, store, local_id: int, access_token: str) -> None:
+    """M2 eviction after a completed remote rotation: unchanged ordering
+    from B14 -- mark (backdated) locally, then best-effort global
+    sign-out. Also kills the retry token for API-auth purposes (its iat
+    predates the mark's backdated cutoff)."""
+    store.mark_password_changed(local_id)
+    try:
+        await app.state.supabase_gateway.global_sign_out(access_token)
+    except (SupabaseAuthError, SupabaseUnavailableError):
+        logger.warning(
+            "supabase global_sign_out unavailable after reset-confirm"
+            " eviction for user %s",
+            local_id,
+        )
+
+
 @router.post("/auth/reset-confirm", status_code=204)
 async def reset_confirm(request: Request, body: ResetConfirm) -> Response:
     _require_supabase_mode(request)
@@ -740,36 +803,61 @@ async def reset_confirm(request: Request, body: ResetConfirm) -> Response:
             else "password_too_long"
         )
         raise HTTPException(422, {"code": code}) from exc
-    try:
-        session = await app.state.supabase_gateway.confirm_with_token_hash(
-            body.token_hash, body.type, body.new_password
+
+    gateway = app.state.supabase_gateway
+    store = app.state.user_store
+
+    if body.retry_token is not None:
+        # RETRY LEG: full claim guards (incl. amr) + normal JIT semantics.
+        # Materializing a row on a retry that fails again is harmless --
+        # it mirrors an identity verify_otp already confirmed.
+        try:
+            verified = await run_in_threadpool(
+                app.state.token_verifier.verify, body.retry_token
+            )
+        except InvalidToken:
+            raise HTTPException(422, {"code": "invalid_or_expired_link"}) from None
+        # SECURITY: only confirm-minted sessions may rotate without a
+        # current-password proof. A password-grant session presenting
+        # itself here would bypass _change_password_supabase's sign-in
+        # check -- a stolen bearer must never become a rotation credential.
+        # Warning-logged like the sibling claim guards (a genuine ops
+        # signal; local id only, never token content).
+        if verified.methods != frozenset({"otp"}):
+            logger.warning(
+                "reset-confirm retry token is not an otp session for user %s",
+                verified.user_id,
+            )
+            raise HTTPException(422, {"code": "invalid_or_expired_link"})
+        user = store.get_user(verified.user_id)
+        if user is None or not user.is_active or user.external_id is None:
+            raise HTTPException(422, {"code": "invalid_or_expired_link"})
+        await _update_password_or_retry_envelope(
+            app, user.external_id, body.new_password, body.retry_token
         )
+        await _finish_confirmed_rotation(app, store, user.id, body.retry_token)
+        return Response(status_code=204)
+
+    # LINK LEG: verify_otp burns the link; every failure AFTER a
+    # successful verify returns a retry envelope instead of stranding a
+    # confirmed identity behind a dead link.
+    try:
+        session = await gateway.verify_token_hash(body.token_hash, body.type)
     except SupabaseAuthError:
         raise HTTPException(422, {"code": "invalid_or_expired_link"}) from None
     except SupabaseUnavailableError:
         raise HTTPException(503, "Authentication service unavailable") from None
-    store = app.state.user_store
-    # confirm_with_token_hash has already rotated the remote password at
-    # this point. Eviction bookkeeping below is therefore keyed ONLY to the
-    # confirmed subject's EXISTING local row -- a plain lookup, never a
-    # JIT-create -- and runs BEFORE the verifier call so it survives a
-    # verification failure (JWKS outage, external-id collision, inactive
-    # check): without it, a completed remote reset would leave any pre-reset
-    # access token for this subject authorizing locally until its natural
-    # TTL. A subject with no local row has nothing to evict; the claim
-    # guards (the verifier, below) still gate all provisioning and the
-    # response itself.
+    await _update_password_or_retry_envelope(
+        app, session.user_id, body.new_password, session.access_token
+    )
+    # Rotation is complete; eviction bookkeeping keyed to the EXISTING row
+    # (lookup only, never JIT) exactly as B14 shipped it, and it runs
+    # BEFORE the verifier call so it survives a verification failure.
     existing_row = store.get_by_external_id(session.user_id)
     if existing_row is not None:
-        store.mark_password_changed(existing_row.id)
-        try:
-            await app.state.supabase_gateway.global_sign_out(session.access_token)
-        except (SupabaseAuthError, SupabaseUnavailableError):
-            logger.warning(
-                "supabase global_sign_out unavailable after reset-confirm"
-                " eviction for user %s",
-                existing_row.id,
-            )
+        await _finish_confirmed_rotation(
+            app, store, existing_row.id, session.access_token
+        )
     # JIT: for an invite-type hash, this IS the invite-acceptance
     # materialization point -- verify() calls resolve_supabase_user
     # internally, so the local row is still created here, on first confirm,
@@ -792,12 +880,11 @@ async def reset_confirm(request: Request, body: ResetConfirm) -> Response:
     if user is None or not user.is_active:
         raise HTTPException(422, {"code": "invalid_or_expired_link"})
     if existing_row is None:
-        # First mark for this row: it did not exist yet at the pre-verify
-        # lookup above, so it was just JIT-created or adopted-by-email
-        # inside verify() and has never been evicted for this reset.
-        store.mark_password_changed(user.id)
-        try:
-            await app.state.supabase_gateway.global_sign_out(session.access_token)
-        except (SupabaseAuthError, SupabaseUnavailableError):
-            pass
+        # The row verify() just JIT-created/adopted (the invite-acceptance
+        # materialization point): its eviction bookkeeping could not run
+        # above -- without this branch the verify_otp session (and its
+        # refresh token, and the retry token) would outlive the confirm
+        # (plan-review finding 2; shipped B14 behavior at auth.py:794-802
+        # -- do not drop it in the restructure).
+        await _finish_confirmed_rotation(app, store, user.id, session.access_token)
     return Response(status_code=204)

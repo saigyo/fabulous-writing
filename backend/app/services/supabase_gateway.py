@@ -229,23 +229,6 @@ class SupabaseAuthGateway:
 
         await self._execute("send_reset_email", call())
 
-    async def confirm_with_token_hash(
-        self, token_hash: str, type_: str, new_password: str
-    ) -> SupabaseSession:
-        async def call() -> SupabaseSession:
-            async with self._user_client() as client:
-                response = await client.verify_otp(
-                    {"token_hash": token_hash, "type": type_}
-                )
-            session = response.session
-            async with self._admin_client() as admin:
-                await admin.update_user_by_id(
-                    session.user.id, {"password": new_password}
-                )
-            return _to_session(session)
-
-        return await self._execute("confirm_with_token_hash", call())
-
     async def verify_token_hash(self, token_hash: str, type_: str) -> SupabaseSession:
         """The verify_otp half of confirmation only: burns the one-time
         link and returns the verified session. The password update is the
