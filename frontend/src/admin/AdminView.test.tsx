@@ -739,6 +739,26 @@ describe('AdminView', () => {
     await screen.findByText(en.adminResendAlreadyActive)
   })
 
+  it('a 422 user_inactive resend response surfaces adminUserInactive', async () => {
+    useStore.setState({ authFeatures: { password_reset: true, invites: true } })
+    vi.mocked(getAdminUsers).mockResolvedValue([
+      adminUser({ id: 2, email: 'bea@example.com', is_admin: false, external_id: 'ext-2' }),
+    ])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+    vi.mocked(postResendInvite).mockRejectedValue(
+      new HttpError(422, 'POST /api/admin/users/2/resend-invite failed: 422', 'user_inactive'),
+    )
+    const u = userEvent.setup()
+
+    render(<AdminView />)
+    await screen.findByText('bea@example.com')
+
+    const row = screen.getByText('bea@example.com').closest('tr')!
+    await u.click(within(row).getByRole('button', { name: en.adminResendInvite }))
+
+    await screen.findByText(en.adminUserInactive)
+  })
+
   it('with invites unavailable, the resend button is absent', async () => {
     useStore.setState({ authFeatures: { password_reset: false, invites: false } })
     vi.mocked(getAdminUsers).mockResolvedValue([

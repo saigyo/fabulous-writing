@@ -256,6 +256,7 @@ export interface Messages {
   resetSuccess: string
   resetBackToSignIn: string
   resetLinkInvalid: string
+  resetAccountInactive: string
   resetEmailLabel: string
   resetRequestSubmit: string
   backToSignIn: string
@@ -263,6 +264,7 @@ export interface Messages {
   adminResendInvite: string
   adminResendSent: string
   adminResendAlreadyActive: string
+  adminUserInactive: string
   adminInviteSent: string
   adminInviteLinkedNoEmail: string
   pwWeakLength: string
