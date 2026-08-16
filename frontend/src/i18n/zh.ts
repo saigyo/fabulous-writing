@@ -271,6 +271,11 @@ export const zh: Messages = {
   resetRequestSubmit: '发送重置链接',
   backToSignIn: '返回登录',
   adminPasswordOptionalHint: '留空以发送邀请邮件',
+  pwWeakLength: '此密码对于安全规则来说太短——请选择更长的密码。',
+  pwWeakCharacters: '请混合使用大写字母、小写字母和数字，让密码更强。',
+  pwWeakPwned: '此密码已出现在已知的数据泄露中——请换一个密码。',
+  pwWeakGeneric: '此密码强度不够——请选择更强的密码。',
+  resetUpdateFailedRetry: '保存尚未成功——请重试。',
   dialogCancel: '取消',
   dialogConfirm: '确认',
 }

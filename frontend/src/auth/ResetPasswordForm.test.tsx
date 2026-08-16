@@ -9,9 +9,10 @@ import { useStore } from '../state/store'
 vi.mock('../api/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api/client')>()),
   postResetConfirm: vi.fn(),
+  postResetRetry: vi.fn(),
 }))
 
-import { postResetConfirm } from '../api/client'
+import { postResetConfirm, postResetRetry } from '../api/client'
 import { ResetPasswordForm } from './ResetPasswordForm'
 
 afterEach(() => {
@@ -148,5 +149,154 @@ describe('ResetPasswordForm', () => {
     await u.click(screen.getByRole('button', { name: en.resetSubmit }))
 
     await waitFor(() => screen.getByText(en.passwordFailed))
+  })
+
+  it('a password_weak (pwned) response keeps the form mounted and the next submit retries with the envelope token', async () => {
+    vi.mocked(postResetConfirm).mockRejectedValue(
+      new HttpError(422, 'POST /api/auth/reset-confirm failed: 422', 'password_weak', {
+        retryToken: 'retry-tok-1',
+        reasons: ['pwned'],
+      }),
+    )
+    vi.mocked(postResetRetry).mockResolvedValue(undefined)
+    render(<ResetPasswordForm tokenHash="abc123" type="recovery" onDone={() => {}} />)
+    const u = userEvent.setup()
+
+    await u.type(screen.getByLabelText(en.resetNewPassword), 'newpassword1')
+    await u.type(screen.getByLabelText(en.resetRepeatPassword), 'newpassword1')
+    await u.click(screen.getByRole('button', { name: en.resetSubmit }))
+
+    await waitFor(() => screen.getByText(en.pwWeakPwned))
+    expect(postResetConfirm).toHaveBeenCalledTimes(1)
+
+    await u.click(screen.getByRole('button', { name: en.resetSubmit }))
+
+    await waitFor(() =>
+      expect(postResetRetry).toHaveBeenCalledWith('retry-tok-1', 'newpassword1'),
+    )
+    expect(postResetConfirm).toHaveBeenCalledTimes(1)
+  })
+
+  it('an update_failed 503 envelope shows resetUpdateFailedRetry and the next submit retries', async () => {
+    vi.mocked(postResetConfirm).mockRejectedValue(
+      new HttpError(503, 'POST /api/auth/reset-confirm failed: 503', 'update_failed', {
+        retryToken: 'retry-tok-2',
+      }),
+    )
+    vi.mocked(postResetRetry).mockResolvedValue(undefined)
+    render(<ResetPasswordForm tokenHash="abc123" type="recovery" onDone={() => {}} />)
+    const u = userEvent.setup()
+
+    await u.type(screen.getByLabelText(en.resetNewPassword), 'newpassword1')
+    await u.type(screen.getByLabelText(en.resetRepeatPassword), 'newpassword1')
+    await u.click(screen.getByRole('button', { name: en.resetSubmit }))
+
+    await waitFor(() => screen.getByText(en.resetUpdateFailedRetry))
+
+    await u.click(screen.getByRole('button', { name: en.resetSubmit }))
+
+    await waitFor(() =>
+      expect(postResetRetry).toHaveBeenCalledWith('retry-tok-2', 'newpassword1'),
+    )
+  })
+
+  it('a retry that fails weak again stays in retry mode and shows the new reason', async () => {
+    vi.mocked(postResetConfirm).mockRejectedValue(
+      new HttpError(422, 'POST /api/auth/reset-confirm failed: 422', 'password_weak', {
+        retryToken: 'retry-tok-3',
+        reasons: ['pwned'],
+      }),
+    )
+    render(<ResetPasswordForm tokenHash="abc123" type="recovery" onDone={() => {}} />)
+    const u = userEvent.setup()
+
+    await u.type(screen.getByLabelText(en.resetNewPassword), 'newpassword1')
+    await u.type(screen.getByLabelText(en.resetRepeatPassword), 'newpassword1')
+    await u.click(screen.getByRole('button', { name: en.resetSubmit }))
+    await waitFor(() => screen.getByText(en.pwWeakPwned))
+
+    vi.mocked(postResetRetry).mockRejectedValue(
+      new HttpError(422, 'POST /api/auth/reset-confirm failed: 422', 'password_weak', {
+        retryToken: 'retry-tok-4',
+        reasons: ['characters'],
+      }),
+    )
+
+    await u.click(screen.getByRole('button', { name: en.resetSubmit }))
+
+    await waitFor(() =>
+      expect(postResetRetry).toHaveBeenCalledWith('retry-tok-3', 'newpassword1'),
+    )
+    await waitFor(() => screen.getByText(en.pwWeakCharacters))
+
+    vi.mocked(postResetRetry).mockResolvedValue(undefined)
+    await u.click(screen.getByRole('button', { name: en.resetSubmit }))
+    await waitFor(() =>
+      expect(postResetRetry).toHaveBeenLastCalledWith('retry-tok-4', 'newpassword1'),
+    )
+  })
+
+  it('a retry that comes back invalid_or_expired_link shows resetLinkInvalid (dead end)', async () => {
+    vi.mocked(postResetConfirm).mockRejectedValue(
+      new HttpError(422, 'POST /api/auth/reset-confirm failed: 422', 'password_weak', {
+        retryToken: 'retry-tok-5',
+        reasons: ['length'],
+      }),
+    )
+    render(<ResetPasswordForm tokenHash="abc123" type="recovery" onDone={() => {}} />)
+    const u = userEvent.setup()
+
+    await u.type(screen.getByLabelText(en.resetNewPassword), 'newpassword1')
+    await u.type(screen.getByLabelText(en.resetRepeatPassword), 'newpassword1')
+    await u.click(screen.getByRole('button', { name: en.resetSubmit }))
+    await waitFor(() => screen.getByText(en.pwWeakLength))
+
+    vi.mocked(postResetRetry).mockRejectedValue(
+      new HttpError(422, 'POST /api/auth/reset-confirm failed: 422', 'invalid_or_expired_link'),
+    )
+    await u.click(screen.getByRole('button', { name: en.resetSubmit }))
+
+    await waitFor(() => screen.getByText(en.resetLinkInvalid))
+  })
+
+  it('reasons priority: pwned wins over characters and length when several are present', async () => {
+    vi.mocked(postResetConfirm).mockRejectedValue(
+      new HttpError(422, 'POST /api/auth/reset-confirm failed: 422', 'password_weak', {
+        retryToken: 'retry-tok-6',
+        reasons: ['length', 'pwned'],
+      }),
+    )
+    render(<ResetPasswordForm tokenHash="abc123" type="recovery" onDone={() => {}} />)
+    const u = userEvent.setup()
+
+    await u.type(screen.getByLabelText(en.resetNewPassword), 'newpassword1')
+    await u.type(screen.getByLabelText(en.resetRepeatPassword), 'newpassword1')
+    await u.click(screen.getByRole('button', { name: en.resetSubmit }))
+
+    await waitFor(() => screen.getByText(en.pwWeakPwned))
+  })
+
+  it('success on retry shows the same success panel as the initial link leg', async () => {
+    vi.mocked(postResetConfirm).mockRejectedValue(
+      new HttpError(422, 'POST /api/auth/reset-confirm failed: 422', 'password_weak', {
+        retryToken: 'retry-tok-7',
+        reasons: ['pwned'],
+      }),
+    )
+    vi.mocked(postResetRetry).mockResolvedValue(undefined)
+    const onDone = vi.fn()
+    render(<ResetPasswordForm tokenHash="abc123" type="recovery" onDone={onDone} />)
+    const u = userEvent.setup()
+
+    await u.type(screen.getByLabelText(en.resetNewPassword), 'newpassword1')
+    await u.type(screen.getByLabelText(en.resetRepeatPassword), 'newpassword1')
+    await u.click(screen.getByRole('button', { name: en.resetSubmit }))
+    await waitFor(() => screen.getByText(en.pwWeakPwned))
+
+    await u.click(screen.getByRole('button', { name: en.resetSubmit }))
+
+    await waitFor(() => screen.getByText(en.resetSuccess))
+    await u.click(screen.getByRole('button', { name: en.resetBackToSignIn }))
+    expect(onDone).toHaveBeenCalledTimes(1)
   })
 })

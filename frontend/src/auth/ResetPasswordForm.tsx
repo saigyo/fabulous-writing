@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
-import { HttpError, MIN_PASSWORD_LENGTH, postResetConfirm } from '../api/client'
+import { HttpError, MIN_PASSWORD_LENGTH, postResetConfirm, postResetRetry } from '../api/client'
 import { useMessages, type Messages } from '../i18n'
+import { mapWeakPasswordReasons } from './weakPassword'
 
 interface ResetPasswordFormProps {
   tokenHash: string
@@ -19,6 +20,8 @@ interface ResetPasswordFormProps {
 // message about a sign-in attempt that never happened on this screen.
 function mapResetError(err: unknown, m: Messages): string {
   if (err instanceof HttpError) {
+    if (err.code === 'password_weak') return mapWeakPasswordReasons(err.reasons, m)
+    if (err.code === 'update_failed') return m.resetUpdateFailedRetry
     if (err.code === 'invalid_or_expired_link') return m.resetLinkInvalid
     if (err.code === 'password_too_short') return m.passwordTooShort(MIN_PASSWORD_LENGTH)
   }
@@ -40,6 +43,12 @@ export function ResetPasswordForm({ tokenHash, type, onDone }: ResetPasswordForm
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
+  // Set once a password_weak/update_failed envelope hands back a
+  // retry_token: from then on this browser tab is in "retry mode" and the
+  // next submit resubmits the same anonymous flow through postResetRetry
+  // instead of re-sending the original link's token_hash/type, which the
+  // server no longer expects.
+  const [retryToken, setRetryToken] = useState<string | null>(null)
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
@@ -54,9 +63,15 @@ export function ResetPasswordForm({ tokenHash, type, onDone }: ResetPasswordForm
     }
     setError(null)
     setPending(true)
-    postResetConfirm(tokenHash, type, password)
+    const call = retryToken
+      ? postResetRetry(retryToken, password)
+      : postResetConfirm(tokenHash, type, password)
+    call
       .then(() => setSuccess(true))
-      .catch((err: unknown) => setError(mapResetError(err, m)))
+      .catch((err: unknown) => {
+        if (err instanceof HttpError && err.retryToken) setRetryToken(err.retryToken)
+        setError(mapResetError(err, m))
+      })
       .finally(() => setPending(false))
   }
 

@@ -288,6 +288,11 @@ export const fr: Messages = {
   resetRequestSubmit: 'Envoyer le lien',
   backToSignIn: 'Retour à la connexion',
   adminPasswordOptionalHint: "Laisse vide pour envoyer un e-mail d'invitation",
+  pwWeakLength: 'Ce mot de passe est trop court pour les règles de sécurité — choisis-en un plus long.',
+  pwWeakCharacters: 'Mélange majuscules, minuscules et chiffres pour renforcer ce mot de passe.',
+  pwWeakPwned: 'Ce mot de passe apparaît dans des fuites de données connues — choisis-en un autre.',
+  pwWeakGeneric: 'Ce mot de passe est trop faible — choisis-en un plus robuste.',
+  resetUpdateFailedRetry: "L'enregistrement n'a pas encore fonctionné — réessaie.",
   dialogCancel: 'Annuler',
   dialogConfirm: 'Confirmer',
 }
