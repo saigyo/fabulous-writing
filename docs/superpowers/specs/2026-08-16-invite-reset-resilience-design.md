@@ -146,7 +146,7 @@ by tests:
   backdated mark cannot kill it (the documented B14 residual, the same
   exposure any confirm session has today). Rotation kills the session's
   REFRESH token (global sign-out); a lifecycle test pins all three
-  halves (bearer live pre-rotation, bearer still live post-rotation,
+  parts (bearer live pre-rotation, bearer still live post-rotation,
   refresh dead post-rotation). What the retry token can never do is
   serve as a rotation credential from a password-minted session (the
   otp-only guard above), and the route itself never hands out a session
