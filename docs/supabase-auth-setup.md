@@ -90,14 +90,54 @@ offending providers. A transient Supabase outage at that check logs a
 warning and lets startup continue rather than bricking every restart — the
 check simply re-runs on the next one.
 
-One honest boundary, worth knowing rather than assuming away: both this
-startup check and the per-token guard above only look at the identity's
-**first** provider (`app_metadata.provider`) — the provider that originally
-created the account. Neither inspects the **session's own** authentication
-method (GoTrue's `amr` claim), so a token minted by a since-added,
-still-enabled provider on an otherwise email-first identity is not
-distinguished from one minted by email/password. Per-session method
-validation is tracked as follow-up work, not shipped here.
+Two independent checks, closing two different windows. The startup check
+above and the per-token `app_metadata.provider` guard both look at the
+identity's **first** provider — the provider that originally created the
+account — so together they are a **config-level gate**: correct as of the
+last restart, but blind to a provider flipped on in the dashboard while the
+process keeps running. `SupabaseTokenVerifier.verify()` closes that
+remaining window with a second, independent check on every request: it also
+inspects the **session's own** authentication method, GoTrue's `amr` claim
+(`[{"method": "password"|"otp", ...}]`, minted per session and carried
+through refresh), and rejects any token whose methods are not a subset of
+`{"password", "otp"}` — the two flows this app's login and
+recovery/invite-confirm routes ever produce. A token minted by a
+since-enabled OAuth/SSO/magiclink provider on an otherwise email-first
+identity carries an `amr` entry outside that set (or none at all) and is
+rejected regardless of `app_metadata.provider`, and regardless of whether
+the next restart's startup check would have caught the dashboard change.
+The first-provider guards stay in place too — they are what keeps a
+*brand-new* OAuth-origin identity from ever reaching this backend in the
+first place — but it is the per-request `amr` check that now covers the
+gap between one restart and the next.
+
+### Enabling leaked password protection
+
+**Auth → Providers → Email**, under that provider's password requirements,
+carries a **"Leaked password protection"** toggle (a Pro-plan-and-above
+feature, backed by the HaveIBeenPwned k-anonymity API) that GoTrue's
+security advisor recommends turning on. It was previously unsafe to enable
+here: a rejection from GoTrue used to arrive *after* the one-time reset or
+invite link had already been burned (`verify_otp` succeeds before the
+password update is even attempted), stranding a confirmed identity behind a
+dead link with no way back in except a fresh admin-issued invite or reset
+email.
+
+That is no longer true. `POST /api/auth/reset-confirm` now separates
+verifying the link from updating the password
+(`supabase_gateway.py#verify_token_hash` only burns the link; the password
+update is the caller's own, separately retryable step) — any rejection
+after that point, weak-password or otherwise, hands back a `retry_token`
+instead of stranding the session, and the form resubmits through it without
+ever needing a second link. A breach rejection specifically (GoTrue's
+`pwned` reason) surfaces to the person resetting or accepting an invite as
+an honest, specific message — "this password appears in known data
+breaches — please pick a different one" — not a generic failure, so they
+know exactly what to change and can retry immediately. Enabling the
+toggle is safe to do at any point after this shipped; there is no
+migration step or config flag on the backend side, since the corresponding
+`password_weak`/`reasons` handling has been in place since the retry flow
+landed.
 
 ## 5. Auth → Settings: invitation-only signup
 
@@ -117,6 +157,14 @@ ever changes admin invites to respect the public-signup toggle, this is the
 page that needs revisiting, not the application code — the backend has no
 opinion on the toggle either way, since it never calls the public signup
 endpoint at all.
+
+An invitation that expired, or whose email never arrived, doesn't need a
+brand-new account: the admin view's **"Resend invitation"** button (next to
+a pending user's row) re-issues it through the same GoTrue admin API.
+Resending invalidates the previous link — only the newest one still
+verifies — and if the account was accepted in the meantime, the button
+honestly reports that (`already_active`) instead of silently sending out a
+link nobody needs.
 
 ## 6. Auth → URL Configuration
 

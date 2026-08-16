@@ -1251,6 +1251,34 @@ reach `resolve_supabase_user` and provision a local row. `iat` gets the same
 hand-rolled leeway check as `LocalTokenVerifier` (`IAT_LEEWAY_SECONDS`,
 shared between both verifiers).
 
+**The `amr` guard (B30, #100) closes the between-restarts window the
+first-provider checks above cannot see.** `app_metadata.provider` (checked
+above) and `create_app`'s startup provider-policy gate
+([Startup bootstrap](#startup-bootstrap), below) both pin the identity's
+**first** provider — the provider that originally created the account —
+which is a config-level guarantee, correct as of the last restart. Neither
+one inspects the **session's own** authentication method, so an identity
+that started out email/password but is later reachable through a
+since-enabled OAuth/SSO/magiclink provider would mint a session those two
+checks cannot distinguish from an ordinary email/password login, for as
+long as the process keeps running. `verify()` adds a third, per-request
+check on top: GoTrue's `amr` claim (`[{"method": "password"|"otp", ...}],
+...]`, minted fresh for every session this app's own flows produce — the
+password grant and the recovery/invite `verify_otp` call — and carried
+through unchanged by a refresh) must be present and every method in it must
+be one of `{"password", "otp"}`; anything else (oauth, sso/saml, magiclink,
+or a token with no `amr` at all — a session no flow of this app could have
+minted) is rejected, `InvalidToken("session method is not an email flow")`,
+regardless of `app_metadata.provider`. This is the check that actually
+covers the gap between one restart and the next; the first-provider checks
+remain in place as the reason a brand-new OAuth-origin identity can never
+reach `resolve_supabase_user` in the first place.
+`VerifiedToken.methods` (a `frozenset[str]`, new in B30) carries the
+verified session's own `amr` methods forward past `verify()` — it is what
+lets `reset_confirm`'s retry leg (below) additionally require
+`methods == frozenset({"otp"})`, on top of this guard, before accepting a
+token as a rotation credential.
+
 `resolve_supabase_user(store, *, subject, email)` maps a verified Supabase
 subject UUID to the local `users` row, in a fixed order that matters:
 **external_id first** (the common case — an already-linked account),
@@ -1279,7 +1307,14 @@ Two client kinds, built by two private context managers:
 
 - `_user_client()` — authenticates with the **publishable** key, for
   operations a signed-in (or signing-in) user performs themselves:
-  `sign_in`, `refresh`, `send_reset_email`, `confirm_with_token_hash`.
+  `sign_in`, `refresh`, `send_reset_email`, `verify_token_hash`.
+  `verify_token_hash` is deliberately **only** the `verify_otp` half of
+  confirmation — it burns the one-time link and returns the verified
+  session, nothing more. B29 (#97) split what used to be a single
+  confirm-and-update call in two: the password update is the caller's own,
+  separately retryable step (`app/api/auth.py#reset_confirm`, below), so a
+  failure updating the password never stands a chance of stranding an
+  already-confirmed identity behind a link that is by then already spent.
 - `_admin_client()` — authenticates with the **secret** key, for operations
   only an admin session or the backend itself may perform: `sign_out`,
   `global_sign_out`, `change_password`, `create_user`, `invite_user`,
@@ -1297,6 +1332,78 @@ matters (`AuthRetryableError` is itself an `AuthError`, so it must be caught
 first): `SupabaseAuthError` (bad credentials, expired/invalid link — a
 `401`/`422` to the caller) and `SupabaseUnavailableError` (network failure,
 5xx, timeout, or a retryable GoTrue error — a `503`).
+
+### Two-leg reset-confirm (`app/api/auth.py#reset_confirm`, B29 #97 + B30 #100)
+
+`POST /api/auth/reset-confirm` serves both password-reset and invite
+acceptance (`ResetConfirm`'s `type: "recovery" | "invite"`), and accepts
+**exactly one** of two request shapes — enforced by a pydantic
+`model_validator`, not left to the handler to sort out:
+
+- **The link leg** — `token_hash` + `type`, straight from the emailed URL
+  fragment. `gateway.verify_token_hash` burns the one-time link (GoTrue's
+  `verify_otp`) and returns the verified session; the route then routes
+  that session's access token through `token_verifier.verify()` (the same
+  claim guards login/refresh apply — never resolved directly), for the
+  invite case this is the actual JIT-materialization point for the local
+  row.
+- **The retry leg** — `retry_token` alone, no `token_hash`/`type`. Reached
+  only after the link leg (or an earlier retry) already burned its link and
+  handed back a `retry_token` in a failure envelope (below). The route
+  verifies the retry token through `token_verifier.verify()` too, but with
+  one **additional** guard beyond the ordinary `amr` check: it requires
+  `verified.methods == frozenset({"otp"})` exactly — a password-grant
+  session (even a perfectly valid, current one) is rejected here, because
+  accepting it would let a stolen ordinary bearer token rotate a password
+  with no current-password proof at all, the exact check
+  `_change_password_supabase` performs by re-`sign_in`-ing. Only a session
+  this app's own confirm flow minted may drive this leg.
+
+Once identity is settled (either leg), the actual password write goes
+through one shared helper, `_update_password_or_retry_envelope`, and **any**
+failure there — weak/breached password, or a transient GoTrue/network
+error — hands back a **retry envelope** instead of a bare error, because by
+this point the one-time link is already spent and retrying is the only
+useful direction left:
+
+| Failure | Status | Envelope |
+|---|---|---|
+| `SupabaseWeakPasswordError` | 422 | `{"code": "password_weak", "reasons": [...], "retry_token": <token>}` |
+| `SupabaseAuthError` / `SupabaseUnavailableError` | 503 | `{"code": "update_failed", "retry_token": <token>}` |
+
+The `retry_token` in both envelopes is the **access token of the session
+that just proved identity** — the link leg's freshly `verify_otp`-minted
+session, or (on a second failed retry) the same retry token handed back
+again. The frontend's `ResetPasswordForm` (`docs/frontend-architecture.md`)
+stores it and resubmits through the retry leg rather than re-showing the
+original link, which the server no longer accepts a second time.
+
+**The retry-token lifecycle, stated honestly — this is the B14 residual,
+not new exposure.** A retry token is a live otp-session bearer from the
+moment it is minted until its own **natural TTL** (the Supabase
+access-token lifetime, §9 of the setup guide, default 1 hour) — nothing
+about the retry flow shortens that. `_finish_confirmed_rotation` runs after
+every **successful** rotation and backdates `password_changed_at` by
+`IAT_LEEWAY_SECONDS` (60s), same as every other password change in this
+app, but a retry token minted inside that 60-second leeway window is, by
+construction, *inside* the window the backdate is built to spare — see
+[Revocation and eviction](#revocation-and-eviction-across-auth-modes)
+below for why that's deliberate, not a gap. So: replaying a **successful**
+retry token rotates the password again, and keeps succeeding, for as long
+as the token itself remains valid — the stateless JWT verifier has no way
+to revoke one specific token early, only to reject everything issued before
+a given instant. That is bounded exposure, not unbounded: reachable only by
+whoever already holds a session this app's own confirm flow minted (never
+by a stolen ordinary password-grant bearer — the `methods ==
+{"otp"}` guard above is exactly what rules that out), and dead the moment
+its natural TTL passes. What rotation **does** kill outright, on every
+successful confirm, is the session's **refresh** token, via
+`global_sign_out` — so even a replayed retry token can never be *extended*
+past its original TTL by minting a fresh one from a refresh call. Put
+together, the route's guarantees are: **the route itself never returns a
+session** to the caller (no auto-login — see the frontend doc for why),
+and **only an otp-minted session** — never an ordinary bearer, stolen or
+otherwise — can ever drive the retry leg at all.
 
 ### Admin invites (`app/api/admin.py`, supabase mode)
 
@@ -1318,6 +1425,27 @@ also apply, though in the invite case the local row already exists from the
 `invite_user` call above, so it resolves by `external_id` on the first hit
 instead of creating a fresh row.
 
+**Resending an invitation** (`POST /api/admin/users/{id}/resend-invite`, B28
+#96) re-issues one already-linked (`external_id is not None`) user's invite
+through the very same `gateway.invite_user` call the create route uses —
+there is no local "pending" tracking at all; **GoTrue is the sole authority**
+on whether an identity is still pending. Calling `invite_user_by_email`
+again on a pending identity re-sends the mail and invalidates whatever link
+was previously outstanding (a Supabase behavior, not something this backend
+implements); calling it on an identity that has already accepted its
+invite is the **one** GoTrue rejection this route maps to
+`422 already_active` — `SupabaseEmailExistsError`, the sole error code that
+honestly means "this account is no longer pending." Every other
+`SupabaseAuthError` (a rate limit, a malformed address, a misconfigured
+project) maps to a generic `503`, deliberately never to `already_active`:
+conflating a real GoTrue rejection with "already accepted" would tell the
+admin something false about the invitee's own state, not about the
+request. The route is admin-gated (`require_admin` on the router) and
+mode-guarded the same way every other supabase-only auth route is
+(`404` outside `auth.mode: supabase`); it costs an `EmailLocks` slot (below)
+just like the create route, to keep a resend from interleaving with a
+concurrent create/reconcile on the same email.
+
 ### Admin password reset (`app/api/admin.py`, supabase mode)
 
 `PATCH /api/admin/users/{id}` with a `password` field mode-dispatches the
@@ -1335,6 +1463,45 @@ resetting someone else's password has no bearer token for that target to
 hand `/logout`, and none is needed — `change_password` already revokes
 every outstanding session/refresh token for that user server-side as part
 of the same admin API call (see the eviction table below).
+
+### `app/core/email_locks.py` — serializing admin user-creation flows (B31, #101)
+
+Both admin routes that touch a Supabase identity by email (`create_user`'s
+invite/create-with-password branches, `resend_invite`) run a
+**pre-check → remote call (create/invite/reconcile, plus a possible
+credential rotation) → local link** sequence. Two concurrent admin requests
+for the **same email** can interleave those steps — the sharpest case: one
+request's `201` response reports a password the other request's rotation
+has already overwritten remotely — so every one of those routes wraps its
+body in `EmailLocks.acquire(email)`, an async context manager handing out
+one `asyncio.Lock` per **normalized** (`.strip().lower()`) email, which
+serializes the whole sequence for that address across concurrent requests.
+
+Two bounded-map hygiene rules, and one exception to the second: entries
+expire after 900s (`_ENTRY_TTL_SECONDS`) and the table caps at 1024
+(`_MAX_ENTRIES`), mirroring `LoginThrottle`'s own TTL/cap shape — **but a
+currently-**held** lock is never evicted**, by either rule
+(`_prune` explicitly skips any `lock.locked()` entry in both the TTL sweep
+and the cap eviction). Losing a held lock out from under an in-flight
+request would let a second request start unserialized while the first is
+still mid-sequence — exactly the race this module exists to close —
+so correctness wins over the cap here; a held lock is bounded anyway,
+naturally, by the number of requests actually in flight for that one email,
+which is small.
+
+**Two stacked scope assumptions, not one.** Like `LoginThrottle`, this is
+in-process state — a **single-process** deployment assumption, out of scope
+to change (spec §4). On top of that, `asyncio.Lock` itself binds to the
+event loop that first contends it and raises `RuntimeError` if a later
+contender comes from a **different** loop — a **single-event-loop**
+assumption `LoginThrottle`'s plain `threading.Lock` never had to make.
+Production uvicorn runs exactly one loop, so this holds in deployment by
+construction; it is the reason any test exercising real contention between
+two requests must drive both from inside **one** loop (`httpx.AsyncClient`
++ `ASGITransport`, or a shared `TestClient` portal) rather than, say, two
+separate `asyncio.run()` calls, which would each get their own loop and
+trip the `RuntimeError` the moment the second one touches a lock the first
+already holds.
 
 ### Revocation and eviction across auth modes
 

@@ -1237,12 +1237,43 @@ whatever it would otherwise show — including the authenticated app, checked be
 `authStatus === 'authenticated'` — rather than only while `'anonymous'`: a recovery or
 invite link opened in a tab that still holds a valid stored token is an explicit intent
 to change the credential, not something to silently swallow into the already-running
-app (a stale-session admin re-invite is the sharpest case). New password, repeat-password,
-client-side length check against `MIN_PASSWORD_LENGTH`, then a single `POST
-/api/auth/reset-confirm` carrying `token_hash`/`type`/the new password. One component
-serves both flows; only the heading and copy branch on `type` (`m.inviteHeading` vs.
-`m.resetHeading`), since the backend endpoint and the UI's own validation are identical
-either way.
+app (a stale-session admin re-invite is the sharpest case). One component serves both
+flows; only the heading and copy branch on `type` (`m.inviteHeading` vs. `m.resetHeading`).
+
+**The retry state machine (B29, #97).** `ResetPasswordForm` holds one extra piece of
+state beyond the ordinary form fields: `retryToken: string | null`, `null` until the
+backend's first rejection hands one back. While it's `null`, submit calls
+`postResetConfirm(tokenHash, type, password)` — the link leg, `token_hash`+`type` from
+the URL fragment captured above. The backend's `POST /api/auth/reset-confirm`
+(`docs/backend-architecture.md`'s two-leg reset-confirm section) treats the one-time link as
+spent the moment it's verified, *before* the password write is even attempted, so any
+failure past that point — a weak/breached password, or a transient `503` — comes back
+as a `retry_token` riding along on the `HttpError` (`err.retryToken`, from the
+`{"code", ..., "retry_token"}` envelope both `password_weak` and `update_failed`
+carry), and `setRetryToken` switches the form into retry mode. Every submit after that
+goes through `postResetRetry(retryToken, password)` instead — the same anonymous flow,
+now driven by the retry token rather than the (already-burned) original link — so the
+person retyping a stronger password never needs a second email round-trip. Nothing
+about the form's visible fields changes between the two modes; only which endpoint the
+next submit calls does.
+
+**Reason-mapped copy, `mapResetError`.** A plain `err.code` switch, mirroring
+`AccountMenu.tsx`'s `mapChangeError` for the codes this flow can actually raise
+(no `wrong_current_password` here — this flow never sees an old password): `password_weak`
+routes through the shared `mapWeakPasswordReasons` (`auth/weakPassword.ts`, also used by
+`AccountMenu` and `AdminView`) — GoTrue's reason vocabulary (`length`, `characters`,
+`pwned`) mapped to one honest, specific message each, with `pwned` (`m.pwWeakPwned`,
+"this password appears in known data breaches — please pick a different one") taking
+priority when several reasons arrive together, since a breached password is the most
+actionable thing to tell someone even if it's also too short. `update_failed` (the
+transient-`503` retry envelope) gets its own neutral "saving didn't work yet — please
+try again" (`m.resetUpdateFailedRetry`), distinct from a validation rejection.
+`invalid_or_expired_link` and the client-pinned `password_too_short` get their own
+messages too; everything else — `password_too_long`, any other 422 code, a bare `503`
+with no retry envelope, a network failure — falls to the same neutral
+`m.passwordFailed` fallback `AccountMenu` uses, deliberately never one that mentions
+signing in (an earlier version of this mapping fell back to a sign-in-failure message
+on a screen where no sign-in was ever attempted).
 
 **Deliberately not an auto-login.** A successful `reset-confirm` returns the gate to
 `LoginForm` (`onDone`) rather than signing the browser straight in with the session
@@ -1608,6 +1639,41 @@ screen-reader user than a disabled control with no explanation. The
 revocation semantics themselves are unchanged; only the self-service path
 to trigger them moved to the dialog described above, which already handles
 the resulting re-authentication.
+
+**The notice channel (B28, #96).** Before this, `AdminView` had exactly one feedback
+channel — `useCrudError`'s error banner (`role="alert"`). A resend, or a create that
+only *linked* an existing pending invite, is something worth telling the admin even
+though nothing failed, so a second piece of state, `notice` (`role="status"`, polite —
+distinct ARIA semantics from the error banner's `alert`), sits next to it. Both
+`save`, `resendInvite`, and `createUser` clear `notice` (`setNotice(null)`) at the
+start of their own attempt, same as they already clear the error banner, so a stale
+success message never lingers under a fresh failure or vice versa.
+
+**Resend** (`resendInvite`, owned by the parent component, not `UserRow` — it isn't
+tied to any row's own `PATCH` lifecycle) calls `postResendInvite(user.id)` and maps its
+outcome onto the two existing channels: a `204` sets `m.adminResendSent` on `notice`;
+an `already_active` `HttpError` routes to the error banner via `m.adminResendAlreadyActive`
+rather than `notice` — it's the admin's mistake to correct (the invite doesn't need
+resending), not a confirmation of something that just happened — and everything else
+falls through `mapAdminError` (the same `password_weak`-aware formatter `save` uses,
+though resend itself never returns that code). `UserRow` renders the **"Resend
+invitation"** button only when `invitesAvailable && user.external_id !== null` — a
+row with no Supabase identity at all has nothing to resend — guarded by its own
+`resendPending` flag exactly like the reset-password button's `resetPending`, so a
+second click before the first `POST` resolves can't fire a duplicate invitation email.
+
+**`invite_emailed` honesty (B28).** `AdminUserCreated` carries two per-call flags:
+`invited` (this create resulted in a Supabase invite, either branch) and
+`invite_emailed` (this call is what actually caused GoTrue to send mail — false when
+the create route instead *reconciled* onto an already-invited, still-pending identity
+without sending a second email; see `docs/backend-architecture.md`'s admin-invites
+section). `createUser`'s success branch reads both to choose which of two notices to
+show, never assuming `invited` alone means "an email just went out":
+`created.invited && created.invite_emailed` → `m.adminInviteSent` ("Invitation sent.");
+`created.invited && !created.invite_emailed` → `m.adminInviteLinkedNoEmail`
+("Linked an existing pending invitation — no new email was sent. Use 'Resend
+invitation' for a fresh link.") — which is also the copy that points the admin at the
+resend button described above when they do want a fresh link sent.
 
 ## Internationalization
 
