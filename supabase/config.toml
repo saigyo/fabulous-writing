@@ -54,6 +54,13 @@ refresh_token_reuse_interval = 10
 # Mirror production: project-wide signups off (invitation-only). Admin
 # invites are exempt — verified against this local stack.
 enable_signup = false
+# Deliberate deviation from the hosted default ("" = none): a strength
+# rule GoTrue enforces but the app's own >=8 pre-validation does not lets
+# the e2e suite reach the real weak_password rejection and exercise the
+# B29 retry leg -- exactly the class of GoTrue-side setting B29 makes
+# safe to enable. All e2e passwords must therefore mix upper- and
+# lowercase letters and digits.
+password_requirements = "lower_upper_letters_digits"
 
 # GoTrue's default IP rate limits (30 sign-ins / 5 min) are sized for
 # humans, not a test suite: one run issues ~16 password grants (incl. the
