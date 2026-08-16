@@ -30,6 +30,7 @@ from app.checkers.llm.provider import LLMProvider
 from app.checkers.rules.engine import RuleEngine
 from app.core.auth import AuthConfigError, LocalTokenVerifier, resolve_auth_secret
 from app.core.config import BUILTIN_ENV_KEYS, Settings, load_settings
+from app.core.email_locks import EmailLocks
 from app.core.supabase_auth import SupabaseTokenVerifier, resolve_supabase_credentials
 from app.nlp.registry import NlpRegistry
 from app.services.documents import DocumentStore
@@ -203,6 +204,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.reset_throttle = LoginThrottle(
         threshold=3, base_delay=60.0, max_delay=900.0, entry_ttl=900.0
     )
+    app.state.email_locks = EmailLocks()
     seed_admin(app.state.user_store, gateway=getattr(app.state, "supabase_gateway", None))
     # Startup sweep (spec §6.6): single-process deployment — no 'started'
     # row can belong to a live run of a process that no longer exists.
