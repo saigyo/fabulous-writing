@@ -848,7 +848,12 @@ async def reset_confirm(request: Request, body: ResetConfirm) -> Response:
             )
             raise HTTPException(422, {"code": "invalid_or_expired_link"})
         user = store.get_user(verified.user_id)
-        if user is None or not user.is_active or user.external_id is None:
+        if user is None:
+            raise HTTPException(422, {"code": "invalid_or_expired_link"})
+        if not user.is_active:
+            # Known account, verified otp session: honest answer (B32).
+            raise HTTPException(422, {"code": "account_inactive"})
+        if user.external_id is None:
             raise HTTPException(422, {"code": "invalid_or_expired_link"})
         await _update_password_or_retry_envelope(
             app, user.external_id, body.new_password, body.retry_token
@@ -865,13 +870,31 @@ async def reset_confirm(request: Request, body: ResetConfirm) -> Response:
         raise HTTPException(422, {"code": "invalid_or_expired_link"}) from None
     except SupabaseUnavailableError:
         raise HTTPException(503, "Authentication service unavailable") from None
+    # B32 (#106): resolve the local row BEFORE any remote rotation -- a
+    # deactivated account's Supabase credential must not be rotatable.
+    # The link is already spent (verify_otp burned it -- correct), and the
+    # submitter has proven mailbox control, so the honest account_inactive
+    # answer gives an enumeration attacker nothing.
+    existing_row = store.get_by_external_id(session.user_id)
+    inactive_row = existing_row
+    if inactive_row is None and session.email is not None:
+        # Adoption edge: an unlinked local row that verify() would adopt
+        # by email must block rotation the same way while inactive. A row
+        # linked to a DIFFERENT external_id is deliberately excluded --
+        # verify() refuses to adopt those, and this surface must not
+        # report another account's state.
+        candidate = store.get_by_email(session.email)
+        if candidate is not None and candidate.external_id is None:
+            inactive_row = candidate
+    if inactive_row is not None and not inactive_row.is_active:
+        raise HTTPException(422, {"code": "account_inactive"})
     await _update_password_or_retry_envelope(
         app, session.user_id, body.new_password, session.access_token
     )
     # Rotation is complete; eviction bookkeeping keyed to the EXISTING row
-    # (lookup only, never JIT) exactly as B14 shipped it, and it runs
-    # BEFORE the verifier call so it survives a verification failure.
-    existing_row = store.get_by_external_id(session.user_id)
+    # (lookup only, never JIT -- never the email-adopted fallback) exactly
+    # as B14 shipped it, and it runs BEFORE the verifier call so it
+    # survives a verification failure.
     if existing_row is not None:
         await _finish_confirmed_rotation(
             app, store, existing_row.id, session.access_token
@@ -895,8 +918,12 @@ async def reset_confirm(request: Request, body: ResetConfirm) -> Response:
         # an existing row of its own.
         raise HTTPException(422, {"code": "invalid_or_expired_link"}) from None
     user = store.get_user(verified.user_id)
-    if user is None or not user.is_active:
+    if user is None:
         raise HTTPException(422, {"code": "invalid_or_expired_link"})
+    if not user.is_active:
+        # Defense in depth: normally unreachable after the pre-rotation
+        # hoist above; kept so a future restructure cannot reopen the gap.
+        raise HTTPException(422, {"code": "account_inactive"})
     if existing_row is None:
         # The row verify() just JIT-created/adopted (the invite-acceptance
         # materialization point): its eviction bookkeeping could not run

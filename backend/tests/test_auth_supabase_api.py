@@ -405,6 +405,84 @@ class TestResetConfirm:
         assert created.password_changed_at is not None
         assert fake.global_sign_out_calls
 
+    def test_linked_inactive_row_422_account_inactive_no_rotation(self, supabase_app):
+        app, fake = supabase_app
+        uuid = fake.register_user(EMAIL, PASSWORD, uuid=UUID)
+        client = TestClient(app)
+        login = client.post("/api/auth/login", json={"email": EMAIL, "password": PASSWORD})
+        app.state.user_store.update_user(login.json()["user"]["id"], is_active=False)
+        fake.valid_token_hashes["inactive-hash"] = (uuid, EMAIL)
+        resp = client.post(
+            "/api/auth/reset-confirm",
+            json={
+                "token_hash": "inactive-hash", "type": "recovery",
+                "new_password": "Another-new-pw-1",
+            },
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "account_inactive"
+        # The remote credential did NOT rotate.
+        assert fake.stored_password(EMAIL) == PASSWORD
+        # The one-time link is spent either way (verify_otp burned it).
+        again = client.post(
+            "/api/auth/reset-confirm",
+            json={
+                "token_hash": "inactive-hash", "type": "recovery",
+                "new_password": "Another-new-pw-1",
+            },
+        )
+        assert again.json()["detail"]["code"] == "invalid_or_expired_link"
+
+    def test_unlinked_inactive_row_by_email_422_account_inactive_no_rotation(self, supabase_app):
+        # Adoption edge: a local row with a matching email but no
+        # external_id would be adopted by verify() -- while inactive it
+        # must block rotation the same way, and must NOT get linked.
+        app, fake = supabase_app
+        row = app.state.user_store.create_user("dormant@example.com")
+        app.state.user_store.update_user(row.id, is_active=False)
+        fake.valid_token_hashes["adopt-hash"] = ("fake-uuid-dormant-1", "dormant@example.com")
+        client = TestClient(app)
+        resp = client.post(
+            "/api/auth/reset-confirm",
+            json={
+                "token_hash": "adopt-hash", "type": "invite",
+                "new_password": "Invitee-pw-123",
+            },
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "account_inactive"
+        # Materialized by the fake's verify_otp with an empty password and
+        # never rotated past it.
+        assert fake.stored_password("dormant@example.com") == ""
+        assert app.state.user_store.get_user(row.id).external_id is None
+
+    def test_retry_leg_inactive_user_422_account_inactive_no_rotation(self, supabase_app):
+        app, fake = supabase_app
+        uuid = fake.register_user(EMAIL, PASSWORD, uuid=UUID)
+        client = TestClient(app)
+        login = client.post("/api/auth/login", json={"email": EMAIL, "password": PASSWORD})
+        user_id = login.json()["user"]["id"]
+        fake.valid_token_hashes["retry-hash"] = (uuid, EMAIL)
+        fake.weak_password_reasons = ["length"]
+        first = client.post(
+            "/api/auth/reset-confirm",
+            json={
+                "token_hash": "retry-hash", "type": "recovery",
+                "new_password": "Weak-but-long-pw1",
+            },
+        )
+        assert first.status_code == 422
+        retry_token = first.json()["detail"]["retry_token"]
+        fake.weak_password_reasons = None
+        app.state.user_store.update_user(user_id, is_active=False)
+        resp = client.post(
+            "/api/auth/reset-confirm",
+            json={"retry_token": retry_token, "new_password": "Strong-new-pw-12"},
+        )
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "account_inactive"
+        assert fake.stored_password(EMAIL) == PASSWORD
+
 
 class TestResetConfirmRetryFlow:
     """B29 (#97): the link leg (token_hash+type) burns the one-time link and
