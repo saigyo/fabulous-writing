@@ -5,7 +5,7 @@ The weak_password rejection is reachable because supabase/config.toml sets
 password_requirements = "lower_upper_letters_digits": an all-lowercase
 >=8-char password passes the app's own pre-validation but fails GoTrue.
 
-Mail budget: these tests add ~3 mails per run to GoTrue's 30/hour ceiling
+Mail budget: these tests add ~5 mails per run to GoTrue's 30/hour ceiling
 (not configurable on the Mailpit-backed stack) -- a rate-limited rerun
 shows up as wait_for_message timeouts, not app bugs. GoTrue's own
 max_frequency (1 s between mails per address) is why the resend below
@@ -101,3 +101,63 @@ def test_weak_password_retry_end_to_end(app_url, admin_creds, runid, mailpit):
     )
     assert retried.status_code == 204
     assert login(app_url, email, strong)["user"]["email"] == email
+
+
+def test_deactivated_user_reset_and_resend_guards(app_url, admin_creds, runid, mailpit):
+    """B32 (#106): a deactivated user's mailbox stays silent on
+    reset-request, and resend-invite answers user_inactive. The admin's
+    own recovery mail is the control: its ARRIVAL bounds the wait, so no
+    sleep has to guess at delivery time (the sleep below only clears
+    GoTrue's per-address max_frequency)."""
+    email = f"dormant-{runid}@e2e.local"
+    password = f"E2e-Dormant-Password-{runid}"
+    admin_email = admin_creds[0]
+
+    admin = login(app_url, *admin_creds)
+    created = admin_create_user(app_url, admin["token"], email)
+    message = mailpit.wait_for_message(email)
+    token_hash, _ = mailpit.extract_token(message["HTML"])
+    confirm = httpx.post(
+        f"{app_url}/api/auth/reset-confirm",
+        json={"token_hash": token_hash, "type": "invite", "new_password": password},
+        timeout=TIMEOUT,
+    )
+    assert confirm.status_code == 204
+
+    deact = httpx.patch(
+        f"{app_url}/api/admin/users/{created['id']}",
+        json={"is_active": False},
+        headers=bearer(admin["token"]),
+        timeout=TIMEOUT,
+    )
+    assert deact.status_code == 200
+
+    # Clear GoTrue's per-address max_frequency (1 s): without this the
+    # dormant mailbox could stay empty even with the guard REMOVED
+    # (GoTrue itself suppressing the mail), passing the test vacuously.
+    time.sleep(1.5)
+
+    dormant_before = mailpit.count_messages(email)
+    admin_before = mailpit.count_messages(admin_email)
+    resp = httpx.post(
+        f"{app_url}/api/auth/reset-request", json={"email": email}, timeout=TIMEOUT
+    )
+    assert resp.status_code == 204
+    resp = httpx.post(
+        f"{app_url}/api/auth/reset-request", json={"email": admin_email}, timeout=TIMEOUT
+    )
+    assert resp.status_code == 204
+
+    # The control mail (admin recovery) arriving proves GoTrue processed
+    # requests issued AFTER the dormant one -- the dormant mailbox result
+    # below is therefore final, not just not-yet-delivered.
+    mailpit.wait_for_message(admin_email, min_count=admin_before + 1)
+    assert mailpit.count_messages(email) == dormant_before
+
+    resend = httpx.post(
+        f"{app_url}/api/admin/users/{created['id']}/resend-invite",
+        headers=bearer(admin["token"]),
+        timeout=TIMEOUT,
+    )
+    assert resend.status_code == 422
+    assert resend.json()["detail"]["code"] == "user_inactive"
