@@ -2164,9 +2164,11 @@ dialog.app-dialog h2 {
 .admin-users { border-collapse: collapse; }
 .admin-users th, .admin-users td { padding: 0.3rem 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
 .admin-error { color: #e5484d; }
+.admin-notice { color: var(--text-dim); }
 .admin-self { opacity: 0.6; }
 .admin-inactive td { opacity: 0.55; }
 .admin-reset { white-space: nowrap; }
+.admin-resend { margin-left: 0.4rem; }
 .admin-self-reset-hint {
   font-size: 0.78rem;
   color: var(--text-dim);

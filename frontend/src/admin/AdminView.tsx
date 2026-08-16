@@ -3,15 +3,28 @@ import {
   ADMIN_MIN_PASSWORD_LENGTH,
   getAdminTiers,
   getAdminUsers,
+  HttpError,
   patchAdminUser,
   postAdminUser,
+  postResendInvite,
   type AdminUser,
   type AdminUserPatch,
 } from '../api/client'
 import { sessionGeneration } from '../auth/session'
+import { mapWeakPasswordReasons } from '../auth/weakPassword'
 import { useCrudError } from '../hooks/useCrudError'
-import { useMessages } from '../i18n'
+import { useMessages, type Messages } from '../i18n'
 import { useStore } from '../state/store'
+
+// Same shape as AccountMenu's mapChangeError: a password_weak rejection gets
+// the honest reasons-based message; everything else (duplicate email, 500s,
+// ...) falls back to the existing generic formatter.
+function mapAdminError(err: unknown, m: Messages): string {
+  if (err instanceof HttpError && err.code === 'password_weak') {
+    return mapWeakPasswordReasons(err.reasons, m)
+  }
+  return m.adminChangeFailed(err instanceof Error ? err.message : String(err))
+}
 
 // The create-row inputs live inside a <tr> (table content model forbids a
 // <form> there — it cannot wrap or sit inside thead/tbody), so association
@@ -33,7 +46,11 @@ export function AdminView() {
   // landing after a create can drop the new row or duplicate it.
   const [users, setUsers] = useState<AdminUser[] | null>(null)
   const [tiers, setTiers] = useState<string[] | null>(null)
-  const { error, run, fail } = useCrudError(m.adminChangeFailed)
+  const { error, fail, clear } = useCrudError(m.adminChangeFailed)
+  // No prior success-banner channel existed (Task 7 adds it): a resend or an
+  // invite-linking create has something worth telling the admin even though
+  // nothing failed. role="status" (polite), unlike admin-error's role="alert".
+  const [notice, setNotice] = useState<string | null>(null)
 
   // Mounted only while the view is active and the user is an admin
   // (App.tsx render guard), so these are the only /api/admin requests the
@@ -59,19 +76,49 @@ export function AdminView() {
   const invitesAvailable = authFeatures?.invites ?? false
   const usersLoaded = users !== null
 
-  // Returns whether the change actually committed: run() swallows the
-  // rejection into the error banner, so callers that must react to the
-  // outcome (password reset clearing its field) need this signal.
+  // Returns whether the change actually committed: a rejection is swallowed
+  // into the error banner here, so callers that must react to the outcome
+  // (password reset clearing its field) need this signal.
   async function save(user: AdminUser, patch: AdminUserPatch): Promise<boolean> {
     const gen = sessionGeneration()
     let committed = false
-    await run(async () => {
+    setNotice(null)
+    clear()
+    try {
       const updated = await patchAdminUser(user.id, patch)
-      if (sessionGeneration() !== gen) return // session ended: do not write
-      setUsers((current) => current?.map((u) => (u.id === updated.id ? updated : u)) ?? current)
-      committed = true
-    })
+      if (sessionGeneration() === gen) {
+        setUsers((current) => current?.map((u) => (u.id === updated.id ? updated : u)) ?? current)
+        committed = true
+      } // else: session ended, do not write
+    } catch (err) {
+      // Weak-password reasons (a password reset, PATCH-with-password) need
+      // the same honest mapping AccountMenu's mapChangeError applies —
+      // wired via mapAdminError rather than useCrudError's format(), which
+      // only ever sees a stringified message, not the HttpError itself.
+      fail(mapAdminError(err, m))
+    }
     return committed
+  }
+
+  // Owned by the parent (Task 7): resend is not tied to a row's own PATCH
+  // lifecycle, and 204/already_active map onto the shared notice/error
+  // channels the same way every other mutation here does.
+  async function resendInvite(user: AdminUser): Promise<void> {
+    const gen = sessionGeneration()
+    setNotice(null)
+    clear()
+    try {
+      await postResendInvite(user.id)
+      if (sessionGeneration() !== gen) return // session ended: do not surface
+      setNotice(m.adminResendSent)
+    } catch (err) {
+      if (sessionGeneration() !== gen) return
+      if (err instanceof HttpError && err.code === 'already_active') {
+        fail(m.adminResendAlreadyActive)
+      } else {
+        fail(mapAdminError(err, m))
+      }
+    }
   }
 
   // ---- create-user row state ----
@@ -104,27 +151,36 @@ export function AdminView() {
     if (password && password.length < ADMIN_MIN_PASSWORD_LENGTH) {
       // Reuses the existing parameterized key (AccountMenu precedent) —
       // no second hardcoded-floor message to drift.
+      setNotice(null)
       fail(m.passwordTooShort(ADMIN_MIN_PASSWORD_LENGTH))
       return
     }
     const gen = sessionGeneration()
     setPending(true)
+    setNotice(null)
+    clear()
     try {
-      await run(async () => {
-        const created = await postAdminUser({
-          email: email.trim(),
-          password: password || undefined,
-          ...(displayName.trim() ? { display_name: displayName.trim() } : {}),
-          tier,
-          is_admin: isAdmin,
-        })
-        if (sessionGeneration() !== gen) return // session ended: do not write
+      const created = await postAdminUser({
+        email: email.trim(),
+        password: password || undefined,
+        ...(displayName.trim() ? { display_name: displayName.trim() } : {}),
+        tier,
+        is_admin: isAdmin,
+      })
+      if (sessionGeneration() === gen) {
         setEmail('')
         setDisplayName('')
         setPassword('')
         setIsAdmin(false)
         setUsers((current) => [...(current ?? []), created])
-      })
+        // Plain create (no invite) shows nothing — unchanged. An invite that
+        // actually sent mail says so; one that only linked an existing
+        // pending invite must not claim a new email went out.
+        if (created.invited && created.invite_emailed) setNotice(m.adminInviteSent)
+        else if (created.invited && !created.invite_emailed) setNotice(m.adminInviteLinkedNoEmail)
+      } // else: session ended, do not write
+    } catch (err) {
+      fail(mapAdminError(err, m))
     } finally {
       setPending(false)
     }
@@ -134,6 +190,7 @@ export function AdminView() {
     <div className="admin-view">
       <h2>{m.adminUsersTitle}</h2>
       {error && <p className="admin-error" role="alert">{error}</p>}
+      {notice && <p className="admin-notice" role="status">{notice}</p>}
       <form
         id={CREATE_FORM_ID}
         onSubmit={(e) => {
@@ -233,7 +290,9 @@ export function AdminView() {
               isSelf={user.id === me?.id}
               tiers={tiers ?? []}
               allowMoreAdmins={allowMoreAdmins}
+              invitesAvailable={invitesAvailable}
               onSave={save}
+              onResend={resendInvite}
               fail={fail}
             />
           ))}
@@ -248,11 +307,22 @@ interface UserRowProps {
   isSelf: boolean
   tiers: string[]
   allowMoreAdmins: boolean
+  invitesAvailable: boolean
   onSave: (user: AdminUser, patch: AdminUserPatch) => Promise<boolean>
+  onResend: (user: AdminUser) => Promise<void>
   fail: (message: string) => void
 }
 
-function UserRow({ user, isSelf, tiers, allowMoreAdmins, onSave, fail }: UserRowProps) {
+function UserRow({
+  user,
+  isSelf,
+  tiers,
+  allowMoreAdmins,
+  invitesAvailable,
+  onSave,
+  onResend,
+  fail,
+}: UserRowProps) {
   const m = useMessages()
   // null = not editing: the input shows the server value until the admin
   // types, so an external display_name change resyncs without remounting
@@ -262,6 +332,9 @@ function UserRow({ user, isSelf, tiers, allowMoreAdmins, onSave, fail }: UserRow
   // Double-click guard for the reset button: a second in-flight PATCH would
   // revoke tokens and write audit rows twice.
   const [resetPending, setResetPending] = useState(false)
+  // Same guard for resend: a second in-flight POST would fire a duplicate
+  // invitation email.
+  const [resendPending, setResendPending] = useState(false)
 
   // The disabled states mirror server guards the UI cannot replace:
   // self-demotion/self-deactivation 409 (admin.py lockout rule) and
@@ -285,12 +358,22 @@ function UserRow({ user, isSelf, tiers, allowMoreAdmins, onSave, fail }: UserRow
     }
     setResetPending(true)
     try {
-      // Clear only on a committed reset: run() swallows failures into the
-      // error banner, so a failed PATCH must leave the typed password in
-      // place rather than wiping it under the error message.
+      // Clear only on a committed reset: a failed PATCH must leave the
+      // typed password in place rather than wiping it under the error
+      // message (onSave itself routes failures to the error banner).
       if (await onSave(user, { password: newPassword })) setNewPassword('')
     } finally {
       setResetPending(false)
+    }
+  }
+
+  async function resendInvite() {
+    if (resendPending) return
+    setResendPending(true)
+    try {
+      await onResend(user)
+    } finally {
+      setResendPending(false)
     }
   }
 
@@ -358,6 +441,15 @@ function UserRow({ user, isSelf, tiers, allowMoreAdmins, onSave, fail }: UserRow
             >
               {m.adminResetPassword}
             </button>
+            {invitesAvailable && user.external_id !== null && (
+              <button
+                className="admin-resend"
+                disabled={resendPending}
+                onClick={() => void resendInvite()}
+              >
+                {m.adminResendInvite}
+              </button>
+            )}
           </>
         )}
       </td>

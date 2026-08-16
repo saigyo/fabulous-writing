@@ -11,6 +11,7 @@ import { useDismissOnOutsideClick } from '../hooks/useDismissOnOutsideClick'
 import { useMessages, type Messages } from '../i18n'
 import { useStore } from '../state/store'
 import { Dialog } from '../ui/Dialog'
+import { mapWeakPasswordReasons } from './weakPassword'
 import { expireSession, login, logout, sessionGeneration } from './session'
 
 type Result = { kind: 'error' | 'success'; text: string } | null
@@ -22,6 +23,7 @@ function mapChangeError(err: unknown, m: Messages): string {
   if (err instanceof HttpError && err.code === 'password_too_short') {
     return m.passwordTooShort(MIN_PASSWORD_LENGTH)
   }
+  if (err instanceof HttpError && err.code === 'password_weak') return mapWeakPasswordReasons(err.reasons, m)
   // password_too_long, any unrecognised code, and a non-HttpError all fall
   // here — bare status 422 must not default to "too short", which would be
   // actively misleading for a multibyte password that tripped the byte
