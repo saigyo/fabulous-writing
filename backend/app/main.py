@@ -1,5 +1,6 @@
 import logging
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -33,7 +34,7 @@ from app.core.config import BUILTIN_ENV_KEYS, Settings, load_settings
 from app.core.email_locks import EmailLocks
 from app.core.supabase_auth import SupabaseTokenVerifier, resolve_supabase_credentials
 from app.nlp.registry import NlpRegistry
-from app.services.db.sqlite import SqliteDatabase
+from app.services.db import create_database
 from app.services.documents import DocumentStore
 from app.services.folders import FolderStore
 from app.services.jobs import JobManager
@@ -142,6 +143,14 @@ def make_provider_factory(settings: Settings):
     return factory
 
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    yield
+    # The Postgres pool must release its connections on shutdown; the
+    # SQLite implementation's close() is a documented no-op.
+    app.state.db.close()
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
     # Outside dev, the three doc routes are not registered at all (rather
@@ -154,7 +163,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if settings.environment == "dev"
         else {"docs_url": None, "redoc_url": None, "openapi_url": None}
     )
-    app = FastAPI(title=APP_NAME, **docs_kwargs)
+    app = FastAPI(title=APP_NAME, lifespan=_lifespan, **docs_kwargs)
     # Added BEFORE CORSMiddleware: Starlette makes the *last-added*
     # middleware outermost, and CORS must stay outermost so a 413 from this
     # middleware still carries CORS headers and is readable by the browser
@@ -172,8 +181,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    db = SqliteDatabase(settings.db_path)
+    db = create_database(settings)
     app.state.settings = settings
+    app.state.db = db
     app.state.terminology_store = TerminologyStore(db)
     app.state.rule_engine = RuleEngine(settings.rules_dir)
     app.state.jobs = JobManager()

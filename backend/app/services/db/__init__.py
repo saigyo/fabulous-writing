@@ -8,11 +8,21 @@ Connection contract — everything a store may rely on:
 
 - ``execute(sql, params=())`` returning a cursor with ``rowcount``,
   ``fetchone()``, ``fetchall()``. Placeholders are qmark (``?``); the SQL
-  text must never contain a literal ``?`` in any other role, because the
-  Postgres implementation translates placeholders textually.
-- ``executescript(ddl)`` for multi-statement DDL.
+  text must contain no literal ``?`` and no literal ``%`` outside a
+  placeholder — ``?`` because the Postgres implementation translates
+  placeholders textually, ``%`` because psycopg's placeholder parser
+  rejects any other use of it.
+- ``executescript(ddl)`` for multi-statement DDL. It renders the canonical
+  ``INTEGER PRIMARY KEY AUTOINCREMENT`` into the dialect's identity form,
+  so a single canonical ``_SCHEMA`` string runs unmodified on both
+  backends.
+- Connections expose a ``dialect`` attribute (``"sqlite"`` or
+  ``"postgres"``).
 - Rows support mapping access (``row["col"]``) AND positional access /
-  tuple unpacking (``row[0]``, ``(x,) = fetchone()``).
+  tuple unpacking (``row[0]``, ``(x,) = fetchone()``). An unknown column
+  name in mapping access raises a backend-specific exception
+  (``IndexError`` on sqlite3.Row, ``ValueError`` on the Postgres row) —
+  stores must not rely on the exact type.
 - A violated UNIQUE constraint (column or expression index) on an
   ``execute()`` call raises ``UniqueViolationError``; every other
   integrity error propagates as the driver's own exception.
@@ -29,6 +39,11 @@ Connection contract — everything a store may rely on:
 - ``raw_connect()`` returns a connection whose transaction the CALLER
   controls (``commit()``/``rollback()``) and closes in a ``finally``;
   needed only by UsageStore.reserve_llm_run.
+- Bind Python ``bool``s as ``int(...)`` — Postgres rejects a bare bool
+  bound to an INTEGER column; every current write site already wraps.
+- ``Database.close()`` releases the backend's resources: a no-op on
+  SQLite, closes the pool on Postgres. The app lifespan calls it
+  unconditionally on shutdown.
 """
 
 import logging
@@ -60,10 +75,18 @@ class Database(Protocol):
 
     def raw_connect(self) -> Any: ...
 
+    def close(self) -> None: ...
+
 
 def table_columns(conn: Any, table: str) -> set[str]:
-    """Column names of an existing table (SQLite: PRAGMA table_info;
-    PR2 adds the information_schema branch for Postgres)."""
+    """Column names of an existing table, honoring search_path on PG."""
+    if getattr(conn, "dialect", "sqlite") == "postgres":
+        rows = conn.execute(
+            "SELECT column_name FROM information_schema.columns"
+            " WHERE table_schema = current_schema() AND table_name = ?",
+            (table,),
+        ).fetchall()
+        return {row[0] for row in rows}
     return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
 
 

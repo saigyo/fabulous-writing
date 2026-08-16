@@ -7,6 +7,7 @@ threading env vars through fifteen test modules.
 """
 
 import os
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -162,3 +163,36 @@ def authed_client(tmp_path: Path) -> TestClient:
     client = TestClient(create_app(settings))
     client.headers.update(auth_headers(client))
     return client
+
+
+@pytest.fixture
+def pg_database():
+    """A PostgresDatabase isolated in a throwaway schema, or skip.
+
+    Never a live database: each test gets its own schema, dropped on
+    teardown; the base DSN (FW_TEST_DATABASE_URL) points at a disposable
+    local server (CI service container / supabase stack port 54322).
+    """
+    base_dsn = os.environ.get("FW_TEST_DATABASE_URL", "").strip()
+    if not base_dsn:
+        pytest.skip("FW_TEST_DATABASE_URL not set")
+    import psycopg
+
+    from app.services.db.postgres import PostgresDatabase
+
+    schema = f"fw_test_{uuid.uuid4().hex[:12]}"
+    with psycopg.connect(base_dsn, autocommit=True) as admin:
+        admin.execute(f'CREATE SCHEMA "{schema}"')
+    sep = "&" if "?" in base_dsn else "?"
+    dsn = f"{base_dsn}{sep}options=-csearch_path%3D{schema}"
+    # Pool + schema per test is deliberate, honest isolation; the cost is
+    # real (hundreds of create/drop cycles across the parametrized files)
+    # and accepted. A PostgresDatabase(...) failure before the try would
+    # leak the schema — acceptable for a disposable test server.
+    database = PostgresDatabase(dsn)
+    try:
+        yield database
+    finally:
+        database.close()
+        with psycopg.connect(base_dsn, autocommit=True) as admin:
+            admin.execute(f'DROP SCHEMA "{schema}" CASCADE')
