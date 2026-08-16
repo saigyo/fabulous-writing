@@ -325,6 +325,9 @@ class TestSupabaseTokenVerifier:
             {"app_metadata": None},   # missing app_metadata entirely -- must fail closed
             {"amr": [{"method": "oauth", "timestamp": 0}]},       # OAuth session on a linked identity
             {"amr": [{"method": "sso/saml", "timestamp": 0}]},
+            # defensive literal: real GoTrue mints "otp" for magic links
+            # (accepted; see the verifier comment) -- this pins only variants
+            # that mint the string verbatim
             {"amr": [{"method": "magiclink", "timestamp": 0}]},
             {"amr": [{"method": "password", "timestamp": 0}, {"method": "oauth", "timestamp": 0}]},  # mixed
             {"amr": []},              # empty list fails closed

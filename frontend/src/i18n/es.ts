@@ -293,7 +293,7 @@ export const es: Messages = {
   adminInviteSent: 'Invitación enviada.',
   adminInviteLinkedNoEmail: 'Se vinculó una invitación pendiente existente — no se envió un correo nuevo. Usa «Reenviar invitación» para obtener un enlace nuevo.',
   pwWeakLength: 'Esta contraseña es demasiado corta para las reglas de seguridad — elige una más larga.',
-  pwWeakCharacters: 'Combina mayúsculas, minúsculas y números para que esta contraseña sea más segura.',
+  pwWeakCharacters: 'A esta contraseña le faltan tipos de caracteres obligatorios — añade otros, como mayúsculas, minúsculas, números o símbolos.',
   pwWeakPwned: 'Esta contraseña aparece en filtraciones de datos conocidas — elige otra.',
   pwWeakGeneric: 'Esta contraseña es demasiado débil — elige una más segura.',
   resetUpdateFailedRetry: 'Guardar no funcionó todavía — vuelve a intentarlo.',

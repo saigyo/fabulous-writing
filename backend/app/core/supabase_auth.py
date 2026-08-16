@@ -215,10 +215,17 @@ class SupabaseTokenVerifier:
         # claim: GoTrue mints [{"method": "password"|"otp", ...}] for every
         # flow this app produces (password grant; invite/recovery confirm)
         # and refresh inherits the entries. Anything else -- oauth,
-        # sso/saml, magiclink, or a token without amr -- is a session no
-        # flow of this app can mint: fail closed, closing the runtime
-        # window the startup OAuth lockout cannot see (provider enabled at
-        # the dashboard between restarts) and the linked-identity case.
+        # sso/saml, a token without amr -- is a session no flow of this
+        # app can mint: fail closed, closing the runtime window the
+        # startup OAuth lockout cannot see (provider enabled at the
+        # dashboard between restarts) and the linked-identity case.
+        # Honest boundary (PR #105 review): passwordless email sign-in
+        # (magic link / email OTP) is NOT excluded -- GoTrue's email
+        # /verify flow mints method "otp" for it, indistinguishable from
+        # a recovery/invite confirm. Trust-anchor equivalent: whoever
+        # controls the mailbox could run the recovery flow anyway. The
+        # literal "magiclink" string stays rejected as defense against
+        # GoTrue variants that mint it verbatim.
         amr = claims.get("amr")
         if not isinstance(amr, list) or not amr:
             raise InvalidToken("token carries no amr")

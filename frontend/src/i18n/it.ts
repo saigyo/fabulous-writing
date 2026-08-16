@@ -288,7 +288,7 @@ export const it: Messages = {
   adminInviteSent: 'Invito inviato.',
   adminInviteLinkedNoEmail: "Collegato a un invito in sospeso già esistente — non è stata inviata una nuova e-mail. Usa «Invia di nuovo l'invito» per un nuovo link.",
   pwWeakLength: 'Questa password è troppo corta per le regole di sicurezza — scegline una più lunga.',
-  pwWeakCharacters: 'Combina lettere maiuscole, minuscole e numeri per rendere questa password più sicura.',
+  pwWeakCharacters: 'A questa password mancano tipi di caratteri richiesti — aggiungine altri, come maiuscole, minuscole, numeri o simboli.',
   pwWeakPwned: "Questa password compare in violazioni di dati note — scegline un'altra.",
   pwWeakGeneric: 'Questa password è troppo debole — scegline una più sicura.',
   resetUpdateFailedRetry: 'Il salvataggio non ha ancora funzionato — riprova.',

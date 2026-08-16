@@ -69,3 +69,47 @@ async def test_cap_never_evicts_a_held_lock():
             async with locks.acquire(f"u{i}@example.com"):
                 pass
         assert "held@example.com" in locks._locks
+
+
+async def test_cap_pressure_never_evicts_entry_with_queued_waiter(monkeypatch):
+    """The release-to-reacquire window (PR #105 review): Lock.locked() is
+    False the instant release() runs, while the woken waiter has not yet
+    re-acquired. A prune in that window must NOT evict the entry -- a
+    third request would mint a fresh lock and same-email operations would
+    overlap. Reference counting (holders + waiters) is what prevents it.
+    """
+    locks = EmailLocks()
+    key = "contended@example.com"
+    order: list[str] = []
+    release_holder = asyncio.Event()
+
+    async def holder() -> None:
+        async with locks.acquire(key):
+            order.append("a-in")
+            await release_holder.wait()
+        order.append("a-out")
+
+    async def waiter() -> None:
+        async with locks.acquire(key):
+            order.append("b-in")
+
+    task_a = asyncio.create_task(holder())
+    await asyncio.sleep(0)  # holder acquires
+    task_b = asyncio.create_task(waiter())
+    await asyncio.sleep(0)  # waiter queues on the SAME lock
+    lock_before = locks._locks[key][0]
+    assert lock_before.locked()  # sanity: currently held
+
+    release_holder.set()
+    await asyncio.sleep(0)  # holder releases and exits; waiter woken, NOT resumed
+    assert order == ["a-in", "a-out"]
+    assert not lock_before.locked()  # the exact window the refcount guards
+
+    # simulate cap pressure landing inside the window
+    monkeypatch.setattr("app.core.email_locks._MAX_ENTRIES", 0)
+    locks._prune(999_999_999.0)
+    assert key in locks._locks, "entry with a queued waiter was evicted"
+    assert locks._locks[key][0] is lock_before
+
+    await asyncio.gather(task_a, task_b)
+    assert order == ["a-in", "a-out", "b-in"]

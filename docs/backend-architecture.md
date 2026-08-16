@@ -1266,13 +1266,21 @@ check on top: GoTrue's `amr` claim (`[{"method": "password"|"otp", ...}, ...]`,
 minted fresh for every session this app's own flows produce — the
 password grant and the recovery/invite `verify_otp` call — and carried
 through unchanged by a refresh) must be present and every method in it must
-be one of `{"password", "otp"}`; anything else (oauth, sso/saml, magiclink,
-or a token with no `amr` at all — a session no flow of this app could have
+be one of `{"password", "otp"}`; anything else (oauth, sso/saml, or a
+token with no `amr` at all — a session no flow of this app could have
 minted) is rejected, `InvalidToken("session method is not an email flow")`,
 regardless of `app_metadata.provider`. This is the check that actually
 covers the gap between one restart and the next; the first-provider checks
 remain in place as the reason a brand-new OAuth-origin identity can never
-reach `resolve_supabase_user` in the first place.
+reach `resolve_supabase_user` in the first place. One honest boundary
+note (PR #105 review): passwordless email sign-in (magic link / email
+OTP) is **not** excluded by this guard — GoTrue's email `/verify` flow
+mints method `otp` for it, indistinguishable from a recovery or invite
+confirm. That is a deliberate trust-anchor equivalence, not a gap:
+whoever controls the mailbox could equally run the recovery flow to set
+a password and log in. The literal `magiclink` amr string remains in the
+reject set purely as defense against GoTrue variants that mint it
+verbatim.
 `VerifiedToken.methods` (a `frozenset[str]`, new in B30) carries the
 verified session's own `amr` methods forward past `verify()` — it is what
 lets `reset_confirm`'s retry leg (below) additionally require
