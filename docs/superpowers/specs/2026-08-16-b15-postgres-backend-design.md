@@ -112,7 +112,17 @@ itself lands in PR2 with the `database:` settings block).
   (`CREATE TABLE IF NOT EXISTS` never alters an existing table); that is
   harmless — for ASCII input NOCASE and the new `LOWER(email)` unique index
   enforce the same constraint, and the old constraint simply becomes
-  redundant.
+  redundant. The same permanence applies to the three stores' legacy
+  name-uniqueness indexes: `CREATE UNIQUE INDEX IF NOT EXISTS` is a no-op
+  when an index of that name exists, so pre-B15 databases keep their
+  NOCASE index definitions verbatim — semantically identical on SQLite,
+  and Postgres (PR2) only ever sees fresh schemas with the LOWER() form.
+- Known dialect difference for PR2's parametrized tests: the untouched
+  plain `ORDER BY name` / `ORDER BY preferred` clauses (terminology,
+  profiles) are BINARY-collated on SQLite (uppercase before lowercase) but
+  follow the database collation on Postgres. PR1 correctly leaves them
+  alone; PR2's fixtures must not assert cross-case list order through
+  them.
 - Types stay uniform across backends: TEXT ISO-8601 timestamps
   (lexicographic comparison, identical semantics), JSON as TEXT, booleans as
   INTEGER 0/1. No PG-idiomatic retyping.
