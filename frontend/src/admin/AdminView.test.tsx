@@ -692,6 +692,33 @@ describe('AdminView', () => {
     await screen.findByText(en.adminResendSent)
   })
 
+  it('a deactivated user row shows the resend button disabled', async () => {
+    // Owner report on PR #105: resending for a deactivated user answered
+    // with "already active" — absurd beside a row showing the account
+    // deactivated. Reactivation is the admin's actual next step.
+    useStore.setState({ authFeatures: { password_reset: true, invites: true } })
+    vi.mocked(getAdminUsers).mockResolvedValue([
+      adminUser({ id: 1, email: 'ada@example.com', external_id: 'ext-1' }), // self
+      adminUser({
+        id: 2,
+        email: 'bea@example.com',
+        is_admin: false,
+        is_active: false,
+        external_id: 'ext-2',
+      }),
+    ])
+    vi.mocked(getAdminTiers).mockResolvedValue(['basic'])
+
+    render(<AdminView />)
+    await screen.findByText('bea@example.com')
+
+    const beaRow = screen.getByText('bea@example.com').closest('tr')!
+    const button = within(beaRow).getByRole('button', {
+      name: en.adminResendInvite,
+    }) as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+  })
+
   it('a 422 already_active resend response surfaces adminResendAlreadyActive', async () => {
     useStore.setState({ authFeatures: { password_reset: true, invites: true } })
     vi.mocked(getAdminUsers).mockResolvedValue([
