@@ -404,6 +404,10 @@ async def resend_invite(
     user = store.get_user(user_id)
     if user is None:
         raise HTTPException(404, "Not found")
+    if not user.is_active:
+        # B32 (#106): a deactivated invitee must not be re-invited into a
+        # dead-end. Admin-only surface -- the honest answer is fine here.
+        raise HTTPException(422, {"code": "user_inactive"})
     if user.external_id is None:
         raise HTTPException(422, {"code": "not_linked"})
     gateway = request.app.state.supabase_gateway
