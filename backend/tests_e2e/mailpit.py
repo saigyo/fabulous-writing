@@ -44,6 +44,21 @@ class Mailpit:
             " scripts/e2e-supabase.sh --down and restart the stack"
         )
 
+    def count_messages(self, to: str) -> int:
+        """Current number of messages addressed to `to` -- the absence
+        half of an assertion pair: capture before, compare after a
+        deterministic bound (a later mail's arrival) has passed.
+        limit=200 keeps the page size above anything a test run can
+        accumulate (Mailpit's default page is 50 -- len() over a capped
+        page would silently undercount)."""
+        resp = httpx.get(
+            f"{self._base}/api/v1/search",
+            params={"query": f"to:{to}", "limit": 200},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return len(resp.json().get("messages", []))
+
     @staticmethod
     def extract_token(html: str) -> tuple[str, str]:
         """(token_hash, type) from the templated fragment link."""
