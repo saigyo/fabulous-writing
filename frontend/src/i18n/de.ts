@@ -289,7 +289,7 @@ export const de: Messages = {
   adminInviteSent: 'Einladung gesendet.',
   adminInviteLinkedNoEmail: 'Bestehende offene Einladung verknüpft — es wurde keine neue E-Mail gesendet. Nutze „Einladung erneut senden“ für einen frischen Link.',
   pwWeakLength: 'Dieses Passwort ist für die Sicherheitsregeln zu kurz — wähle ein längeres.',
-  pwWeakCharacters: 'Mische Groß- und Kleinbuchstaben und Ziffern, um das Passwort stärker zu machen.',
+  pwWeakCharacters: 'Diesem Passwort fehlen vorgeschriebene Zeichenarten — ergänze weitere, etwa Groß- und Kleinbuchstaben, Ziffern oder Sonderzeichen.',
   pwWeakPwned: 'Dieses Passwort taucht in bekannten Datenlecks auf — bitte wähle ein anderes.',
   pwWeakGeneric: 'Dieses Passwort ist zu schwach — wähle ein stärkeres.',
   resetUpdateFailedRetry: 'Das Speichern hat noch nicht geklappt — versuch es bitte erneut.',

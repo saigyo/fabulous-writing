@@ -273,7 +273,7 @@ export const en: Messages = {
   adminInviteSent: 'Invitation sent.',
   adminInviteLinkedNoEmail: 'Linked an existing pending invitation — no new email was sent. Use "Resend invitation" for a fresh link.',
   pwWeakLength: 'This password is too short for the security rules — pick a longer one.',
-  pwWeakCharacters: 'Mix upper- and lowercase letters and digits to make this password stronger.',
+  pwWeakCharacters: 'This password is missing required character types — add other kinds, like upper- and lowercase letters, digits or symbols.',
   pwWeakPwned: 'This password appears in known data breaches — please pick a different one.',
   pwWeakGeneric: 'This password is too weak — pick a stronger one.',
   resetUpdateFailedRetry: "Saving didn't work yet — please try again.",

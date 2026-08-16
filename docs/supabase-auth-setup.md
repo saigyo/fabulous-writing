@@ -102,10 +102,17 @@ inspects the **session's own** authentication method, GoTrue's `amr` claim
 through refresh), and rejects any token whose methods are not a subset of
 `{"password", "otp"}` — the two flows this app's login and
 recovery/invite-confirm routes ever produce. A token minted by a
-since-enabled OAuth/SSO/magiclink provider on an otherwise email-first
-identity carries an `amr` entry outside that set (or none at all) and is
-rejected regardless of `app_metadata.provider`, and regardless of whether
-the next restart's startup check would have caught the dashboard change.
+since-enabled OAuth/SSO provider on an otherwise email-first identity
+carries an `amr` entry outside that set (or none at all) and is rejected
+regardless of `app_metadata.provider`, and regardless of whether the
+next restart's startup check would have caught the dashboard change.
+One honest caveat: passwordless email sign-in (magic link / email OTP)
+is **not** blocked by this check — GoTrue mints the same `otp` method
+for it that recovery and invite confirmations carry, and its issuance
+cannot be disabled separately while those flows stay on. This is a
+trust-anchor equivalence rather than a hole: a magic link only ever
+reaches the account's own mailbox, and mailbox control already implies
+account control through the password-reset flow.
 The first-provider guards stay in place too — they are what keeps a
 *brand-new* OAuth-origin identity from ever reaching this backend in the
 first place — but it is the per-request `amr` check that now covers the

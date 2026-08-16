@@ -1220,8 +1220,8 @@ In `supabase/config.toml` — under **`[auth]`** (next to `minimum_password_leng
 
 ```toml
 # Deliberate deviation from the hosted default ("" = none): a strength
-# rule GoTrue enforces but the app's own >=8 pre-validation does not lets
-# the e2e suite reach the real weak_password rejection and exercise the
+# rule that GoTrue enforces, but that the app's own >=8 pre-validation
+# does not, lets the e2e suite reach the real weak_password rejection and exercise the
 # B29 retry leg -- exactly the class of GoTrue-side setting B29 makes
 # safe to enable. All e2e passwords must therefore mix upper- and
 # lowercase letters and digits.

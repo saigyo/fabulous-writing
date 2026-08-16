@@ -294,7 +294,7 @@ export const fr: Messages = {
   adminInviteSent: 'Invitation envoyée.',
   adminInviteLinkedNoEmail: "Invitation en attente déjà liée — aucun nouvel e-mail n'a été envoyé. Utilise « Renvoyer l'invitation » pour un nouveau lien.",
   pwWeakLength: 'Ce mot de passe est trop court pour les règles de sécurité — choisis-en un plus long.',
-  pwWeakCharacters: 'Mélange majuscules, minuscules et chiffres pour renforcer ce mot de passe.',
+  pwWeakCharacters: 'Il manque des types de caractères requis à ce mot de passe — ajoutes-en d’autres, comme des majuscules, des minuscules, des chiffres ou des symboles.',
   pwWeakPwned: 'Ce mot de passe apparaît dans des fuites de données connues — choisis-en un autre.',
   pwWeakGeneric: 'Ce mot de passe est trop faible — choisis-en un plus robuste.',
   resetUpdateFailedRetry: "L'enregistrement n'a pas encore fonctionné — réessaie.",

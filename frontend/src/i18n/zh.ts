@@ -277,7 +277,7 @@ export const zh: Messages = {
   adminInviteSent: '邀请已发送。',
   adminInviteLinkedNoEmail: '已关联现有的待处理邀请——未发送新邮件。使用“重新发送邀请”获取新链接。',
   pwWeakLength: '此密码对于安全规则来说太短——请选择更长的密码。',
-  pwWeakCharacters: '请混合使用大写字母、小写字母和数字，让密码更强。',
+  pwWeakCharacters: '这个密码缺少要求的字符类型——请加入其他类型，比如大写字母、小写字母、数字或符号。',
   pwWeakPwned: '此密码已出现在已知的数据泄露中——请换一个密码。',
   pwWeakGeneric: '此密码强度不够——请选择更强的密码。',
   resetUpdateFailedRetry: '保存尚未成功——请重试。',
