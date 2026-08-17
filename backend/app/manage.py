@@ -306,6 +306,11 @@ def main(
         # with schema management forced on, ignoring database.manage_schema.
         from app.schema import init_stores
 
+        # Imported lazily, like import-to-postgres (manage_import.py): only
+        # this command needs to catch psycopg's own errors, so no other
+        # subcommand pays for the import.
+        import psycopg
+
         settings = Settings(db_path=args.db) if args.db is not None else load_settings()
         database = create_database(settings, timeout=_BUSY_TIMEOUT_SECONDS)
         try:
@@ -325,6 +330,13 @@ def main(
                         "Check the path and its permissions.",
                         file=sys.stderr,
                     )
+                return 1
+            except psycopg.Error as exc:
+                # The single most likely operator error this feature
+                # introduces: running init-db (DDL) with the app-role DSN,
+                # which lacks CREATE. Mirrors import-to-postgres's own
+                # handling of the same driver error (manage_import.py).
+                print(f"could not initialize the schema: {exc}", file=sys.stderr)
                 return 1
         finally:
             database.close()

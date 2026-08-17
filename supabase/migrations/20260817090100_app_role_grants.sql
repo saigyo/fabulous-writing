@@ -18,6 +18,20 @@ alter default privileges for role postgres in schema public
 alter default privileges for role postgres in schema public
   grant execute on functions to fabwriting_app;
 
+-- Assert the design's other boundary half: no CREATE on public. The grants
+-- above never grant it, but that guarantee holds only by omission -- a
+-- project whose public carries a legacy `grant all on schema public to
+-- public` (pre-PG15 dumps, some self-hosted setups) would silently keep
+-- DDL rights. public always exists, so this needs no namespace guard,
+-- unlike the auth/storage/extensions checks below.
+do $$
+begin
+  if has_schema_privilege('fabwriting_app', 'public', 'CREATE') then
+    raise exception 'fabwriting_app unexpectedly has CREATE on schema public';
+  end if;
+end
+$$;
+
 -- Isolation from Supabase's own schemas. Deliberately NOT a blanket
 -- `revoke ... from public` on Supabase schemas -- internal Supabase roles
 -- depend on those grants. Schema-existence-guarded so the migration also
