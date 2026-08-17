@@ -11,6 +11,7 @@ from app.services.db import (
     UniqueViolationError,
     migrate_columns,
     table_columns,
+    verify_schema,
 )
 from app.services.ownership import GlobalReadOnlyError
 
@@ -48,6 +49,18 @@ CREATE TABLE IF NOT EXISTS profile_seed_markers (
 );
 """
 )
+
+_MIGRATED_COLUMNS = [
+    ("llm_tier", "TEXT"),
+    ("packs_on", "TEXT NOT NULL DEFAULT '[]'"),
+]
+
+# Tables (and post-release columns) this store needs; checked instead of
+# created when the app runs without schema management (B36 spec R3).
+_REQUIRED_SCHEMA = {
+    "profiles": [*_MIGRATED_COLUMNS, ("owner_id", "INTEGER")],
+    "profile_seed_markers": [],
+}
 
 
 class Profile(BaseModel):
@@ -94,19 +107,18 @@ def _row_to_profile(row: Row) -> Profile:
 class ProfileStore:
     """Checking profiles, stored beside domains/terms in the same SQLite DB."""
 
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, *, manage_schema: bool = True) -> None:
         self.db = db
         with self._connect() as conn:
-            conn.executescript(_SCHEMA)
-            self._migrate(conn)
+            if manage_schema:
+                conn.executescript(_SCHEMA)
+                self._migrate(conn)
+            else:
+                verify_schema(conn, _REQUIRED_SCHEMA)
 
     def _migrate(self, conn: Any) -> None:
         # Pre-existing databases lack columns added later; guard by name.
-        migrate_columns(
-            conn,
-            "profiles",
-            [("llm_tier", "TEXT"), ("packs_on", "TEXT NOT NULL DEFAULT '[]'")],
-        )
+        migrate_columns(conn, "profiles", _MIGRATED_COLUMNS)
         columns = table_columns(conn, "profiles")
         if "owner_id" not in columns:
             # One-shot backfill against the pre-auth single-owner DB (spec

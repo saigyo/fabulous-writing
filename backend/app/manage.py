@@ -339,7 +339,7 @@ def main(
     database = create_database(settings, timeout=_BUSY_TIMEOUT_SECONDS)
     try:
         try:
-            store = UserStore(database)
+            store = UserStore(database, manage_schema=settings.database.manage_schema)
         except sqlite3.OperationalError as exc:
             if _is_lock_contention(exc):
                 print(f"Database is busy ({exc}). Is the server writing right now?", file=sys.stderr)

@@ -15,7 +15,7 @@ from typing import Literal, Protocol
 from app.core.config import CreditCostSettings, LimitsSettings, TierLimitsSettings
 from app.core.permissions import EffectiveSelection, RequestedLLM
 from app.services.credits import estimate_cost, run_cost
-from app.services.db import Database, Row, migrate_columns
+from app.services.db import Database, Row, migrate_columns, verify_schema
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +80,16 @@ CREATE INDEX IF NOT EXISTS idx_llm_usage_user_created
     ON llm_usage(user_id, created_at);
 """
 
+_MIGRATED_COLUMNS = [
+    ("fail_stage", "TEXT"),
+    ("fail_detail", "TEXT"),
+    ("credits", "INTEGER"),
+]
+
+# Tables (and post-release columns) this store needs; checked instead of
+# created when the app runs without schema management (B36 spec R3).
+_REQUIRED_SCHEMA = {"llm_usage": _MIGRATED_COLUMNS}
+
 
 class MeteredUser(Protocol):
     """What reservation needs to know about the caller. Satisfied by
@@ -140,6 +150,7 @@ class UsageStore:
         db: Database,
         *,
         credit_cost: CreditCostSettings | None = None,
+        manage_schema: bool = True,
     ) -> None:
         self.db = db
         # Pricing is global and static, unlike per-tier limits -- injected
@@ -147,13 +158,11 @@ class UsageStore:
         # calls it) stays untouched (B6 spec §4).
         self.credit_cost = credit_cost or CreditCostSettings()
         with self.db.connect() as conn:
-            conn.executescript(_SCHEMA)
-            migrate_columns(
-                conn,
-                "llm_usage",
-                [("fail_stage", "TEXT"), ("fail_detail", "TEXT"),
-                 ("credits", "INTEGER")],
-            )
+            if manage_schema:
+                conn.executescript(_SCHEMA)
+                migrate_columns(conn, "llm_usage", _MIGRATED_COLUMNS)
+            else:
+                verify_schema(conn, _REQUIRED_SCHEMA)
 
     def reserve_llm_run(
         self,

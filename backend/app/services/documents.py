@@ -5,7 +5,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.core.models import Language
-from app.services.db import Database, Row, migrate_columns, table_columns
+from app.services.db import Database, Row, migrate_columns, table_columns, verify_schema
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS documents (
@@ -31,6 +31,16 @@ CREATE TABLE IF NOT EXISTS documents (
     updated_at TEXT NOT NULL
 );
 """
+
+_MIGRATED_COLUMNS = [
+    ("folder_id", "INTEGER"),
+    ("edited_at", "TEXT"),
+    ("checked_at", "TEXT"),
+]
+
+# Tables (and post-release columns) this store needs; checked instead of
+# created when the app runs without schema management (B36 spec R3).
+_REQUIRED_SCHEMA = {"documents": _MIGRATED_COLUMNS}
 
 
 class Document(BaseModel):
@@ -107,11 +117,14 @@ def _row_to_document(row: Row) -> Document:
 class DocumentStore:
     """User documents with per-document settings and check-state snapshots."""
 
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, *, manage_schema: bool = True) -> None:
         self.db = db
         with self._connect() as conn:
-            conn.executescript(_SCHEMA)
-            self._migrate(conn)
+            if manage_schema:
+                conn.executescript(_SCHEMA)
+                self._migrate(conn)
+            else:
+                verify_schema(conn, _REQUIRED_SCHEMA)
 
     def _connect(self):  # thin delegate; the shared helper carries the docs
         return self.db.connect()
@@ -120,15 +133,7 @@ class DocumentStore:
         # Pre-existing databases lack columns added later; guard by name.
         columns = table_columns(conn, "documents")
         missing = {"folder_id", "edited_at", "checked_at"} - columns
-        migrate_columns(
-            conn,
-            "documents",
-            [
-                ("folder_id", "INTEGER"),
-                ("edited_at", "TEXT"),
-                ("checked_at", "TEXT"),
-            ],
-        )
+        migrate_columns(conn, "documents", _MIGRATED_COLUMNS)
         if "edited_at" in missing:
             conn.execute("UPDATE documents SET edited_at = updated_at")
         if "checked_at" in missing:

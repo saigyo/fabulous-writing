@@ -187,20 +187,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     try:
         app.state.settings = settings
         app.state.db = db
-        app.state.terminology_store = TerminologyStore(db)
+        app.state.terminology_store = TerminologyStore(
+            db, manage_schema=settings.database.manage_schema
+        )
         app.state.rule_engine = RuleEngine(settings.rules_dir)
         app.state.jobs = JobManager()
         app.state.nlp = NlpRegistry(settings.nlp.models)
         app.state.provider_factory = make_provider_factory(settings)
-        app.state.document_store = DocumentStore(db)
-        app.state.folder_store = FolderStore(db)
-        app.state.profile_store = ProfileStore(db)
-        app.state.usage_store = UsageStore(db, credit_cost=settings.credit_cost)
+        app.state.document_store = DocumentStore(
+            db, manage_schema=settings.database.manage_schema
+        )
+        app.state.folder_store = FolderStore(
+            db, manage_schema=settings.database.manage_schema
+        )
+        app.state.profile_store = ProfileStore(
+            db, manage_schema=settings.database.manage_schema
+        )
+        app.state.usage_store = UsageStore(
+            db,
+            credit_cost=settings.credit_cost,
+            manage_schema=settings.database.manage_schema,
+        )
         if settings.auth.mode == "supabase":
             credentials = resolve_supabase_credentials(settings)
             app.state.supabase_gateway = SupabaseAuthGateway(credentials)
             _enforce_email_only_providers(app.state.supabase_gateway)
-            app.state.user_store = UserStore(db)
+            app.state.user_store = UserStore(
+                db, manage_schema=settings.database.manage_schema
+            )
             app.state.token_verifier = SupabaseTokenVerifier(
                 credentials.url, app.state.user_store
             )
@@ -208,7 +222,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.auth_secret = resolve_auth_secret(
                 ephemeral_ok=settings.auth.ephemeral_secret
             )
-            app.state.user_store = UserStore(db)
+            app.state.user_store = UserStore(
+                db, manage_schema=settings.database.manage_schema
+            )
             app.state.token_verifier = LocalTokenVerifier(app.state.auth_secret)
         app.state.login_throttle = LoginThrottle()
         # Separate instance for reset-request: sharing login_throttle would let

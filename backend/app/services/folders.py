@@ -6,7 +6,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from app.core.models import Language
-from app.services.db import Database, Row, UniqueViolationError, migrate_columns
+from app.services.db import Database, Row, UniqueViolationError, migrate_columns, verify_schema
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,20 @@ CREATE TABLE IF NOT EXISTS folders (
     default_llm_auto INTEGER
 );
 """
+
+_MIGRATED_COLUMNS = [
+    ("default_language", "TEXT"),
+    ("default_profile_id", "INTEGER"),
+    ("default_domain_ids", "TEXT"),
+    ("default_llm_provider", "TEXT"),
+    ("default_llm_model", "TEXT"),
+    ("default_llm_tier", "TEXT"),
+    ("default_llm_auto", "INTEGER"),
+]
+
+# Tables (and post-release columns) this store needs; checked instead of
+# created when the app runs without schema management (B36 spec R3).
+_REQUIRED_SCHEMA = {"folders": _MIGRATED_COLUMNS}
 
 
 class FolderDefaults(BaseModel):
@@ -86,30 +100,21 @@ class FolderStore:
     like the profiles/documents stores.
     """
 
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, *, manage_schema: bool = True) -> None:
         self.db = db
         with self._connect() as conn:
-            conn.executescript(_SCHEMA)
-            self._migrate(conn)
+            if manage_schema:
+                conn.executescript(_SCHEMA)
+                self._migrate(conn)
+            else:
+                verify_schema(conn, _REQUIRED_SCHEMA)
 
     def _connect(self):  # thin delegate; the shared helper carries the docs
         return self.db.connect()
 
     def _migrate(self, conn: Any) -> None:
         # Pre-existing databases lack columns added later; guard by name.
-        migrate_columns(
-            conn,
-            "folders",
-            [
-                ("default_language", "TEXT"),
-                ("default_profile_id", "INTEGER"),
-                ("default_domain_ids", "TEXT"),
-                ("default_llm_provider", "TEXT"),
-                ("default_llm_model", "TEXT"),
-                ("default_llm_tier", "TEXT"),
-                ("default_llm_auto", "INTEGER"),
-            ],
-        )
+        migrate_columns(conn, "folders", _MIGRATED_COLUMNS)
         # M3 rebuild, guarded by shape: the legacy table carries an inline
         # UNIQUE on name (global uniqueness — wrong once folders are
         # per-user) and a DEFAULT 1 on owner_id (would let an INSERT that
