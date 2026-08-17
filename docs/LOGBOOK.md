@@ -4243,3 +4243,13 @@ six mutation-verified guards in the import module alone. B15 is
 complete across its three PRs — the app now runs on SQLite or managed
 Postgres behind one seam, with a verified migration path between them.
 B16 (fly.io) is unblocked with the stateless profile in hand.
+
+Post-entry addendum, same PR: the owner live-tested the walkthrough and
+hit a `ModuleNotFoundError` — the guide's commands lacked `uv run` (and
+the `cd backend` context), which no test can catch because tests never
+execute documentation. Fixed in the closing commit; the operator guide
+now runs verbatim. A dress rehearsal with both real database files
+(the current supabase-linked one and the pre-B14 local-users backup,
+snapshotted read-only) had already imported cleanly into throwaway
+schemas — counts, flags, FKs, and sequence continuation all verified,
+no refusal or skip-index warnings on real data.

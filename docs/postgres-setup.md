@@ -71,9 +71,10 @@ exists.
 
 ## Migrating an existing SQLite deployment
 
-`python -m app.manage import-to-postgres` does a one-time, all-or-nothing
-copy of an existing SQLite database into the Postgres target named by
-`FW_DATABASE_URL`.
+`uv run python -m app.manage import-to-postgres` (run from `backend/` —
+`uv run` provides the project environment; a bare `python3` will fail with
+`ModuleNotFoundError`) does a one-time, all-or-nothing copy of an existing
+SQLite database into the Postgres target named by `FW_DATABASE_URL`.
 
 1. Stop the server.
 2. **Copy the `.db` file first.** Constructing the importer's stores runs
@@ -89,11 +90,12 @@ copy of an existing SQLite database into the Postgres target named by
 4. Run:
 
    ```sh
-   python -m app.manage --db /path/to/fabulous.db import-to-postgres
+   cd backend
+   uv run python -m app.manage --db /path/to/fabulous.db import-to-postgres
    ```
 
    `--db` is a **top-level** option and must come *before* the subcommand
-   (`python -m app.manage --db ... import-to-postgres`, not
+   (`... app.manage --db ... import-to-postgres`, not
    `import-to-postgres --db ...`) — omit it entirely to import the database
    at the configured `db_path` instead.
 
