@@ -56,6 +56,40 @@ def test_unknown_attribute_still_raises_attribute_error():
         main_module.does_not_exist
 
 
+def test_failed_startup_closes_the_pool(tmp_path, monkeypatch):
+    # create_app wraps its post-create_database body in
+    # `except BaseException: db.close(); raise` so a pool's worker threads
+    # never outlive a failed startup. Nothing else in the suite exercises
+    # that handler: SQLite's close() is a documented no-op, and the PG
+    # smoke test only exercises a clean shutdown. A fake Database whose
+    # connect() itself raises fails inside the try on the very first store
+    # construction (TerminologyStore) -- a genuine post-factory startup
+    # failure -- so this pins both that create_app re-raises it AND that
+    # close() was called exactly once first.
+    sentinel = RuntimeError("boom")
+    close_calls = 0
+
+    class FakeDatabase:
+        dialect = "sqlite"
+
+        def connect(self):
+            raise sentinel
+
+        def raw_connect(self):
+            raise sentinel
+
+        def close(self):
+            nonlocal close_calls
+            close_calls += 1
+
+    monkeypatch.setattr(main_module, "create_database", lambda settings: FakeDatabase())
+    settings = Settings(db_path=tmp_path / "t.db", rules_dir=tmp_path / "rules")
+    with pytest.raises(RuntimeError) as exc_info:
+        create_app(settings)
+    assert exc_info.value is sentinel
+    assert close_calls == 1
+
+
 def test_seeders_run_after_admin_bootstrap(tmp_path, monkeypatch):
     # Spec §9 startup order: migrations -> admin seeding -> global
     # seeders. With bootstrap credentials missing and no users, create_app
