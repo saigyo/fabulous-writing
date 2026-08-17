@@ -12,6 +12,11 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path
 
+# Not a new lazy-load path: app.services.db.postgres already imports psycopg,
+# and this module (manage_import) is itself imported lazily by manage.py, so
+# sqlite-only deployments still never load psycopg.
+import psycopg
+
 from app.services.db import DATABASE_URL_ENV, table_columns
 from app.services.db.postgres import PostgresDatabase
 from app.services.db.sqlite import SqliteDatabase
@@ -157,7 +162,17 @@ def run_import(source_path: Path, *, env: Mapping[str, str] | None = None) -> in
         # refusal checks below — deliberate, so the checks can query the
         # tables; a refused target holds only empty tables and is safe to
         # re-import into after fixing the cause.
-        _init_stores(target)
+        try:
+            _init_stores(target)
+        except psycopg.Error as exc:
+            # A connectable target whose role lacks DDL privileges, or one
+            # with an incompatible existing schema, fails here — driver/DDL
+            # errors of this kind name the offending object, not the DSN, so
+            # this is safe to print in full (unlike the RuntimeError catch
+            # above, which guards a message that could otherwise echo the
+            # connection string).
+            print(f"could not initialize the target schema: {exc}", file=sys.stderr)
+            return 1
 
         with source.connect() as src_conn:
             with target.connect() as probe_conn:

@@ -146,6 +146,75 @@ def test_directory_source_fails_naming_the_path_without_traceback(
     assert "Traceback" not in err
 
 
+def test_copy_table_streams_in_bounded_chunks() -> None:
+    """Pins _copy_table's bounded-memory streaming (fetchmany, not
+    fetchall): every other test in this file copies well under one
+    _COPY_CHUNK_SIZE (500) chunk, so a regression back to conn.fetchall()
+    would stay green everywhere else. Drives _copy_table directly against
+    fakes that fail loudly on fetchall() and serve more rows than fit in a
+    single chunk — no PG, no SQLite, no store construction needed.
+    """
+    import app.manage_import as manage_import
+
+    class FakeRow:
+        """Minimal mimic of the seam's Row: string OR positional access."""
+
+        def __init__(self, id_val: int, email_val: str) -> None:
+            self._by_name = {"id": id_val, "email": email_val}
+            self._by_index = (id_val, email_val)
+
+        def __getitem__(self, key):
+            if isinstance(key, str):
+                return self._by_name[key]
+            return self._by_index[key]
+
+    total_rows = 1200
+    fake_rows = [FakeRow(i, f"user{i}@example.com") for i in range(total_rows)]
+    fetchall_called = {"yes": False}
+
+    class FakeSourceCursor:
+        def __init__(self, rows: list) -> None:
+            self._rows = rows
+            self._pos = 0
+
+        def fetchall(self):
+            fetchall_called["yes"] = True
+            raise AssertionError("unbounded fetch")
+
+        def fetchmany(self, size: int) -> list:
+            chunk = self._rows[self._pos : self._pos + size]
+            self._pos += len(chunk)
+            return chunk
+
+    class FakeSourceConn:
+        dialect = "sqlite"
+
+        def execute(self, query: str, params=()):
+            if query.startswith("PRAGMA"):
+                # (cid, name, type, notnull, dflt_value, pk) — table_columns
+                # only reads index 1 (name).
+                return [
+                    (0, "id", "INTEGER", 0, None, 1),
+                    (1, "email", "TEXT", 0, None, 0),
+                ]
+            if query.startswith("SELECT"):
+                return FakeSourceCursor(fake_rows)
+            raise AssertionError(f"unexpected source query: {query}")
+
+    inserted: list = []
+
+    class FakeDestConn:
+        def execute(self, query: str, params=()):
+            assert query.startswith("INSERT")
+            inserted.append(params)
+
+    count = manage_import._copy_table(FakeSourceConn(), FakeDestConn(), "users")
+
+    assert count == total_rows
+    assert len(inserted) == total_rows
+    assert fetchall_called["yes"] is False
+
+
 def test_default_source_comes_from_settings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pg_import_target: PostgresDatabase
 ) -> None:
@@ -313,6 +382,43 @@ def test_source_only_column_refused_before_any_write(
     assert "  users: legacy_flag" in err
     counts = _table_counts(pg_import_target)
     assert all(count == 0 for count in counts.values()), counts
+
+
+def test_target_init_failure_reports_named_error_without_traceback(
+    tmp_path: Path,
+    pg_import_target: PostgresDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A connectable target whose role lacks DDL privileges (or carries an
+    # incompatible existing schema) fails inside _init_stores(target).
+    # Simulating an actual privilege revocation is awkward against a
+    # throwaway schema owned by the test role, so this monkeypatches
+    # _init_stores itself: the source call (dialect "sqlite") passes
+    # through untouched, and the target call (dialect "postgres" — the
+    # second call) raises the driver error DDL failures actually surface.
+    import app.manage_import as manage_import
+
+    src_path = tmp_path / "src.db"
+    UserStore(SqliteDatabase(src_path)).create_user("user@example.com", "password12345")
+
+    real_init_stores = manage_import._init_stores
+
+    def failing_init_stores(db):
+        if getattr(db, "dialect", None) == "postgres":
+            raise psycopg.errors.InsufficientPrivilege(
+                "permission denied for schema x"
+            )
+        return real_init_stores(db)
+
+    monkeypatch.setattr(manage_import, "_init_stores", failing_init_stores)
+
+    rc = main(["--db", str(src_path), "import-to-postgres"])
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "could not initialize the target schema" in err
+    assert "Traceback" not in err
 
 
 def test_failure_mid_copy_leaves_target_empty(

@@ -353,6 +353,8 @@ git add app/manage_import.py app/manage.py tests/test_import_postgres.py
 git commit -m "feat(manage): import-to-postgres — FK-ordered copy, unicode-collision pre-check, setval, single transaction (B15 PR3, #56)"
 ```
 
+(Amended post-execution, Copilot round 3: the commit message text above is the planned snippet, not the shipped one — the shipped commit describes the identity-reset mechanism as `ALTER TABLE … ALTER COLUMN id RESTART WITH …`, not `setval`, per the round-1 amendment already recorded elsewhere in this plan. This snippet is left as originally planned; it is a historical record, not something to re-run.)
+
 ---
 
 ### Task 2: Operator docs
@@ -382,7 +384,7 @@ Spec §R9's session-mode sentence gives the wrong reason ("relies on advisory lo
 - [ ] **Step 2: Cross-references**
 
 `docs/supabase-auth-setup.md`: one sentence in its intro region — auth mode and database backend are independent; Postgres setup lives in `docs/postgres-setup.md`.
-`docs/backend-architecture.md`: a short importer paragraph in the operator-CLI/manage.py area (locate by content): what `import-to-postgres` does (stores-initialized schemas, unicode-folding pre-check, FK-ordered copy with explicit ids, `setval`, count-verified single transaction) with a pointer to `docs/postgres-setup.md`.
+`docs/backend-architecture.md`: a short importer paragraph in the operator-CLI/manage.py area (locate by content): what `import-to-postgres` does (stores-initialized schemas, unicode-folding pre-check, FK-ordered copy with explicit ids, transactional identity restart via `ALTER TABLE … ALTER COLUMN id RESTART WITH …` — amended post-execution, Copilot round 1: not `setval`, which is non-transactional — count-verified single transaction) with a pointer to `docs/postgres-setup.md`.
 
 - [ ] **Step 3: Sweep and gates**
 
