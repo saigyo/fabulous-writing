@@ -66,13 +66,21 @@ workflow in this repo) with two files, comments in English:
      for tables, sequences, and functions — objects created later by the
      admin role (`init-db`, `import-to-postgres`, future migrations) become
      usable by the app role automatically;
-   - defensive revokes: `REVOKE ALL ON SCHEMA auth, storage, extensions
-     FROM fabwriting_app` and `REVOKE ALL ON ALL TABLES/FUNCTIONS IN SCHEMA
-     auth FROM fabwriting_app`. Never a blanket `REVOKE … FROM PUBLIC` on
-     Supabase schemas — internal Supabase roles depend on those grants.
-     The revoke statements must tolerate the schemas being absent (plain
-     Postgres has no `auth`/`storage`/`extensions`), so the migration also
-     applies cleanly outside Supabase.
+   - isolation from Supabase's schemas — amended after a live probe
+     (plan review, 2026-08-17): `auth` gets an **assertion**, not a
+     revoke. On Supabase the migration runs as `postgres`, which holds
+     only plain `USAGE` (no grant option) on the `supabase_admin`-owned
+     `auth` schema, so `REVOKE … FROM fabwriting_app` there can revoke
+     nothing and merely floods `db push` with ~140 "no privileges could
+     be revoked" warnings; a fresh role has no `auth` access anyway. The
+     migration instead raises an exception if
+     `has_schema_privilege('fabwriting_app','auth','USAGE')` is ever
+     true. `storage`/`extensions` keep real `REVOKE ALL` statements
+     (those work — `postgres` holds grant option there). Never a blanket
+     `REVOKE … FROM PUBLIC` on Supabase schemas — internal Supabase
+     roles depend on those grants. All branches are schema-existence-
+     guarded so the migration also applies cleanly on plain Postgres
+     (CI service container, non-Supabase deployments).
 
 `supabase/seed.sql` (executed only by local `supabase db reset`, never by
 `db push`) activates the role for local development:
@@ -152,9 +160,13 @@ PG integration (real server):
 - fixture creates a throwaway restricted role (unique
   `fw_test_role_<hex>` name — roles are cluster-wide and tests run in
   parallel — with `LOGIN` and a throwaway password) whose grants on the
-  per-test schema mirror the migration's grants; teardown drops owned
-  privileges and the role. The real `fabwriting_app` role is never touched
-  by tests;
+  per-test schema mirror the migration's grants; teardown drops the schema
+  and then the role, with the role drop guaranteed even if the schema drop
+  fails — a teardown bug must never leak a cluster-wide role. (No
+  `DROP OWNED BY`: it needs the role's own privileges, which the
+  non-superuser local `postgres` lacks; the schema drop already removes
+  every schema-scoped grant.) The real `fabwriting_app` role is never
+  touched by tests;
 - API smoke through the restricted role: admin DSN runs `init-db`-style
   schema creation, app connects with `manage_schema: false` as the
   restricted role, exercises signup-free basics (login, document create,
