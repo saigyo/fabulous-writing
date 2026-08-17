@@ -39,6 +39,93 @@ of advisory locks, for the LLM-usage reservation transaction, uses the
 transaction-scoped `pg_advisory_xact_lock` — those survive transaction
 pooling fine and are not the reason to avoid it.)
 
+## Least-privilege application role
+
+The dashboard's default connection string authenticates as `postgres`, the
+project's admin role — it can read and alter every schema, including
+Supabase Auth's `auth`. Production should instead connect as
+`fabwriting_app`, a DML-only role that cannot run DDL and cannot leave
+`public`.
+
+1. **Create the role** — on a fresh Supabase project, link it and push the
+   migrations that define the role and its grants:
+
+   ```sh
+   supabase link --project-ref <projectref>
+   supabase db push          # applies supabase/migrations/ (role + grants)
+   ```
+
+2. **Activate it.** The role ships `NOLOGIN` — a migration is not the place
+   for a password — so this is a one-time, out-of-band step in the SQL
+   editor. Generate the password locally (it lives only in your deployment
+   secrets, never in this repo):
+
+   ```sh
+   python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+   ```
+
+   ```sql
+   alter role fabwriting_app with login password '<generated>';
+   ```
+
+3. **Verify**, still in the SQL editor:
+
+   ```sql
+   set role fabwriting_app;
+   select * from auth.users limit 1;   -- must fail: permission denied for schema auth
+   create table public.probe (id int); -- must fail: permission denied for schema public
+   reset role;
+   ```
+
+   On a database that already holds app tables, also verify DML works under
+   the role. On a fresh project (no tables yet) there's nothing to `select`
+   from, so check the grants directly instead:
+   `select has_schema_privilege('fabwriting_app', 'public', 'USAGE');` → `t`,
+   and the same for `'CREATE'` → `f`.
+
+4. **Two DSNs.** The runtime `FW_DATABASE_URL` uses `fabwriting_app`
+   (Supavisor session mode: username `fabwriting_app.<projectref>`); the
+   admin DSN is used only for `init-db` and `import-to-postgres` and never
+   enters runtime deployment secrets. `config.yaml` gets:
+
+   ```yaml
+   database:
+     backend: postgres
+     manage_schema: false
+   ```
+
+5. **Schema creation and releases.** With `manage_schema: false` the app
+   never issues DDL — it verifies the schema at startup instead, and
+   refuses to start if it's missing or stale. Initial creation, and every
+   schema-changing release, runs the `init-db` manage command under the
+   admin DSN:
+
+   ```sh
+   cd backend
+   FW_DATABASE_URL='<admin DSN>' uv run python -m app.manage init-db
+   ```
+
+   Run this *before* deploying the new app version — the DDL is additive,
+   so the old version keeps working against the same database meanwhile.
+   `init-db` must run as the `postgres` role specifically: the migration's
+   `alter default privileges for role postgres` grants apply only to
+   objects *that role* creates, so tables created by any other admin role
+   land ungranted and break the app.
+
+6. **Local development parity.** After a `supabase db reset` the migrations
+   plus `supabase/seed.sql` recreate the role with the dev password
+   automatically. On an already-running stack, apply the two migration
+   files once via `psql` and run the seed's `alter role` line by hand. The
+   local app DSN is
+   `postgresql://fabwriting_app:fabwriting_dev@127.0.0.1:54322/postgres`.
+
+**Caution:** `supabase/config.toml` in this repo is the *local e2e stack's*
+config (`project_id = "fabulous-writing-e2e"`, B27) — `supabase link
+--project-ref <hosted>` records the hosted project against this same
+directory, so subsequent `db push`/`db reset` invocations target whichever
+side their flags say. Double-check `--local` vs. linked context before
+each.
+
 ## How the password reaches the app
 
 Normally as the DSN's userinfo component —
@@ -86,7 +173,9 @@ SQLite database into the Postgres target named by `FW_DATABASE_URL`.
    `database.backend: sqlite` in `config.yaml` for now — the import tool
    reads the target from the environment variable regardless of what
    `backend` says, so this keeps the running config truthful until the
-   import is verified.
+   import is verified. The import runs owner-level DDL (schema creation,
+   identity `RESTART`), so `FW_DATABASE_URL` must carry the **admin** DSN
+   for the import; switch it to the app-role DSN afterwards.
 4. Run:
 
    ```sh

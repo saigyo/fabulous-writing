@@ -732,6 +732,23 @@ warning so a half-finished cutover is visible instead of silently ignored.
 `app/services/db/postgres.py` is imported lazily inside `create_database`'s
 `postgres` branch, so a SQLite deployment never imports `psycopg`.
 
+**`database.manage_schema`** (default `true`, B36) gates the DDL every store
+constructor otherwise runs: `false` skips it and calls `db/__init__.py`'s
+`verify_schema` instead — a read-only check (works under a DML-only role)
+that every required table and migrated column exists, raising with the
+`init-db` remedy named in the error if not. The `init-db` manage subcommand
+(`app.schema.init_stores`) is the other side of that gate: it constructs
+every store with schema management forced on, so it always takes the DDL
+path regardless of `manage_schema`, under whatever DSN `FW_DATABASE_URL`
+provides at the time — the admin role, in the intended least-privilege
+deployment (`fabwriting_app`'s role and grants live in
+`supabase/migrations/`, not in application code). **Verification-scope
+caveat:** `verify_schema` checks tables and columns only, not indexes — the
+folder/profile partial unique indexes (`idx_folders_owner_name`,
+`idx_profiles_owner_lang_name`, `idx_profiles_global_lang_name`) are created
+solely by the DDL path, so an index-only schema change still requires
+running `init-db` and gets no startup failure if that step is skipped.
+
 **The Postgres pool** (`PostgresDatabase`, wrapping `psycopg_pool.ConnectionPool`) is
 fixed-size, 1–5 connections, with no config knobs: `open=True` alone does not connect
 eagerly (a bad DSN would only surface as a `PoolTimeout` on first checkout), so the

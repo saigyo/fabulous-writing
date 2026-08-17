@@ -42,6 +42,7 @@ auth:
 #   backend: sqlite   # sqlite (default) | postgres
 #   # postgres mode requires the connection string in the FW_DATABASE_URL
 #   # environment variable (never here — it carries a password).
+#   manage_schema: false   # postgres + app role: schema is managed via `init-db` (admin DSN)
 
 # Global, server-level limits (metering). max_document_chars/
 # max_concurrent_llm_runs/llm_run_max_age/concurrency_reject_delay apply to
