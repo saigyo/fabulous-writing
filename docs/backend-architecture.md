@@ -61,13 +61,14 @@ backend/
 │   └── services/
 │       ├── db/
 │       │   ├── __init__.py      # seam contract: Database/Row protocols, UniqueViolationError, migrate_columns()
-│       │   └── sqlite.py        # SqliteDatabase — the only implementation until B15 PR2
+│       │   ├── sqlite.py        # SqliteDatabase
+│       │   └── postgres.py      # PostgresDatabase (B15 PR2) — imported lazily, only when selected
 │       ├── ownership.py         # GlobalReadOnlyError — the one exception every owner-scoped store raises
 │       ├── jobs.py              # in-memory check jobs, scoped to their creator
-│       ├── terminology.py       # SQLite store: domains, terms — owner-scoped, nullable owner_id
-│       ├── profiles.py          # SQLite store: checking profiles — owner-scoped, nullable owner_id
-│       ├── documents.py         # SQLite store: documents — owner-scoped, NOT NULL owner_id
-│       ├── folders.py           # SQLite store: folders + per-folder defaults — owner-scoped
+│       ├── terminology.py       # domains, terms — owner-scoped, nullable owner_id
+│       ├── profiles.py          # checking profiles — owner-scoped, nullable owner_id
+│       ├── documents.py         # documents — owner-scoped, NOT NULL owner_id
+│       ├── folders.py           # folders + per-folder defaults — owner-scoped
 │       ├── seed.py              # example terminology domain (seeded as a global row)
 │       ├── seed_profiles.py     # Standard + example profiles per language (seeded as global rows)
 │       ├── users.py             # UserStore: users + admin_audit tables; per-user token_epoch
@@ -126,8 +127,8 @@ Singletons on `app.state`:
 | Object | Role |
 |---|---|
 | `settings` | validated `Settings` (see below) |
-| `terminology_store` | SQLite-backed domains/terms |
-| `profile_store` | SQLite-backed checking profiles |
+| `terminology_store` | domains/terms (SQLite or Postgres, see [the `db/` seam](#documents)) |
+| `profile_store` | checking profiles (SQLite or Postgres, see [the `db/` seam](#documents)) |
 | `rule_engine` | all YAML rules, loaded and validated |
 | `jobs` | in-memory `JobManager` for check jobs |
 | `nlp` | `NlpRegistry` of lazy spaCy pipelines |
@@ -158,7 +159,8 @@ Startup also seeds the database idempotently: an example terminology domain
 
 `Settings` (`app/core/config.py`) is a pydantic model with sensible defaults, optionally
 overridden by `backend/config.yaml` (`config.example.yaml` documents every key). Notable
-knobs: `db_path`, `rules_dir`, `seed_terminology`, `seed_example_profiles`,
+knobs: `db_path`, `database.backend` (`sqlite` default | `postgres`, see [the `db/`
+seam](#documents)), `rules_dir`, `seed_terminology`, `seed_example_profiles`,
 `vet_suggestions`, `dictionaries_dir`, per-provider base URLs and default models,
 `providers.extra_providers` (named OpenAI-compatible endpoints — validated at load:
 lowercase identifier names that don't shadow built-ins, since the name derives the
@@ -696,25 +698,95 @@ hand-written `INSERT` that forgot the column. What M3 changed is that `owner_id`
 *enforced*: pre-M3 code accepted the column but never scoped a query by it, so every
 document was visible to every logged-in caller regardless of whose id was stored.
 
-All six SQLite-backed stores (`terminology.py`, `profiles.py`, `documents.py`,
+All six stores (`terminology.py`, `profiles.py`, `documents.py`,
 `folders.py`, `users.py`, `usage.py` under `app/services/`) hold a `Database` (the
 `app/services/db/` seam, spec: docs/superpowers/specs/2026-08-16-b15-postgres-backend-
 design.md) instead of a bare `db_path`. The contract lives in `db/__init__.py`: qmark
 (`?`) placeholders, rows with both mapping and positional access (the `Row` protocol,
-satisfied today by `sqlite3.Row`), a dialect-agnostic `UniqueViolationError` for any
-violated UNIQUE constraint, and two ways to get a connection — `connect()`, a
-transaction-wrapping context manager (commit on clean exit, rollback on exception,
-connection always closed afterward) that every store uses for its ordinary
-read/write methods, and `raw_connect()`, a connection whose transaction the *caller*
-manages (`commit()`/`rollback()`, closed in a `finally`), needed only by
+satisfied by `sqlite3.Row` on SQLite and a small dual-access row on Postgres), a
+dialect-agnostic `UniqueViolationError` for any violated UNIQUE constraint, and two
+ways to get a connection — `connect()`, a transaction-wrapping context manager
+(commit on clean exit, rollback on exception, connection always closed/released
+afterward) that every store uses for its ordinary read/write methods, and
+`raw_connect()`, a connection whose transaction the *caller* manages
+(`commit()`/`rollback()`, closed in a `finally`), needed only by
 `UsageStore.reserve_llm_run` (see [The reservation transaction](#the-reservation-transaction)
 below). `db/__init__.py` also keeps `migrate_columns()` (adds any
 missing `(name, declaration)` columns via `table_columns()` — SQLite's
-`PRAGMA table_info`; PR2 adds an `information_schema` branch for Postgres — plus
-`ALTER TABLE ... ADD COLUMN`), the same idempotent phased-in-column pattern used for
-things like `documents.folder_id` and `profiles.packs_on`/`llm_tier`.
-`app/services/db/sqlite.py` is the only implementation of the contract until B15 PR2
-adds a Postgres one behind the same `Database` protocol.
+`PRAGMA table_info`, or an `information_schema.columns` query scoped to
+`current_schema()` on Postgres — plus `ALTER TABLE ... ADD COLUMN`), the same
+idempotent phased-in-column pattern used for things like `documents.folder_id` and
+`profiles.packs_on`/`llm_tier`. `app/services/db/sqlite.py` (`SqliteDatabase`) and
+`app/services/db/postgres.py` (`PostgresDatabase`, B15 PR2) are the two
+implementations of the contract; a store never knows which one it holds.
+
+**Choosing and connecting** (`create_database` in `db/__init__.py`, called once from
+`main.py`'s app factory): `settings.database.backend` (`sqlite`, the default, or
+`postgres`) picks the implementation. `sqlite` builds `SqliteDatabase(settings.db_path,
+timeout=...)` as before. `postgres` reads the DSN from the `FW_DATABASE_URL`
+environment variable only — never from `config.yaml` or any other settings source,
+since a DSN carries a password and config files get logged/committed — and raises a
+`RuntimeError` naming the variable (never its value) if it is unset or blank; a
+`FW_DATABASE_URL` left set while `backend` is still `sqlite` is a no-op, logged as a
+warning so a half-finished cutover is visible instead of silently ignored.
+`app/services/db/postgres.py` is imported lazily inside `create_database`'s
+`postgres` branch, so a SQLite deployment never imports `psycopg`.
+
+**The Postgres pool** (`PostgresDatabase`, wrapping `psycopg_pool.ConnectionPool`) is
+fixed-size, 1–5 connections, with no config knobs: `open=True` alone does not connect
+eagerly (a bad DSN would only surface as a `PoolTimeout` on first checkout), so the
+constructor also calls `pool.wait(timeout=30.0)` to force one connection at boot —
+fail loudly with the pool's own host/port diagnostics (never the password) rather than
+fail on the first request. `Database.close()` closes the pool; the app lifespan calls
+it unconditionally on shutdown (a no-op for `SqliteDatabase`). The fixed 1–5 sizing
+sits beneath FastAPI's own ~40-thread pool for synchronous (`def`) route handlers —
+under a burst of concurrent requests, threads queue on pool checkout rather than each
+opening its own connection; an accepted consequence of not exposing pool-size knobs,
+not a bug.
+
+**Dialect translation.** `PostgresConnection.execute()` rewrites qmark placeholders to
+psycopg's `%s` textually before executing (safe because the contract forbids a literal
+`?` or `%` outside a placeholder in any store's SQL) and maps
+`psycopg.errors.UniqueViolation` to the seam's `UniqueViolationError`; every other
+error propagates as the driver raised it. Rows come back through a small `_DualRow`
+(mapping *and* positional access, mirroring `sqlite3.Row`) built from the cursor's
+column names. `executescript()` renders the one DDL construct with no common spelling
+— the canonical `INTEGER PRIMARY KEY AUTOINCREMENT` becomes `BIGINT GENERATED BY
+DEFAULT AS IDENTITY PRIMARY KEY` (`BY DEFAULT`, not `ALWAYS`, so PR3's import tool can
+insert explicit ids) — before executing the same `_SCHEMA` string SQLite runs
+unmodified.
+
+**Serialization and isolation.** SQLite's single-writer file gives `reserve_llm_run`
+(below) its TOCTOU-safety for free — the `INSERT` takes the write lock before any
+`COUNT` runs. Postgres has no such global lock, so on that dialect the reservation
+transaction opens with `SELECT pg_advisory_xact_lock(...)` on a fixed 64-bit key
+before the insert: without it, two concurrent reservations could each read the
+pre-insert counts, both see room under a window budget, and both commit — a classic
+write-skew race that Postgres's default READ COMMITTED isolation does not prevent by
+itself. `credits_used()` (the `/me` usage payload's source) has the opposite problem:
+it is read-only, but sums several windows in a loop, and Postgres's READ COMMITTED
+takes a fresh snapshot per statement, so a reservation or settlement committing
+mid-loop could mix ledger snapshots across windows. SQLite closes that gap with an
+explicit `BEGIN`; Postgres instead runs the loop under `SET TRANSACTION ISOLATION
+LEVEL REPEATABLE READ`, pinning every window's sum to one snapshot.
+
+**Accepted latency residual** (spec Decision 5): stores stay synchronous on both
+dialects — no async rewrite, no SQLAlchemy. CRUD routes are already threadpooled
+`def` handlers, but a handful of `async def` call sites (auth, the LLM gate) call into
+a store directly, so in `postgres` mode they block the event loop for the duration of
+a pooled same-region query (roughly 1–2 ms). This is a documented, accepted residual,
+not an oversight; `anyio.to_thread` is the follow-up lever if hosted latency proves
+worse in practice.
+
+**Local testing against Postgres.** `FW_TEST_DATABASE_URL` (distinct from the app's
+own `FW_DATABASE_URL`) points pytest's Postgres-parametrized tests at a disposable
+server — the CI service container, or a local `supabase start` stack's Postgres port
+(`54322`). Unset, those tests skip, keeping the default `uv run pytest` gate SQLite-
+only, Docker- and network-free. Each test that needs one gets its own throwaway schema
+(`CREATE SCHEMA "fw_test_<uuid>"`, `search_path` pointed at it via the DSN's `options`
+query param, dropped on teardown) rather than sharing a database across tests — real
+isolation at the cost of hundreds of create/drop cycles across the parametrized test
+files, an accepted trade for tests that can't see each other's rows.
 
 This PR (B15 PR1) also unified three things that used to vary store-by-store:
 every `INSERT` that needs the new row's id uses `RETURNING id` instead of a
@@ -2081,6 +2153,13 @@ manager, since two of its three exit paths need to roll back. `user` is typed as
 structurally by `app.api.deps.CurrentUser` without this service importing
 from `app.api`; `now` is keyword-only and test-only (defaults to
 `datetime.now(UTC)`).
+
+On Postgres, the transaction's very first statement — before even the staleness sweep
+below — is `SELECT pg_advisory_xact_lock(...)` on a fixed key (see [the `db/`
+seam](#documents)): SQLite gets this transaction's TOCTOU-safety for free from its
+single-writer file, but Postgres needs the explicit lock to restore the same
+single-writer property, or two concurrent reservations could both read pre-insert
+counts as under budget and both commit — write skew.
 
 One transaction, in order:
 
