@@ -6,9 +6,11 @@ plain managed Postgres database instead of this backend's default
 single-container deployment). Postgres mode exists for hosted deployments —
 anywhere the data needs to live outside the container's own volume, or
 survive a redeploy that doesn't carry the volume with it. The backend has no
-Postgres-specific behavior beyond the connection itself: it treats the
-target as ordinary managed Postgres, and [supabase.com](https://supabase.com)
-is simply the hosted instance this project documents and tests against.
+Supabase-specific dependency: it treats the target as ordinary managed
+Postgres (advisory locks, `REPEATABLE READ` for the usage-reservation
+transaction — nothing Supabase-only), and
+[supabase.com](https://supabase.com) is simply the hosted instance this
+project documents and tests against.
 
 ## Connection string
 
@@ -132,6 +134,11 @@ Two failure modes worth knowing in advance:
   the copy as a unique-constraint error; the whole transaction rolls back
   cleanly, so nothing is left half-imported. Resolve the duplicates in the
   running SQLite-backed app, then re-run the import.
+
+For very large ledgers (a big `documents` or `llm_usage` table), run the
+import from a machine close to the target: rows copy one at a time, each a
+separate round-trip, so total duration scales with row count times
+round-trip latency.
 
 ## Backup
 

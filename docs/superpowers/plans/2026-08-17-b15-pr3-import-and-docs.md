@@ -77,7 +77,7 @@ Run: `uv run pytest tests/test_import_postgres.py -n0 -q` → collection error (
 
 Operator flow: configure FW_DATABASE_URL (target), keep database.backend
 on sqlite until the import verifies, run
-`python -m app.manage import-to-postgres [--db SOURCE.db]`, then flip
+`python -m app.manage --db SOURCE.db import-to-postgres`, then flip
 database.backend to postgres. The tool is all-or-nothing: one target
 transaction, committed only after per-table count verification.
 """
