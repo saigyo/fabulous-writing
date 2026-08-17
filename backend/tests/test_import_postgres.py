@@ -124,6 +124,27 @@ def test_missing_source_fails_naming_the_path(
     assert str(absent) in err
 
 
+def test_directory_source_fails_naming_the_path_without_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A dummy DSN is needed for the same reason as
+    # test_missing_source_fails_naming_the_path: the DSN-present check runs
+    # first. Unlike that test, a directory passes source_path.exists(), so
+    # this exercises the sqlite3.Error catch around opening the source —
+    # which must fire (and print a named, actionable message) before PG is
+    # ever dialed, so no PG env/fixture is needed here.
+    monkeypatch.setenv("FW_DATABASE_URL", "postgresql://user:pass@localhost:5432/db")
+    src_dir = tmp_path / "not_a_file.db"
+    src_dir.mkdir()
+
+    rc = main(["--db", str(src_dir), "import-to-postgres"])
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert str(src_dir) in err
+    assert "Traceback" not in err
+
+
 def test_default_source_comes_from_settings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pg_import_target: PostgresDatabase
 ) -> None:

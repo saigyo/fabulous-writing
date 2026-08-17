@@ -2,11 +2,12 @@
 
 Operator flow: configure FW_DATABASE_URL (target), keep database.backend
 on sqlite until the import verifies, run
-`python -m app.manage import-to-postgres [--db SOURCE.db]`, then flip
+`python -m app.manage --db SOURCE.db import-to-postgres`, then flip
 database.backend to postgres. The tool is all-or-nothing: one target
 transaction, committed only after per-table count verification.
 """
 
+import sqlite3
 import sys
 from collections.abc import Mapping
 from pathlib import Path
@@ -49,17 +50,22 @@ def _init_stores(db) -> None:
     UsageStore(db)
 
 
-def _collisions_under_unicode_folding(src_conn) -> list[tuple[int, str]]:
-    """users rows whose emails collide under full-Unicode lower().
+def _collisions_under_unicode_folding(src_conn, dst_conn) -> list[tuple[int, str]]:
+    """users rows whose emails collide under the TARGET's own LOWER().
 
     SQLite's LOWER() is ASCII-only, so two rows can coexist there and
-    still violate the target's LOWER(email) unique index (Postgres folds
-    full Unicode). Grouping happens in Python for exactly that reason.
+    still violate the target's LOWER(email) unique index. The fold that
+    matters is the exact one that index applies — the target's LOWER(),
+    which follows the database's collation — not Python's str.lower(),
+    which is locale-independent and can disagree with it on exotic
+    locales. So each email is folded by asking the target directly, one
+    query per row (operator-scale N keeps the round-trip cost fine).
     """
     rows = src_conn.execute("SELECT id, email FROM users ORDER BY id").fetchall()
     by_folded: dict[str, list[tuple[int, str]]] = {}
     for row in rows:
-        by_folded.setdefault(row["email"].lower(), []).append((row["id"], row["email"]))
+        (folded,) = dst_conn.execute("SELECT LOWER(?)", (row["email"],)).fetchone()
+        by_folded.setdefault(folded, []).append((row["id"], row["email"]))
     return [item for group in by_folded.values() if len(group) > 1 for item in group]
 
 
@@ -79,20 +85,32 @@ def _source_only_columns(src_conn, dst_conn) -> list[tuple[str, set[str]]]:
     return extras
 
 
+_COPY_CHUNK_SIZE = 500
+
+
 def _copy_table(src_conn, dst_conn, table: str) -> int:
     columns = sorted(table_columns(src_conn, table))
     column_list = ", ".join(columns)
     placeholders = ", ".join("?" for _ in columns)
-    # Whole-table fetch is deliberate: a one-time operator tool at
-    # single-deployment scale, and the copy must sit in one transaction
-    # anyway.
-    rows = src_conn.execute(f"SELECT {column_list} FROM {table}").fetchall()
-    for row in rows:
-        dst_conn.execute(
-            f"INSERT INTO {table} ({column_list}) VALUES ({placeholders})",
-            tuple(row[c] for c in columns),
-        )
-    return len(rows)
+    # Streamed via fetchmany, not fetchall: documents carries large texts
+    # and llm_usage grows without bound, so a whole-table fetch risks
+    # unbounded memory. Row-at-a-time insert count is unchanged (still one
+    # round-trip per row) and the copy still sits in one transaction —
+    # streaming only bounds how much of the source is held in memory at
+    # once, not the round-trip count.
+    cursor = src_conn.execute(f"SELECT {column_list} FROM {table}")
+    count = 0
+    while True:
+        rows = cursor.fetchmany(_COPY_CHUNK_SIZE)
+        if not rows:
+            break
+        for row in rows:
+            dst_conn.execute(
+                f"INSERT INTO {table} ({column_list}) VALUES ({placeholders})",
+                tuple(row[c] for c in columns),
+            )
+        count += len(rows)
+    return count
 
 
 def run_import(source_path: Path, *, env: Mapping[str, str] | None = None) -> int:
@@ -111,8 +129,21 @@ def run_import(source_path: Path, *, env: Mapping[str, str] | None = None) -> in
         print(f"source database not found: {source_path}", file=sys.stderr)
         return 1
 
-    source = SqliteDatabase(source_path)
-    _init_stores(source)
+    try:
+        # source_path.exists() only rules out "nothing there" — a locked,
+        # corrupt, or non-database file (or a directory, which passes
+        # .exists() too) only surfaces once sqlite3 actually opens it, which
+        # happens lazily on the first statement the store constructors run
+        # below. Mirrors manage.py's own catch around UserStore construction.
+        source = SqliteDatabase(source_path)
+        _init_stores(source)
+    except sqlite3.Error as exc:
+        print(
+            f"could not open source database at {source_path} ({exc}). Check "
+            "the path and its permissions.",
+            file=sys.stderr,
+        )
+        return 1
     try:
         # A bad DSN raises RuntimeError from the pool's boot wait; keep the
         # CLI's rc=1 convention instead of a traceback. The message names
@@ -142,7 +173,8 @@ def run_import(source_path: Path, *, env: Mapping[str, str] | None = None) -> in
                     print(f"  {table}: {', '.join(sorted(cols))}", file=sys.stderr)
                 return 1
 
-            collisions = _collisions_under_unicode_folding(src_conn)
+            with target.connect() as probe_conn:
+                collisions = _collisions_under_unicode_folding(src_conn, probe_conn)
             if collisions:
                 print(
                     "refusing to import: these user emails are distinct in"
@@ -180,10 +212,20 @@ def run_import(source_path: Path, *, env: Mapping[str, str] | None = None) -> in
                     if source_counts[table]:
                         # GENERATED BY DEFAULT accepted our explicit ids; the
                         # sequence must move past them or the next insert
-                        # collides with an imported row.
+                        # collides with an imported row. setval() is
+                        # deliberately NOT used here: it is non-transactional
+                        # (a sequence advance it makes survives a ROLLBACK),
+                        # which would contradict this function's "nothing
+                        # committed" promise on a later failure. ALTER
+                        # TABLE ... RESTART WITH is ordinary catalog DDL and
+                        # rolls back with the rest of the transaction
+                        # (verified empirically against live Postgres).
+                        (max_id,) = dst_conn.execute(
+                            f"SELECT MAX(id) FROM {table}"
+                        ).fetchone()
                         dst_conn.execute(
-                            f"SELECT setval(pg_get_serial_sequence('{table}', 'id'),"
-                            f" (SELECT MAX(id) FROM {table}))"
+                            f"ALTER TABLE {table} ALTER COLUMN id RESTART WITH"
+                            f" {int(max_id) + 1}"
                         )
                 # Belt-and-braces: these counts run inside the same
                 # uncommitted transaction that wrote the rows, so a mismatch
