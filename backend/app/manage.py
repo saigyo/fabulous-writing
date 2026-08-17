@@ -207,6 +207,13 @@ _COMMANDS = {
     "activate": (_cmd_activate, True),
 }
 
+# _COMMANDS alone drives dispatch (handler, needs_email) for the commands
+# that go through UserStore; import-to-postgres has no handler here (its
+# own early branch in main() dispatches it before a UserStore exists) but
+# still needs to appear in error()'s valid-command list, hence this maps
+# separately from the dispatch table instead of folding into it.
+_ALL_COMMANDS = (*_COMMANDS, "import-to-postgres")
+
 
 class _SilentArgumentParser(argparse.ArgumentParser):
     """An ArgumentParser whose error() never echoes the offending token.
@@ -235,7 +242,7 @@ class _SilentArgumentParser(argparse.ArgumentParser):
         self.print_usage(sys.stderr)
         print(
             f"{self.prog}: error: invalid arguments. Valid commands: "
-            f"{', '.join(_COMMANDS)}. Values are withheld: passwords are "
+            f"{', '.join(_ALL_COMMANDS)}. Values are withheld: passwords are "
             "never accepted as command-line arguments — they are prompted "
             "for or read from stdin.",
             file=sys.stderr,
@@ -253,6 +260,10 @@ def _build_parser() -> argparse.ArgumentParser:
         sub = subparsers.add_parser(name)
         if needs_email:
             sub.add_argument("email")
+    subparsers.add_parser(
+        "import-to-postgres",
+        help="one-time copy of the SQLite database into FW_DATABASE_URL",
+    )
     return parser
 
 
@@ -278,6 +289,13 @@ def main(
     # process on the machine.
     args = _parse_args(_build_parser(), argv)
     args.read_password = read_password or _prompt_password
+    if args.command == "import-to-postgres":
+        # Imported lazily so sqlite-only deployments and every other
+        # subcommand keep never importing psycopg (seam §R1).
+        from app.manage_import import run_import
+
+        source_path = args.db if args.db is not None else load_settings().db_path
+        return run_import(source_path)
     if args.db is not None:
         # --db pins a SQLite file directly and must work without a
         # loadable config (operator escape hatch); backend defaults
