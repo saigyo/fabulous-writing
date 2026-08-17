@@ -16,6 +16,7 @@ import pytest
 
 from app.core.models import Language
 from app.manage import main
+from app.manage_import import run_import
 from app.services.db.postgres import PostgresDatabase
 from app.services.db.sqlite import SqliteDatabase
 from app.services.documents import DocumentStore
@@ -89,6 +90,22 @@ def test_missing_env_fails_naming_the_variable(
     err = capsys.readouterr().err
     assert "FW_DATABASE_URL" in err
     assert "postgresql://" not in err
+
+
+def test_run_import_env_mapping_is_honored(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # run_import's env kwarg mirrors create_database's seam; main() never
+    # exercises it (it always passes the process environment implicitly),
+    # so this drives run_import directly to prove the kwarg is honored.
+    src = tmp_path / "src.db"
+    UserStore(SqliteDatabase(src)).create_user("user@example.com", "password12345")
+
+    rc = run_import(src, env={})
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "FW_DATABASE_URL" in err
 
 
 def test_missing_source_fails_naming_the_path(
@@ -221,6 +238,10 @@ def test_non_empty_target_refused_without_writes(
     assert rc == 1
     err = capsys.readouterr().err
     assert "users" in err
+    # Pinned to the refusal's own wording, mirroring the source-only-column
+    # test: with the guard removed the copy fails on users_pkey instead, whose
+    # message also contains "users" and also leaves the count at 1.
+    assert "refusing to import into a non-empty target" in err
     assert _table_counts(pg_import_target)["users"] == 1
 
 

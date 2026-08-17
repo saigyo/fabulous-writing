@@ -119,7 +119,7 @@ def run_import(source_path: Path, *, env: Mapping[str, str] | None = None) -> in
         # the variable only — never the value.
         target = PostgresDatabase(dsn)
     except RuntimeError as exc:
-        print(f"could not connect to the {DATABASE_URL_ENV} target: {exc}", file=sys.stderr)
+        print(f"import-to-postgres: {exc}", file=sys.stderr)
         return 1
     try:
         # NOTE: this creates the target schema (empty tables) BEFORE the
