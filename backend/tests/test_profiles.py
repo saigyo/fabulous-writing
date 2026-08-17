@@ -28,8 +28,8 @@ INSERT INTO profiles (language, name) VALUES ('en', 'Old');
 
 
 @pytest.fixture()
-def store(tmp_path):
-    return ProfileStore(SqliteDatabase(tmp_path / "test.db"))
+def store(db):
+    return ProfileStore(db)
 
 
 def test_create_and_list_profiles(store):
@@ -87,18 +87,18 @@ def test_remove_domain_everywhere(store):
     assert store.get_profile(b.id, owner_id=1).domain_ids == [3]
 
 
-def test_llm_tier_roundtrip(tmp_path: Path) -> None:
-    store = ProfileStore(SqliteDatabase(tmp_path / "p.db"))
+def test_llm_tier_roundtrip(db) -> None:
+    store = ProfileStore(db)
     p = store.create_profile(Language.EN, "Blog", owner_id=None, llm_tier="quality")
     assert store.get_profile(p.id, owner_id=1).llm_tier == "quality"
     updated = store.update_profile(p.id, owner_id=1, is_admin=True, llm_tier=None)
     assert updated.llm_tier is None
 
 
-def test_llm_tier_column_migration_is_idempotent(tmp_path: Path) -> None:
+def test_llm_tier_column_migration_is_idempotent(db) -> None:
     # Opening the store twice must not fail on the ALTER TABLE guard.
-    ProfileStore(SqliteDatabase(tmp_path / "p.db"))
-    store = ProfileStore(SqliteDatabase(tmp_path / "p.db"))
+    ProfileStore(db)
+    store = ProfileStore(db)
     assert (
         store.create_profile(
             Language.EN, "X", owner_id=None, llm_tier="local"
@@ -205,8 +205,8 @@ def test_seed_survives_user_profile_named_standard(store):
     assert store.standard_profile(L.DE) is not None
 
 
-def test_packs_on_roundtrip(tmp_path) -> None:
-    store = ProfileStore(SqliteDatabase(tmp_path / "p.sqlite"))
+def test_packs_on_roundtrip(db) -> None:
+    store = ProfileStore(db)
     profile = store.create_profile(
         Language.EN, "Docs", owner_id=None, packs_on=["techdocs", "blog"]
     )
@@ -218,8 +218,8 @@ def test_packs_on_roundtrip(tmp_path) -> None:
     assert store.get_profile(profile.id, owner_id=1).packs_on == ["techdocs"]
 
 
-def test_seed_pack_profiles(tmp_path) -> None:
-    store = ProfileStore(SqliteDatabase(tmp_path / "profiles.sqlite"))
+def test_seed_pack_profiles(db) -> None:
+    store = ProfileStore(db)
     seed_profiles(store, DEMOS, seed_examples=True)
     en = {p.name: p for p in store.list_profiles(Language.EN, owner_id=1)}
     assert en["Marketing"].packs_on == ["marketing"]
@@ -246,7 +246,7 @@ def test_seed_pack_profiles(tmp_path) -> None:
 def test_connection_is_closed_after_use(tmp_path: Path) -> None:
     # `with sqlite3.connect(...)` alone only manages the transaction; the
     # store must also close the connection or every operation leaks one.
-    store = ProfileStore(SqliteDatabase(tmp_path / "profiles.db"))
+    store = ProfileStore(SqliteDatabase(tmp_path / "profiles.db"))  # sqlite-only: asserts sqlite3.ProgrammingError after close
     with store._connect() as conn:
         conn.execute("SELECT 1")
     with pytest.raises(sqlite3.ProgrammingError):
@@ -255,18 +255,18 @@ def test_connection_is_closed_after_use(tmp_path: Path) -> None:
 
 def test_packs_on_migration_defaults_empty(tmp_path) -> None:
     # A database created before the column existed gets it via _migrate.
-    db = tmp_path / "old.sqlite"
-    conn = sqlite3.connect(db)
+    legacy_db = tmp_path / "old.sqlite"
+    conn = sqlite3.connect(legacy_db)
     conn.executescript(_SCHEMA_BEFORE_PACKS_ON)
     conn.commit()
     conn.close()
-    store = ProfileStore(SqliteDatabase(db))
+    store = ProfileStore(SqliteDatabase(legacy_db))  # sqlite-only: hand-built legacy schema
     old = store.list_profiles(Language.EN, owner_id=1)[0]
     assert old.packs_on == []
 
 
-def test_profile_visibility_global_plus_own(tmp_path):
-    store = ProfileStore(SqliteDatabase(tmp_path / "p.db"))
+def test_profile_visibility_global_plus_own(db):
+    store = ProfileStore(db)
     builtin = store.create_profile(Language.EN, "Standard", owner_id=None, is_standard=True)
     mine = store.create_profile(Language.EN, "Mine", owner_id=1)
     theirs = store.create_profile(Language.EN, "Theirs", owner_id=2)
@@ -277,8 +277,8 @@ def test_profile_visibility_global_plus_own(tmp_path):
     assert store.get_profile(mine.id, owner_id=1).is_global is False
 
 
-def test_global_profile_mutation_requires_admin(tmp_path):
-    store = ProfileStore(SqliteDatabase(tmp_path / "p.db"))
+def test_global_profile_mutation_requires_admin(db):
+    store = ProfileStore(db)
     builtin = store.create_profile(Language.EN, "Standard", owner_id=None, is_standard=True)
     with pytest.raises(GlobalReadOnlyError):
         store.update_profile(builtin.id, owner_id=1, is_admin=False, example_text="x")
@@ -292,8 +292,8 @@ def test_global_profile_mutation_requires_admin(tmp_path):
     )
 
 
-def test_profile_names_unique_per_owner_and_global_partition(tmp_path):
-    store = ProfileStore(SqliteDatabase(tmp_path / "p.db"))
+def test_profile_names_unique_per_owner_and_global_partition(db):
+    store = ProfileStore(db)
     store.create_profile(Language.EN, "Casual", owner_id=None)
     # A user may shadow a global name...
     store.create_profile(Language.EN, "Casual", owner_id=1)
@@ -308,8 +308,8 @@ def test_profile_names_unique_per_owner_and_global_partition(tmp_path):
     store.create_profile(Language.DE, "Casual", owner_id=1)
 
 
-def test_owner_id_not_serialized_but_is_global_is(tmp_path):
-    store = ProfileStore(SqliteDatabase(tmp_path / "p.db"))
+def test_owner_id_not_serialized_but_is_global_is(db):
+    store = ProfileStore(db)
     profile = store.create_profile(Language.EN, "Mine", owner_id=1)
     dumped = profile.model_dump()
     assert "owner_id" not in dumped
@@ -318,8 +318,8 @@ def test_owner_id_not_serialized_but_is_global_is(tmp_path):
 
 def test_migration_backfills_ownership_by_seed_name_match(tmp_path):
     # Legacy pre-M3 shape with the table-level UNIQUE and no owner_id.
-    db = tmp_path / "legacy.db"
-    with connect(db) as conn:
+    legacy_db = tmp_path / "legacy.db"
+    with connect(legacy_db) as conn:
         conn.execute(
             """CREATE TABLE profiles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -351,8 +351,8 @@ def test_migration_backfills_ownership_by_seed_name_match(tmp_path):
                 "INSERT INTO profiles (language, name, is_standard) VALUES (?, ?, ?)",
                 (language, name, std),
             )
-    store = ProfileStore(SqliteDatabase(db))
-    with connect(db) as conn:
+    store = ProfileStore(SqliteDatabase(legacy_db))  # sqlite-only: hand-built legacy schema
+    with connect(legacy_db) as conn:
         owners = {
             (row["language"], row["name"]): row["owner_id"]
             for row in conn.execute("SELECT language, name, owner_id FROM profiles")
@@ -367,16 +367,15 @@ def test_migration_backfills_ownership_by_seed_name_match(tmp_path):
         ("de", "Marketing"): 1,
     }
     assert "UNIQUE" not in sql.upper()  # rebuild dropped the constraint
-    ProfileStore(SqliteDatabase(db))  # idempotent second open
+    ProfileStore(SqliteDatabase(legacy_db))  # sqlite-only: hand-built legacy schema (idempotent second open)
 
 
-def test_backfill_runs_exactly_once(tmp_path):
+def test_backfill_runs_exactly_once(db):
     # A post-migration rename onto a seed name must NOT be re-globalized.
-    db = tmp_path / "p.db"
-    store = ProfileStore(SqliteDatabase(db))
+    store = ProfileStore(db)
     mine = store.create_profile(Language.EN, "My Style", owner_id=1)
     store.update_profile(mine.id, owner_id=1, is_admin=False, name="Marketing")
-    ProfileStore(SqliteDatabase(db))  # reopen: migration guard must skip the backfill
+    ProfileStore(db)  # reopen: migration guard must skip the backfill
     assert store.get_profile(mine.id, owner_id=1).is_global is False
 
 

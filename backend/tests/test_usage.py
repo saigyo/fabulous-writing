@@ -32,8 +32,8 @@ EFFECTIVE = EffectiveSelection(
 
 
 @pytest.fixture
-def store(tmp_path):
-    return UsageStore(SqliteDatabase(tmp_path / "usage.db"))
+def store(db):
+    return UsageStore(db)
 
 
 def reserve(store, user=None, *, limits=LIMITS, server=SERVER, run_id="run-1",
@@ -76,8 +76,13 @@ class TestReservationRow:
     def test_check_constraint_rejects_unknown_status(self, store):
         # A typo'd terminal status would silently leak a concurrency slot
         # for llm_run_max_age (spec §5.3) — it must fail loudly instead.
+        # The CHECK genuinely holds on both backends; psycopg is imported
+        # here (not at module level) so the SQLite-only default gate never
+        # requires it as a dependency.
+        import psycopg
+
         with store.db.connect() as conn:
-            with pytest.raises(sqlite3.IntegrityError):
+            with pytest.raises((sqlite3.IntegrityError, psycopg.errors.CheckViolation)):
                 conn.execute(
                     """INSERT INTO llm_usage (user_id, day, created_at, status,
                        provider, model, text_chars, source, run_id)
@@ -163,7 +168,7 @@ class TestConcurrency:
 
     def test_two_simultaneous_reservations_admit_exactly_one(self, tmp_path):
         # TOCTOU (spec §6.4): insert-first serializes concurrent starts.
-        store = UsageStore(SqliteDatabase(tmp_path / "usage.db"))
+        store = UsageStore(SqliteDatabase(tmp_path / "usage.db"))  # sqlite-only: relies on SQLite's global writer lock, not the PG advisory lock (see TestPostgresReservationConcurrency for the PG sibling)
         limits = budget_limits(credits_per_day=1)
         # Two racing reservations at 1 credit each: the first to insert sums
         # to 1 (not > 1, admitted); the second sums to 2 (> 1, rejected).
@@ -240,7 +245,7 @@ def test_startup_sweeps_started_ledger_rows(tmp_path: Path):
     # create_app tests do (conftest already provides the FW_* env the app
     # factory needs) — the arrange/assert below is the requirement.
     settings = Settings(db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules")
-    store = UsageStore(SqliteDatabase(settings.db_path))
+    store = UsageStore(SqliteDatabase(settings.db_path))  # sqlite-only: exercises create_app's SQLite-backed startup sweep via Settings.db_path
     store.reserve_llm_run(  # leaves a 'started' row
         FakeUser(1), TierLimitsSettings(credits_per_day=1_000_000,
         max_llm_document_chars=1000, concurrent_llm_runs=5),
@@ -301,8 +306,13 @@ class TestFailureColumns:
         assert row["status"] == "started"  # the write never happened
 
     def test_check_constraint_rejects_unknown_stage(self, store):
+        # Same seam-agnostic widening as test_check_constraint_rejects_
+        # unknown_status above: the fresh-schema CHECK holds on both
+        # backends.
+        import psycopg
+
         with store.db.connect() as conn:
-            with pytest.raises(sqlite3.IntegrityError):
+            with pytest.raises((sqlite3.IntegrityError, psycopg.errors.CheckViolation)):
                 conn.execute(
                     """INSERT INTO llm_usage (user_id, day, created_at, status,
                        provider, model, text_chars, source, run_id, fail_stage)
@@ -336,7 +346,7 @@ class TestFailureColumns:
                    VALUES (1, '2026-07-20', '2026-07-20T00:00:00+00:00',
                            'failed', 'p', 'm', 1, 'check', 'r')"""
             )
-        store = UsageStore(SqliteDatabase(db_path))
+        store = UsageStore(SqliteDatabase(db_path))  # sqlite-only: hand-built legacy schema
         (row,) = rows(store)
         assert row["fail_stage"] is None
         assert row["fail_detail"] is None

@@ -12,14 +12,15 @@ from app.services.terminology import TerminologyStore
 
 
 @pytest.fixture
-def store(tmp_path: Path) -> TerminologyStore:
-    return TerminologyStore(SqliteDatabase(tmp_path / "test.db"))
+def store(db) -> TerminologyStore:
+    return TerminologyStore(db)
 
 
 class TestStore:
-    def test_connection_is_closed_after_use(self, store: TerminologyStore) -> None:
+    def test_connection_is_closed_after_use(self, tmp_path: Path) -> None:
         # `with sqlite3.connect(...)` alone only manages the transaction; the
         # store must also close the connection or every operation leaks one.
+        store = TerminologyStore(SqliteDatabase(tmp_path / "t.db"))  # sqlite-only: asserts sqlite3.ProgrammingError after close
         with store._connect() as conn:
             conn.execute("SELECT 1")
         with pytest.raises(sqlite3.ProgrammingError):
@@ -162,8 +163,8 @@ class TestChecker:
         assert len(checker.check("einloggen", Language.DE, domain.id, owner_id=1)) == 1
 
 
-def test_domain_visibility_and_admin_rule(tmp_path):
-    store = TerminologyStore(SqliteDatabase(tmp_path / "t.db"))
+def test_domain_visibility_and_admin_rule(db):
+    store = TerminologyStore(db)
     shared = store.create_domain("Shared", owner_id=None)
     mine = store.create_domain("Mine", owner_id=1)
     store.create_domain("Theirs", owner_id=2)
@@ -176,8 +177,8 @@ def test_domain_visibility_and_admin_rule(tmp_path):
     assert store.update_domain(shared.id, owner_id=1, is_admin=True, name="X").name == "X"
 
 
-def test_domain_names_unique_per_owner(tmp_path):
-    store = TerminologyStore(SqliteDatabase(tmp_path / "t.db"))
+def test_domain_names_unique_per_owner(db):
+    store = TerminologyStore(db)
     store.create_domain("Docs", owner_id=1)
     store.create_domain("docs", owner_id=2)      # other owner: fine
     store.create_domain("Docs", owner_id=None)   # global partition: fine
@@ -187,8 +188,8 @@ def test_domain_names_unique_per_owner(tmp_path):
         store.create_domain("docs", owner_id=None)
 
 
-def test_terms_inherit_domain_ownership(tmp_path):
-    store = TerminologyStore(SqliteDatabase(tmp_path / "t.db"))
+def test_terms_inherit_domain_ownership(db):
+    store = TerminologyStore(db)
     shared = store.create_domain("Shared", owner_id=None)
     theirs = store.create_domain("Theirs", owner_id=2)
     term = store.create_term(
@@ -218,8 +219,8 @@ def test_terms_inherit_domain_ownership(tmp_path):
 
 
 def test_migration_backfills_domain_ownership(tmp_path):
-    db = tmp_path / "legacy.db"
-    with connect(db) as conn:
+    legacy_db = tmp_path / "legacy.db"
+    with connect(legacy_db) as conn:
         conn.execute(
             """CREATE TABLE domains (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -229,15 +230,15 @@ def test_migration_backfills_domain_ownership(tmp_path):
         )
         conn.execute("INSERT INTO domains (name) VALUES ('Product docs')")
         conn.execute("INSERT INTO domains (name) VALUES ('My own domain')")
-    store = TerminologyStore(SqliteDatabase(db))
+    store = TerminologyStore(SqliteDatabase(legacy_db))  # sqlite-only: hand-built legacy schema
     by_name = {d.name: d for d in store.list_domains(owner_id=1)}
     assert by_name["Product docs"].is_global is True   # seed-name match
     assert by_name["My own domain"].is_global is False # -> admin (1)
-    TerminologyStore(SqliteDatabase(db))  # idempotent
+    TerminologyStore(SqliteDatabase(legacy_db))  # sqlite-only: hand-built legacy schema (idempotent)
 
 
-def test_seeder_presence_check_is_global_only(tmp_path):
-    store = TerminologyStore(SqliteDatabase(tmp_path / "t.db"))
+def test_seeder_presence_check_is_global_only(db):
+    store = TerminologyStore(db)
     store.create_domain("User domain", owner_id=1)
     assert store.has_global_domains() is False   # a user domain must not
     assert seed_terminology(store) is True       # ...suppress seeding: it runs
