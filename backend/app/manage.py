@@ -311,42 +311,53 @@ def main(
     # handler path below) to tell the two apart. A postgres connection
     # failure escapes these handlers entirely and surfaces as its own
     # error — fail loudly, the spec's intent for that backend.
+    # Built outside the try/finally below so a failure here (before there is
+    # anything to close) doesn't run close() against a name that was never
+    # bound; everything from here on — store construction, command dispatch,
+    # any sys.exit a handler raises (SystemExit still runs a finally) — must
+    # release the pool/connection on its way out, in-process callers of
+    # main() (tests, the postgres backend's pool and worker threads) have no
+    # other place that would do it for them.
+    database = create_database(settings, timeout=_BUSY_TIMEOUT_SECONDS)
     try:
-        store = UserStore(create_database(settings, timeout=_BUSY_TIMEOUT_SECONDS))
-    except sqlite3.OperationalError as exc:
-        if _is_lock_contention(exc):
-            print(f"Database is busy ({exc}). Is the server writing right now?", file=sys.stderr)
-        else:
-            print(
-                f"Could not open the database at {settings.db_path} ({exc}). Check "
-                "the path and its permissions.",
-                file=sys.stderr,
-            )
-        return 1
-    except sqlite3.DatabaseError as exc:
-        # OperationalError (busy) is itself a DatabaseError subclass, so
-        # this broader clause must come second or it would shadow the
-        # message above for the busy case. Whatever is left over here is a
-        # different operator situation — a corrupt or unreadable file —
-        # calling for a different next step (restore from backup, not wait).
-        print(f"Database is unreadable or corrupt ({exc}).", file=sys.stderr)
-        return 1
+        try:
+            store = UserStore(database)
+        except sqlite3.OperationalError as exc:
+            if _is_lock_contention(exc):
+                print(f"Database is busy ({exc}). Is the server writing right now?", file=sys.stderr)
+            else:
+                print(
+                    f"Could not open the database at {settings.db_path} ({exc}). Check "
+                    "the path and its permissions.",
+                    file=sys.stderr,
+                )
+            return 1
+        except sqlite3.DatabaseError as exc:
+            # OperationalError (busy) is itself a DatabaseError subclass, so
+            # this broader clause must come second or it would shadow the
+            # message above for the busy case. Whatever is left over here is a
+            # different operator situation — a corrupt or unreadable file —
+            # calling for a different next step (restore from backup, not wait).
+            print(f"Database is unreadable or corrupt ({exc}).", file=sys.stderr)
+            return 1
 
-    handler, _ = _COMMANDS[args.command]
-    try:
-        return handler(store, args)
-    except sqlite3.OperationalError as exc:
-        # Handlers perform real writes (set_password, update_user), so lock
-        # contention hit here deserves the same clean message as at
-        # startup — but only lock contention. Re-raise anything else
-        # unchanged: a non-lock OperationalError is a bug (see
-        # _is_lock_contention), and mislabeling it as "the database is
-        # busy" would send an operator to wait out a lock that does not
-        # exist, during exactly the incident this tool is for.
-        if not _is_lock_contention(exc):
-            raise
-        print(f"Database is busy ({exc}). Is the server writing right now?", file=sys.stderr)
-        return 1
+        handler, _ = _COMMANDS[args.command]
+        try:
+            return handler(store, args)
+        except sqlite3.OperationalError as exc:
+            # Handlers perform real writes (set_password, update_user), so lock
+            # contention hit here deserves the same clean message as at
+            # startup — but only lock contention. Re-raise anything else
+            # unchanged: a non-lock OperationalError is a bug (see
+            # _is_lock_contention), and mislabeling it as "the database is
+            # busy" would send an operator to wait out a lock that does not
+            # exist, during exactly the incident this tool is for.
+            if not _is_lock_contention(exc):
+                raise
+            print(f"Database is busy ({exc}). Is the server writing right now?", file=sys.stderr)
+            return 1
+    finally:
+        database.close()
 
 
 if __name__ == "__main__":  # pragma: no cover

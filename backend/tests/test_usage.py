@@ -715,9 +715,31 @@ class TestPostgresReservationConcurrency:
         ]
         for p in processes:
             p.start()
-        results = [queue.get(timeout=30) for _ in processes]
-        for p in processes:
-            p.join()
+        # A worker that dies before its queue.put (or one that just never
+        # shows up before the timeout) must not leave the others running:
+        # a raise out of the comprehension below would skip the join loop
+        # entirely, and the pg_database fixture's teardown drops this
+        # schema out from under any still-live child — masking whatever
+        # actually failed behind a confusing error from the orphan instead,
+        # and potentially hanging CI on process cleanup. `results` stays
+        # None until every expected message is in, so the finally clause
+        # can tell a real failure (still-alive workers to terminate, then
+        # join with a timeout so a stuck child can't hang the test run)
+        # from the happy path (every worker already reported in — join
+        # blocks briefly for exit, no terminate needed).
+        results = None
+        try:
+            results = [queue.get(timeout=30) for _ in processes]
+        finally:
+            if results is None:
+                for p in processes:
+                    if p.is_alive():
+                        p.terminate()
+                for p in processes:
+                    p.join(timeout=10)
+            else:
+                for p in processes:
+                    p.join()
         assert all(p.exitcode == 0 for p in processes), [p.exitcode for p in processes]
         admitted = [kind for kind, _ in results if kind == "admitted"]
         assert len(admitted) == 1, (
