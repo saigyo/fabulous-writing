@@ -182,121 +182,126 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
     db = create_database(settings)
-    app.state.settings = settings
-    app.state.db = db
-    app.state.terminology_store = TerminologyStore(db)
-    app.state.rule_engine = RuleEngine(settings.rules_dir)
-    app.state.jobs = JobManager()
-    app.state.nlp = NlpRegistry(settings.nlp.models)
-    app.state.provider_factory = make_provider_factory(settings)
-    app.state.document_store = DocumentStore(db)
-    app.state.folder_store = FolderStore(db)
-    app.state.profile_store = ProfileStore(db)
-    app.state.usage_store = UsageStore(db, credit_cost=settings.credit_cost)
-    if settings.auth.mode == "supabase":
-        credentials = resolve_supabase_credentials(settings)
-        app.state.supabase_gateway = SupabaseAuthGateway(credentials)
-        _enforce_email_only_providers(app.state.supabase_gateway)
-        app.state.user_store = UserStore(db)
-        app.state.token_verifier = SupabaseTokenVerifier(
-            credentials.url, app.state.user_store
-        )
-    else:
-        app.state.auth_secret = resolve_auth_secret(
-            ephemeral_ok=settings.auth.ephemeral_secret
-        )
-        app.state.user_store = UserStore(db)
-        app.state.token_verifier = LocalTokenVerifier(app.state.auth_secret)
-    app.state.login_throttle = LoginThrottle()
-    # Separate instance for reset-request: sharing login_throttle would let
-    # 5 free POSTs block a legitimate login for the same (email, ip) AND
-    # would void the throttle's bcrypt-bounded-exemption invariant (its
-    # docstring) — reset requests pay no bcrypt. max_delay <= entry_ttl is
-    # enforced by LoginThrottle.__post_init__.
-    app.state.reset_throttle = LoginThrottle(
-        threshold=3, base_delay=60.0, max_delay=900.0, entry_ttl=900.0
-    )
-    app.state.email_locks = EmailLocks()
-    seed_admin(app.state.user_store, gateway=getattr(app.state, "supabase_gateway", None))
-    # Startup sweep (spec §6.6): single-process deployment — no 'started'
-    # row can belong to a live run of a process that no longer exists.
-    app.state.usage_store.sweep_all_started()
-    # Global seeders last (spec §9): migrations (store constructors) -> admin
-    # bootstrap -> seeders, so a failing bootstrap aborts before any global
-    # row is written.
-    if settings.seed_terminology:
-        seed_terminology(app.state.terminology_store)
-    seed_profiles(
-        app.state.profile_store,
-        settings.demos_dir,
-        seed_examples=settings.seed_example_profiles,
-    )
-    # Every feature router requires a logged-in caller. Attached here at
-    # inclusion, rather than edited into each of the ten router files, so the
-    # policy lives in one readable place and a router added to this list
-    # without the dependency is visible in the diff. auth_router is excluded
-    # because POST /auth/login must stay public; its own endpoints (GET
-    # /auth/me, POST /auth/password) declare get_current_user individually.
-    # admin_router is excluded too: it already carries require_admin (a
-    # strictly stronger check) on itself.
-    protected = [
-        terminology_router, checks_router, languages_router, rules_router,
-        providers_router, suggestions_router, documents_router,
-        folders_router, profiles_router, routing_router,
-    ]
-    for router in protected:
-        app.include_router(router, dependencies=[Depends(get_current_user)])
-    app.include_router(auth_router)
-    app.include_router(admin_router)
-
-    @app.get("/api/health")
-    def health() -> dict[str, object]:
-        supabase = settings.auth.mode == "supabase"
-        return {
-            "status": "ok",
-            "name": APP_NAME,
-            "version": os.environ.get("FW_APP_VERSION", "dev"),
-            "auth_features": {"password_reset": supabase, "invites": supabase},
-        }
-
-    # Single-origin serving for the container image (spec: single-container
-    # design). Registered last: FastAPI matches routes in registration
-    # order, so every /api route above wins over the catch-all. Known,
-    # accepted quirk: with dist_dir set, a POST to an unknown path returns
-    # 405 (the catch-all matches by path, GET-only) instead of 404. The
-    # catch-all serves only files enumerated from dist_dir at startup (an
-    # immutable image layer in the container) — no request-derived path is
-    # ever joined onto a filesystem path, so there is nothing for a
-    # traversal segment to escape into.
-    dist_dir = settings.frontend.dist_dir
-    if dist_dir is not None:
-        dist = Path(dist_dir).resolve()
-        if not (dist / "index.html").is_file():
-            raise RuntimeError(
-                f"frontend.dist_dir={dist} has no index.html — point it at a"
-                " built Vite dist/"
+    try:
+        app.state.settings = settings
+        app.state.db = db
+        app.state.terminology_store = TerminologyStore(db)
+        app.state.rule_engine = RuleEngine(settings.rules_dir)
+        app.state.jobs = JobManager()
+        app.state.nlp = NlpRegistry(settings.nlp.models)
+        app.state.provider_factory = make_provider_factory(settings)
+        app.state.document_store = DocumentStore(db)
+        app.state.folder_store = FolderStore(db)
+        app.state.profile_store = ProfileStore(db)
+        app.state.usage_store = UsageStore(db, credit_cost=settings.credit_cost)
+        if settings.auth.mode == "supabase":
+            credentials = resolve_supabase_credentials(settings)
+            app.state.supabase_gateway = SupabaseAuthGateway(credentials)
+            _enforce_email_only_providers(app.state.supabase_gateway)
+            app.state.user_store = UserStore(db)
+            app.state.token_verifier = SupabaseTokenVerifier(
+                credentials.url, app.state.user_store
             )
-        app.mount(
-            "/assets",
-            StaticFiles(directory=dist / "assets", check_dir=False),
-            name="assets",
+        else:
+            app.state.auth_secret = resolve_auth_secret(
+                ephemeral_ok=settings.auth.ephemeral_secret
+            )
+            app.state.user_store = UserStore(db)
+            app.state.token_verifier = LocalTokenVerifier(app.state.auth_secret)
+        app.state.login_throttle = LoginThrottle()
+        # Separate instance for reset-request: sharing login_throttle would let
+        # 5 free POSTs block a legitimate login for the same (email, ip) AND
+        # would void the throttle's bcrypt-bounded-exemption invariant (its
+        # docstring) — reset requests pay no bcrypt. max_delay <= entry_ttl is
+        # enforced by LoginThrottle.__post_init__.
+        app.state.reset_throttle = LoginThrottle(
+            threshold=3, base_delay=60.0, max_delay=900.0, entry_ttl=900.0
         )
+        app.state.email_locks = EmailLocks()
+        seed_admin(app.state.user_store, gateway=getattr(app.state, "supabase_gateway", None))
+        # Startup sweep (spec §6.6): single-process deployment — no 'started'
+        # row can belong to a live run of a process that no longer exists.
+        app.state.usage_store.sweep_all_started()
+        # Global seeders last (spec §9): migrations (store constructors) -> admin
+        # bootstrap -> seeders, so a failing bootstrap aborts before any global
+        # row is written.
+        if settings.seed_terminology:
+            seed_terminology(app.state.terminology_store)
+        seed_profiles(
+            app.state.profile_store,
+            settings.demos_dir,
+            seed_examples=settings.seed_example_profiles,
+        )
+        # Every feature router requires a logged-in caller. Attached here at
+        # inclusion, rather than edited into each of the ten router files, so the
+        # policy lives in one readable place and a router added to this list
+        # without the dependency is visible in the diff. auth_router is excluded
+        # because POST /auth/login must stay public; its own endpoints (GET
+        # /auth/me, POST /auth/password) declare get_current_user individually.
+        # admin_router is excluded too: it already carries require_admin (a
+        # strictly stronger check) on itself.
+        protected = [
+            terminology_router, checks_router, languages_router, rules_router,
+            providers_router, suggestions_router, documents_router,
+            folders_router, profiles_router, routing_router,
+        ]
+        for router in protected:
+            app.include_router(router, dependencies=[Depends(get_current_user)])
+        app.include_router(auth_router)
+        app.include_router(admin_router)
 
-        spa_files = {
-            (Path(root) / name).relative_to(dist).as_posix(): Path(root) / name
-            for root, _dirs, names in os.walk(dist)
-            for name in names
-        }
+        @app.get("/api/health")
+        def health() -> dict[str, object]:
+            supabase = settings.auth.mode == "supabase"
+            return {
+                "status": "ok",
+                "name": APP_NAME,
+                "version": os.environ.get("FW_APP_VERSION", "dev"),
+                "auth_features": {"password_reset": supabase, "invites": supabase},
+            }
 
-        @app.get("/{full_path:path}", include_in_schema=False)
-        def spa(full_path: str) -> FileResponse:
-            # /api/* never falls back to HTML: a missing API route must
-            # stay a JSON 404, not a 200 page.
-            if full_path == "api" or full_path.startswith("api/"):
-                raise HTTPException(status_code=404)
-            return FileResponse(spa_files.get(full_path) or dist / "index.html")
+        # Single-origin serving for the container image (spec: single-container
+        # design). Registered last: FastAPI matches routes in registration
+        # order, so every /api route above wins over the catch-all. Known,
+        # accepted quirk: with dist_dir set, a POST to an unknown path returns
+        # 405 (the catch-all matches by path, GET-only) instead of 404. The
+        # catch-all serves only files enumerated from dist_dir at startup (an
+        # immutable image layer in the container) — no request-derived path is
+        # ever joined onto a filesystem path, so there is nothing for a
+        # traversal segment to escape into.
+        dist_dir = settings.frontend.dist_dir
+        if dist_dir is not None:
+            dist = Path(dist_dir).resolve()
+            if not (dist / "index.html").is_file():
+                raise RuntimeError(
+                    f"frontend.dist_dir={dist} has no index.html — point it at a"
+                    " built Vite dist/"
+                )
+            app.mount(
+                "/assets",
+                StaticFiles(directory=dist / "assets", check_dir=False),
+                name="assets",
+            )
 
-    return app
+            spa_files = {
+                (Path(root) / name).relative_to(dist).as_posix(): Path(root) / name
+                for root, _dirs, names in os.walk(dist)
+                for name in names
+            }
+
+            @app.get("/{full_path:path}", include_in_schema=False)
+            def spa(full_path: str) -> FileResponse:
+                # /api/* never falls back to HTML: a missing API route must
+                # stay a JSON 404, not a 200 page.
+                if full_path == "api" or full_path.startswith("api/"):
+                    raise HTTPException(status_code=404)
+                return FileResponse(spa_files.get(full_path) or dist / "index.html")
+
+        return app
+    except BaseException:
+        # The pool's worker threads must not outlive a failed startup.
+        db.close()
+        raise
 
 
 def __getattr__(name: str):
