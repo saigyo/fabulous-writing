@@ -9,6 +9,7 @@ import os
 import sqlite3
 import uuid
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
 
 import psycopg
@@ -295,7 +296,7 @@ def test_source_only_column_refused_before_any_write(
 ) -> None:
     src_path = tmp_path / "src.db"
     UserStore(SqliteDatabase(src_path)).create_user("user@example.com", "password12345")
-    with sqlite3.connect(src_path) as raw:
+    with closing(sqlite3.connect(src_path)) as raw, raw:
         raw.execute("ALTER TABLE users ADD COLUMN legacy_flag INTEGER")
 
     rc = main(["--db", str(src_path), "import-to-postgres"])
