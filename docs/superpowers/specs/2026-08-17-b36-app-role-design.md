@@ -161,12 +161,12 @@ PG integration (real server):
   `fw_test_role_<hex>` name — roles are cluster-wide and tests run in
   parallel — with `LOGIN` and a throwaway password) whose grants on the
   per-test schema mirror the migration's grants; teardown drops the schema
-  and then the role, with the role drop guaranteed even if the schema drop
-  fails — a teardown bug must never leak a cluster-wide role. (No
-  `DROP OWNED BY`: it needs the role's own privileges, which the
-  non-superuser local `postgres` lacks; the schema drop already removes
-  every schema-scoped grant.) The real `fabwriting_app` role is never
-  touched by tests;
+  and then the role, with the role drop still *attempted* even if the
+  schema drop fails — a teardown bug must never silently skip it, since a
+  leaked role is cluster-wide. (No `DROP OWNED BY`: it needs the role's
+  own privileges, which the non-superuser local `postgres` lacks; the
+  schema drop already removes every schema-scoped grant.) The real
+  `fabwriting_app` role is never touched by tests;
 - API smoke through the restricted role: admin DSN runs `init-db`-style
   schema creation, app connects with `manage_schema: false` as the
   restricted role, exercises signup-free basics (login, document create,
