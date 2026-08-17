@@ -53,9 +53,15 @@ begin
   end if;
   if exists (select 1 from pg_namespace where nspname = 'storage') then
     revoke all on schema storage from fabwriting_app;
+    if has_schema_privilege('fabwriting_app', 'storage', 'USAGE') then
+      raise exception 'fabwriting_app unexpectedly has USAGE on schema storage';
+    end if;
   end if;
   if exists (select 1 from pg_namespace where nspname = 'extensions') then
     revoke all on schema extensions from fabwriting_app;
+    if has_schema_privilege('fabwriting_app', 'extensions', 'USAGE') then
+      raise exception 'fabwriting_app unexpectedly has USAGE on schema extensions';
+    end if;
   end if;
 end
 $$;
