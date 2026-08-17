@@ -282,6 +282,19 @@ def main(
         # --db pins a SQLite file directly and must work without a
         # loadable config (operator escape hatch); backend defaults
         # to sqlite in a bare Settings.
+        try:
+            # Best-effort warning only: load_settings() failing is exactly
+            # when this escape hatch is needed most (a broken config), so
+            # any failure here is swallowed and --db proceeds silently.
+            configured = load_settings()
+        except Exception:
+            configured = None
+        if configured is not None and configured.database.backend == "postgres":
+            print(
+                "config selects the postgres backend; --db overrides it with a "
+                "SQLite file",
+                file=sys.stderr,
+            )
         settings = Settings(db_path=args.db)
     else:
         settings = load_settings()

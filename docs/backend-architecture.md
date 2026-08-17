@@ -778,6 +778,12 @@ a pooled same-region query (roughly 1–2 ms). This is a documented, accepted re
 not an oversight; `anyio.to_thread` is the follow-up lever if hosted latency proves
 worse in practice.
 
+**Collation residual** (spec §R2 residual): a plain `ORDER BY name` or `ORDER BY
+preferred` clause collates BINARY on SQLite but by the database's locale on
+Postgres, so the two backends can order otherwise-tied rows (e.g. differing only
+in case) differently; the parametrized store tests avoid asserting cross-case
+order through those clauses.
+
 **Local testing against Postgres.** `FW_TEST_DATABASE_URL` (distinct from the app's
 own `FW_DATABASE_URL`) points pytest's Postgres-parametrized tests at a disposable
 server — the CI service container, or a local `supabase start` stack's Postgres port
