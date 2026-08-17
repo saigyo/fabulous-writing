@@ -5,7 +5,7 @@ from typing import Any
 from pydantic import BaseModel, Field, computed_field
 
 from app.core.models import Language
-from app.services.db import Database, Row, UniqueViolationError, table_columns
+from app.services.db import Database, Row, UniqueViolationError, table_columns, verify_schema
 from app.services.ownership import GlobalReadOnlyError
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,10 @@ CREATE TABLE IF NOT EXISTS terms (
     case_sensitive INTEGER NOT NULL DEFAULT 0
 );
 """
+
+# Tables (and post-release columns) this store needs; checked instead of
+# created when the app runs without schema management (B36 spec R3).
+_REQUIRED_SCHEMA = {"domains": [("owner_id", "INTEGER")], "terms": []}
 
 
 class Domain(BaseModel):
@@ -78,11 +82,14 @@ def _row_to_term(row: Row) -> Term:
 
 
 class TerminologyStore:
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, *, manage_schema: bool = True) -> None:
         self.db = db
         with self._connect() as conn:
-            conn.executescript(_SCHEMA)
-            self._migrate(conn)
+            if manage_schema:
+                conn.executescript(_SCHEMA)
+                self._migrate(conn)
+            else:
+                verify_schema(conn, _REQUIRED_SCHEMA)
 
     def _migrate(self, conn: Any) -> None:
         columns = table_columns(conn, "domains")

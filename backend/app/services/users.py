@@ -11,7 +11,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.core.auth import IAT_LEEWAY_SECONDS, check_password, hash_password
-from app.services.db import Database, Row, UniqueViolationError, migrate_columns
+from app.services.db import Database, Row, UniqueViolationError, migrate_columns, verify_schema
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -54,6 +54,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lower
 # Fields update_user accepts. Anything else is a programming error, not a
 # silently ignored write.
 _UPDATABLE = ("display_name", "tier", "is_admin", "is_active", "external_id")
+
+_MIGRATED_COLUMNS = [
+    ("password_changed_at", "TEXT"),
+    ("token_epoch", "INTEGER NOT NULL DEFAULT 0"),
+]
+
+# Tables (and post-release columns) this store needs; checked instead of
+# created when the app runs without schema management (B36 spec R3).
+_REQUIRED_SCHEMA = {"users": _MIGRATED_COLUMNS, "admin_audit": []}
 
 
 class User(BaseModel):
@@ -107,11 +116,14 @@ def _row_to_user(row: Row) -> User:
 
 
 class UserStore:
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, *, manage_schema: bool = True) -> None:
         self.db = db
         with self._connect() as conn:
-            conn.executescript(_SCHEMA)
-            self._migrate(conn)
+            if manage_schema:
+                conn.executescript(_SCHEMA)
+                self._migrate(conn)
+            else:
+                verify_schema(conn, _REQUIRED_SCHEMA)
 
     def _connect(self):
         return self.db.connect()
@@ -121,14 +133,7 @@ class UserStore:
         field. A bare DDL change to `_SCHEMA` only applies via
         `CREATE TABLE IF NOT EXISTS`, which never touches an existing
         table."""
-        migrate_columns(
-            conn,
-            "users",
-            [
-                ("password_changed_at", "TEXT"),
-                ("token_epoch", "INTEGER NOT NULL DEFAULT 0"),
-            ],
-        )
+        migrate_columns(conn, "users", _MIGRATED_COLUMNS)
 
     def create_user(
         self,

@@ -239,6 +239,12 @@ class DatabaseSettings(BaseModel):
 
     backend: Literal["sqlite", "postgres"] = "sqlite"
 
+    # When False the app never issues DDL: store construction verifies the
+    # schema instead (created out-of-band via `init-db` under an admin
+    # FW_DATABASE_URL). Intended for postgres mode with the DML-only app
+    # role (B36); semantics are backend-uniform.
+    manage_schema: bool = True
+
 
 # Restricted to the ledger's source values; a typo'd key must fail loudly,
 # not silently price a source at the default.

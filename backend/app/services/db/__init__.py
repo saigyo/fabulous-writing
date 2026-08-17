@@ -101,6 +101,32 @@ def migrate_columns(
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
 
+def verify_schema(
+    conn: Any, required: Mapping[str, Sequence[tuple[str, str]]]
+) -> None:
+    """Check that every required table exists and carries the columns
+    `migrate_columns` would ensure (same (name, decl) shape; decls unused).
+    Read-only by design: must work under a DML-only role (B36 spec R3).
+    Raises RuntimeError naming every problem plus the remedy."""
+    problems = []
+    for table, columns in required.items():
+        existing = table_columns(conn, table)
+        if not existing:
+            problems.append(f"table '{table}' is missing")
+            continue
+        missing = [name for name, _decl in columns if name not in existing]
+        if missing:
+            problems.append(
+                f"table '{table}' is missing columns: {', '.join(missing)}"
+            )
+    if problems:
+        raise RuntimeError(
+            "database schema is not ready: "
+            + "; ".join(problems)
+            + f". Run the 'init-db' manage command with an admin {DATABASE_URL_ENV} first."
+        )
+
+
 logger = logging.getLogger(__name__)
 
 DATABASE_URL_ENV = "FW_DATABASE_URL"
