@@ -215,6 +215,17 @@ Every guard test is mutation-verified per the standing rule.
   holds no app tables yet — B16's `init-db` will create them under the
   admin role, covered by the default-privileges grants.
 
+> **Amendment (final review, 2026-08-18):** the local-stack bullet's premise
+> above — "existing tables are owned by `postgres`, so the `ON ALL TABLES`
+> grants cover them" — is factually wrong for this stack: probed, `public`
+> on the running stack holds 0 relations and 0 functions. The `ON ALL
+> TABLES`/`SEQUENCES`/`FUNCTIONS` grants therefore cover nothing locally
+> either; the correct step order is the same as the hosted bullet's: apply
+> the role + grants migrations, run `init-db` (or the importer) under the
+> admin DSN so the tables land under the `alter default privileges`
+> coverage, and only THEN flip the local `FW_DATABASE_URL` to the app role
+> and set `manage_schema: false`.
+
 ## Out of scope
 
 - Moving table DDL into CLI migrations (rejected above).

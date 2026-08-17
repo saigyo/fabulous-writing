@@ -68,13 +68,20 @@ Supabase Auth's `auth`. Production should instead connect as
    alter role fabwriting_app with login password '<generated>';
    ```
 
-3. **Verify**, still in the SQL editor:
+3. **Verify**, still in the SQL editor. `SET ROLE` requires membership *with
+   the SET option*, which `postgres` doesn't have on a role it only just
+   created — grant it first (one line, harmless: `postgres` already holds
+   ADMIN OPTION on every role it creates):
 
    ```sql
+   grant fabwriting_app to postgres with set true;
+
    set role fabwriting_app;
    select * from auth.users limit 1;   -- must fail: permission denied for schema auth
    create table public.probe (id int); -- must fail: permission denied for schema public
    reset role;
+
+   revoke fabwriting_app from postgres; -- optional hygiene: undoes the grant above
    ```
 
    On a database that already holds app tables, also verify DML works under

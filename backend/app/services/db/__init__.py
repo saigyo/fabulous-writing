@@ -112,7 +112,10 @@ def verify_schema(
     for table, columns in required.items():
         existing = table_columns(conn, table)
         if not existing:
-            problems.append(f"table '{table}' is missing")
+            # information_schema.columns is privilege-filtered on Postgres
+            # (probed): a table that exists but was never granted to this
+            # role is indistinguishable here from one that doesn't exist.
+            problems.append(f"table '{table}' is missing or not readable by this role")
             continue
         missing = [name for name, _decl in columns if name not in existing]
         if missing:
@@ -123,7 +126,8 @@ def verify_schema(
         raise RuntimeError(
             "database schema is not ready: "
             + "; ".join(problems)
-            + f". Run the 'init-db' manage command with an admin {DATABASE_URL_ENV} first."
+            + f". Run the 'init-db' manage command with an admin {DATABASE_URL_ENV} first;"
+            " if the table already exists, check this role's grants instead."
         )
 
 
