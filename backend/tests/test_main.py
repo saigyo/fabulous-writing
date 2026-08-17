@@ -7,6 +7,8 @@ docstring for why), this `__getattr__` hook is the single line deciding
 whether that command works at all in production. It had no regression test.
 """
 
+import types
+
 import pytest
 from uvicorn.importer import import_from_string
 
@@ -87,6 +89,30 @@ def test_failed_startup_closes_the_pool(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError) as exc_info:
         create_app(settings)
     assert exc_info.value is sentinel
+    assert close_calls == 1
+
+
+async def test_lifespan_closes_the_pool_on_abnormal_exit():
+    # _lifespan wraps its `yield` in `try/finally` so app.state.db.close()
+    # runs even when the `async with` body raises -- e.g. a request handler
+    # exception propagating through uvicorn's lifespan machinery, or
+    # cancellation. A bare `yield` would skip close() on that path, leaking
+    # the Postgres pool's connections and worker threads. Drive `_lifespan`
+    # directly as the asynccontextmanager it is, against a minimal fake app,
+    # to pin that close() still runs when the body throws.
+    close_calls = 0
+
+    class FakeDatabase:
+        def close(self):
+            nonlocal close_calls
+            close_calls += 1
+
+    fake_app = types.SimpleNamespace(state=types.SimpleNamespace(db=FakeDatabase()))
+
+    with pytest.raises(RuntimeError, match="boom"):
+        async with main_module._lifespan(fake_app):
+            raise RuntimeError("boom")
+
     assert close_calls == 1
 
 

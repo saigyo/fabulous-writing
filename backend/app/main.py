@@ -145,10 +145,12 @@ def make_provider_factory(settings: Settings):
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    yield
-    # The Postgres pool must release its connections on shutdown; the
-    # SQLite implementation's close() is a documented no-op.
-    app.state.db.close()
+    try:
+        yield
+    finally:
+        # The Postgres pool must release its connections on EVERY shutdown
+        # path, abnormal included; the SQLite close() is a documented no-op.
+        app.state.db.close()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
