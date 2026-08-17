@@ -619,52 +619,15 @@ In `usage.py` `credits_used` (line 358), the `conn.execute("BEGIN")` becomes:
 
 - [ ] **Step 3: Write the failing concurrency test**
 
-Append to `backend/tests/test_usage.py` (imports: `threading`, plus whatever the file already has; construct settings objects exactly like the file's existing reservation tests do — read one before writing):
+**Amended post-execution:** this step originally prescribed a `threading.Barrier`-based racer (8 `threading.Thread`s sharing one `UsageStore`/connection pool). Executing it surfaced a mutation-insensitive guard: CPython's GIL plus a fast loopback Postgres round-trip lets one thread finish its whole insert-then-count-then-commit sequence before a second thread's dispatch catches up, so the threads self-serialize and the test stayed green even with `pg_advisory_xact_lock` removed — silently defeating the mutation contract. Fixed before commit (216ad8e) by racing via `multiprocessing` instead, since OS processes have no such GIL hand-off bias and reliably reproduce the write skew; a robustness follow-up (e5c1930) joins/terminates workers on failure so a stuck or dead child can't hang the run.
 
-The file's existing `test_two_simultaneous_reservations_admit_exactly_one` (line ~163) is the template — same helpers (`budget_limits`, `FakeUser`, module constants `SERVER`, `REQUESTED`, `EFFECTIVE`), same positional `reserve_llm_run` call shape, widened to 8 racers:
+What shipped, in `backend/tests/test_usage.py`: a module-level worker function `_pg_reservation_worker(dsn, run_id, barrier, queue)` — module level so `multiprocessing`'s `spawn` start method can pickle a reference to it and re-import the module in the child. Each child builds its own `PostgresDatabase(dsn)` and `UsageStore(database)`, waits on a shared `multiprocessing.Barrier(8)`, calls `reserve_llm_run`, and reports `(decision.kind, decision.reservation_id)` on a `multiprocessing.Queue`, closing its own database in a `finally`. `TestPostgresReservationConcurrency.test_concurrent_reservations_admit_exactly_one` spawns 8 such `Process`es against the pool's DSN (`pg_database._pool.conninfo` — no public accessor exists), collects one queue message per process with a `try`/`finally` that terminates and joins (with timeout) any still-alive worker if collection raises or times out — otherwise a real failure surfaces as a confusing orphan-process error instead, or hangs CI. It then asserts every process exited 0 and that exactly one racer was admitted.
 
-```python
-class TestPostgresReservationConcurrency:
-    def test_concurrent_reservations_admit_exactly_one(self, pg_database):
-        """Write-skew regression pin (spec §R4): under READ COMMITTED every
-        racing insert-first reservation sees only its own uncommitted row
-        (spent = 1, not > 1) and ALL of them pass the budget check — the
-        SQLite write lock that made insert-first TOCTOU-safe does not
-        exist here. pg_advisory_xact_lock serializes the transactions;
-        with it, exactly one of these eight is admitted, deterministically.
-        Mutation contract: with the lock removed this fails on the first
-        round with a multi-admission overshoot."""
-        store = UsageStore(pg_database)
-        limits = budget_limits(credits_per_day=1)
-        barrier = threading.Barrier(8)
-        decisions = []
-        record = threading.Lock()
-
-        def attempt(run_id):
-            barrier.wait()
-            decision = store.reserve_llm_run(
-                FakeUser(1), limits, SERVER, REQUESTED, EFFECTIVE,
-                1, "check", run_id,
-            )
-            with record:
-                decisions.append(decision)
-
-        threads = [threading.Thread(target=attempt, args=(f"race{i}",))
-                   for i in range(8)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-        admitted = [d for d in decisions if d.kind == "admitted"]
-        assert len(admitted) == 1, (
-            f"budget overshoot: {len(admitted)} admissions against a"
-            " one-credit day window"
-        )
-```
-
-(Serialized, the outcome is deterministic: the first transaction sums to 1 — not > 1, admitted; every later one sees the committed row, sums ≥ 2, and is rejected — so the assertion is exact, no slack, no rounds needed. If the class needs any import or constant the file does not already have at module level, only `pg_database` qualifies — everything else above already exists in the file.)
+Mutation contract unchanged: with the lock removed the test fails on the first round, deterministically, with a multi-admission overshoot.
 
 - [ ] **Step 4: Run to verify it fails**
+
+**Amended post-execution:** "bounded by pool `max_size`" below describes the threading racer's constraint (all racers sharing one connection pool); the shipped multiprocessing racers each open their own `PostgresDatabase`/pool, so that bound does not apply — empirically 7/8 admitted with the lock absent, not 2.
 
 Run: `PG_ENV uv run pytest tests/test_usage.py::TestPostgresReservationConcurrency -n0 -q`
 Expected: FAIL **on the first run, deterministically** — without the lock, the racing transactions each see spent = 1 (own row only) and multiple are admitted (empirically 2, bounded by pool `max_size` and commit timing, not 8 — the assertion is `== 1` so any overshoot fails). Record the observed admission count in the report.
@@ -695,6 +658,8 @@ At the top of `reserve_llm_run`'s try block, BEFORE the staleness sweep:
 ```
 
 - [ ] **Step 6: Verify + mutation-verify**
+
+**Amended post-execution:** the threading racer originally specified for Step 3 passed this exact mutation check falsely — the "green every time" below held for it too, which is precisely why the guard was mutation-insensitive (see Step 3's amendment). The shipped multiprocessing racers give the same green-three-times result AND correctly fail under mutation: 7/8 admitted with the lock commented out, green again once restored.
 
 Run: `PG_ENV uv run pytest tests/test_usage.py::TestPostgresReservationConcurrency -n0 -q` three times → green every time (serialized outcome is deterministic).
 Mutation: comment the lock statement out → the test must fail on the first run (overshoot admission); restore by re-editing; green again.
