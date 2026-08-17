@@ -17,15 +17,10 @@ from pathlib import Path
 # sqlite-only deployments still never load psycopg.
 import psycopg
 
+from app.schema import init_stores
 from app.services.db import DATABASE_URL_ENV, table_columns
 from app.services.db.postgres import PostgresDatabase
 from app.services.db.sqlite import SqliteDatabase
-from app.services.documents import DocumentStore
-from app.services.folders import FolderStore
-from app.services.profiles import ProfileStore
-from app.services.terminology import TerminologyStore
-from app.services.usage import UsageStore
-from app.services.users import UserStore
 
 # Copy order: terms REFERENCES domains (the schema's one declared FK);
 # everything else is logical-reference only, ordered parents-first for
@@ -42,17 +37,6 @@ _TABLES = (
     "llm_usage",
 )
 _IDENTITY_TABLES = tuple(t for t in _TABLES if t != "profile_seed_markers")
-
-
-def _init_stores(db) -> None:
-    """Constructing the stores runs schema init + idempotent migrations —
-    normalizing an old source file and creating the target schema."""
-    UserStore(db)
-    FolderStore(db)
-    DocumentStore(db)
-    TerminologyStore(db)
-    ProfileStore(db)
-    UsageStore(db)
 
 
 def _collisions_under_unicode_folding(src_conn, dst_conn) -> list[tuple[int, str]]:
@@ -141,7 +125,7 @@ def run_import(source_path: Path, *, env: Mapping[str, str] | None = None) -> in
         # happens lazily on the first statement the store constructors run
         # below. Mirrors manage.py's own catch around UserStore construction.
         source = SqliteDatabase(source_path)
-        _init_stores(source)
+        init_stores(source)
     except sqlite3.Error as exc:
         print(
             f"could not open source database at {source_path} ({exc}). Check "
@@ -163,7 +147,7 @@ def run_import(source_path: Path, *, env: Mapping[str, str] | None = None) -> in
         # tables; a refused target holds only empty tables and is safe to
         # re-import into after fixing the cause.
         try:
-            _init_stores(target)
+            init_stores(target)
         except psycopg.Error as exc:
             # A connectable target whose role lacks DDL privileges, or one
             # with an incompatible existing schema, fails here — driver/DDL

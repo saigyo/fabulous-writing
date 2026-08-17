@@ -212,7 +212,7 @@ _COMMANDS = {
 # own early branch in main() dispatches it before a UserStore exists) but
 # still needs to appear in error()'s valid-command list, hence this maps
 # separately from the dispatch table instead of folding into it.
-_ALL_COMMANDS = (*_COMMANDS, "import-to-postgres")
+_ALL_COMMANDS = (*_COMMANDS, "import-to-postgres", "init-db")
 
 
 class _SilentArgumentParser(argparse.ArgumentParser):
@@ -264,6 +264,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "import-to-postgres",
         help="one-time copy of the SQLite database into FW_DATABASE_URL",
     )
+    subparsers.add_parser(
+        "init-db",
+        help="create or migrate the database schema (postgres: run with an "
+        "admin FW_DATABASE_URL; the runtime app role cannot run DDL)",
+    )
     return parser
 
 
@@ -296,6 +301,35 @@ def main(
 
         source_path = args.db if args.db is not None else load_settings().db_path
         return run_import(source_path)
+    if args.command == "init-db":
+        # The one command whose purpose is DDL: it constructs every store
+        # with schema management forced on, ignoring database.manage_schema.
+        from app.schema import init_stores
+
+        settings = Settings(db_path=args.db) if args.db is not None else load_settings()
+        database = create_database(settings, timeout=_BUSY_TIMEOUT_SECONDS)
+        try:
+            try:
+                init_stores(database)
+            except sqlite3.OperationalError as exc:
+                # Same operator-facing discrimination as the UserStore
+                # startup path below: busy vs. unopenable.
+                if _is_lock_contention(exc):
+                    print(
+                        f"Database is busy ({exc}). Is the server writing right now?",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        f"Could not open the database at {settings.db_path} ({exc}). "
+                        "Check the path and its permissions.",
+                        file=sys.stderr,
+                    )
+                return 1
+        finally:
+            database.close()
+        print("database schema initialized (or already up to date)")
+        return 0
     if args.db is not None:
         # --db pins a SQLite file directly and must work without a
         # loadable config (operator escape hatch); backend defaults

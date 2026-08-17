@@ -391,10 +391,10 @@ def test_target_init_failure_reports_named_error_without_traceback(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # A connectable target whose role lacks DDL privileges (or carries an
-    # incompatible existing schema) fails inside _init_stores(target).
+    # incompatible existing schema) fails inside init_stores(target).
     # Simulating an actual privilege revocation is awkward against a
     # throwaway schema owned by the test role, so this monkeypatches
-    # _init_stores itself: the source call (dialect "sqlite") passes
+    # init_stores itself: the source call (dialect "sqlite") passes
     # through untouched, and the target call (dialect "postgres" — the
     # second call) raises the driver error DDL failures actually surface.
     import app.manage_import as manage_import
@@ -402,7 +402,7 @@ def test_target_init_failure_reports_named_error_without_traceback(
     src_path = tmp_path / "src.db"
     UserStore(SqliteDatabase(src_path)).create_user("user@example.com", "password12345")
 
-    real_init_stores = manage_import._init_stores
+    real_init_stores = manage_import.init_stores
 
     def failing_init_stores(db):
         if getattr(db, "dialect", None) == "postgres":
@@ -411,7 +411,7 @@ def test_target_init_failure_reports_named_error_without_traceback(
             )
         return real_init_stores(db)
 
-    monkeypatch.setattr(manage_import, "_init_stores", failing_init_stores)
+    monkeypatch.setattr(manage_import, "init_stores", failing_init_stores)
 
     rc = main(["--db", str(src_path), "import-to-postgres"])
 
