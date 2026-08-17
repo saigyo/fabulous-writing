@@ -7,8 +7,9 @@ single-container deployment). Postgres mode exists for hosted deployments —
 anywhere the data needs to live outside the container's own volume, or
 survive a redeploy that doesn't carry the volume with it. The backend has no
 Supabase-specific dependency: it treats the target as ordinary managed
-Postgres (advisory locks, `REPEATABLE READ` for the usage-reservation
-transaction — nothing Supabase-only), and
+Postgres (an advisory lock for the usage-reservation transaction,
+`REPEATABLE READ` for the multi-window credit-usage read — nothing
+Supabase-only), and
 [supabase.com](https://supabase.com) is simply the hosted instance this
 project documents and tests against.
 

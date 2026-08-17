@@ -227,15 +227,21 @@ nothing.
 Subcommand `import-to-postgres`: reads a SQLite file (default: the
 configured `db_path`), writes to `FW_DATABASE_URL`.
 
-1. Refuses a non-empty target (any rows in any known table → error, no
-   writes).
+1. Refuses a non-empty target (any rows in any known table → error, no ROW
+   writes). Schema initialization (idempotent DDL) runs before this check —
+   and before the pre-checks below — deliberately, so they can query the
+   tables; a refused target therefore holds empty tables only and is safe
+   to re-import into once the cause is fixed.
 2. Pre-checks emails that are distinct in SQLite but collide under
    Postgres' full-Unicode `LOWER()` folding → error listing the affected
    row ids and emails. Printing emails is correct here: this is an
    operator-only CLI and the operator needs them to resolve the collision;
    the secret/token logging rules are about credentials, not account data.
-3. Copies all tables in FK order with explicit ids, resets each identity
-   sequence (`setval` to `MAX(id)`), verifies per-table row counts.
+3. Copies all tables in FK order with explicit ids, then restarts each
+   identity sequence past the imported ids with the transactional
+   `ALTER TABLE … ALTER COLUMN id RESTART WITH …` (not `setval`, which is
+   non-transactional and would survive a later rollback), verifies
+   per-table row counts.
 4. One transaction: all-or-nothing.
 
 ### R9 — Documentation
