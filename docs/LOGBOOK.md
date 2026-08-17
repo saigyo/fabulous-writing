@@ -4178,3 +4178,68 @@ architecture doc: sync stores block the event loop ~1–2 ms per query
 in async handlers (threadpooled CRUD unaffected), and plain
 `ORDER BY name` clauses follow the database collation on Postgres —
 parametrized tests must not assert cross-case order through them.
+
+## 2026-08-17 — B15 PR3: import-to-postgres and the operator docs — B15 complete (PR #111)
+
+The closing B15 PR (#56): the migration path and the documentation that
+makes the Postgres backend operable. `manage.py import-to-postgres`
+(logic in `app/manage_import.py`) copies a SQLite deployment into
+`FW_DATABASE_URL` — both sides get store-initialized schemas, three
+up-front refusals (source-only columns from pre-B15 files, emails that
+collide only under the target's own `LOWER()` folding, non-empty
+target), an FK-ordered explicit-id copy streamed in bounded chunks,
+transactional identity restarts, and per-table count verification
+inside one all-or-nothing transaction. `docs/postgres-setup.md` covers
+mode selection, the DSN and every password mechanism (percent-encoded
+userinfo plus the libpq alternatives the verbatim-DSN design inherits),
+the import walkthrough, and the honest pooling guidance.
+
+Review pressure earned its keep at every layer. The pre-execution plan
+review ran the importer verbatim against live Postgres and found a
+Critical hiding in the plan file itself: the KELVIN SIGN test glyph had
+silently lost two characters in an edit, making the collision test
+vacuous — the fix mandates writing it as an escape, never a raw glyph.
+The same review disproved the spec's own Supavisor rationale (the real
+transaction-pooling breaker is psycopg's server-side prepared
+statements, not the advisory locks, which are transaction-scoped and
+pooling-compatible) and surfaced that psycopg_pool echoes a MALFORMED
+DSN's value into its own error log — pre-existing since PR2, filed as
+#110 rather than scope-crept. The final whole-branch review drove the
+real CLI end-to-end on live Postgres and proved my own triage wrong:
+what the ledger had parked as a cosmetic assertion nit was a fully
+vacuous guard test — the non-empty-target refusal, the one check
+standing between an operator and a populated production database,
+could be deleted with the suite staying green. Fixed with
+refusal-wording pins.
+
+Copilot went three rounds, 7 inline + 10 suppressed findings, every
+single one legitimate — the standout being round one's catch that
+`setval` is non-transactional in PostgreSQL, so sequence changes
+survived our rollback and quietly broke the all-or-nothing promise;
+the importer now uses `ALTER TABLE … RESTART WITH` (catalog DDL,
+probe-verified to roll back), pinned by a commit-fault test that fails
+if anyone regresses to `setval`. Rounds two and three were
+suppressed-only and still all real: source-of-truth drift syncs, a
+target-init error-handling gap, and an unpinned bounded-memory
+behavior (a fake-cursor test now rejects `fetchall` outright). Along
+the way the owner spotted 12 unclosed-sqlite-connection
+ResourceWarnings in the CI logs — investigation showed them pre-dating
+B15 entirely (test files using `with sqlite3.connect(...)`, whose
+context manager never closes); PR3's own new instance was fixed here
+and the repo-wide sweep filed as B34 (#112).
+
+Operational footnote: GitHub's API spent hours flapping 503s through
+the review rounds. Replies and comments rerouted through REST, thread
+resolution waited (the owner eventually clicked them through), and one
+real casualty taught a lesson — `gh pr view` returned empty mid-outage
+and a piped `gh pr edit` wiped the PR body, `Closes #56.` included;
+rebuilt from the creation file and PATCHed back with verification.
+Never pipe a fetched-then-edited artifact back without checking the
+fetch succeeded.
+
+Verification: default gate 1490 passed zero warnings (three importer
+tests run PG-free); full live-PG suite green with 13 importer tests;
+six mutation-verified guards in the import module alone. B15 is
+complete across its three PRs — the app now runs on SQLite or managed
+Postgres behind one seam, with a verified migration path between them.
+B16 (fly.io) is unblocked with the stateless profile in hand.
