@@ -4113,3 +4113,68 @@ mapping), frontend untouched and green (645 + tsc + oxlint). One
 process footnote: the Task 2 implementer died mid-task on an API
 connection error; resuming the same agent finished cleanly — the
 ledger-and-report discipline made the recovery a non-event.
+
+## 2026-08-17 — B15 PR2: the Postgres backend — pool, advisory-lock serialization, parametrized suites, CI lane (PR #109)
+
+Second of three B15 PRs (#56): the Postgres implementation behind PR1's
+seam. `db/postgres.py` carries the whole dialect: a psycopg 3 pool
+(fixed 1–5, eager `wait()` so a bad DSN fails at boot with the variable
+name and never the value, closed through a new app lifespan), qmark→`%s`
+translation, a dual-access row factory, `UniqueViolation` mapping, and
+canonical-DDL rendering so the six stores' `_SCHEMA` strings run
+verbatim on both backends. Selection via `database.backend` (default
+sqlite, untouched) with the DSN exclusively in `FW_DATABASE_URL` —
+env-only, orthogonal to `auth.mode`. The correctness heart:
+`reserve_llm_run`'s insert-first TOCTOU guard is not safe under READ
+COMMITTED (write skew — every racing transaction sees only its own
+row), so on Postgres the transaction opens with a global
+`pg_advisory_xact_lock`, restoring the single-writer property SQLite
+provides for free; `credits_used` gets a REPEATABLE READ snapshot for
+the same per-statement-snapshot reason. Store suites are parametrized
+`[sqlite, postgres]` (137 PG variants in schema-per-test isolation,
+SQLite-specific tests pinned with stated reasons), topped by a PG-mode
+API smoke and an always-on `test-postgres` CI lane running the full
+suite against a postgres:17 service container.
+
+The execution's one genuine discovery: the planned threading-based
+race test for the advisory lock was mutation-INSENSITIVE — CPython's
+GIL plus a fast loopback round-trip serialized the racers by accident,
+so the test stayed green with the lock removed. The implementer caught
+it, proved the real race with OS processes (7/8 budget overshoot
+without the lock), and the shipped test now races 8 spawn-context
+processes; the lesson (concurrency guards need process-level racers)
+went into project memory. The plan review had its own first: the Opus
+reviewer ran the plan's code verbatim against a live Postgres 17
+before execution, catching a Critical that five duplicate pre-scans
+used SQLite's bare-column GROUP BY leniency — invalid grammar on PG —
+plus thirteen further findings, which is what made six of seven tasks
+first-pass clean. The final whole-branch review probed secrets
+discipline with a live bad-DSN boot under DEBUG logging (the password
+never surfaces) and audited every read-modify-write path for PG
+hazards.
+
+Copilot went five rounds and earned its keep in every non-clean one:
+two real inline findings (orphanable multiprocessing workers on test
+failure; the CLI leaking the pool on in-process invocation), then two
+real suppressed ones (the failed-startup pool cleanup guarded only by
+an uncommitted probe — now a committed, mutation-verified close-spy
+test; the committed plan still prescribing the abandoned threading
+test — amended post-execution), then one suppressed (lifespan close
+skipped on abnormal exit — now try/finally with a direct-lifespan
+guard test), and in round four it independently rediscovered our
+documented residual — the untested REPEATABLE READ statement — which
+was then closed with the final reviewer's deterministic recipe: a
+mid-loop commit through a second connection makes the window sums
+diverge under READ COMMITTED ({'hour': 49, 'week': 1049}) and agree
+under one snapshot. Round five: clean, nothing suppressed. Along the
+way the licenses CI job caught the manifest drift for the three new
+LGPL-3.0 packages, regenerated via the B17 container recipe.
+
+Verification: default gate unchanged and Docker-free (1485 passed,
+zero warnings, PG tests skipping without `FW_TEST_DATABASE_URL`); full
+suite against live Postgres 1636+ passed with zero skips; frontend
+untouched and green. Deliberate residuals, documented in the
+architecture doc: sync stores block the event loop ~1–2 ms per query
+in async handlers (threadpooled CRUD unaffected), and plain
+`ORDER BY name` clauses follow the database collation on Postgres —
+parametrized tests must not assert cross-case order through them.
