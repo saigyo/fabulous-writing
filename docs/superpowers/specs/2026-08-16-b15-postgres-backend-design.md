@@ -241,11 +241,12 @@ configured `db_path`), writes to `FW_DATABASE_URL`.
 ### R9 — Documentation
 
 - New `docs/postgres-setup.md`: Supabase DSN guidance (direct connection or
-  Supavisor **session** mode — required because the app pools connections
-  itself and relies on advisory locks and `search_path`; transaction pooling
-  breaks both), `FW_DATABASE_URL` setup, import-tool walkthrough, backup
-  note ("your Postgres provider's backup story replaces copying the data
-  directory").
+  Supavisor **session** mode — required because the app issues server-side
+  prepared statements (psycopg's default `prepare_threshold`), which
+  transaction-mode pooling does not support, and the app already runs its
+  own connection pool, so an external transaction pooler adds nothing),
+  `FW_DATABASE_URL` setup, import-tool walkthrough, backup note ("your
+  Postgres provider's backup story replaces copying the data directory").
 - `docs/postgres-setup.md` also documents how the password reaches the app
   (owner-requested, 2026-08-17): normally as the DSN's userinfo component,
   with special characters percent-encoded (`@`→`%40`, `:`→`%3A`, `/`→`%2F`,

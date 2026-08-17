@@ -9,6 +9,11 @@ For how the backend consumes what you configure here, see
 [Authentication and user accounts](backend-architecture.md#authentication-and-user-accounts)
 in the architecture doc.
 
+Auth mode and database backend are independent choices — `auth.mode:
+supabase` on this page has nothing to do with `database.backend: postgres`;
+see [`docs/postgres-setup.md`](postgres-setup.md) for the latter. A
+deployment can run either, both, or neither.
+
 ## 1. Create the project
 
 Create a project at [supabase.com](https://supabase.com) and note its URL:
