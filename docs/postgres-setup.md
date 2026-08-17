@@ -71,14 +71,41 @@ Supabase Auth's `auth`. Production should instead connect as
 3. **Verify**, still in the SQL editor. `SET ROLE` requires membership *with
    the SET option*, which `postgres` doesn't have on a role it only just
    created — grant it first (one line, harmless: `postgres` already holds
-   ADMIN OPTION on every role it creates):
+   ADMIN OPTION on every role it creates).
+
+   The SQL editor runs a whole pasted block as one transaction, so a probe
+   that fails as expected (`permission denied`) would otherwise abort the
+   transaction and skip everything after it — including `reset role` and
+   the cleanup `revoke`. Wrap each expected-to-fail probe in its own `DO`
+   block that catches `insufficient_privilege` and turns it back into a
+   `NOTICE`, and turns an *unexpected success* into a loud exception
+   instead, so the whole block always runs to completion:
 
    ```sql
    grant fabwriting_app to postgres with set true;
 
    set role fabwriting_app;
-   select * from auth.users limit 1;   -- must fail: permission denied for schema auth
-   create table public.probe (id int); -- must fail: permission denied for schema public
+
+   do $$
+   begin
+     perform 1 from auth.users limit 1;
+     raise exception 'FAIL: select on auth.users was allowed';
+   exception
+     when insufficient_privilege then
+       raise notice 'OK: select on auth.users denied';
+   end
+   $$;
+
+   do $$
+   begin
+     create table public.probe (id int);
+     raise exception 'FAIL: create table in public was allowed';
+   exception
+     when insufficient_privilege then
+       raise notice 'OK: create table in public denied';
+   end
+   $$;
+
    reset role;
 
    revoke fabwriting_app from postgres; -- optional hygiene: undoes the grant above

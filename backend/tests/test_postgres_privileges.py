@@ -55,38 +55,54 @@ def restricted() -> Iterator[Restricted]:
     admin_dsn = f"{base_dsn}{sep}options=-csearch_path%3D{schema}"
     with psycopg.connect(base_dsn, autocommit=True) as admin:
         admin.execute(f'CREATE SCHEMA "{schema}"')
-        # Mirrors supabase/migrations/20260817090100_app_role_grants.sql,
-        # scoped to the throwaway schema -- and, crucially, applied to the
-        # SCHEMA BEFORE init_stores() creates any table in it, matching
-        # production order (`db push` grants an empty schema, `init-db`
-        # creates tables afterwards under the admin role). In that order an
-        # `ON ALL TABLES` grant would match nothing; only the
-        # `ALTER DEFAULT PRIVILEGES` clauses make the schema usable, so
-        # those -- not a superseded post-hoc grant -- are what this fixture
-        # must exercise.
         admin.execute(
             f'CREATE ROLE "{role}" LOGIN NOINHERIT NOBYPASSRLS '
             f"PASSWORD '{password}'"
         )
-        admin.execute(f'GRANT USAGE ON SCHEMA "{schema}" TO "{role}"')
-        admin.execute(
-            f'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA "{schema}" '
-            f'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "{role}"'
-        )
-        admin.execute(
-            f'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA "{schema}" '
-            f'GRANT USAGE, SELECT ON SEQUENCES TO "{role}"'
-        )
-    db = PostgresDatabase(admin_dsn)
-    try:
-        init_stores(db)  # admin (postgres) creates the tables, as init-db
-        # would -- AFTER the default-privilege grants above, so the tables
-        # land already usable to `role` without any per-table grant.
-    finally:
-        db.close()
-    base_restricted = _swap_userinfo(base_dsn, role, password)
-    sep2 = "&" if "?" in base_restricted else "?"
-    restricted_dsn = f"{base_restricted}{sep2}options=-csearch_path%3D{schema}"
+        # From here on, the role exists cluster-wide -- a failure in any of
+        # the remaining setup must not skip the fixture's own teardown
+        # (below, after the `yield`), since a setup exception makes pytest
+        # never reach the `yield` at all. Best-effort clean up what setup
+        # did manage to create, then re-raise so the original failure still
+        # surfaces as the test error.
+        try:
+            # Mirrors supabase/migrations/20260817090100_app_role_grants.sql,
+            # scoped to the throwaway schema -- and, crucially, applied to
+            # the SCHEMA BEFORE init_stores() creates any table in it,
+            # matching production order (`db push` grants an empty schema,
+            # `init-db` creates tables afterwards under the admin role). In
+            # that order an `ON ALL TABLES` grant would match nothing; only
+            # the `ALTER DEFAULT PRIVILEGES` clauses make the schema usable,
+            # so those -- not a superseded post-hoc grant -- are what this
+            # fixture must exercise.
+            admin.execute(f'GRANT USAGE ON SCHEMA "{schema}" TO "{role}"')
+            admin.execute(
+                f'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA "{schema}" '
+                f'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "{role}"'
+            )
+            admin.execute(
+                f'ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA "{schema}" '
+                f'GRANT USAGE, SELECT ON SEQUENCES TO "{role}"'
+            )
+            db = PostgresDatabase(admin_dsn)
+            try:
+                init_stores(db)  # admin (postgres) creates the tables, as
+                # init-db would -- AFTER the default-privilege grants above,
+                # so the tables land already usable to `role` without any
+                # per-table grant.
+            finally:
+                db.close()
+            base_restricted = _swap_userinfo(base_dsn, role, password)
+            sep2 = "&" if "?" in base_restricted else "?"
+            restricted_dsn = (
+                f"{base_restricted}{sep2}options=-csearch_path%3D{schema}"
+            )
+        except BaseException:
+            try:
+                admin.execute(f'DROP SCHEMA "{schema}" CASCADE')
+            finally:
+                admin.execute(f'DROP ROLE "{role}"')
+            raise
     yield Restricted(base_dsn, schema, role, admin_dsn, restricted_dsn)
     # Teardown discipline: the role is CLUSTER-WIDE — always ATTEMPT
     # DROP ROLE even if the schema drop raises (if the schema drop failed,

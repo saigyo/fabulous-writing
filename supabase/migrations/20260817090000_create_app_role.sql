@@ -50,10 +50,31 @@ $$;
 -- cannot silently fix that via ALTER -- the assertion below turns it into
 -- a loud failure instead of a silent no-op or a confusing permission
 -- error deep in `db push`.
+--
+-- Membership risk: NOINHERIT only stops fabwriting_app from automatically
+-- USING the privileges of roles it belongs to -- membership still lets it
+-- SET ROLE into them explicitly, regardless of NOINHERIT. A pre-existing
+-- fabwriting_app (hand-created, restored from a dump, a leftover from an
+-- earlier manual attempt) could already BELONG TO some other role, which
+-- would hand it SET ROLE access to whatever that role can do. Direction
+-- matters: pg_auth_members.member is the role gaining membership, so
+-- `member = fabwriting_app's oid` means fabwriting_app is a MEMBER of
+-- (belongs to) some other role -- that's the risk this checks for. The
+-- other direction is fine and expected: the runbook's
+-- `grant fabwriting_app to postgres with set true` (docs/postgres-setup.md)
+-- makes postgres a member OF fabwriting_app -- member = postgres's oid,
+-- roleid = fabwriting_app's oid -- and must NOT trip this assertion.
 do $$
 begin
   if exists (select 1 from pg_roles where rolname = 'fabwriting_app' and rolsuper) then
     raise exception 'fabwriting_app has the SUPERUSER attribute; only an actual superuser can revoke it (ALTER ROLE ... NOSUPERUSER fails for a mere CREATEROLE actor) -- fix by hand, then re-run this migration';
+  end if;
+
+  if exists (
+    select 1 from pg_auth_members
+    where member = (select oid from pg_roles where rolname = 'fabwriting_app')
+  ) then
+    raise exception 'fabwriting_app unexpectedly belongs to another role (a pg_auth_members row has it as member) -- NOINHERIT does not block SET ROLE into that role -- fix by hand (revoke the membership from fabwriting_app), then re-run this migration';
   end if;
 end
 $$;
