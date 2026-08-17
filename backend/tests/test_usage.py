@@ -746,3 +746,74 @@ class TestPostgresReservationConcurrency:
             f"budget overshoot: {len(admitted)} admissions against a"
             " one-credit day window"
         )
+
+
+class TestPostgresCreditsUsedIsolation:
+    def test_repeatable_read_pins_one_snapshot_across_windows(
+        self, pg_database, monkeypatch
+    ):
+        """Copilot round 4 (PR #109): credits_used's REPEATABLE READ
+        statement (usage.py, `SET TRANSACTION ISOLATION LEVEL REPEATABLE
+        READ`) had no observable test -- regressing it to READ COMMITTED
+        left every PG variant green.
+
+        Under REPEATABLE READ, the whole multi-window loop reads one
+        snapshot, taken on the first data-touching query in the
+        transaction (the 'hour' SELECT). A row a second, independent
+        connection commits in between the 'hour' and 'week' SELECTs must
+        stay invisible to 'week' too, even though 'week's window start is
+        earlier and would otherwise include it. Under READ COMMITTED, each
+        SELECT takes its own fresh snapshot: 'week' (which runs after the
+        commit) would see the injected row while 'hour' (which already ran)
+        would not, so the two totals diverge.
+
+        Mutation contract: replacing the SET TRANSACTION ISOLATION LEVEL
+        statement with `pass` makes the final assertion fail -- 'week'
+        picks up the injected row's 1000 credits, 'hour' does not.
+        """
+        import psycopg
+
+        import app.services.usage as usage_module
+
+        store = UsageStore(pg_database)
+        moment = datetime(2026, 7, 29, 12, 30, tzinfo=UTC)  # Wednesday
+        limits = budget_limits(credits_per_day=10_000)
+        baseline = reserve(store, limits=limits, run_id="baseline", now=moment)
+        assert baseline.kind == "admitted"
+        # text_chars=100 default estimate (see TestWindowEnforcement.EST),
+        # visible to both windows before either SELECT runs.
+        BASELINE_CREDITS = 49
+
+        real_window_start = usage_module._window_start
+        calls: list[str] = []
+        dsn = pg_database._pool.conninfo
+
+        def spy_window_start(m: datetime, window: str) -> datetime:
+            calls.append(window)
+            if len(calls) == 2:
+                # Second call ('week'): a separate connection commits a new
+                # row that falls inside BOTH windows, before this call
+                # returns and the 'week' SELECT runs on the store's own
+                # (already-snapshotted) transaction.
+                with psycopg.connect(dsn, autocommit=True) as injector:
+                    injector.execute(
+                        """INSERT INTO llm_usage (user_id, day, created_at,
+                               status, provider, model, text_chars, source,
+                               run_id, credits)
+                           VALUES (%s, %s, %s, 'completed', 'ollama', 'm',
+                                   5, 'check', 'injected', %s)""",
+                        (
+                            1,
+                            moment.strftime("%Y-%m-%d"),
+                            moment.isoformat(timespec="seconds"),
+                            1000,
+                        ),
+                    )
+            return real_window_start(m, window)
+
+        monkeypatch.setattr(usage_module, "_window_start", spy_window_start)
+
+        used = store.credits_used(1, ["hour", "week"], now=moment)
+
+        assert calls == ["hour", "week"]
+        assert used == {"hour": BASELINE_CREDITS, "week": BASELINE_CREDITS}
