@@ -18,7 +18,7 @@ import pytest
 from app.core.models import Language
 from app.manage import main
 from app.manage_import import run_import
-from app.services.db.postgres import PostgresDatabase
+from app.services.db.postgres import PostgresConnection, PostgresDatabase
 from app.services.db.sqlite import SqliteDatabase
 from app.services.documents import DocumentStore
 from app.services.folders import FolderStore
@@ -339,3 +339,47 @@ def test_failure_mid_copy_leaves_target_empty(
     assert rc == 1
     counts = _table_counts(pg_import_target)
     assert all(count == 0 for count in counts.values()), counts
+
+
+def test_failure_after_identity_restart_leaves_sequences_untouched(
+    tmp_path: Path,
+    pg_import_target: PostgresDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # test_failure_mid_copy_leaves_target_empty injects its failure BEFORE
+    # the identity-restart loop runs at all, so it cannot tell a working
+    # transactional ALTER TABLE ... RESTART WITH apart from a regression
+    # back to the old non-transactional setval() (which would survive the
+    # rollback below). This test strikes AFTER the restart loop and BEFORE
+    # commit, by making the importer's own commit() raise once, so the
+    # rollback has to undo the identity change too.
+    src_path = tmp_path / "src.db"
+    UserStore(SqliteDatabase(src_path)).create_user("user@example.com", "password12345")
+
+    calls = {"n": 0}
+    real_commit = PostgresConnection.commit
+
+    def failing_commit(self: PostgresConnection) -> None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("boom")
+        real_commit(self)
+
+    # The import's own dst_conn.commit() is the only PostgresConnection.commit()
+    # call in this window: store construction and the probe queries all go
+    # through connect()'s context manager, which commits via the pool's own
+    # mechanism on the raw psycopg connection, never through this method.
+    monkeypatch.setattr(PostgresConnection, "commit", failing_commit)
+
+    rc = main(["--db", str(src_path), "import-to-postgres"])
+
+    assert rc == 1
+    assert calls["n"] == 1
+    counts = _table_counts(pg_import_target)
+    assert all(count == 0 for count in counts.values()), counts
+
+    # The pin: with a setval() regression, the sequence advance survives the
+    # rollback and the next id would be max(imported ids) + 1 instead of 1.
+    target_users = UserStore(pg_import_target)
+    fresh = target_users.create_user("carol@example.com", "password12345")
+    assert fresh.id == 1

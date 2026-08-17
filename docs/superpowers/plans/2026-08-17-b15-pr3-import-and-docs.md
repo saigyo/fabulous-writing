@@ -4,7 +4,7 @@
 
 **Goal:** Ship the one-time SQLite→Postgres import (`manage.py import-to-postgres`) and the operator documentation (`docs/postgres-setup.md` + cross-references), closing #56.
 
-**Architecture:** The import logic lives in a new module `app/manage_import.py` (keeps `manage.py` lean); `manage.py` registers the subcommand and branches to it early, because the importer manages TWO databases (SQLite source from `--db`/settings, Postgres target from `FW_DATABASE_URL`) and doesn't fit the `(store, args)` handler contract. Constructing the stores against both databases first normalizes both schemas (source migrations run, target schema is created); then raw rows copy in FK order with explicit ids through ONE target transaction, identity sequences reset via `setval`, per-table counts verified before the single commit.
+**Architecture:** The import logic lives in a new module `app/manage_import.py` (keeps `manage.py` lean); `manage.py` registers the subcommand and branches to it early, because the importer manages TWO databases (SQLite source from `--db`/settings, Postgres target from `FW_DATABASE_URL`) and doesn't fit the `(store, args)` handler contract. Constructing the stores against both databases first normalizes both schemas (source migrations run, target schema is created); then raw rows copy in FK order with explicit ids through ONE target transaction, identity sequences reset via the transactional `ALTER TABLE … ALTER COLUMN id RESTART WITH …` (amended post-execution, Copilot round 1: `setval` is non-transactional and would survive a rollback), per-table counts verified before the single commit.
 
 **Tech Stack:** Python 3.13, the PR1/PR2 seam (`SqliteDatabase`, `PostgresDatabase`, `table_columns`), pytest with a module-local throwaway-schema fixture.
 
@@ -22,7 +22,7 @@
 
 ## File Structure
 
-- **Create** `backend/app/manage_import.py` — the importer: table order, collision pre-check, copy, `setval`, verification.
+- **Create** `backend/app/manage_import.py` — the importer: table order, collision pre-check, copy, transactional identity restart (amended post-execution, Copilot round 1: shipped as `ALTER TABLE … ALTER COLUMN id RESTART WITH …`, not `setval`, which is non-transactional and survives a rollback), verification.
 - **Modify** `backend/app/manage.py` — subcommand registration + early branch (~10 lines).
 - **Create** `backend/tests/test_import_postgres.py` — the importer's test module.
 - **Create** `docs/postgres-setup.md`; **Modify** `docs/supabase-auth-setup.md` (one cross-reference), `docs/backend-architecture.md` (importer paragraph + operator-CLI section touch-up).
@@ -60,7 +60,7 @@ the source is a tmp_path SQLite file populated through the real stores.
 1. `test_missing_env_fails_naming_the_variable` (NO PG needed — runs in the default gate): build a small source via `SqliteDatabase(tmp_path / "src.db")` + `UserStore(db)` + one `create_user`; call `main(["--db", str(src), "import-to-postgres"])` with `FW_DATABASE_URL` guaranteed absent (`monkeypatch.delenv("FW_DATABASE_URL", raising=False)`); assert return 1 and `capsys` stderr contains `FW_DATABASE_URL` and does NOT contain any DSN-ish value.
 1b. `test_missing_source_fails_naming_the_path` (NO PG needed): `main(["--db", str(tmp_path / "absent.db"), "import-to-postgres"])` with a syntactically valid dummy `FW_DATABASE_URL` set — the DSN-present check runs first, so a dummy is needed; the source-not-found return then fires BEFORE any connection is attempted, so the dummy is never dialed. Assert return 1 and stderr names the path.
 1c. `test_default_source_comes_from_settings` (PG): omit `--db`; point `FW_CONFIG_FILE` at a tmp config whose `db_path` names the populated source (see `tests/conftest.py`'s `_config_isolation` for the mechanism); run `main(["import-to-postgres"])`; assert the import succeeds — this pins the `load_settings().db_path` default.
-2. `test_happy_path_copies_all_tables_with_ids_and_sequences` (PG): populate the source through the real stores — at least: two users (one with `external_id`), one audit row (`UserStore.record_audit` — keyword-only), one folder (`FolderStore.create_folder(name, *, owner_id=…)`), one document IN that folder, one OWNED domain + one term in it (`TerminologyStore.create_term(domain_id, *, owner_id, is_admin, …)` — a term on a GLOBAL domain with `is_admin=False` raises `GlobalReadOnlyError`, so create the domain with an owner or pass `is_admin=True`), one profile, a seed marker (`ProfileStore.mark_example_seeded(Language…)`), one settled `llm_usage` row — for the reservation, reuse `tests/test_usage.py:17-45`'s ready-made `LIMITS`/`SERVER`/`REQUESTED`/`EFFECTIVE`/`FakeUser` constants rather than constructing settings objects (a bare `TierLimitsSettings()` fails validation). Run the import. Assert per table: target count == source count; spot-check ids preserved (the document's `folder_id` still resolves, the term's `domain_id` still resolves); **sequence continuation**: construct a `UserStore` on the fixture's `PostgresDatabase` and `create_user` a fresh user — its id must be `max(imported ids) + 1` (the `setval` pin; mutation target).
+2. `test_happy_path_copies_all_tables_with_ids_and_sequences` (PG): populate the source through the real stores — at least: two users (one with `external_id`), one audit row (`UserStore.record_audit` — keyword-only), one folder (`FolderStore.create_folder(name, *, owner_id=…)`), one document IN that folder, one OWNED domain + one term in it (`TerminologyStore.create_term(domain_id, *, owner_id, is_admin, …)` — a term on a GLOBAL domain with `is_admin=False` raises `GlobalReadOnlyError`, so create the domain with an owner or pass `is_admin=True`), one profile, a seed marker (`ProfileStore.mark_example_seeded(Language…)`), one settled `llm_usage` row — for the reservation, reuse `tests/test_usage.py:17-45`'s ready-made `LIMITS`/`SERVER`/`REQUESTED`/`EFFECTIVE`/`FakeUser` constants rather than constructing settings objects (a bare `TierLimitsSettings()` fails validation). Run the import. Assert per table: target count == source count; spot-check ids preserved (the document's `folder_id` still resolves, the term's `domain_id` still resolves); **sequence continuation**: construct a `UserStore` on the fixture's `PostgresDatabase` and `create_user` a fresh user — its id must be `max(imported ids) + 1` (the identity-restart pin — shipped as `ALTER TABLE … ALTER COLUMN id RESTART WITH …`, amended post-execution from `setval` per Copilot round 1; mutation target).
 3. `test_non_empty_target_refused_without_writes` (PG): pre-create one user directly in the target schema (construct a `UserStore` on the module-local fixture's `PostgresDatabase` + `create_user`), then run the import of a 2-user source; assert return 1, stderr names the non-empty table, and the target still has exactly 1 user (nothing copied).
 4. `test_email_collision_under_unicode_folding_refused` (PG): source with two users whose emails are distinct under SQLite’s ASCII folding but collide under full-Unicode folding — **write the second address with an explicit escape in the test code, never a raw glyph**: `"kelvin@x.de"` and `"\u212Aelvin@x.de"` (KELVIN SIGN + "elvin@x.de"; both Python’s `str.lower()` and PG’s `lower()` fold U+212A to `k` — probe-verified). Assert return 1, stderr lists both ids and both emails, and the target user count is 0.
 4b. `test_source_only_column_refused_before_any_write` (PG): add a stray column to the source after store init (`ALTER TABLE users ADD COLUMN legacy_flag INTEGER` through a raw connect); assert return 1, stderr names the table and the extra column, and every target count is 0 — the pre-write column-set check (mutation target (d)).
@@ -251,14 +251,23 @@ def run_import(source_path: Path, *, env: Mapping[str, str] | None = None) -> in
                 source_counts: dict[str, int] = {}
                 for table in _TABLES:
                     source_counts[table] = _copy_table(src_conn, dst_conn, table)
+                # Amended post-execution (Copilot round 1): setval() is
+                # non-transactional — a sequence advance it makes survives a
+                # ROLLBACK, contradicting this function's "nothing
+                # committed" promise on a later failure. ALTER TABLE …
+                # RESTART WITH is ordinary catalog DDL and rolls back with
+                # the rest of the transaction, so it replaces setval() here.
                 for table in _IDENTITY_TABLES:
                     if source_counts[table]:
                         # GENERATED BY DEFAULT accepted our explicit ids; the
                         # sequence must move past them or the next insert
                         # collides with an imported row.
+                        (max_id,) = dst_conn.execute(
+                            f"SELECT MAX(id) FROM {table}"
+                        ).fetchone()
                         dst_conn.execute(
-                            f"SELECT setval(pg_get_serial_sequence('{table}', 'id'),"
-                            f" (SELECT MAX(id) FROM {table}))"
+                            f"ALTER TABLE {table} ALTER COLUMN id RESTART WITH"
+                            f" {int(max_id) + 1}"
                         )
                 # Belt-and-braces: these counts run inside the same
                 # uncommitted transaction that wrote the rows, so a mismatch
@@ -329,7 +338,7 @@ Run: `PG_ENV uv run pytest tests/test_import_postgres.py -n0 -q` → all pass.
 
 - [ ] **Step 6: Mutation-verify the three guards**
 
-(a) Comment out the `setval` loop → `test_happy_path…` must fail, and the OBSERVED failure is a `DuplicateEmailError` ("A user with email … already exists"), NOT a low-id assertion: the identity PK collision surfaces as `UniqueViolation`, which `create_user` maps to its duplicate-email error (probe-verified). Do not write an `id ==` assertion expecting to see it fire under mutation. Restore.
+(a) Comment out the identity-restart loop (shipped as `ALTER TABLE … ALTER COLUMN id RESTART WITH …`, amended post-execution from `setval` per Copilot round 1) → `test_happy_path…` must fail, and the OBSERVED failure is a `DuplicateEmailError` ("A user with email … already exists"), NOT a low-id assertion: the identity PK collision surfaces as `UniqueViolation`, which `create_user` maps to its duplicate-email error (probe-verified). Do not write an `id ==` assertion expecting to see it fire under mutation. Restore.
 (b) Replace the single-transaction shape with a per-table `dst_conn.commit()` inside the copy loop → `test_failure_mid_copy_leaves_target_empty` must fail (earlier tables committed); restore.
 (c) Make `_collisions_under_unicode_folding` return `[]` unconditionally → `test_email_collision…` must fail (import proceeds and either succeeds vacuously or dies on the unique index — either way the refusal assertion fails); restore.
 (d) Make `_source_only_columns` return `[]` unconditionally → `test_source_only_column_refused_before_any_write` must fail (the copy aborts on the raw driver error instead of the named refusal); restore.

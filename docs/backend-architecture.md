@@ -1748,7 +1748,9 @@ dropped, and a second refuses source `users` rows whose emails are distinct
 under SQLite's ASCII-only `LOWER()` but collide under Postgres' full-Unicode
 case folding. The copy itself walks every table in foreign-key order with
 the source's own ids, resets each identity sequence past the imported
-values (`setval`), and verifies matching per-table row counts — all inside
+values with the transactional `ALTER TABLE … ALTER COLUMN id RESTART
+WITH …` (not `setval`, which is non-transactional and would survive a
+later rollback), and verifies matching per-table row counts — all inside
 one transaction, committed only once every count checks out. See
 [`docs/postgres-setup.md`](postgres-setup.md) for the full operator
 walkthrough.
