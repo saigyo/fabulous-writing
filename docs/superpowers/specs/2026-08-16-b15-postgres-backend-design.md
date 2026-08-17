@@ -246,6 +246,15 @@ configured `db_path`), writes to `FW_DATABASE_URL`.
   breaks both), `FW_DATABASE_URL` setup, import-tool walkthrough, backup
   note ("your Postgres provider's backup story replaces copying the data
   directory").
+- `docs/postgres-setup.md` also documents how the password reaches the app
+  (owner-requested, 2026-08-17): normally as the DSN's userinfo component,
+  with special characters percent-encoded (`@`→`%40`, `:`→`%3A`, `/`→`%2F`,
+  `%`→`%25`); alternatively via libpq's standard mechanisms — the app hands
+  `FW_DATABASE_URL` verbatim to psycopg/libpq, so a password-less DSN plus
+  `PGPASSWORD` or `~/.pgpass` (`PGPASSFILE`) works, as does the `key=value`
+  conninfo format. Deployment examples use the env-only pattern
+  (`fly secrets set FW_DATABASE_URL=...` for B16); the value never appears
+  in config files or logs (the factory names only the variable).
 - `docs/backend-architecture.md`: db-seam section (update per standing
   maintenance rule).
 - `docs/supabase-auth-setup.md`: one cross-reference (auth mode and
