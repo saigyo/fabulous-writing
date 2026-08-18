@@ -54,18 +54,22 @@ def restricted() -> Iterator[Restricted]:
     sep = "&" if "?" in base_dsn else "?"
     admin_dsn = f"{base_dsn}{sep}options=-csearch_path%3D{schema}"
     with psycopg.connect(base_dsn, autocommit=True) as admin:
-        admin.execute(f'CREATE SCHEMA "{schema}"')
-        admin.execute(
-            f'CREATE ROLE "{role}" LOGIN NOINHERIT NOBYPASSRLS '
-            f"PASSWORD '{password}'"
-        )
-        # From here on, the role exists cluster-wide -- a failure in any of
-        # the remaining setup must not skip the fixture's own teardown
-        # (below, after the `yield`), since a setup exception makes pytest
-        # never reach the `yield` at all. Best-effort clean up what setup
-        # did manage to create, then re-raise so the original failure still
-        # surfaces as the test error.
+        # CREATE SCHEMA is the first cluster-visible thing this fixture
+        # creates, so the cleanup guard has to start covering failures from
+        # here -- including CREATE ROLE itself (e.g. a test DSN that lacks
+        # CREATEROLE). `role_created` tracks how far setup got, since the
+        # except branch must not attempt DROP ROLE for a role that was
+        # never created (that would just raise a second, masking error). A
+        # setup exception means pytest never reaches the `yield` below, so
+        # this is the only place that can clean up a partial setup.
+        role_created = False
         try:
+            admin.execute(f'CREATE SCHEMA "{schema}"')
+            admin.execute(
+                f'CREATE ROLE "{role}" LOGIN NOINHERIT NOBYPASSRLS '
+                f"PASSWORD '{password}'"
+            )
+            role_created = True
             # Mirrors supabase/migrations/20260817090100_app_role_grants.sql,
             # scoped to the throwaway schema -- and, crucially, applied to
             # the SCHEMA BEFORE init_stores() creates any table in it,
@@ -101,7 +105,8 @@ def restricted() -> Iterator[Restricted]:
             try:
                 admin.execute(f'DROP SCHEMA "{schema}" CASCADE')
             finally:
-                admin.execute(f'DROP ROLE "{role}"')
+                if role_created:
+                    admin.execute(f'DROP ROLE "{role}"')
             raise
     yield Restricted(base_dsn, schema, role, admin_dsn, restricted_dsn)
     # Teardown discipline: the role is CLUSTER-WIDE — always ATTEMPT
