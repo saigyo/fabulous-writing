@@ -17,7 +17,7 @@ logger echoes the offending string verbatim in its connection-error line
 string`). A mangled real DSN can still contain a password, so this violates
 the repo's env-secret discipline (the app's own messages name only the
 variable). Wrong-credential failures do NOT leak — libpq reports host/port
-only; the exposure is limited to malformed-syntax values. Pre-existing since
+only; the exposure is limited to malformed-syntax values, i.e. the whole-string echo; a secret mangled into an individual field of a valid-syntax DSN can still surface through libpq's connect-time diagnostics (tracked separately). Pre-existing since
 B15 PR2; documented as a caveat in `docs/postgres-setup.md` since B15 PR3.
 
 ### Requirements
