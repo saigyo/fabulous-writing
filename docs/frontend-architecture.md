@@ -1068,6 +1068,20 @@ signed in. Put together: **a first-time anonymous visit makes exactly one `/api/
 request, `GET /api/health`** (not zero); a visit with a stored token makes two, that
 health check plus `GET /api/auth/me`.
 
+**About and the dev instance badge (B35).** `AccountMenu.tsx`'s popover gains an
+"About" entry opening a small dialog: the wordmark, the app version (`appVersion ??
+'—'`), the configured database's display name (`DB_DISPLAY_NAMES[user.db_backend]`,
+falling back to the raw id for anything unmapped), a hardcoded GitHub link, and a
+copyright line. `appVersion` comes from the same one-per-page-load health fetch as
+`authFeatures` above and survives a store reset the same way (see
+`state/store.ts`'s reset-surviving field list); the database name comes from
+`MeResponse.db_backend`, so it is only known once a caller is signed in. `App.tsx`'s
+`Header` uses the same two values to render a `dev · <backend>` badge under the
+wordmark (`.brand` / `.instance-badge` in `App.css`) whenever `appVersion === 'dev'`
+— absent on any release build, on the pre-auth login screen (no `Header` mounted
+there), and hidden below the 1080px breakpoint alongside the wordmark itself so it
+is never left orphaned once the wordmark disappears.
+
 **Where the Bearer header is attached.** `api/client.ts` builds `Authorization: Bearer
 <token>` in exactly one place, `authHeader()`, reading `useStore.getState().token` at
 fetch time (not captured earlier — an in-flight request that turns stale during a
