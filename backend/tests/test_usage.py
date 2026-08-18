@@ -2,6 +2,7 @@ import logging
 import multiprocessing
 import sqlite3
 import threading
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -255,7 +256,7 @@ def test_startup_sweeps_started_ledger_rows(tmp_path: Path):
         1, "check", "orphan",
     )
     create_app(settings)
-    with sqlite3.connect(settings.db_path) as conn:
+    with closing(sqlite3.connect(settings.db_path)) as conn:
         (status,) = conn.execute(
             "SELECT status FROM llm_usage WHERE run_id = 'orphan'"
         ).fetchone()
