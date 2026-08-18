@@ -4253,3 +4253,44 @@ now runs verbatim. A dress rehearsal with both real database files
 snapshotted read-only) had already imported cleanly into throwaway
 schemas — counts, flags, FKs, and sequence continuation all verified,
 no refusal or skip-index warnings on real data.
+
+## 2026-08-18 — B36: least-privilege Postgres app role (PR #115)
+Commits: `0234367`…`9739e4c` (+ this entry). Closes #114.
+
+Production never connects as the Supabase admin role again: `fabwriting_app`
+is a DML-only role — no DDL, no schema beyond `public`, `auth` unreachable at
+the database level. The design pivoted on one probe made before the spec was
+written: `CREATE TABLE IF NOT EXISTS` fails on the schema `CREATE` privilege
+check *even when the table exists*, so the stores' idempotent startup DDL
+cannot run under such a role at all. Hence `database.manage_schema: false`
+(stores *verify* tables + migrated columns via the new `verify_schema` seam
+helper and fail fast naming the remedy), the psycopg-free `app/schema.py`
+home for `init_stores`, and the `init-db` manage subcommand as the explicit
+admin-DSN migration step — deploy story: `init-db` first, then deploy.
+
+The role and grants ship as the repo's first Supabase CLI migrations. What
+began as CREATE-plus-GRANTs hardened, over one live-probing Opus plan review
+(two rounds), an Opus whole-branch review, and five Copilot rounds, into a
+convergent, self-asserting script: attribute re-assertion without touching
+LOGIN/PASSWORD, loud rejection of memberships/ownership/database-level
+privileges, revoke-then-grant at every ACL layer (objects, schema incl.
+grant options, default ACLs), and a dynamic sweep rejecting direct grants on
+any foreign schema. Every one of the 15 review-round findings was legitimate,
+five of them suppressed-but-real (the rule holds); two of Copilot's literal
+suggestions were deliberately adapted after probes — effective-privilege
+assertions would false-fire forever on Supabase's PUBLIC-granted `net`
+schema, and `db push` never re-executes a recorded migration, so drift
+remediation means running the SQL manually. PG privilege tests build their
+throwaway role in production order (default ACLs before tables) and are
+leak-checked to zero cluster residue on every path, including partial
+fixture setup — cluster-wide roles were this branch's recurring hazard (a
+`DROP OWNED BY` teardown would have leaked one per run; caught in plan
+review by a live probe).
+
+Verification: default gate 1506 passed / 166 skipped, live-PG gate 1672
+passed, both zero warnings; migrations verified rollback-guarded on PG 17
+repeatedly, including re-apply against an activated role and flip-proofs for
+each convergence claim. Not yet applied anywhere real (R8 follows
+post-merge): the local stack's `public` schema turned out to hold no app
+tables — the earlier B15 import is gone, so the local application starts
+with `init-db`/re-import before the DSN flip; hosted follows the runbook.
