@@ -2134,6 +2134,38 @@ dialog.app-dialog h2 {
   margin: 0;
 }
 
+.about-dialog .about-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  min-width: 16rem;
+}
+
+.about-facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.3rem 1rem;
+}
+
+.about-facts div {
+  display: contents;
+}
+
+.about-facts dt {
+  color: var(--text-dim);
+}
+
+.about-facts dd {
+  margin: 0;
+}
+
+.about-copyright {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
 .account-password-actions {
   display: flex;
   justify-content: flex-end;

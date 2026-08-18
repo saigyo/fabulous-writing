@@ -70,6 +70,14 @@ async function openPasswordForm(u: ReturnType<typeof userEvent.setup>) {
   await u.click(screen.getByRole('button', { name: en.accountChangePassword }))
 }
 
+function openAbout() {
+  fireEvent.click(screen.getByLabelText(en.accountMenu))
+  fireEvent.click(screen.getByText(en.accountAbout))
+  const dialog = document.querySelector('dialog')
+  if (!dialog) throw new Error('about dialog did not open')
+  return dialog
+}
+
 interface PasswordFormValues {
   current?: string
   next?: string
@@ -104,6 +112,7 @@ beforeEach(() => {
     sessionExpired: false,
     restoreFailed: false,
     uiLocale: 'en', // pins the catalog so message assertions are deterministic
+    appVersion: null,
   })
 })
 
@@ -641,5 +650,32 @@ describe('AccountMenu', () => {
 
     await u.type(screen.getByLabelText(en.passwordCurrent), 'x')
     expect(screen.queryByText(en.passwordCurrentWrong)).toBeNull()
+  })
+
+  it('opens the About dialog with version, database, repo link and copyright', () => {
+    useStore.setState({ user: user({ db_backend: 'postgres' }), appVersion: '1.2.3' })
+    render(<AccountMenu />)
+    const dialog = openAbout()
+    expect(dialog.textContent).toContain('1.2.3')
+    expect(dialog.textContent).toContain('PostgreSQL')
+    expect(dialog.textContent).toContain('© 2026 Markus Ackermann')
+    const link = dialog.querySelector('a')
+    expect(link?.getAttribute('href')).toBe('https://github.com/saigyo/fabulous-writing')
+    expect(link?.getAttribute('rel')).toBe('noopener noreferrer')
+    expect(link?.textContent).toBe('GitHub')
+  })
+
+  it('maps the sqlite backend to its display name in the About dialog', () => {
+    useStore.setState({ user: user({ db_backend: 'sqlite' }), appVersion: '1.2.3' })
+    render(<AccountMenu />)
+    expect(openAbout().textContent).toContain('SQLite')
+  })
+
+  it('shows an em dash, never a fabricated dev, when the version is unknown', () => {
+    useStore.setState({ user: user({ db_backend: 'sqlite' }), appVersion: null })
+    render(<AccountMenu />)
+    const dialog = openAbout()
+    expect(dialog.textContent).toContain('—')
+    expect(dialog.textContent).not.toContain('dev')
   })
 })

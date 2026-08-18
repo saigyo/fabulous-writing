@@ -11,10 +11,18 @@ import { useDismissOnOutsideClick } from '../hooks/useDismissOnOutsideClick'
 import { useMessages, type Messages } from '../i18n'
 import { useStore } from '../state/store'
 import { Dialog } from '../ui/Dialog'
+import { Wordmark } from '../Wordmark'
 import { mapWeakPasswordReasons } from './weakPassword'
 import { expireSession, login, logout, sessionGeneration } from './session'
 
 type Result = { kind: 'error' | 'success'; text: string } | null
+
+// Literal backend ids from /auth/me mapped to product names; an unknown id
+// (never expected) falls through verbatim rather than hiding the fact.
+const DB_DISPLAY_NAMES: Record<string, string> = {
+  sqlite: 'SQLite',
+  postgres: 'PostgreSQL',
+}
 
 function mapChangeError(err: unknown, m: Messages): string {
   if (err instanceof HttpError && err.code === 'wrong_current_password') {
@@ -39,8 +47,10 @@ function mapChangeError(err: unknown, m: Messages): string {
 export function AccountMenu() {
   const m = useMessages()
   const user = useStore((s) => s.user)
+  const appVersion = useStore((s) => s.appVersion)
   const [open, setOpen] = useState(false)
   const [passwordOpen, setPasswordOpen] = useState(false)
+  const [aboutOpen, setAboutOpen] = useState(false)
   const anchorRef = useRef<HTMLDivElement>(null)
   const badgeRef = useRef<HTMLButtonElement>(null)
 
@@ -72,7 +82,10 @@ export function AccountMenu() {
   // mounted across logout/expiry (rendering null), so a password dialog
   // left open by a mid-change 401 would otherwise reappear on re-login.
   useEffect(() => {
-    if (!user) setPasswordOpen(false)
+    if (!user) {
+      setPasswordOpen(false)
+      setAboutOpen(false)
+    }
   }, [user])
 
   if (!user) return null
@@ -107,6 +120,15 @@ export function AccountMenu() {
             type="button"
             onClick={() => {
               setOpen(false)
+              setAboutOpen(true)
+            }}
+          >
+            {m.accountAbout}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false)
               logout()
             }}
           >
@@ -122,6 +144,43 @@ export function AccountMenu() {
           className="account-password-dialog"
         >
           <PasswordForm email={user.email} onCancel={() => setPasswordOpen(false)} />
+        </Dialog>
+      )}
+      {aboutOpen && (
+        <Dialog
+          title={m.accountAbout}
+          onClose={() => setAboutOpen(false)}
+          returnFocusTo={badgeRef}
+          className="about-dialog"
+        >
+          <div className="about-content">
+            <div aria-hidden="true">
+              <Wordmark />
+            </div>
+            <dl className="about-facts">
+              <div>
+                <dt>{m.aboutVersion}</dt>
+                <dd>{appVersion ?? '—'}</dd>
+              </div>
+              <div>
+                <dt>{m.aboutDatabase}</dt>
+                <dd>{DB_DISPLAY_NAMES[user.db_backend] ?? user.db_backend}</dd>
+              </div>
+              <div>
+                <dt>{m.aboutSource}</dt>
+                <dd>
+                  <a
+                    href="https://github.com/saigyo/fabulous-writing"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    GitHub
+                  </a>
+                </dd>
+              </div>
+            </dl>
+            <p className="about-copyright">© 2026 Markus Ackermann</p>
+          </div>
         </Dialog>
       )}
     </div>
