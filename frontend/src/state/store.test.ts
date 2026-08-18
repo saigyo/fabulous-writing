@@ -241,6 +241,12 @@ describe('resetSessionState', () => {
     expect(state.refreshToken).toBe('rt')
     expect(state.tokenExpiresAt).toBe(1_900_000_000)
   })
+
+  it('leaves appVersion untouched, like authFeatures', () => {
+    useStore.setState({ appVersion: '1.2.3' })
+    resetSessionState()
+    expect(useStore.getState().appVersion).toBe('1.2.3')
+  })
 })
 
 describe('setSessionTokens', () => {
@@ -284,6 +290,7 @@ describe('setAuth', () => {
       concurrent_llm_runs: 5,
     },
     allow_additional_admins: false,
+    db_backend: 'sqlite',
   }
 
   beforeEach(() => {

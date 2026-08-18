@@ -50,6 +50,7 @@ function user(overrides: Partial<MeResponse> = {}): MeResponse {
       concurrent_llm_runs: 5,
     },
     allow_additional_admins: false,
+    db_backend: 'sqlite',
     ...overrides,
   }
 }
@@ -82,6 +83,7 @@ beforeEach(() => {
     sessionExpired: false,
     restoreFailed: false,
     authFeatures: null,
+    appVersion: null,
     uiLocale: 'en', // pin the catalog so message assertions are deterministic
   })
 })
@@ -586,5 +588,23 @@ describe('LoginGate', () => {
 
     await waitFor(() => screen.getByLabelText(en.signInEmail))
     screen.getByText(en.forgotPassword)
+  })
+
+  it('stores the health version for the instance badge and About dialog', async () => {
+    useStore.setState({ appVersion: null })
+    vi.mocked(getHealth).mockResolvedValue({
+      status: 'ok',
+      name: 'Fabulous Writing',
+      version: '1.2.3',
+      auth_features: { password_reset: false, invites: false },
+    })
+    render(
+      <LoginGate>
+        <Sentinel />
+      </LoginGate>,
+    )
+    await waitFor(() => {
+      expect(useStore.getState().appVersion).toBe('1.2.3')
+    })
   })
 })

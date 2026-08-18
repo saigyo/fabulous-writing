@@ -214,6 +214,7 @@ export interface MeResponse {
   usage: UsagePayload
   limits: LimitsPayload
   allow_additional_admins: boolean
+  db_backend: string
 }
 
 export interface LoginResponse {

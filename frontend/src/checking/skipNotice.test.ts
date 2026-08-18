@@ -10,6 +10,7 @@ const user = (over: object) => ({
   limits: { max_document_chars: 200000, max_llm_document_chars: 20000,
             concurrent_llm_runs: 3 },
   allow_additional_admins: false,
+  db_backend: 'sqlite',
   ...over,
 })
 

@@ -59,6 +59,7 @@ export function LoginGate({ children }: { children: ReactNode }) {
   const authStatus = useStore((s) => s.authStatus)
   const restoreFailed = useStore((s) => s.restoreFailed)
   const setAuthFeatures = useStore((s) => s.setAuthFeatures)
+  const setAppVersion = useStore((s) => s.setAppVersion)
   const m = useMessages()
   // Captured once, straight from the initial render — not in an effect —
   // so a link is available on the very first paint rather than flashing
@@ -85,9 +86,12 @@ export function LoginGate({ children }: { children: ReactNode }) {
     // Best-effort: a failed health check just means no reset/invite
     // affordance this load, not a broken gate.
     getHealth()
-      .then((h) => h.auth_features && setAuthFeatures(h.auth_features))
+      .then((h) => {
+        if (h.auth_features) setAuthFeatures(h.auth_features)
+        if (h.version) setAppVersion(h.version)
+      })
       .catch(() => {})
-  }, [setAuthFeatures])
+  }, [setAuthFeatures, setAppVersion])
 
   useEffect(() => {
     // Strips a burned token_hash/type pair from the URL's fragment right
