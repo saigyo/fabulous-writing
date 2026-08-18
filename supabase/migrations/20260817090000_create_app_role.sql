@@ -74,6 +74,19 @@ $$;
 -- some DDL) could already own objects created before this migration ever
 -- ran. The oid is resolved once, above, and reused for every check in this
 -- block.
+--
+-- Database-level risk: schema-level CREATE (asserted absent in
+-- 20260817090100_app_role_grants.sql) isn't the only way to create a new
+-- schema -- CREATE at the DATABASE level grants that too, independent of
+-- any per-schema ACL, and would let fabwriting_app spin up a schema of its
+-- own to own and operate in freely. Owning the database itself is a further
+-- step past that: the DATABASE owner can rename, drop, or reassign it, and
+-- (like the object-ownership risk above) that authority bypasses the
+-- privilege system entirely. Neither is granted by anything in this
+-- migration or its grants file, but a pre-existing/restored fabwriting_app
+-- could hold either. PUBLIC is never granted database CREATE by default
+-- (probed: `has_database_privilege('public', current_database(), 'CREATE')`
+-- is false on this stack), so this cannot false-fire on a normal apply.
 do $$
 declare
   app_oid oid := (select oid from pg_roles where rolname = 'fabwriting_app');
@@ -91,6 +104,14 @@ begin
      or exists (select 1 from pg_namespace where nspowner = app_oid)
   then
     raise exception 'fabwriting_app unexpectedly OWNS a relation, function, or schema -- an object owner keeps implicit ALTER/DROP authority over it regardless of the role''s own attributes or any ACL, so ownership is a privilege-escalation path NOINHERIT and the grant recipe above cannot close -- fix by hand (reassign the object(s) to another owner), then re-run this migration';
+  end if;
+
+  if has_database_privilege(app_oid, current_database(), 'CREATE') then
+    raise exception 'fabwriting_app unexpectedly has CREATE on the current database -- that lets it create schemas of its own regardless of any per-schema ACL -- fix by hand (revoke database CREATE from fabwriting_app), then re-run this migration';
+  end if;
+
+  if exists (select 1 from pg_database where datname = current_database() and datdba = app_oid) then
+    raise exception 'fabwriting_app unexpectedly OWNS the current database -- database ownership bypasses the privilege system entirely, the same as object ownership above -- fix by hand (reassign the database to another owner), then re-run this migration';
   end if;
 end
 $$;
