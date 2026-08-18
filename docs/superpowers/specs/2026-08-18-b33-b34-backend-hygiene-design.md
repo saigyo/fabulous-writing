@@ -112,10 +112,18 @@ narrowly scoped `ignore` with a comment naming the library and reason
 **R6 — Pin the gate.** `pyproject.toml` `[tool.pytest.ini_options]` gains:
 
 ```toml
-filterwarnings = ["error::ResourceWarning"]
+filterwarnings = [
+    "error::ResourceWarning",
+    "error::pytest.PytestUnraisableExceptionWarning",
+]
 ```
 
-Scoped deliberately: only ResourceWarning is promoted, so dependency bumps
+The second entry is load-bearing, not scope creep: a ResourceWarning
+raised at GC time inside `__del__` cannot propagate as an exception and
+reaches pytest through the unraisable-exception hook, wrapped as
+`PytestUnraisableExceptionWarning` — without promoting the wrapper, the
+exact leak class B34 targets would still pass the gate. Scoped
+deliberately beyond that: no blanket promotion, so dependency bumps
 emitting DeprecationWarnings cannot break CI; promoting all warnings was
 considered and rejected as out of scope (PR #109 measured ~14 findings
 under blanket `-W error`).
