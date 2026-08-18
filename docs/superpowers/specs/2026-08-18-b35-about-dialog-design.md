@@ -23,8 +23,10 @@ backend — must become visible: one at a glance, both on demand.
   the value just isn't kept.
 - `AccountMenu.tsx` (frontend/src/auth) and the `Dialog.tsx` primitive
   (frontend/src/ui) exist; the About surface composes them.
-- The header is a fixed-50px flex row; the wordmark inside it is 1.15rem,
-  leaving vertical room for a small second line beneath it.
+- The header is a flex row with `min-height: 68px` (its CSS comment says
+  "fixed height" but that is intent, not a cap); the wordmark inside it is
+  1.15rem, leaving vertical room for a small second line beneath it. Under
+  the `max-width: 1080px` media query the wordmark is hidden.
 
 ## Requirements
 
@@ -56,12 +58,16 @@ primitive. Content, in order:
 3. Database: localized label + `SQLite` / `PostgreSQL` (display names
    mapped from the `db_backend` literal; an unknown id falls through
    verbatim rather than hiding the fact).
-4. Copyright line: `© 2026 Markus Ackermann` (locale-neutral literal).
-5. Source link: localized label + a link reading `GitHub` with hardcoded
+4. Source link: localized label + a link reading `GitHub` with hardcoded
    `href="https://github.com/saigyo/fabulous-writing"`,
    `target="_blank" rel="noopener noreferrer"`. Static literal URL only —
    the standing XSS rule (no dynamic `href` from user/LLM content) is not
    in play but the constant keeps it trivially auditable.
+5. Copyright line: `© 2026 Markus Ackermann` (locale-neutral literal).
+
+If the version is not yet known (health fetch failed or in flight), the
+version row shows `—` — NEVER a fabricated `dev`, which would invent the
+exact fact the incident turned on.
 
 No system-info dump: exactly these five rows.
 
@@ -73,8 +79,9 @@ No system-info dump: exactly these five rows.
   `dbBackend` is known — which cannot happen in practice, since the header
   renders only post-login — plain `dev`).
 - Styling: ~0.65rem, muted color, tight line-height, left-aligned under
-  the wordmark; the fixed 50px header height must not grow (existing
-  header comment makes this a hard constraint).
+  the wordmark; the header must not grow beyond its existing min-height,
+  and under the `max-width: 1080px` media query (which hides the wordmark)
+  the badge hides with it — no orphaned badge.
 - Release builds (`version !== "dev"`) render NO badge — the brand
   container then contains only the wordmark and the header is visually
   unchanged from today.
