@@ -64,17 +64,33 @@ $$;
 -- `grant fabwriting_app to postgres with set true` (docs/postgres-setup.md)
 -- makes postgres a member OF fabwriting_app -- member = postgres's oid,
 -- roleid = fabwriting_app's oid -- and must NOT trip this assertion.
+--
+-- Ownership risk: object OWNERSHIP is a separate authority path from both
+-- role attributes and ACLs -- an owner can ALTER or DROP its own relations,
+-- functions, and schemas even with none of the grants above and even under
+-- NOINHERIT, because ownership checks bypass the privilege system entirely
+-- (see PostgreSQL's object-ownership rules). A pre-existing fabwriting_app
+-- (hand-created, restored from a dump, an earlier manual attempt that ran
+-- some DDL) could already own objects created before this migration ever
+-- ran. The oid is resolved once, above, and reused for every check in this
+-- block.
 do $$
+declare
+  app_oid oid := (select oid from pg_roles where rolname = 'fabwriting_app');
 begin
-  if exists (select 1 from pg_roles where rolname = 'fabwriting_app' and rolsuper) then
+  if exists (select 1 from pg_roles where oid = app_oid and rolsuper) then
     raise exception 'fabwriting_app has the SUPERUSER attribute; only an actual superuser can revoke it (ALTER ROLE ... NOSUPERUSER fails for a mere CREATEROLE actor) -- fix by hand, then re-run this migration';
   end if;
 
-  if exists (
-    select 1 from pg_auth_members
-    where member = (select oid from pg_roles where rolname = 'fabwriting_app')
-  ) then
+  if exists (select 1 from pg_auth_members where member = app_oid) then
     raise exception 'fabwriting_app unexpectedly belongs to another role (a pg_auth_members row has it as member) -- NOINHERIT does not block SET ROLE into that role -- fix by hand (revoke the membership from fabwriting_app), then re-run this migration';
+  end if;
+
+  if exists (select 1 from pg_class where relowner = app_oid)
+     or exists (select 1 from pg_proc where proowner = app_oid)
+     or exists (select 1 from pg_namespace where nspowner = app_oid)
+  then
+    raise exception 'fabwriting_app unexpectedly OWNS a relation, function, or schema -- an object owner keeps implicit ALTER/DROP authority over it regardless of the role''s own attributes or any ACL, so ownership is a privilege-escalation path NOINHERIT and the grant recipe above cannot close -- fix by hand (reassign the object(s) to another owner), then re-run this migration';
   end if;
 end
 $$;
