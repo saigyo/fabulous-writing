@@ -362,6 +362,11 @@ class MeResponse(BaseModel):
     # admin view disable a checkbox that would only 403. No endpoint accepts
     # it as input, so reporting it does not weaken the config-only guarantee.
     allow_additional_admins: bool
+    # Which storage backend this INSTANCE runs on (B35, #113): the fact
+    # that was invisible in the two-instances incident. Auth-gated by
+    # virtue of living on /auth/me; /api/health deliberately stays
+    # version-only.
+    db_backend: str
 
     @classmethod
     def from_user(
@@ -397,6 +402,7 @@ class MeResponse(BaseModel):
                 concurrent_llm_runs=limits.concurrent_llm_runs,
             ),
             allow_additional_admins=settings.auth.allow_additional_admins,
+            db_backend=settings.database.backend,
         )
 
 
