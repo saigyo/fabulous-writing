@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from typing import Any
 
 import psycopg
+from psycopg.conninfo import conninfo_to_dict
 from psycopg_pool import ConnectionPool, PoolTimeout
 
 from app.services.db import DATABASE_URL_ENV, UniqueViolationError
@@ -89,6 +90,17 @@ class PostgresDatabase:
     dialect = "postgres"
 
     def __init__(self, dsn: str) -> None:
+        # A malformed conninfo must never reach psycopg_pool: its logger
+        # echoes the raw string — password included — in its connection-
+        # error line (#110). Parse first; on failure name only the
+        # variable, and suppress the cause chain (psycopg's message
+        # embeds the raw string).
+        try:
+            conninfo_to_dict(dsn)
+        except psycopg.ProgrammingError:
+            raise RuntimeError(
+                f"{DATABASE_URL_ENV} is not a valid PostgreSQL connection string"
+            ) from None
         self._pool = ConnectionPool(
             dsn,
             min_size=1,

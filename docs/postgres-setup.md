@@ -294,10 +294,12 @@ the SQLite file from step 2 above remains a point-in-time fallback for as
 long as you keep it around; once you're confident in the Postgres backups
 and no longer need to fall back, it's safe to delete.
 
-## Known logging caveat
+## Malformed DSN handling
 
-On a **malformed** `FW_DATABASE_URL` (a syntax error in the DSN itself, not
-merely wrong credentials), psycopg's connection-pool logger may echo the
-offending connection string — password included — in its own error line
-before the app's variable-name-only message ever prints; treat any such log
-line as sensitive until this is closed off (tracked as a follow-up, #110).
+A syntactically malformed `FW_DATABASE_URL` is rejected by the app itself
+before the connection pool is constructed, with an error naming only the
+variable. The raw value — which can contain a password if a real DSN was
+mangled — never reaches psycopg's pool logger, which would otherwise echo
+it verbatim (closed as #110). Wrong credentials or an unreachable host are
+unaffected: those still fail loudly at boot with the pool's own host/port
+diagnostics.
