@@ -756,8 +756,7 @@ rejected by `conninfo_to_dict` before the pool is ever constructed, naming only
 password included. For a well-formed but wrong DSN (bad credentials, unreachable host),
 `open=True` alone does not connect eagerly (that would only surface as a `PoolTimeout`
 on first checkout), so the constructor also calls `pool.wait(timeout=30.0)` to force one
-connection at boot — fail loudly with the pool's own host/port diagnostics (never the
-password) rather than fail on the first request. `Database.close()` closes the pool; the app lifespan calls
+connection at boot — fail loudly with the pool's own host/port diagnostics (never the password field — though a secret mangled into the host or port field of a valid-syntax DSN can still appear in libpq's connect-time diagnostics; tracked as a follow-up) rather than fail on the first request. `Database.close()` closes the pool; the app lifespan calls
 it unconditionally on shutdown (a no-op for `SqliteDatabase`). The fixed 1–5 sizing
 sits beneath FastAPI's own ~40-thread pool for synchronous (`def`) route handlers —
 under a burst of concurrent requests, threads queue on pool checkout rather than each
