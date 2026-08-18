@@ -36,6 +36,11 @@ def pytest_collection_modifyitems(config, items):
     # take precedence over the ini pin and, unlike session-wide
     # addinivalue_line, leave the gate fully armed for tests/ items in a
     # mixed `pytest tests tests_e2e` run (#112).
+    # Caveat: this only covers warnings raised during the item's own
+    # run/teardown — the common case for refcount-reclaimed httpx/socket
+    # leaks. A leak only collected at session-end GC still trips the ini
+    # pin (pytest_unconfigure runs outside any item's filter context);
+    # acceptable for a manually-run suite.
     here = Path(__file__).parent
     for item in items:
         try:
