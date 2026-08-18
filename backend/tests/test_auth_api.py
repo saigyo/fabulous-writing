@@ -11,14 +11,15 @@ import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.auth import LoginThrottle, _throttle_key
+from app.api.auth import LoginThrottle, MeResponse, _throttle_key
 from app.api.deps import MAX_TOKEN_BYTES, CurrentUser, get_current_user, require_admin
 from app.core.auth import LocalTokenVerifier, VerifiedToken, issue_token
 from app.core.config import Settings
 from app.core.permissions import EffectiveSelection, RequestedLLM
 from app.main import create_app
 from app.services.db.sqlite import SqliteDatabase
-from app.services.users import UserStore
+from app.services.usage import UsageStore
+from app.services.users import User, UserStore
 from tests.conftest import (
     TEST_ADMIN_EMAIL,
     TEST_ADMIN_PASSWORD,
@@ -492,6 +493,25 @@ class TestMeUsageAndLimits:
         me = client.get("/api/auth/me", headers=user_headers).json()
         (day,) = [w for w in me["usage"]["windows"] if w["window"] == "day"]
         assert day["used_percent"] == 100  # capped; uncapped ceil would be 205
+
+
+def test_me_reports_db_backend_sqlite(app_client):
+    body = app_client.get("/api/auth/me", headers=auth_headers(app_client)).json()
+    assert body["db_backend"] == "sqlite"
+
+
+def test_me_response_reports_db_backend_postgres_from_settings(tmp_path):
+    # Settings-level: MeResponse.from_user reads the configured backend
+    # string — no pool, no server, runs in the default gate (spec R6).
+    settings = Settings(
+        db_path=tmp_path / "unused.db",
+        rules_dir=tmp_path / "rules",
+        database={"backend": "postgres"},
+    )
+    user = User(id=1, email="a@b.c", created_at="2026-01-01T00:00:00+00:00")
+    usage_store = UsageStore(SqliteDatabase(tmp_path / "usage.db"))
+    me = MeResponse.from_user(user, settings, usage_store=usage_store)
+    assert me.db_backend == "postgres"
 
 
 def test_password_change_requires_the_current_password(app_client):
