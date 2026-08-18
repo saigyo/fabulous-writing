@@ -2,6 +2,10 @@
 -- only; no CREATE — DDL stays with the admin role (init-db, migrations).
 -- All statements are idempotent.
 
+-- Revoke first so a re-run converges on exactly USAGE -- GRANT only adds,
+-- so a pre-existing/restored fabwriting_app could still carry WITH GRANT
+-- OPTION, letting it delegate schema access to other roles.
+revoke usage on schema public from fabwriting_app;
 grant usage on schema public to fabwriting_app;
 
 -- Existing objects. Revoke first so a re-run converges on exactly this verb
@@ -17,7 +21,16 @@ grant usage, select                  on all sequences in schema public to fabwri
 grant execute                        on all functions in schema public to fabwriting_app;
 
 -- Future objects created by the admin role (init-db, import-to-postgres,
--- later migrations) become usable without per-object grants.
+-- later migrations) become usable without per-object grants. Revoke first,
+-- same reasoning as above -- default-ACL entries only add too, so a stale
+-- extra verb or grant option here would taint every object init-db creates
+-- from then on.
+alter default privileges for role postgres in schema public
+  revoke all on tables from fabwriting_app;
+alter default privileges for role postgres in schema public
+  revoke all on sequences from fabwriting_app;
+alter default privileges for role postgres in schema public
+  revoke all on functions from fabwriting_app;
 alter default privileges for role postgres in schema public
   grant select, insert, update, delete on tables to fabwriting_app;
 alter default privileges for role postgres in schema public
