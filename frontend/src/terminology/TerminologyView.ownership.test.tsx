@@ -55,6 +55,7 @@ function user(overrides: Partial<MeResponse> = {}): MeResponse {
       concurrent_llm_runs: 5,
     },
     allow_additional_admins: false,
+    db_backend: 'sqlite',
     ...overrides,
   }
 }

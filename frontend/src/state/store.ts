@@ -140,12 +140,17 @@ interface AppStateData {
   // Set once by LoginGate's unconditional, empty-deps mount effect (Task 7)
   // from GET /api/health's auth_features — never re-fetched afterwards. Not
   // persisted: it describes the deployment, not the session, so there is no
-  // storage key for it. It MUST survive resetSessionState() (see the ninth
+  // storage key for it. It MUST survive resetSessionState() (see the tenth
   // exclusion member below) — the gate that would re-fetch it is mounted
   // for the whole app lifetime and only runs that effect once per page
   // load, so a reset on logout would silently and permanently hide
   // "Forgot password?" for the rest of the tab's life.
   authFeatures: AuthFeatures | null
+  // Set from the same one-per-page-load health fetch as authFeatures and
+  // for the same reason not persisted and reset-surviving: it describes
+  // the deployment, not the session (B35). null only until that fetch
+  // resolves; 'dev' or the release tag afterwards.
+  appVersion: string | null
 }
 
 interface AppStateActions {
@@ -214,6 +219,9 @@ interface AppStateActions {
   // Called only from LoginGate's mount-effect health fetch — see
   // authFeatures's own comment above.
   setAuthFeatures: (authFeatures: AuthFeatures) => void
+  // Called only from LoginGate's mount-effect health fetch — see
+  // appVersion's own comment above.
+  setAppVersion: (appVersion: string) => void
 }
 
 type AppState = AppStateData & AppStateActions
@@ -255,10 +263,10 @@ function migrateByFinding<T>(
   )
 }
 
-// Every AppStateData field except the nine auth fields (token,
+// Every AppStateData field except the ten auth/deployment fields (token,
 // refreshToken, tokenExpiresAt, user, authStatus, sessionExpired,
-// restoreFailed, authGeneration, authFeatures) — those are managed
-// explicitly by resetSessionState()'s callers via setAuth()/
+// restoreFailed, authGeneration, authFeatures, appVersion) — those are
+// managed explicitly by resetSessionState()'s callers via setAuth()/
 // setSessionTokens(), never through this object. Since B1 (#34), callers
 // null the auth fields BEFORE the reset (the ordering invariant in
 // session.ts: the prefs write subscriber must see user === null while pref
@@ -266,8 +274,9 @@ function migrateByFinding<T>(
 // authGeneration specifically must survive a reset untouched: it is bumped
 // only by login()'s own commit, which runs after the reset on a cross-user
 // login — keeping it out of this object makes that explicit instead of
-// coincidental. authFeatures (Task 7) must survive a reset for a different
-// reason — see its own comment on AppStateData above.
+// coincidental. authFeatures (Task 7) and appVersion (B35) must survive a
+// reset for a different reason — see their own comments on AppStateData
+// above.
 // Exported (rather than enumerated again inside resetSessionState()) so a
 // field added here is reset automatically instead of silently leaking from
 // one account's session into the next.
@@ -282,6 +291,7 @@ export const INITIAL_DATA: Omit<
   | 'restoreFailed'
   | 'authGeneration'
   | 'authFeatures'
+  | 'appVersion'
 > = {
   language: 'en',
   uiLocale: null,
@@ -361,6 +371,7 @@ export const useStore = create<AppState>()((set) => ({
   restoreFailed: false,
   authGeneration: 0,
   authFeatures: null,
+  appVersion: null,
 
   setLanguage: (language) => set({ language }),
   setUiLocale: (uiLocale) => set({ uiLocale }),
@@ -496,4 +507,5 @@ export const useStore = create<AppState>()((set) => ({
   bumpAuthGeneration: () =>
     set((state) => ({ authGeneration: state.authGeneration + 1 })),
   setAuthFeatures: (authFeatures) => set({ authFeatures }),
+  setAppVersion: (appVersion) => set({ appVersion }),
 }))

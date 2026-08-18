@@ -43,6 +43,7 @@ const USER = {
     concurrent_llm_runs: 5,
   },
   allow_additional_admins: false,
+  db_backend: 'sqlite',
 }
 
 function seedStore(): void {
