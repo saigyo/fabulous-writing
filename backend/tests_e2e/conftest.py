@@ -28,17 +28,29 @@ APP_PORT = 8001
 APP_URL = f"http://127.0.0.1:{APP_PORT}"
 
 
-def pytest_configure(config):
+def pytest_collection_modifyitems(config, items):
     # The B34 ResourceWarning pin in pyproject.toml also governs explicit
     # `pytest tests_e2e` runs (testpaths only sets the default target).
     # The e2e suite is browser/network-heavy and run manually — a leaked
-    # socket in playwright/httpx must not hard-fail it. Later
-    # filterwarnings entries take precedence, so these neutralize the
-    # pin for e2e runs only (#112).
-    config.addinivalue_line("filterwarnings", "default::ResourceWarning")
-    config.addinivalue_line(
-        "filterwarnings", "default::pytest.PytestUnraisableExceptionWarning"
-    )
+    # socket in playwright/httpx must not hard-fail it. Mark-level filters
+    # take precedence over the ini pin and, unlike session-wide
+    # addinivalue_line, leave the gate fully armed for tests/ items in a
+    # mixed `pytest tests tests_e2e` run (#112).
+    here = Path(__file__).parent
+    for item in items:
+        try:
+            item_path = item.path
+        except AttributeError:
+            item_path = Path(str(item.fspath))
+        if item_path.is_relative_to(here):
+            item.add_marker(
+                pytest.mark.filterwarnings("default::ResourceWarning")
+            )
+            item.add_marker(
+                pytest.mark.filterwarnings(
+                    "default::pytest.PytestUnraisableExceptionWarning"
+                )
+            )
 
 _REQUIRED_ENV = (
     "FW_SUPABASE_E2E_API_URL",
