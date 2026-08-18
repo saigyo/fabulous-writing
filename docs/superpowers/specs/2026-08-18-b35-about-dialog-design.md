@@ -53,8 +53,9 @@ primitive. Content, in order:
 2. Version: localized label + the raw version string as delivered by
    `FW_APP_VERSION` (`1.2.3` — release.yml strips the tag's `v` prefix —
    or `dev`). Displayed verbatim, no re-prefixing.
-3. Storage: localized label + `SQLite` / `PostgreSQL` (display names
-   mapped from the `db_backend` literal).
+3. Database: localized label + `SQLite` / `PostgreSQL` (display names
+   mapped from the `db_backend` literal; an unknown id falls through
+   verbatim rather than hiding the fact).
 4. Copyright line: `© 2026 Markus Ackermann` (locale-neutral literal).
 5. Source link: localized label + a link reading `GitHub` with hardcoded
    `href="https://github.com/saigyo/fabulous-writing"`,
@@ -85,7 +86,7 @@ No system-info dump: exactly these five rows.
 
 ### R5 — i18n
 
-New locale strings: About menu entry, dialog title, version label, storage
+New locale strings: About menu entry, dialog title, version label, database
 label, source label. All 7 locales (en de fr es it ja zh), informal
 register per the standing rules (Du/tu/tú), zh conventions, French
 typographic apostrophes. `register.test.ts` / `i18n.test.ts` pick the new
