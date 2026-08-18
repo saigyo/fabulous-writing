@@ -4,7 +4,14 @@
 
 grant usage on schema public to fabwriting_app;
 
--- Existing objects.
+-- Existing objects. Revoke first so a re-run converges on exactly this verb
+-- set -- GRANT only adds, so a pre-existing/restored fabwriting_app could
+-- carry stale extra verbs (TRUNCATE/REFERENCES/TRIGGER on tables, UPDATE on
+-- sequences) that would otherwise survive every re-push untouched.
+revoke all on all tables    in schema public from fabwriting_app;
+revoke all on all sequences in schema public from fabwriting_app;
+revoke all on all functions in schema public from fabwriting_app;
+
 grant select, insert, update, delete on all tables    in schema public to fabwriting_app;
 grant usage, select                  on all sequences in schema public to fabwriting_app;
 grant execute                        on all functions in schema public to fabwriting_app;
@@ -62,6 +69,44 @@ begin
     if has_schema_privilege('fabwriting_app', 'extensions', 'USAGE') then
       raise exception 'fabwriting_app unexpectedly has USAGE on schema extensions';
     end if;
+  end if;
+end
+$$;
+
+-- Direct-grant sweep: auth/storage/extensions above are asserted by name,
+-- but any OTHER schema could carry a grant straight to fabwriting_app too
+-- (a hand-run `grant usage on schema x to fabwriting_app` never reverted, a
+-- restored dump). Walk every non-system schema other than public itself
+-- (pg_% and information_schema are never a legitimate DML target and
+-- aren't user schemas anyway) and raise, naming the schema(s), if
+-- aclexplode(nspacl) shows fabwriting_app as a direct grantee on any of
+-- them.
+--
+-- Deliberately DIRECT grants only, not effective privilege: on Supabase,
+-- schema `net` grants USAGE to PUBLIC (`=U/supabase_admin`), which every
+-- role -- including this one -- inherits, and PUBLIC privileges have no
+-- per-grantee ACL entry to revoke against just one role. That grant is
+-- platform baseline, out of this migration's scope to change (revoking
+-- PUBLIC grants on Supabase-owned schemas would break Supabase's own
+-- internal roles that depend on them), and an *effective*-privilege
+-- assertion (has_schema_privilege) would false-fire on it forever. A
+-- direct-grant check still catches what this guards against -- someone
+-- explicitly granting fabwriting_app access to a schema outside public --
+-- without ever tripping on that inherited baseline.
+do $$
+declare
+  app_oid oid := (select oid from pg_roles where rolname = 'fabwriting_app');
+  hits text;
+begin
+  select string_agg(distinct n.nspname, ', ' order by n.nspname)
+    into hits
+    from pg_namespace n, aclexplode(n.nspacl) a
+    where a.grantee = app_oid
+      and n.nspname <> 'public'
+      and n.nspname !~ '^pg_'
+      and n.nspname <> 'information_schema';
+  if hits is not null then
+    raise exception 'fabwriting_app unexpectedly has a direct grant on schema(s): % -- only schema public is in scope for this role -- fix by hand (revoke the grant), then re-run this migration', hits;
   end if;
 end
 $$;
