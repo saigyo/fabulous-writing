@@ -105,9 +105,23 @@ transaction manager.
 ResourceWarning promoted to error (both gates: with and without
 `FW_TEST_DATABASE_URL`) and fix every finding it surfaces, whatever the
 source — the run is the audit (guard-rules-need-a-directory-sweep rule).
-If a finding originates in a third-party library we cannot fix, add a
-narrowly scoped `ignore` with a comment naming the library and reason
-(none expected).
+Two mechanism facts govern how the sweep is run (live-probed during plan
+review, 2026-08-18): (a) GC-time findings are attributed to whichever
+test happens to run when collection fires, not the leaking one — every
+sweep/verification run uses `PYTHONTRACEMALLOC=15` so the report carries
+the true allocation stack; (b) on a SMALL selection, xdist workers
+swallow the GC-time unraisable error entirely — a real leak ran green
+three times under `-n auto` — so any single-file verification MUST use
+`-n0` (the full suite under `-n auto` does surface the findings).
+
+One third-party finding is known and expected: `spylls` never closes its
+dictionary file handles (`spylls/hunspell/readers/file_reader.py`,
+reached via `app/checkers/llm/vetting.py:84` `Dictionary.from_files`;
+the `_hunspell` cache keeps the Dictionary alive, so the leak is bounded
+to one handle set per language per process). Not fixable at our call
+site; it gets a narrowly scoped, commented `ignore` entry that matches
+only unclosed-FILE warnings from the dictionaries path, and the sweep
+must prove the ignore does NOT mask sqlite connection leaks.
 
 **R6 — Pin the gate.** `pyproject.toml` `[tool.pytest.ini_options]` gains:
 
@@ -115,8 +129,19 @@ narrowly scoped `ignore` with a comment naming the library and reason
 filterwarnings = [
     "error::ResourceWarning",
     "error::pytest.PytestUnraisableExceptionWarning",
+    # + the narrowly scoped spylls ignore from R5, placed after the error
+    #   entries (later entries take precedence in pytest)
 ]
 ```
+
+The pin lives in `[tool.pytest.ini_options]` and therefore also governs
+explicit `pytest tests_e2e` invocations (testpaths only sets the default
+target). The e2e suite is browser/network-heavy, run manually, and out
+of B34's scope: `tests_e2e/conftest.py` neutralizes the pin for e2e runs
+(appends `default::ResourceWarning` / `default::pytest.
+PytestUnraisableExceptionWarning` via `config.addinivalue_line`, with a
+comment), so a future manual e2e run cannot hard-fail on a browser
+socket nobody has triaged.
 
 The second entry is load-bearing, not scope creep: a ResourceWarning
 raised at GC time inside `__del__` cannot propagate as an exception and
@@ -128,10 +153,14 @@ emitting DeprecationWarnings cannot break CI; promoting all warnings was
 considered and rejected as out of scope (PR #109 measured ~14 findings
 under blanket `-W error`).
 
-**R7 — Test-only change set.** No production code changes in Part 2. The
-pin is self-testing; mutation verification = temporarily reintroduce one
-unclosed connection (e.g. revert the `test_usage.py` site), watch the suite
-fail with ResourceWarning-as-error, restore by re-editing.
+**R7 — No production-code changes in Part 2.** The sweep touches tests
+and pytest config only (the spylls leak is bounded and handled by the R5
+ignore, not by patching production code). The pin is self-testing;
+mutation verification = temporarily reintroduce one unclosed connection
+(e.g. revert the `test_usage.py` site), run the file with `-n0`, and
+judge by EXIT CODE — the GC-time error can surface AFTER the summary
+line (e.g. `N passed` followed by a traceback, exit 1), so grepping for
+"failed" gives a false all-clear. Restore by re-editing.
 
 ## Out of scope
 
