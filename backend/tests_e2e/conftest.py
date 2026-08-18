@@ -27,6 +27,19 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 APP_PORT = 8001
 APP_URL = f"http://127.0.0.1:{APP_PORT}"
 
+
+def pytest_configure(config):
+    # The B34 ResourceWarning pin in pyproject.toml also governs explicit
+    # `pytest tests_e2e` runs (testpaths only sets the default target).
+    # The e2e suite is browser/network-heavy and run manually — a leaked
+    # socket in playwright/httpx must not hard-fail it. Later
+    # filterwarnings entries take precedence, so these neutralize the
+    # pin for e2e runs only (#112).
+    config.addinivalue_line("filterwarnings", "default::ResourceWarning")
+    config.addinivalue_line(
+        "filterwarnings", "default::pytest.PytestUnraisableExceptionWarning"
+    )
+
 _REQUIRED_ENV = (
     "FW_SUPABASE_E2E_API_URL",
     "FW_SUPABASE_E2E_MAILPIT_URL",

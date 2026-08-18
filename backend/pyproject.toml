@@ -45,6 +45,24 @@ dev = [
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "-n auto --dist load"
+filterwarnings = [
+    # B34 (#112): unclosed sqlite connections must fail the suite, not
+    # scroll past as ignored-by-default ResourceWarnings. The second
+    # entry catches the GC-time case: a ResourceWarning raised inside
+    # __del__ cannot propagate and reaches pytest via the unraisable-
+    # exception hook as PytestUnraisableExceptionWarning instead.
+    "error::ResourceWarning",
+    "error::pytest.PytestUnraisableExceptionWarning",
+    # spylls never closes its dictionary file handles (upstream:
+    # spylls/hunspell/readers/file_reader.py, reached via
+    # app/checkers/llm/vetting.py Dictionary.from_files; the _hunspell
+    # cache bounds the leak to one handle set per language per process).
+    # Scoped to unclosed-FILE warnings from the dictionaries path only —
+    # unclosed sqlite CONNECTIONS still fail (Step 6 proves it). Later
+    # entries take precedence in pytest, so these sit below the errors.
+    "ignore:(?s).*unclosed file.*dictionaries.*:pytest.PytestUnraisableExceptionWarning",
+    "ignore:(?s).*unclosed file.*dictionaries.*:ResourceWarning",
+]
 
 [tool.uv.sources]
 en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }

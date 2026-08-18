@@ -4,6 +4,7 @@ import logging
 import sqlite3
 import time
 import uuid
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -852,7 +853,9 @@ def test_failed_setup_discards_job_and_does_not_leak_running_entry(
 
 
 def _read_usage_rows(db_path: Path) -> list[sqlite3.Row]:
-    with sqlite3.connect(db_path) as conn:
+    # `with sqlite3.connect(...)` alone only manages the transaction; the
+    # connection itself must be closed deterministically (#112).
+    with closing(sqlite3.connect(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         return conn.execute("SELECT * FROM llm_usage ORDER BY id").fetchall()
 
