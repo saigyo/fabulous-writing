@@ -4,14 +4,22 @@
 
 -- Revoke first so a re-run converges on exactly USAGE -- GRANT only adds,
 -- so a pre-existing/restored fabwriting_app could still carry WITH GRANT
--- OPTION, letting it delegate schema access to other roles.
-revoke usage on schema public from fabwriting_app;
+-- OPTION (letting it delegate schema access to other roles) or, more
+-- importantly, a direct CREATE grant that would otherwise survive past
+-- this revoke and abort the migration at the public-CREATE assertion
+-- below. `revoke all` (not just USAGE) clears both; that assertion then
+-- stands only as the net for PUBLIC-inherited legacy CREATE (a pre-PG15
+-- `grant all on schema public to public`), which no revoke-from-role can
+-- remove.
+revoke all on schema public from fabwriting_app;
 grant usage on schema public to fabwriting_app;
 
 -- Existing objects. Revoke first so a re-run converges on exactly this verb
 -- set -- GRANT only adds, so a pre-existing/restored fabwriting_app could
 -- carry stale extra verbs (TRUNCATE/REFERENCES/TRIGGER on tables, UPDATE on
--- sequences) that would otherwise survive every re-push untouched.
+-- sequences) that would otherwise go untouched: `db push` never re-executes
+-- an already-applied migration, so only the first apply or a manual re-run
+-- (psql / SQL editor) ever converges this.
 revoke all on all tables    in schema public from fabwriting_app;
 revoke all on all sequences in schema public from fabwriting_app;
 revoke all on all functions in schema public from fabwriting_app;
