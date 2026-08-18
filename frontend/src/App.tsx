@@ -169,7 +169,14 @@ export function Header() {
 
   return (
     <header className="header">
-      <Wordmark />
+      <div className="brand">
+        <Wordmark />
+        {store.appVersion === 'dev' && (
+          <span className="instance-badge">
+            {store.user?.db_backend ? `dev · ${store.user.db_backend}` : 'dev'}
+          </span>
+        )}
+      </div>
       <LocaleSwitcher />
       <nav className="view-switch">
         <button

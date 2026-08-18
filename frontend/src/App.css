@@ -37,6 +37,22 @@
   font-size: 1.15rem;
 }
 
+/* B35: instance-identity badge, dev builds only. The header's min-height
+   is 68px; wordmark (1.15rem) + badge at line-height 1.1 stays well
+   below it — the badge must never grow the header. */
+.brand {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.1;
+}
+
+.instance-badge {
+  font-size: 0.65rem;
+  color: var(--text-dim);
+  letter-spacing: 0.03em;
+}
+
 .view-switch {
   display: flex;
   gap: 0.25rem;
@@ -194,6 +210,10 @@
 /* Very narrow windows: drop the wordmark, the controls matter more. */
 @media (max-width: 1080px) {
   .header h1 {
+    display: none;
+  }
+
+  .header .instance-badge {
     display: none;
   }
 }

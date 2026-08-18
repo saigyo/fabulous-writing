@@ -2361,6 +2361,9 @@ M4 policy payload:
 - `allow_additional_admins: bool` — a read-only mirror of the config-only
   switch (spec §7.1); no endpoint accepts it as input, so reporting it does
   not weaken the config-only guarantee.
+- `db_backend: str` (B35) — the configured storage backend (`"sqlite"` or
+  `"postgres"`), reported as the auth-gated instance-identity fact the
+  frontend's About dialog and dev instance badge display.
 
 This is the frontend's only source for quota/limit *numbers* — the
 `effective_llm` report on checks/suggestions carries the skip *code* only

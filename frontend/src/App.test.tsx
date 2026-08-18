@@ -94,6 +94,8 @@ beforeEach(() => {
     lastProfileByLanguage: {},
     docMeta: null,
     uiLocale: 'en',
+    user: null,
+    appVersion: null,
   })
 })
 
@@ -254,5 +256,22 @@ describe('Header quota indicator', () => {
     await waitFor(() => expect(getProfiles).toHaveBeenCalled())
 
     expect(screen.queryByLabelText(new RegExp(en.quotaIndicatorTitle))).toBeNull()
+  })
+})
+
+describe('Header dev instance badge', () => {
+  it('shows the dev instance badge with the backend under the wordmark', () => {
+    vi.mocked(getProfiles).mockResolvedValue([])
+    useStore.setState({ user: user({ db_backend: 'postgres' }), appVersion: 'dev' })
+    render(<Header />)
+    screen.getByText('dev · postgres')
+  })
+
+  it('renders no instance badge on a release version', () => {
+    vi.mocked(getProfiles).mockResolvedValue([])
+    useStore.setState({ user: user({ db_backend: 'postgres' }), appVersion: '1.2.3' })
+    render(<Header />)
+    expect(screen.queryByText(/dev ·/)).toBeNull()
+    expect(screen.queryByText('1.2.3')).toBeNull()
   })
 })
