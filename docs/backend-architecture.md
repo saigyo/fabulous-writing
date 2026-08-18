@@ -750,11 +750,14 @@ solely by the DDL path, so an index-only schema change still requires
 running `init-db` and gets no startup failure if that step is skipped.
 
 **The Postgres pool** (`PostgresDatabase`, wrapping `psycopg_pool.ConnectionPool`) is
-fixed-size, 1–5 connections, with no config knobs: `open=True` alone does not connect
-eagerly (a bad DSN would only surface as a `PoolTimeout` on first checkout), so the
-constructor also calls `pool.wait(timeout=30.0)` to force one connection at boot —
-fail loudly with the pool's own host/port diagnostics (never the password) rather than
-fail on the first request. `Database.close()` closes the pool; the app lifespan calls
+fixed-size, 1–5 connections, with no config knobs: a syntactically malformed DSN is
+rejected by `conninfo_to_dict` before the pool is ever constructed, naming only
+`FW_DATABASE_URL` (#110) — the pool's own logger would otherwise echo the raw string,
+password included. For a well-formed but wrong DSN (bad credentials, unreachable host),
+`open=True` alone does not connect eagerly (that would only surface as a `PoolTimeout`
+on first checkout), so the constructor also calls `pool.wait(timeout=30.0)` to force one
+connection at boot — fail loudly with the pool's own host/port diagnostics (never the
+password) rather than fail on the first request. `Database.close()` closes the pool; the app lifespan calls
 it unconditionally on shutdown (a no-op for `SqliteDatabase`). The fixed 1–5 sizing
 sits beneath FastAPI's own ~40-thread pool for synchronous (`def`) route handlers —
 under a burst of concurrent requests, threads queue on pool checkout rather than each

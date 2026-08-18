@@ -156,6 +156,66 @@ class TestCreateDatabase:
         assert not any("s3cret" in r.message for r in caplog.records)
 
 
+class TestPostgresDsnPrevalidation:
+    """B33 (#110): a malformed DSN must be rejected by the app before
+    psycopg_pool sees it — the pool's own logger echoes the raw value
+    (password included, if the operator mangled a real DSN)."""
+
+    MALFORMED = "not-a-dsn-s3cret-fragment"
+
+    def test_malformed_dsn_raises_naming_only_the_variable(
+        self, caplog, monkeypatch
+    ):
+        from app.services.db import postgres
+
+        class PoolMustNotBeConstructed:
+            def __init__(self, conninfo, **kwargs):
+                raise AssertionError("pool must never see a malformed DSN")
+
+        # The invariant is "the raw value never reaches psycopg_pool",
+        # not merely "no log line appeared": a stub pool that explodes on
+        # construction asserts it directly.
+        monkeypatch.setattr(postgres, "ConnectionPool", PoolMustNotBeConstructed)
+        with caplog.at_level(logging.DEBUG):
+            with pytest.raises(RuntimeError) as excinfo:
+                postgres.PostgresDatabase(self.MALFORMED)
+        message = str(excinfo.value)
+        assert "FW_DATABASE_URL" in message
+        assert self.MALFORMED not in message
+        # `raise ... from None`: psycopg's parse error embeds the raw
+        # string, so no traceback layer may carry it.
+        assert excinfo.value.__cause__ is None
+        assert excinfo.value.__suppress_context__ is True
+        assert self.MALFORMED not in caplog.text
+
+    @pytest.mark.parametrize(
+        "dsn",
+        [
+            "postgresql://user:secret@localhost:5432/db",
+            "host=localhost dbname=db user=u password=p",
+        ],
+        ids=["url-form", "keyvalue-form"],
+    )
+    def test_valid_dsn_forms_reach_pool_construction(self, dsn, monkeypatch):
+        # Guards against OVER-strict validation: everything libpq accepts
+        # — both DSN forms — must reach ConnectionPool unchanged
+        # (stubbed; no server involved).
+        from app.services.db import postgres
+
+        seen = {}
+
+        class StubPool:
+            def __init__(self, conninfo, **kwargs):
+                seen["conninfo"] = conninfo
+
+            def wait(self, timeout=None):
+                pass
+
+        monkeypatch.setattr(postgres, "ConnectionPool", StubPool)
+        postgres.PostgresDatabase(dsn)
+        assert seen["conninfo"] == dsn
+
+
 class TestPostgresContract:
     _DDL = (
         "CREATE TABLE IF NOT EXISTS t ("
