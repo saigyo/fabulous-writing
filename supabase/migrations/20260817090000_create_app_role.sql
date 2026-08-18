@@ -5,18 +5,22 @@
 --           (SQL editor / psql, never a migration)
 --   local:  supabase/seed.sql sets a dev password on every `db reset`.
 -- Guarded by an existence check: roles are cluster-wide, so this must
--- survive both a fresh local `db reset` and a `db push` to a remote where
--- the role may already exist.
+-- survive both a fresh local `db reset` and the first `db push` against a
+-- remote where the role may already exist.
 --
 -- Existence-only guards are the wrong shape here, though: a role created
 -- by hand (an earlier manual attempt, a restored cluster) could hold
 -- attributes this migration claims it doesn't. So after the guarded
--- CREATE, an unconditional ALTER ROLE converges every attribute below on
--- every run, including a re-push against an already-activated role.
--- LOGIN and PASSWORD are deliberately absent from that ALTER: they are
--- set out-of-band (see the file-level activation note above), and this
--- migration must never touch them, or a re-push would lock the activated
--- role out.
+-- CREATE, an unconditional ALTER ROLE converges every attribute below --
+-- but only when this SQL actually runs: on that first apply, or whenever
+-- an operator runs this file by hand (psql / SQL editor) to re-assert
+-- against suspected drift. `db push` records a migration as applied and
+-- does not re-execute it on later pushes, so there is no automatic
+-- "every push" reconvergence -- manual re-execution is the only drift
+-- remedy. LOGIN and PASSWORD are deliberately absent from that ALTER: they
+-- are set out-of-band (see the file-level activation note above), and this
+-- migration must never touch them, or a manual re-run would lock the
+-- activated role out.
 do $$
 begin
   if not exists (select 1 from pg_roles where rolname = 'fabwriting_app') then
@@ -33,8 +37,9 @@ begin
 end
 $$;
 
--- Convergence step: runs every time, regardless of the guard above. Never
--- mention LOGIN or PASSWORD here -- see the comment above the guard.
+-- Convergence step: runs every time this file executes (first apply or a
+-- manual re-run alike), regardless of the guard above. Never mention LOGIN
+-- or PASSWORD here -- see the comment above the guard.
 --
 -- SUPERUSER is deliberately absent from this ALTER, unlike the CREATE
 -- above: Postgres lets only an actual superuser touch that attribute via

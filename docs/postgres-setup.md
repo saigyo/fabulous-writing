@@ -55,6 +55,25 @@ Supabase Auth's `auth`. Production should instead connect as
    supabase db push          # applies supabase/migrations/ (role + grants)
    ```
 
+   `db push` records a migration as applied and does not re-execute it on
+   later pushes — so it is *not* a repeatable drift-remediation mechanism.
+   The two migrations' internal convergence (idempotent `REVOKE`s ahead of
+   every `GRANT`, an unconditional `ALTER ROLE`) and their assertions only
+   run when the SQL actually runs: on that first `db push`, or when an
+   operator re-runs the files by hand. If the role's state is ever in
+   doubt — a hand-edited grant, a restored cluster — re-assert it by
+   running the two migration files directly against the admin DSN, in
+   order:
+
+   ```sh
+   psql "<admin DSN>" \
+     -v ON_ERROR_STOP=1 \
+     -f supabase/migrations/20260817090000_create_app_role.sql \
+     -f supabase/migrations/20260817090100_app_role_grants.sql
+   ```
+
+   (or paste each file's contents into the SQL editor, in the same order).
+
 2. **Activate it.** The role ships `NOLOGIN` — a migration is not the place
    for a password — so this is a one-time, out-of-band step in the SQL
    editor. Generate the password locally (it lives only in your deployment
