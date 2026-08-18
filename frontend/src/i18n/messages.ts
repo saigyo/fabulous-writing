@@ -233,6 +233,10 @@ export interface Messages {
   accountMenu: string
   accountChangePassword: string
   accountLogOut: string
+  accountAbout: string
+  aboutVersion: string
+  aboutDatabase: string
+  aboutSource: string
   passwordCurrent: string
   passwordNew: string
   passwordConfirm: string
