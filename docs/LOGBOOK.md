@@ -4294,3 +4294,44 @@ each convergence claim. Not yet applied anywhere real (R8 follows
 post-merge): the local stack's `public` schema turned out to hold no app
 tables — the earlier B15 import is gone, so the local application starts
 with `init-db`/re-import before the DSN flip; hosted follows the runbook.
+
+## 2026-08-18 — B33+B34: backend hygiene — DSN log leak and ResourceWarning gate (PR #119)
+
+Two small accumulated items bundled into one branch before B16, chosen over
+three separate pipeline runs. B33 (#110): a syntactically malformed
+`FW_DATABASE_URL` used to be echoed verbatim — password included, if a real
+DSN was mangled — by psycopg_pool's own logger. `PostgresDatabase.__init__`
+now parses the DSN with `conninfo_to_dict` before the pool exists; on
+failure it raises a variable-name-only RuntimeError with `from None`, since
+psycopg's parse message itself embeds the raw string. Both libpq DSN forms
+are pinned against over-strict validation, and the malformed-DSN test stubs
+`ConnectionPool` with a class that explodes on construction — asserting the
+actual invariant (the value never reaches the pool) rather than the absence
+of a log line. B34 (#112): the suite's 12-per-CI-run unclosed-sqlite
+ResourceWarnings traced to just two sites (the issue's candidate list was
+mostly stale — the audit was the enforcement run, not the grep); both now
+use `contextlib.closing`, and a `filterwarnings` pin makes any future leak
+fail the suite.
+
+The pin needed three mechanism discoveries, all from the plan review's live
+probes rather than the implementation: a ResourceWarning raised inside
+`__del__` cannot propagate and reaches pytest only as
+`PytestUnraisableExceptionWarning` via the unraisable hook, so that wrapper
+must be promoted too; the GC-time error can surface AFTER the `N passed`
+summary line, so mutation-verification is judged by exit code alone; and on
+small selections xdist swallows the unraisable error entirely — a real leak
+ran green three times under `-n auto` — so single-file verification is
+`-n0`-only. One upstream leak (spylls never closes its dictionary handles,
+bounded by the `_hunspell` cache) gets a message-scoped ignore, probed
+unable to mask an unclosed sqlite connection. Copilot's single round-1
+finding was real: the e2e opt-out via `addinivalue_line` mutated
+session-wide filters, so a mixed `pytest tests tests_e2e` run would have
+disarmed the gate for the main suite — replaced by path-scoped per-item
+marks, with the session-end-GC limitation documented rather than papered
+over. The final review's residual — secrets mangled into a *field* of a
+valid-syntax DSN still echo via libpq's connect diagnostics — is out of the
+whole-string scope and filed as B39 (#118).
+
+Verification: default gate 1509 passed / 166 skipped, live-PG gate 1675
+passed, both exit 0 with zero warnings; every guard mutation-verified (the
+B33 pre-check in both directions, the B34 pin by reintroducing the leak).
