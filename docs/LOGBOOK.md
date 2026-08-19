@@ -4335,3 +4335,42 @@ whole-string scope and filed as B39 (#118).
 Verification: default gate 1509 passed / 166 skipped, live-PG gate 1675
 passed, both exit 0 with zero warnings; every guard mutation-verified (the
 B33 pre-check in both directions, the B34 pin by reintroducing the leak).
+
+## 2026-08-19 — B35: About dialog and dev instance badge (PR #120)
+
+The 2026-08-17 incident — two pixel-identical instances, edits silently
+landing in the wrong database — gets its one-glance fix. `/auth/me` now
+reports `db_backend`, the exact fact that was invisible, auth-gated by
+construction (`/api/health` stays byte-identical; its full-dict test guard
+never moved). The frontend finally keeps the `version` it was already
+fetching once per page load (`appVersion`, reset-surviving like
+`authFeatures`, pinned two-pronged: deleting the exclusion-union member is
+a type-level mutation only `tsc -b` can catch, while the realistic
+regression — the field sneaking into `INITIAL_DATA` — fails the runtime
+reset test; the Task 2 implementer tripped the plan's own vacuous-pin STOP
+on discovering that split, which was the correct move against a plan that
+had named the wrong mutation vector).
+
+The visible half: an About entry in the account menu (wordmark rendered
+aria-hidden so the dialog title keeps the accessible name; version with an
+em-dash fallback — never a fabricated `dev`, which would invent the very
+fact the incident turned on; SQLite/PostgreSQL display names with unknown
+ids falling through verbatim; a hardcoded GitHub link with
+`noopener noreferrer`; copyright), and a muted `dev · postgres` badge under
+the wordmark — zero-click disambiguation, absent on genuine releases (the
+`FW_APP_VERSION` release wiring was verified complete before planning), on
+the login screen, and below the 1080px breakpoint where the wordmark
+hides. Four new message keys across all seven locales; the technical
+literals deliberately unlocalized. The plan review earned its keep twice:
+16 pre-execution findings (this repo has no jest-dom — every sketched test
+had to be rewritten to house idioms — and the required `db_backend` field
+broke `tsc -b` across 27 inline fixtures that vitest, which never
+typechecks, would happily have shipped red to CI) plus the min-height-68px
+correction of a "fixed 50px header" claim both spec and plan had repeated.
+
+Verification: backend 1511 passed / 166 skipped zero warnings, frontend
+652 tests + oxlint + `tsc -b` build all clean; every guard
+mutation-verified; final whole-branch review APPROVE with adversarial
+leak/XSS probes (nothing renders pre-auth, no dynamic hrefs). Copilot
+reviewed 47/47 files and generated zero comments — the project's first
+fully clean round.
