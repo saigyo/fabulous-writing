@@ -25,9 +25,15 @@ orphan this deployment fails CI instead of failing at machine boot.
   cd backend
   read -rs FW_DATABASE_URL   # paste the admin DSN — no echo, no shell history
   export FW_DATABASE_URL
-  uv run python -m app.manage init-db
+  FW_CONFIG_FILE=../deploy/fly/config.yaml uv run python -m app.manage init-db
   unset FW_DATABASE_URL
   ```
+
+  `FW_CONFIG_FILE` must point at the committed fly config: without a
+  config file, `load_settings()` falls back to defaults
+  (`database.backend: sqlite`), `FW_DATABASE_URL` is ignored entirely,
+  and `init-db` would silently initialize a local SQLite file instead
+  of the hosted database.
 
 - Supabase Auth configured ([supabase-auth-setup.md](supabase-auth-setup.md));
   have the project URL, publishable key, and secret key at hand.
