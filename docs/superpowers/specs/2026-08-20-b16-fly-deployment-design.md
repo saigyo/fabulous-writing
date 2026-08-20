@@ -178,7 +178,13 @@ Supabase runbooks (`docs/postgres-setup.md`,
    `FW_AUTH_SECRET` is deliberately absent — it backs local-mode
    token signing only and is never read in `auth.mode: supabase`,
    documented as set-only-if-mode-flips);
-   `fly deploy -c deploy/fly/fly.toml`; smoke checks (`/api/health`
+   `fly deploy --ha=false -c deploy/fly/fly.toml` — `--ha=false` is
+   mandatory on EVERY deploy: plain `fly deploy` creates two machines
+   (Fly's HA default), violating the auth design's binding
+   one-machine/one-worker precondition (per-process login throttle;
+   the second process's startup sweep would mark the first's live
+   usage runs abandoned) — followed by a machine-count verification
+   (`fly machine list` must show exactly one); smoke checks (`/api/health`
    returns the release version; login; About dialog shows
    `0.5.0` / PostgreSQL (the release workflow strips the git tag's
    leading `v` for both the GHCR tag and `FW_APP_VERSION`); LLM check
@@ -186,15 +192,19 @@ Supabase runbooks (`docs/postgres-setup.md`,
    unavailable).
 3. **Updating** — schema-changing releases: `init-db` first under the
    admin DSN (additive DDL, old release keeps serving), then bump the
-   image tag in `fly.toml` (commit) and `fly deploy`. Non-schema
-   releases: tag bump + deploy only.
+   image tag in `fly.toml` (commit) and `fly deploy --ha=false -c
+   deploy/fly/fly.toml`. Non-schema releases: tag bump + deploy only
+   (same guarded command).
 4. **Operational notes** — scale-to-zero semantics and the measured
    cold-start figure; the `FW_TRUSTED_PROXIES` CIDR-list
    justification (R1);
-   logs via `fly logs` never contain secrets (names-only rule); the
-   pre-"real traffic" checklist pointing at #118 (B39 DSN field-echo
-   hardening) and #116 (B37 CloudFront/WAF) as consciously-deferred
-   items.
+   logs via `fly logs` never contain secrets (names-only rule) — with
+   the one known exception tracked as #118 (B39): libpq's connect
+   diagnostics can echo a secret mis-pasted into a *field* of a valid
+   DSN, so failed-connect logs are treated as potentially
+   secret-bearing until B39 lands; the pre-"real traffic" checklist
+   pointing at #118 (B39 DSN field-echo hardening) and #116 (B37
+   CloudFront/WAF) as consciously-deferred items.
 
 README gets a one-paragraph pointer ("Hosted deployment (fly.io)" →
 the doc). `docs/backend-architecture.md` gains one sentence in the

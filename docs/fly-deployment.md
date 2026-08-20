@@ -23,7 +23,10 @@ orphan this deployment fails CI instead of failing at machine boot.
 
   ```bash
   cd backend
-  FW_DATABASE_URL='<admin DSN>' uv run python -m app.manage init-db
+  read -rs FW_DATABASE_URL   # paste the admin DSN — no echo, no shell history
+  export FW_DATABASE_URL
+  uv run python -m app.manage init-db
+  unset FW_DATABASE_URL
   ```
 
 - Supabase Auth configured ([supabase-auth-setup.md](supabase-auth-setup.md));
@@ -50,12 +53,14 @@ to `fly.toml` itself.
    **outside the repo**, import it from stdin, and delete it:
 
    ```bash
-   # /tmp/fw-secrets.env — six lines, NAME=VALUE, no quotes:
+   umask 077                    # the scratch file must not be group/world-readable
+   SECRETS_FILE=$(mktemp)
+   # Put the six NAME=VALUE lines into "$SECRETS_FILE" (no quotes):
    #   FW_DATABASE_URL, FW_SUPABASE_SECRET_KEY,
    #   FW_SUPABASE_PUBLISHABLE_KEY, FW_ADMIN_EMAIL,
    #   FW_ADMIN_PASSWORD, ANTHROPIC_API_KEY
-   fly secrets import -a fabulous-writing < /tmp/fw-secrets.env
-   rm /tmp/fw-secrets.env
+   fly secrets import -a fabulous-writing < "$SECRETS_FILE"
+   rm "$SECRETS_FILE"
    ```
 
    `FW_DATABASE_URL` is the APP-ROLE Supavisor DSN with username form
