@@ -74,7 +74,8 @@ Contents (exact values; comments in the file explain each):
   B21).
 - `[env]`:
   - `FW_CONFIG_FILE = "/fly/config.yaml"`;
-  - `FW_TRUSTED_PROXIES = "*"` — deliberate and justified: on fly,
+  - `FW_TRUSTED_PROXIES = "fdaa::/16,172.16.0.0/12"` — deliberate and
+    justified: on fly,
     `internal_port` is reachable only through fly-proxy for public
     traffic (the service ports are the only public surface), and the
     remaining peers are the org's own 6PN private network — a
@@ -186,7 +187,8 @@ Supabase runbooks (`docs/postgres-setup.md`,
    image tag in `fly.toml` (commit) and `fly deploy`. Non-schema
    releases: tag bump + deploy only.
 4. **Operational notes** — scale-to-zero semantics and the measured
-   cold-start figure; `FW_TRUSTED_PROXIES="*"` justification (R1);
+   cold-start figure; the `FW_TRUSTED_PROXIES` CIDR-list
+   justification (R1);
    logs via `fly logs` never contain secrets (names-only rule); the
    pre-"real traffic" checklist pointing at #118 (B39 DSN field-echo
    hardening) and #116 (B37 CloudFront/WAF) as consciously-deferred
