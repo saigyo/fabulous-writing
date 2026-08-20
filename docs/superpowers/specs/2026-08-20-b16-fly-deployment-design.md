@@ -21,7 +21,7 @@ up from the repo with no undocumented steps.
   The self-contained SQLite profile is not targeted by B16.
 - **Image: reuse, never rebuild.** The fly app runs the existing GHCR
   release image, pinned by tag in `fly.toml`
-  (`ghcr.io/saigyo/fabulous-writing:v0.5.0` at time of writing — v0.5.0
+  (`ghcr.io/saigyo/fabulous-writing:0.5.0` at time of writing — v0.5.0
   was cut for this story; it is the first release containing B36's
   `manage_schema` key, without which the fly config cannot boot at all
   since `DatabaseSettings` is `extra="forbid"`). A release bump is a
@@ -62,7 +62,7 @@ commands in docs run with `-c deploy/fly/fly.toml` from the repo root.
 Contents (exact values; comments in the file explain each):
 
 - `app = "fabulous-writing"`, `primary_region = "fra"`.
-- `[build] image = "ghcr.io/saigyo/fabulous-writing:v0.5.0"` — the
+- `[build] image = "ghcr.io/saigyo/fabulous-writing:0.5.0"` — the
   pinned release tag; deploying a new release = editing this line
   (git-recorded) and following the update runbook.
 - `[[files]]` — `guest_path = "/fly/config.yaml"`,
@@ -180,7 +180,9 @@ Supabase runbooks (`docs/postgres-setup.md`,
    documented as set-only-if-mode-flips);
    `fly deploy -c deploy/fly/fly.toml`; smoke checks (`/api/health`
    returns the release version; login; About dialog shows
-   `v0.5.0` / PostgreSQL; LLM check through Claude; local tier reports
+   `0.5.0` / PostgreSQL (the release workflow strips the git tag's
+   leading `v` for both the GHCR tag and `FW_APP_VERSION`); LLM check
+   through Claude; local tier reports
    unavailable).
 3. **Updating** — schema-changing releases: `init-db` first under the
    admin DSN (additive DDL, old release keeps serving), then bump the

@@ -6,6 +6,7 @@ of failing at machine boot. fly.toml gets structural pins via tomllib
 (fly's own semantic validation runs at rollout: `fly config validate`).
 """
 
+import re
 import tomllib
 from pathlib import Path
 
@@ -109,8 +110,12 @@ class TestFlyToml:
         assert fly_toml["primary_region"] == "fra"
 
     def test_deploys_pinned_release_image(self, fly_toml):
+        # release.yml strips the git tag's leading "v" before pushing
+        # (version=${GITHUB_REF_NAME#v}): release v0.5.0 publishes GHCR
+        # tag 0.5.0. A "v"-prefixed pin here would reference an image
+        # that does not exist and fail the first deploy.
         image = fly_toml["build"]["image"]
-        assert image.startswith("ghcr.io/saigyo/fabulous-writing:v")
+        assert re.fullmatch(r"ghcr\.io/saigyo/fabulous-writing:\d+\.\d+\.\d+", image)
 
     def test_config_file_delivery_is_cross_pinned(self, fly_toml):
         files = fly_toml["files"]

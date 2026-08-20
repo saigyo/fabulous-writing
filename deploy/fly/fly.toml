@@ -17,7 +17,7 @@ primary_region = "fra"
   # git-recorded edit here — preceded by `init-db` under the admin DSN
   # whenever the release changes the schema (docs/fly-deployment.md,
   # "Updating").
-  image = "ghcr.io/saigyo/fabulous-writing:v0.5.0"
+  image = "ghcr.io/saigyo/fabulous-writing:0.5.0"
 
 [[files]]
   # Non-secret deployment config, written into the machine at boot.
