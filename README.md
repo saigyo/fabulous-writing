@@ -264,6 +264,14 @@ Third-party license notices for everything bundled in the image are in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) (also at
 `/app/THIRD-PARTY-NOTICES.md` inside the image).
 
+### Hosted deployment (fly.io)
+
+For a hosted demo instance rather than a self-managed container, this repo
+also ships a fly.io deployment target: the same released image, reused
+as-is, with its machine definition and non-secret config committed under
+[`deploy/fly/`](deploy/fly/) and secrets set via `fly secrets`. See
+[docs/fly-deployment.md](docs/fly-deployment.md) for the operator runbook.
+
 ## Setup and running
 
 ### Quick start

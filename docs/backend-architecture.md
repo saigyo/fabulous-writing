@@ -2588,7 +2588,10 @@ one-off scripts), then the `FW_CONFIG_FILE` environment variable, then the
 repo-relative `backend/config.yaml` default. The container entrypoint sets
 `FW_CONFIG_FILE=/config/config.yaml`, so the wizard-generated file on the mounted
 `/config` volume wins over the baked-in default without either side having to know
-about the other.
+about the other. The fly.io layer (`deploy/fly/`) deploys the released image with
+`manage_schema: false` against hosted Supabase, with config delivered via fly.toml's
+`[[files]]` and secrets via `fly secrets` (B16, #57; see
+[docs/fly-deployment.md](fly-deployment.md)).
 
 **Env file and trusted proxies (B21, #78 / B26, #86).** `FW_ENV_FILE` (default:
 `fabulous.env` next to the config file, i.e. `dirname(FW_CONFIG_FILE)`) is applied by
