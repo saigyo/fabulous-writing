@@ -4374,3 +4374,61 @@ mutation-verified; final whole-branch review APPROVE with adversarial
 leak/XSS probes (nothing renders pre-auth, no dynamic hrefs). Copilot
 reviewed 47/47 files and generated zero comments — the project's first
 fully clean round.
+
+## 2026-08-20 — B16: fly.io deployment layer (PR #121)
+
+The hosted demo instance now deploys from the repo with no undocumented
+steps, and not one line of backend code or Dockerfile changed to get
+there. `deploy/fly/` holds the machine definition (app
+`fabulous-writing` in `fra`, pinned GHCR release image, config delivered
+via `[[files]]` to `/fly/config.yaml` — outside the wizard-owned
+`/config`, so the env-file probe resolves to a path that never exists
+and fly secrets always win — scale-to-zero, `/api/health` check, 2 GB
+VM) and the non-secret config (postgres + `manage_schema: false` on the
+B36 app role, Supabase auth, single-origin serve, Anthropic-only routing
+across all seven languages with the local tier honestly unavailable).
+`backend/tests/test_fly_config.py` loads that config through the real
+`Settings` model so a schema rename that orphans the deployment fails CI
+— which now also fires on `deploy/fly/**` edits — plus value pins,
+the `FW_CONFIG_FILE`↔`guest_path` cross-pin, raw-YAML routing-table
+completeness (the B24 overlay makes settings-level assertions unable to
+tell "listed" from "silently defaulted"), and a value-shaped secret scan
+shared by both artifacts (names allowed, assignments banned). v0.5.0 was
+cut *before* the branch existed, deliberately: it is the first release
+carrying B36's `manage_schema` key, and releasing first meant `fly.toml`
+could pin a tag that exists.
+
+The review pipeline out-earned every prior story on a per-line basis.
+Two probe-backed Opus plan rounds executed the plan's verbatim tests
+against its verbatim artifacts pre-execution and caught the plan's own
+secret-scan failing on its own comment, a YAML-anchor-breaking mutation
+recipe, and — the round-2 self-correction — that round 1's suggested
+`fdaa::/8` has host bits set, which uvicorn silently demotes to a
+never-matching string literal: the shipped `fdaa::/16,172.16.0.0/12`
+now carries a dedicated every-entry-parses guard, the only place that
+failure mode is catchable offline. Six Copilot rounds then found five
+genuine deployment-breakers in what looked like a done branch: plain
+`fly deploy` creates TWO machines (Fly's HA default) against the auth
+design's binding one-machine/one-worker precondition, so `--ha=false`
+is now mandatory everywhere with a machine-count verification step; the
+pinned `:v0.5.0` image tag didn't exist — release.yml strips the `v`,
+registry-probed 200/404 — and the tag test now fullmatches the
+v-stripped convention; and a bare `init-db` would have silently
+initialized local SQLite (no config → `load_settings()` defaults →
+`FW_DATABASE_URL` ignored), so the command now sets
+`FW_CONFIG_FILE=../deploy/fly/config.yaml`. Suppressed comments stayed
+real findings to the last round: `sb_secret_` and TOML-style `NAME =`
+joined the secret scan (both mutation-verified), the secrets runbook
+moved from argv to `fly secrets import` under `umask 077`/`mktemp`, and
+the admin DSN is entered via `read -rs`. Round 6 read all nine files
+and generated nothing, posted or suppressed.
+
+Verification: backend 1529 passed / 166 skipped, zero warnings (18 new
+fly-config tests, 11 guard mutations verified across the rounds); final
+whole-branch Opus review APPROVE with a live uvicorn-0.52.1 trust-list
+probe and a clean-tree mutation spot-check; CI green throughout
+(CodeQL, test, test-postgres). The actual rollout is post-merge by
+design (spec R5): `fly config validate`, first deploy, cold-start
+measurement, and any runbook corrections land as a follow-up. #118
+(B39) is flagged in the ops doc as the one known log-safety exception
+and a pre-real-traffic gate.
