@@ -82,8 +82,12 @@ Contents (exact values; comments in the file explain each):
     private (6PN) addresses, so an exact-IP list is not available.
     Plan-phase verification resolved this: the pinned uvicorn (0.52.1)
     splits `--forwarded-allow-ips` on commas and accepts CIDRs, so the
-    shipped value is `"fdaa::/8,172.16.0.0/12"` (6PN IPv6 + RFC1918
-    machine-local IPv4) — fly-private space only, never `*`. The B21
+    shipped value is `"fdaa::/16,172.16.0.0/12"` (6PN IPv6 + RFC1918
+    machine-local IPv4) — fly-private space only, never `*`. Every
+    entry must be a VALID network (uvicorn silently demotes a
+    malformed CIDR — e.g. `fdaa::/8`, host bits set — to a
+    never-matching string literal; the R3 test guards entry validity
+    offline). The B21
     docs' general warning against `*` stands for self-hosted setups;
     the ops doc states the fly-specific justification.
 - `[http_service]`: `internal_port = 8000`, `force_https = true`,
