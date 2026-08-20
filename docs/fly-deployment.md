@@ -67,8 +67,20 @@ to `fly.toml` itself.
    branch) — set it only if this deployment ever flips to
    `auth.mode: local`.
 4. `fly config validate -c deploy/fly/fly.toml`
-5. `fly deploy -c deploy/fly/fly.toml`
-6. Smoke checks: `GET https://fabulous-writing.fly.dev/api/health`
+5. `fly deploy --ha=false -c deploy/fly/fly.toml`
+
+   `--ha=false` is NOT optional: plain `fly deploy` creates TWO
+   machines (Fly's high-availability default), and this backend has a
+   binding one-machine/one-worker precondition (multi-user-auth design,
+   fly.io sub-project) — the login throttle is per-process, and a
+   second process booting would mark the first one's live usage runs
+   `'abandoned'`, corrupting the ledger. Horizontal scaling first
+   requires shared-state replacements for both mechanisms.
+6. Verify exactly one machine exists: `fly machine list -a
+   fabulous-writing` must show a single machine. If a second one ever
+   appears, remove it with `fly machine destroy <id>` before serving
+   traffic.
+7. Smoke checks: `GET https://fabulous-writing.fly.dev/api/health`
    returns the pinned release version; log in; About dialog shows the
    version and "PostgreSQL"; run an LLM check (Claude); the local tier
    reports unavailable — expected, there is no Ollama on fly.
@@ -77,9 +89,11 @@ to `fly.toml` itself.
 
 - Schema-changing release: run `init-db` under the admin DSN FIRST
   (additive DDL — the old release keeps serving), then bump the image
-  tag in `deploy/fly/fly.toml` (commit) and `fly deploy -c
+  tag in `deploy/fly/fly.toml` (commit) and `fly deploy --ha=false -c
   deploy/fly/fly.toml`.
 - Non-schema release: tag bump + deploy only.
+- Every deploy keeps `--ha=false` (see step 5 above); re-check the
+  machine count after deploying.
 
 ## 4. Operational notes
 

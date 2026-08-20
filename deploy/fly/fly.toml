@@ -1,6 +1,8 @@
 # fly.io machine definition for the hosted demo instance (B16, #57).
 # Deploys the released GHCR image — never builds. Run all fly commands
-# from the repo root:  fly deploy -c deploy/fly/fly.toml
+# from the repo root:  fly deploy --ha=false -c deploy/fly/fly.toml
+# (--ha=false is mandatory: the backend requires exactly one machine /
+# one worker — see docs/fly-deployment.md, "First deploy" step 5.)
 # Secrets (set via `fly secrets set`, names only): FW_DATABASE_URL,
 # FW_SUPABASE_SECRET_KEY, FW_SUPABASE_PUBLISHABLE_KEY, FW_ADMIN_EMAIL,
 # FW_ADMIN_PASSWORD, ANTHROPIC_API_KEY. (FW_AUTH_SECRET only if
