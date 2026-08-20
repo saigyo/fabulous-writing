@@ -16,9 +16,8 @@ database:
 auth:
   mode: supabase
   supabase:
-    # Public project URL, not a secret. Replaced with the target
-    # project's real ref at first deploy (docs/fly-deployment.md).
-    url: https://PROJECT-REF.supabase.co
+    # Public project URL, not a secret (docs/fly-deployment.md).
+    url: https://hadjtxychikuhupmkhjx.supabase.co
 
 frontend:
   dist_dir: /app/dist
