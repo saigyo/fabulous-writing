@@ -1,0 +1,58 @@
+# fly.io machine definition for the hosted demo instance (B16, #57).
+# Deploys the released GHCR image — never builds. Run all fly commands
+# from the repo root:  fly deploy -c deploy/fly/fly.toml
+# Secrets (set via `fly secrets set`, names only): FW_DATABASE_URL,
+# FW_SUPABASE_SECRET_KEY, FW_SUPABASE_PUBLISHABLE_KEY, FW_ADMIN_EMAIL,
+# FW_ADMIN_PASSWORD, ANTHROPIC_API_KEY. (FW_AUTH_SECRET only if
+# auth.mode is ever flipped to local — unused in supabase mode.)
+# Guarded by backend/tests/test_fly_config.py.
+
+app = "fabulous-writing"
+primary_region = "fra"
+
+[build]
+  # Pinned release tag. Deploying a new release is a one-line,
+  # git-recorded edit here — preceded by `init-db` under the admin DSN
+  # whenever the release changes the schema (docs/fly-deployment.md,
+  # "Updating").
+  image = "ghcr.io/saigyo/fabulous-writing:v0.5.0"
+
+[[files]]
+  # Non-secret deployment config, written into the machine at boot.
+  # Deliberately outside /config (which belongs to the wizard flow);
+  # the entrypoint's env-file probe then looks for /fly/fabulous.env,
+  # which never exists — all environment comes from fly secrets.
+  guest_path = "/fly/config.yaml"
+  local_path = "deploy/fly/config.yaml"
+
+[env]
+  FW_CONFIG_FILE = "/fly/config.yaml"
+  # Trust fly's private address ranges (6PN IPv6 + the full RFC1918
+  # 172.16/12 block for machine-local IPv4 hops) for X-Forwarded-For,
+  # so the login throttle keys on real client IPs. Public traffic
+  # reaches internal_port only through fly-proxy; the pinned uvicorn
+  # (0.52.1) splits this on commas and accepts CIDRs — every entry
+  # MUST be a valid network (uvicorn silently demotes a malformed one,
+  # e.g. fdaa::/8, to a never-matching string literal; the test suite
+  # guards this). Deliberately NOT "*": see docs/fly-deployment.md.
+  FW_TRUSTED_PROXIES = "fdaa::/16,172.16.0.0/12"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/api/health"
+    interval = "30s"
+    timeout = "5s"
+    # Model loading dominates startup; measured at rollout and tuned
+    # by follow-up commit if needed.
+    grace_period = "60s"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "2gb"

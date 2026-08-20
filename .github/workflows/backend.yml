@@ -5,12 +5,14 @@ on:
     branches: [main]
     paths:
       - "backend/**"
+      - "deploy/fly/**"
       - ".github/workflows/backend.yml"
       - "docker/entrypoint.sh"
       - "fabulous.sh"
   pull_request:
     paths:
       - "backend/**"
+      - "deploy/fly/**"
       - ".github/workflows/backend.yml"
       - "docker/entrypoint.sh"
       - "fabulous.sh"

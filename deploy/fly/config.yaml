@@ -1,0 +1,53 @@
+# Non-secret deployment config for the fly.io demo instance (B16, #57).
+# Delivered into the machine via fly.toml [[files]]; FW_CONFIG_FILE
+# points at the guest path. Every secret lives exclusively in fly
+# secrets (names in docs/fly-deployment.md) — nothing here may ever
+# hold a DSN, key, or password. Guarded by
+# backend/tests/test_fly_config.py.
+
+environment: production
+
+database:
+  backend: postgres
+  # Schema is created/migrated out-of-band: `init-db` under an admin
+  # FW_DATABASE_URL (B36). The runtime app-role DSN cannot run DDL.
+  manage_schema: false
+
+auth:
+  mode: supabase
+  supabase:
+    # Public project URL, not a secret. Replaced with the target
+    # project's real ref at first deploy (docs/fly-deployment.md).
+    url: https://PROJECT-REF.supabase.co
+
+frontend:
+  dist_dir: /app/dist
+
+# Single-origin serving: no cross-origin callers exist.
+cors:
+  origins: []
+
+providers:
+  default_provider: claude
+
+# Complete 7-language table — a partial one would silently inherit
+# non-Anthropic defaults for unlisted languages (B24). Remote tiers on
+# the wizard's Anthropic column; the local tier stays honestly on
+# Ollama and reports unavailable on fly (no Ollama there).
+routing:
+  languages:
+    en: &anthropic_european
+      quality: { provider: claude, model: "claude-opus-5" }
+      balanced: { provider: claude, model: "claude-sonnet-5" }
+      cheap: { provider: claude, model: "claude-haiku-4-5" }
+      local: { provider: ollama, model: "mistral-nemo:12b-instruct-2407-q6_K" }
+    de: *anthropic_european
+    fr: *anthropic_european
+    es: *anthropic_european
+    it: *anthropic_european
+    ja: &anthropic_cjk
+      quality: { provider: claude, model: "claude-opus-5" }
+      balanced: { provider: claude, model: "claude-sonnet-5" }
+      cheap: { provider: claude, model: "claude-haiku-4-5" }
+      local: { provider: ollama, model: "qwen3:8b" }
+    zh: *anthropic_cjk
