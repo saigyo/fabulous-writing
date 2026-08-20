@@ -4432,3 +4432,33 @@ design (spec R5): `fly config validate`, first deploy, cold-start
 measurement, and any runbook corrections land as a follow-up. #118
 (B39) is flagged in the ops doc as the one known log-safety exception
 and a pre-real-traffic gate.
+
+## 2026-08-20 — B16 rollout: first deploy executed (PR #122)
+
+The spec-R5 rollout, same evening as the merge, and the runbook held up
+with zero deviations: `fly config validate` clean, `fly deploy
+--ha=false` resolved GHCR `0.5.0` remotely and created exactly one
+machine in `fra` (verified via `fly machine list`), `/api/health`
+reported 0.5.0 with supabase auth features, and the boot itself was the
+proof that `manage_schema: false` schema verification passes through
+the `fabwriting_app` role against the hosted database. The machine's
+own 6PN address (`fdaa:a1:…`) landed inside the trusted `fdaa::/16`,
+validating the proxy-trust choice live. Browser pass (Markus): login,
+About dialog showing 0.5.0 / PostgreSQL with no dev badge, a real
+Claude-backed check, local tier honestly unavailable.
+
+The database side needed almost nothing — a welcome surprise, verified
+rather than trusted: the B36-era hosted application had already left
+both migrations recorded, the role activated, and all nine tables
+postgres-owned with correct app-role grants (DML yes, `public` CREATE
+no, `auth` USAGE no — probed via read-only `supabase db query` before
+touching anything), so `init-db` under the admin DSN reported the
+schema up to date. Cold start measured by stopping the machine and
+timing the auto-start round trip: **~32 seconds** to the first `200`,
+comfortably inside the 60-second check grace — recorded in the ops doc,
+no tuning needed. This PR carries the two commits the runbook itself
+mandates: the real project URL in `deploy/fly/config.yaml` (fly-config
+gate still 18/18) and the measured figure — and its CI run doubled as
+the live proof of the round-1 Copilot fix, the backend gate firing on a
+`deploy/fly/**`-only diff. Copilot: clean first round, zero posted,
+zero suppressed.
