@@ -79,12 +79,13 @@ Contents (exact values; comments in the file explain each):
     traffic (the service ports are the only public surface), and the
     remaining peers are the org's own 6PN private network — a
     single-operator org here. Fly-proxy connects from non-constant
-    private (6PN) addresses, so an exact-IP list is not available;
-    **plan-phase verification**: check the pinned uvicorn version for
-    CIDR support in `--forwarded-allow-ips` and, if supported, trust
-    the 6PN range (`fdaa::/8`) instead of `*`. The B21 docs' general
-    warning against `*` stands for self-hosted setups; the ops doc
-    states the fly-specific justification for whichever value ships.
+    private (6PN) addresses, so an exact-IP list is not available.
+    Plan-phase verification resolved this: the pinned uvicorn (0.52.1)
+    splits `--forwarded-allow-ips` on commas and accepts CIDRs, so the
+    shipped value is `"fdaa::/8,172.16.0.0/12"` (6PN IPv6 + RFC1918
+    machine-local IPv4) — fly-private space only, never `*`. The B21
+    docs' general warning against `*` stands for self-hosted setups;
+    the ops doc states the fly-specific justification.
 - `[http_service]`: `internal_port = 8000`, `force_https = true`,
   `auto_stop_machines = "stop"`, `auto_start_machines = true`,
   `min_machines_running = 0`.
@@ -125,8 +126,11 @@ The non-secret deployment config, loaded by the entrypoint via
 
 New `backend/tests/test_fly_config.py` loading the repo's
 `deploy/fly/config.yaml` through the real `Settings` model (path
-resolved relative to the repo root from the test file, skipped if the
-deploy tree is absent — it never is in CI). Pins:
+resolved relative to the repo root from the test file; a missing
+deploy tree is a hard FAILURE, not a skip — a skip would silently
+disarm the gate). The backend CI workflow's `paths:` filters gain
+`deploy/fly/**` so the gate also fires on artifact-only edits (the
+runbook-mandated project-URL and image-tag commits). Pins:
 
 - parses cleanly through `load_settings`/`Settings` (a future
   config-model rename that orphans the fly config fails CI, the exact
@@ -161,12 +165,14 @@ Supabase runbooks (`docs/postgres-setup.md`,
    the postgres-setup runbook rather than duplicating it); Anthropic
    API key; `flyctl` authenticated.
 2. **First deploy** — `fly apps create fabulous-writing`; the
-   `fly secrets set` block listing the seven secrets **by name only**
-   (`FW_AUTH_SECRET` generated e.g. via `secrets.token_urlsafe(48)`,
-   `FW_DATABASE_URL` = app-role Supavisor DSN with the
+   `fly secrets set` block listing the six secrets **by name only**
+   (`FW_DATABASE_URL` = app-role Supavisor DSN with the
    `fabwriting_app.<project-ref>` username form,
    `FW_SUPABASE_SECRET_KEY`, `FW_SUPABASE_PUBLISHABLE_KEY`,
-   `FW_ADMIN_EMAIL`, `FW_ADMIN_PASSWORD`, `ANTHROPIC_API_KEY`);
+   `FW_ADMIN_EMAIL`, `FW_ADMIN_PASSWORD`, `ANTHROPIC_API_KEY`;
+   `FW_AUTH_SECRET` is deliberately absent — it backs local-mode
+   token signing only and is never read in `auth.mode: supabase`,
+   documented as set-only-if-mode-flips);
    `fly deploy -c deploy/fly/fly.toml`; smoke checks (`/api/health`
    returns the release version; login; About dialog shows
    `v0.5.0` / PostgreSQL; LLM check through Claude; local tier reports
