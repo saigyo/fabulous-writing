@@ -23,7 +23,7 @@ orphan this deployment fails CI instead of failing at machine boot.
 
   ```bash
   cd backend
-  FW_DATABASE_URL="<admin DSN>" uv run python -m app.manage init-db
+  FW_DATABASE_URL='<admin DSN>' uv run python -m app.manage init-db
   ```
 
 - Supabase Auth configured ([supabase-auth-setup.md](supabase-auth-setup.md));
@@ -43,17 +43,19 @@ to `fly.toml` itself.
 1. Set the real project URL in `deploy/fly/config.yaml`
    (`auth.supabase.url`) and commit.
 2. `fly apps create fabulous-writing`
-3. Set the secrets (values from your password manager — never commit
-   or echo them):
+3. Set the secrets. Don't pass values on the `fly secrets set` command
+   line — they would land in shell history and be visible as process
+   arguments while `flyctl` runs. Instead, write the six `NAME=VALUE`
+   lines (values from your password manager) to a scratch file
+   **outside the repo**, import it from stdin, and delete it:
 
    ```bash
-   fly secrets set -a fabulous-writing \
-     FW_DATABASE_URL=... \
-     FW_SUPABASE_SECRET_KEY=... \
-     FW_SUPABASE_PUBLISHABLE_KEY=... \
-     FW_ADMIN_EMAIL=... \
-     FW_ADMIN_PASSWORD=... \
-     ANTHROPIC_API_KEY=...
+   # /tmp/fw-secrets.env — six lines, NAME=VALUE, no quotes:
+   #   FW_DATABASE_URL, FW_SUPABASE_SECRET_KEY,
+   #   FW_SUPABASE_PUBLISHABLE_KEY, FW_ADMIN_EMAIL,
+   #   FW_ADMIN_PASSWORD, ANTHROPIC_API_KEY
+   fly secrets import -a fabulous-writing < /tmp/fw-secrets.env
+   rm /tmp/fw-secrets.env
    ```
 
    `FW_DATABASE_URL` is the APP-ROLE Supavisor DSN with username form
@@ -78,8 +80,9 @@ to `fly.toml` itself.
    requires shared-state replacements for both mechanisms.
 6. Verify exactly one machine exists: `fly machine list -a
    fabulous-writing` must show a single machine. If a second one ever
-   appears, remove it with `fly machine destroy <id>` before serving
-   traffic.
+   appears, remove it before serving traffic: `fly machine stop <id>`
+   followed by `fly machine destroy <id>` (`destroy` refuses a running
+   machine unless forced).
 7. Smoke checks: `GET https://fabulous-writing.fly.dev/api/health`
    returns the pinned release version; log in; About dialog shows the
    version and "PostgreSQL"; run an LLM check (Claude); the local tier

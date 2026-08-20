@@ -41,6 +41,18 @@ SECRET_ENV_NAMES = (
 )
 
 
+def _assert_no_secret_values(text: str) -> None:
+    # Value-shaped guards shared by both artifacts: DSNs, Anthropic key
+    # prefix, Supabase hosted key prefix, and assignment-shaped secret
+    # names ("=" for YAML/env style, " =" for TOML style).
+    assert "postgresql://" not in text
+    assert "sk-ant-" not in text
+    assert "sb_secret_" not in text
+    for name in SECRET_ENV_NAMES:
+        assert f"{name}=" not in text, name
+        assert f"{name} =" not in text, name
+
+
 @pytest.fixture(scope="module")
 def fly_settings():
     # load_settings falls back to defaults for a missing file; the
@@ -97,10 +109,8 @@ class TestFlyConfigYaml:
 
     def test_no_secret_values_in_config(self):
         text = CONFIG_PATH.read_text(encoding="utf-8")
-        assert "postgresql://" not in text
-        assert "sk-ant-" not in text
+        _assert_no_secret_values(text)
         for name in SECRET_ENV_NAMES:
-            assert f"{name}=" not in text, name
             assert f"{name}:" not in text, name
 
 
@@ -161,7 +171,6 @@ class TestFlyToml:
 
     def test_no_secret_values_in_fly_toml(self, fly_toml):
         text = FLY_TOML_PATH.read_text(encoding="utf-8")
-        assert "postgresql://" not in text
-        assert "sk-ant-" not in text
+        _assert_no_secret_values(text)
         # Env section may only carry the two non-secret variables.
         assert set(fly_toml["env"]) == {"FW_CONFIG_FILE", "FW_TRUSTED_PROXIES"}
