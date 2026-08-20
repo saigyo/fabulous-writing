@@ -16,8 +16,8 @@ orphan this deployment fails CI instead of failing at machine boot.
 ## 1. Prerequisites
 
 - A hosted Supabase project with the B36 role migrations pushed and the
-  `fabwriting_app` password set (docs/postgres-setup.md, "Least-privilege
-  application role").
+  `fabwriting_app` password set ([postgres-setup.md](postgres-setup.md),
+  "Least-privilege application role").
 - Schema initialized from your machine under the ADMIN DSN — the admin
   DSN never becomes a fly secret:
 
@@ -26,14 +26,19 @@ orphan this deployment fails CI instead of failing at machine boot.
   FW_DATABASE_URL="<admin DSN>" uv run python -m app.manage init-db
   ```
 
-- Supabase Auth configured (docs/supabase-auth-setup.md); have the
-  project URL, publishable key, and secret key at hand.
+- Supabase Auth configured ([supabase-auth-setup.md](supabase-auth-setup.md));
+  have the project URL, publishable key, and secret key at hand.
 - An Anthropic API key; `flyctl` installed and authenticated.
 - The GHCR image is public — `fly deploy` needs no registry auth. If it
   were ever flipped private, deploys would need registry credentials
   configured on fly first.
 
 ## 2. First deploy
+
+Run every `fly` command below from the repo root, with `-c
+deploy/fly/fly.toml` — `fly.toml`'s `[[files]] local_path` is resolved
+relative to the working directory the command runs from, not relative
+to `fly.toml` itself.
 
 1. Set the real project URL in `deploy/fly/config.yaml`
    (`auth.supabase.url`) and commit.
@@ -52,18 +57,21 @@ orphan this deployment fails CI instead of failing at machine boot.
    ```
 
    `FW_DATABASE_URL` is the APP-ROLE Supavisor DSN with username form
-   `fabwriting_app.<project-ref>` (docs/postgres-setup.md); the admin
-   DSN must never be set here. `FW_AUTH_SECRET` is deliberately absent
-   from this list: it backs local-mode token signing only and is never
-   read in `auth.mode: supabase` (`main.py` resolves it only on the
-   local branch) — set it only if this deployment ever flips to
+   `fabwriting_app.<projectref>` ([postgres-setup.md](postgres-setup.md));
+   the admin DSN must never be set here. `FW_ADMIN_PASSWORD` must be at
+   least 12 characters — `seed_admin` validates against
+   `ADMIN_SET_MIN_PASSWORD_LENGTH = 12` and a shorter value fails the
+   first boot. `FW_AUTH_SECRET` is deliberately absent from this list:
+   it backs local-mode token signing only and is never read in
+   `auth.mode: supabase` (`main.py` resolves it only on the local
+   branch) — set it only if this deployment ever flips to
    `auth.mode: local`.
 4. `fly config validate -c deploy/fly/fly.toml`
 5. `fly deploy -c deploy/fly/fly.toml`
-6. Smoke checks: `/api/health` returns the pinned release version;
-   log in; About dialog shows the version and "PostgreSQL"; run an
-   LLM check (Claude); the local tier reports unavailable — expected,
-   there is no Ollama on fly.
+6. Smoke checks: `GET https://fabulous-writing.fly.dev/api/health`
+   returns the pinned release version; log in; About dialog shows the
+   version and "PostgreSQL"; run an LLM check (Claude); the local tier
+   reports unavailable — expected, there is no Ollama on fly.
 
 ## 3. Updating
 
@@ -111,7 +119,11 @@ bug to "fix" during rollout.
 itself logs, and every error path in this codebase that touches a
 secret-bearing value (a malformed `FW_DATABASE_URL`, a Supabase auth
 failure) names the offending variable only, never its value — the same
-standing rule the rest of the app's error handling follows.
+standing rule the rest of the app's error handling follows. One known
+exception is tracked as #118 (B39): a password mis-pasted into a
+*field* of an otherwise valid DSN can still be echoed by libpq's
+connect diagnostics — until that lands, treat logs from a failed
+database connect as potentially secret-bearing.
 
 **Before real (non-demo) traffic.** Two hardening items are open and
 consciously deferred past this first deployment: #118 (B39, DSN
