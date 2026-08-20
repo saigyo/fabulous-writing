@@ -116,9 +116,10 @@ to `fly.toml` itself.
 `auto_start_machines` brings it back on the next request. That first
 request pays a cold start dominated by model loading (spaCy/GiNZA
 pipelines) rather than by fly's own machine-start time; the health
-check's `grace_period` is set generously for this reason. The actual
-figure will be measured at first rollout and the grace period tuned
-by follow-up commit if needed.
+check's `grace_period` is set generously for this reason. Measured at
+first rollout (2026-08-20, image 0.5.0): **~32 seconds** from stopped
+machine to the first `200` on `/api/health` — comfortably inside the
+60-second grace period, so no tuning was needed.
 
 **`FW_TRUSTED_PROXIES="fdaa::/16,172.16.0.0/12"`.** Forwarded headers
 are trusted at all because the login throttle keys on the caller's real
