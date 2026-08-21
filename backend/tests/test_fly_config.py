@@ -152,9 +152,11 @@ class TestFlyToml:
         svc = fly_toml["http_service"]
         assert svc["internal_port"] == 8000
         assert svc["force_https"] is True
-        assert svc["auto_stop_machines"] == "stop"
+        # Always-on (2026-08-22): background bot traffic defeated
+        # scale-to-zero — see docs/fly-deployment.md "Lifecycle".
+        assert svc["auto_stop_machines"] == "off"
         assert svc["auto_start_machines"] is True
-        assert svc["min_machines_running"] == 0
+        assert svc["min_machines_running"] == 1
 
     def test_health_check(self, fly_toml):
         checks = fly_toml["http_service"]["checks"]

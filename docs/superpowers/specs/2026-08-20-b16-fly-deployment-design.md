@@ -35,6 +35,13 @@ up from the repo with no undocumented steps.
   `min_machines_running = 0`. Costs pennies while idle; the first
   visitor after idle pays the model-loading cold start (measured during
   rollout, documented in the ops doc).
+
+  > **Amendment (2026-08-22, post-rollout):** one day of operation
+  > disproved the idle premise — internet background scans woke the
+  > machine constantly, so it paid for most of the runtime anyway plus
+  > a ~32 s cold start per wake. Flipped to always-on
+  > (`auto_stop_machines = "off"`, `min_machines_running = 1`,
+  > ~$11–12/month); rationale in docs/fly-deployment.md "Lifecycle".
 - **App name `fabulous-writing`** (URL `fabulous-writing.fly.dev`;
   availability confirmed at rollout, fallback agreed then), **region
   `fra`**.

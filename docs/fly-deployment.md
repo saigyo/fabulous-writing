@@ -2,10 +2,9 @@
 
 This deploys the app as a single stateless fly.io machine running the
 released GHCR image, backed by a hosted Supabase project for both
-Postgres and auth — no volume, no in-cluster database. Combined with
-`min_machines_running = 0`, the machine scales to zero when idle, so cost
-during a quiet demo period is close to nothing; you pay for the machine
-only while it's actually serving traffic. Everything specific to this
+Postgres and auth — no volume, no in-cluster database. The machine runs
+**always-on** (one machine, ~$11–12/month; see "Lifecycle" below for why
+scale-to-zero was abandoned). Everything specific to this
 deployment target lives in two committed files: `deploy/fly/fly.toml`
 (the machine definition — image, secrets' *names*, networking, health
 check) and `deploy/fly/config.yaml` (the app's own non-secret config,
@@ -111,15 +110,25 @@ to `fly.toml` itself.
 
 ## 4. Operational notes
 
-**Scale-to-zero.** With `min_machines_running = 0` and
-`auto_stop_machines = "stop"`, the machine stops entirely once idle and
-`auto_start_machines` brings it back on the next request. That first
-request pays a cold start dominated by model loading (spaCy/GiNZA
-pipelines) rather than by fly's own machine-start time; the health
-check's `grace_period` is set generously for this reason. Measured at
+**Lifecycle: always-on (since 2026-08-22).** The first rollout ran
+scale-to-zero (`auto_stop_machines = "stop"`, `min_machines_running =
+0`), but one day of operation disproved its premise: internet
+background scans hitting the public address woke the machine
+constantly, so the instance paid for most of the runtime anyway — plus
+a cold start per wake. That cold start is dominated by model loading
+(spaCy/GiNZA pipelines), not fly's machine-start time; measured at
 first rollout (2026-08-20, image 0.5.0): **~32 seconds** from stopped
-machine to the first `200` on `/api/health` — comfortably inside the
-60-second grace period, so no tuning was needed.
+machine to the first `200` on `/api/health` — inside the 60-second
+check `grace_period`, but each wake window risks 502s for requests
+that outlast fly-proxy's connect patience and repaints the dashboard's
+"Proxy is having trouble reaching app" banner. The config is now
+`auto_stop_machines = "off"` with `min_machines_running = 1` (always
+one machine under either knob's interpretation, ~$11–12/month for
+`shared-cpu-2x`/2 GB); `auto_start_machines` stays on so a manually
+stopped machine revives on the next request. That dashboard banner is
+therefore only expected after a deploy or a manual stop — if it
+persists while the machine shows `started` with checks `1/1`, treat it
+as real.
 
 **`FW_TRUSTED_PROXIES="fdaa::/16,172.16.0.0/12"`.** Forwarded headers
 are trusted at all because the login throttle keys on the caller's real
