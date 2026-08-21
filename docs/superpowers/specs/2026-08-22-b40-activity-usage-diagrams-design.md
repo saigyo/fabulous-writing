@@ -115,9 +115,14 @@ ones.
   user id. Non-admins: the view renders only `self` regardless of
   store state (same client-side gating idiom as the admin view), and
   the server enforces independently.
-- Screen composition: range picker (30 / 90 / 365; refetch on change,
-  default 30), three panels (runs stacked by category, tokens
-  input/output, credits), totals line. Subject `all` adds the sortable
+- Screen composition (settled via visual-companion mockups,
+  2026-08-22): top row with the screen heading left and the range
+  picker right (30 / 90 / 365 pills; refetch on change, default 30); a
+  one-line totals summary under it (runs · tokens in/out · credits);
+  then the three panels as a **vertical stack of full-width charts**
+  (runs stacked by category, tokens input/output, credits) — full
+  width keeps per-day resolution usable at 365 days. Subject `all`
+  adds the sortable
   per-user table (columns per R1; sort by any column, default credits
   descending; row click → that user's subject; a back control returns
   to `all`). Admin viewing a specific user sees whose data it is
@@ -128,12 +133,28 @@ ones.
 ### R4 — SVG chart components
 
 In-repo components (`activity/` or `ui/`, plan decides): a stacked
-daily bar chart used by all three panels — props: day labels, named
-series with values and CSS-variable-based colors, y-axis with a small
-number of ticks, an accessible per-day tooltip (`<title>` element —
-the house pattern, no portal library), theme-aware via existing CSS
-custom properties, x-axis labels thinned at 90/365 so they stay
-legible. No animations. Rendering is pure (data in, SVG out) so tests
+daily bar chart used by all three panels. Visual style (settled via
+visual-companion mockups, 2026-08-22 — "flat minimal plus gridlines"):
+
+- flat **square-edged** stacked bars (no rounded corners, no
+  animations), hairline baseline, dim axis labels;
+- **faint horizontal gridlines** at the y-tick positions
+  (`var(--border)`);
+- **hover tooltip showing the actual numbers**: per-day `<title>`
+  element (the house pattern, no portal library) listing each visible
+  category with its value, e.g. "2026-08-14 — check 6, suggestion 2,
+  failed 1" / "input 18,400, output 6,100" / "credits 210";
+- colors from CSS custom properties, theme-aware in both themes:
+  category ramp on the accent hue (`check` = `var(--accent)`,
+  `suggestion` and `name` as two lighter ramp steps introduced as new
+  `--accent-mid` / `--accent-faint` variables with light and dark
+  values), `failed` = `var(--held-back)` amber; tokens: input =
+  `var(--accent)`, output = `var(--accent-faint)`; credits =
+  `var(--accent-mid)`;
+- x-axis labels thinned at 90/365 so they stay legible.
+
+Props: day labels, named series with values and colors, y-axis with a
+small number of ticks. Rendering is pure (data in, SVG out) so tests
 assert on the DOM with the house idioms (`getByText`,
 `querySelector`); no snapshot tests.
 
