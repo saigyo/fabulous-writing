@@ -89,13 +89,13 @@ Response shape (all three; `per_user` only on `/all`):
               "name": [0, …], "failed": [0, …]},
     "input_tokens": [0, …],
     "output_tokens": [0, …],
-    "credits": [0.0, …]
+    "credits": [0, …]
   },
   "totals": {"runs": 0, "input_tokens": 0, "output_tokens": 0,
-              "credits": 0.0},
+              "credits": 0},
   "per_user": [{"user_id": 1, "email": "…", "display_name": null,
                  "runs": 0, "input_tokens": 0, "output_tokens": 0,
-                 "credits": 0.0}]
+                 "credits": 0}]
 }
 ```
 
