@@ -9,7 +9,7 @@ schema changes.
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Literal, Protocol
 
 from app.core.config import CreditCostSettings, LimitsSettings, TierLimitsSettings
@@ -90,6 +90,12 @@ _MIGRATED_COLUMNS = [
 # created when the app runs without schema management (B36 spec R3).
 _REQUIRED_SCHEMA = {"llm_usage": _MIGRATED_COLUMNS}
 
+# The OK categories mirror config._CREDIT_SOURCES exactly; a NEW source
+# added there must be added here too or its completed runs vanish from
+# every chart (the failed bucket is status-based and unaffected).
+_RUN_CATEGORIES = ("check", "suggestion", "name", "failed")
+_SETTLED_FAILED = "('failed','cancelled','abandoned')"
+
 
 class MeteredUser(Protocol):
     """What reservation needs to know about the caller. Satisfied by
@@ -117,6 +123,24 @@ class QuotaDecision:
     # The window whose budget bound (B6 spec §5) -- internal: tests and
     # logs only, never a user-facing number.
     exhausted_window: str | None = None
+
+
+@dataclass(frozen=True)
+class ActivitySeries:
+    days: list[str]                 # ISO dates, ascending, len == requested days
+    runs: dict[str, list[int]]      # keys exactly: check, suggestion, name, failed
+    input_tokens: list[int]
+    output_tokens: list[int]
+    credits: list[int]
+
+
+@dataclass(frozen=True)
+class UserActivityTotals:
+    user_id: int
+    runs: int
+    input_tokens: int
+    output_tokens: int
+    credits: int
 
 
 def _utc_now() -> datetime:
@@ -406,6 +430,74 @@ class UsageStore:
                     ).fetchone()
                 used[window] = total
         return used
+
+    def activity_series(
+        self, user_id: int | None, *, days: int, end: date | None = None
+    ) -> ActivitySeries:
+        """Daily activity buckets for one user (or all users when user_id is
+        None), zero-filled over the full range. `started` rows are excluded
+        everywhere: they are not activity yet, and the startup sweep may
+        still re-label them."""
+        end_day = end or _utc_now().date()
+        start_day = end_day - timedelta(days=days - 1)
+        where = "status != 'started' AND day >= ? AND day <= ?"
+        params: list[object] = [start_day.isoformat(), end_day.isoformat()]
+        if user_id is not None:
+            where += " AND user_id = ?"
+            params.append(user_id)
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                "SELECT day,"
+                " SUM(CASE WHEN status = 'completed' AND source = 'check' THEN 1 ELSE 0 END),"
+                " SUM(CASE WHEN status = 'completed' AND source = 'suggestion' THEN 1 ELSE 0 END),"
+                " SUM(CASE WHEN status = 'completed' AND source = 'name' THEN 1 ELSE 0 END),"
+                f" SUM(CASE WHEN status IN {_SETTLED_FAILED} THEN 1 ELSE 0 END),"
+                " COALESCE(SUM(input_tokens), 0),"
+                " COALESCE(SUM(output_tokens), 0),"
+                " COALESCE(SUM(credits), 0)"
+                f" FROM llm_usage WHERE {where} GROUP BY day",
+                tuple(params),
+            ).fetchall()
+        by_day = {r[0]: r for r in rows}
+        day_list = [(start_day + timedelta(days=i)).isoformat() for i in range(days)]
+
+        def col(idx):
+            return [int(by_day[d][idx]) if d in by_day else 0 for d in day_list]
+
+        return ActivitySeries(
+            days=day_list,
+            runs={"check": col(1), "suggestion": col(2), "name": col(3), "failed": col(4)},
+            input_tokens=col(5), output_tokens=col(6), credits=col(7),
+        )
+
+    def activity_user_totals(
+        self, *, days: int, end: date | None = None
+    ) -> list[UserActivityTotals]:
+        """Same WHERE as activity_series (no user filter), collapsed per
+        user rather than per day. Ordered by credits DESC as a stable
+        server-side default; the client re-sorts freely."""
+        end_day = end or _utc_now().date()
+        start_day = end_day - timedelta(days=days - 1)
+        with self.db.connect() as conn:
+            rows = conn.execute(
+                "SELECT user_id,"
+                " COUNT(*),"
+                " COALESCE(SUM(input_tokens), 0),"
+                " COALESCE(SUM(output_tokens), 0),"
+                " COALESCE(SUM(credits), 0)"
+                " FROM llm_usage"
+                " WHERE status != 'started' AND day >= ? AND day <= ?"
+                " GROUP BY user_id"
+                " ORDER BY COALESCE(SUM(credits), 0) DESC",
+                (start_day.isoformat(), end_day.isoformat()),
+            ).fetchall()
+        return [
+            UserActivityTotals(
+                user_id=r[0], runs=int(r[1]), input_tokens=int(r[2]),
+                output_tokens=int(r[3]), credits=int(r[4]),
+            )
+            for r in rows
+        ]
 
     def sweep_all_started(self) -> int:
         """Startup sweep (spec §6.6): in a single-process deployment no
