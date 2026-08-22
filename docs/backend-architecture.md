@@ -2172,15 +2172,30 @@ WHERE clause per user instead of per day, ordered by `credits` DESC. Both read
 
 `app/api/usage_activity.py` exposes this as three GETs under
 `/api/usage/activity`: the bare path returns the caller's own series (any
-authenticated user); `/all` (admin-only) returns the server-wide series plus
-a `per_user` breakdown joined against `UserStore.list_users()` for
-email/display_name; `/{user_id}` (admin-only) returns one other user's series,
+authenticated user, via a plain `activity_series` call); `/all` (admin-only)
+returns the server-wide series plus a `per_user` breakdown joined against
+`UserStore.list_users()` for email/display_name; `/{user_id}` (admin-only)
+returns one other user's series via its own single `activity_series` call,
 404 if unknown. `days` is a query param restricted to `{30, 90, 365}` via an
 `IntEnum` (not a `Literal` — FastAPI's string-to-int query coercion doesn't
 apply to `Literal` members, so every explicit `?days=` value would 422).
-`/all` and `/{user_id}` read one UTC clock instant and pass it as `end` to
-both store calls, so the series and per-user totals describe the same range
-even if the query straddles midnight.
+
+Only `/all` needs a same-snapshot guarantee — it is the one route joining two
+projections (server-wide series, per-user totals) into one response, so
+`UsageStore.activity_all(*, days, end=None)` runs them together: one UTC
+clock instant read as `end` (so both describe the same day range even if the
+request straddles midnight) AND one DB connection with the transaction
+pinned to a single snapshot before either query runs (`BEGIN` on sqlite,
+`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ` on postgres — the same
+idiom `credits_used` uses above), so a ledger row settling between the two
+queries can't make them disagree either.
+`activity_series`/`activity_user_totals` stay as separate, single-connection
+methods for `/all`'s two query bodies to share (`activity_series` doubles as
+the bare path's and `/{user_id}`'s own call) — see `activity_all`'s
+docstring for why the two can't just be called back to back for `/all`.
+`/{user_id}`, by contrast, only ever calls `activity_series` once — there is
+no second projection to keep in sync, so no shared connection or snapshot is
+needed there.
 
 ### Credit windows (B6)
 
