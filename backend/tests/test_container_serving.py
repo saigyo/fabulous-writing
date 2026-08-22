@@ -171,6 +171,17 @@ class TestEmbedServing:
             == "frame-ancestors chrome-extension://abc https://example.com"
         )
 
+    # Copilot round 8: the documented natural YAML syntax `- self` (bare,
+    # unquoted) must render the correct CSP token end to end, not just pass
+    # config validation — main.py joins EmbedSettings.allowed_ancestors
+    # directly into the header value.
+    @pytest.mark.parametrize("path", ["/embed", "/embed/", "/embed/anything", "/embed.html"])
+    def test_bare_self_ancestor_renders_quoted_self_in_header(self, tmp_path, path):
+        client = make_app(tmp_path, make_dist(tmp_path), ancestors=["self"])
+        r = client.get(path)
+        assert r.status_code == 200
+        assert r.headers["content-security-policy"] == "frame-ancestors 'self'"
+
     def test_index_and_root_stay_none_when_ancestors_configured(self, tmp_path):
         client = make_app(
             tmp_path, make_dist(tmp_path), ancestors=["chrome-extension://abc"]

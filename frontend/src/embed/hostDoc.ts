@@ -56,13 +56,30 @@ export interface HostDoc extends DocumentPort {
   replaceResult(requestId: string, ok: boolean, text: string, fieldId: string): void
   connected(): boolean
   capabilities(): HostCapabilities | null
-  /** Unconditional teardown for session turnover (auth/session.ts, via
-   * embed/disconnectSlot.ts on logout/expireSession) — same effect as
-   * fieldDisconnected but without requiring the fieldId to match, since a
-   * session ending must clear the shim regardless of which field (if any)
-   * is currently connected. Without this, the shim's private fieldId/
-   * buffer/items survive a logout and the first textChanged after a
-   * re-login republishes pre-logout findings. */
+  /** Session-scoped teardown for session turnover (auth/session.ts, via
+   * embed/disconnectSlot.ts on logout/expireSession): clears tracked
+   * findings (store and host both get the empty-findings message, sent
+   * while fieldId is still current), settles pending replacements as
+   * 'refused', clears the selection, and clears the store's doc metrics/
+   * scorecard — but deliberately RETAINS the shim's own field identity,
+   * capabilities, meta, and buffer.
+   *
+   * Contrast with the old unconditional teardown() this replaced: that
+   * also nulled fieldId, which made the login-time republish() (fieldId
+   * === null) a no-op — the embed then waited forever while the host still
+   * believed it was connected (nothing tells the host to reconnect; see
+   * republish()'s own comment). Retaining the buffer leaks nothing: its
+   * text belongs to the HOST page (still visible there, in the user's own
+   * field), not to the session.
+   *
+   * connected() (fieldId !== null) stays true across this call by design —
+   * the STORE is what goes login-gated (connectedField is cleared by
+   * auth/session.ts's resetSessionState(), which always runs immediately
+   * before this), not the shim's private knowledge of the field. Also
+   * flips the session-active flag off: a host textChanged that arrives in
+   * the window between this call and the next republish() (the user is
+   * logged out but the host page keeps running) must not publish tracked
+   * findings or doc metrics into the store — see syncBuffer(). */
   resetSession(): void
   /** Re-publishes the currently connected field's state to the store —
    * wired to auth/session.ts's login() via embed/activateSlot.ts. A field
@@ -74,7 +91,14 @@ export interface HostDoc extends DocumentPort {
    * so it is safe to call unconditionally on every login. Deliberately NOT
    * teardown: the host still believes it is connected and has no reconnect
    * affordance, so the fix is to make the store agree with the shim again,
-   * not to disconnect. */
+   * not to disconnect.
+   *
+   * Also the counterpart to resetSession()'s session-active flip: this is
+   * the one path (besides fieldConnected) that turns the flag back on, so
+   * a textChanged that arrives after this point resumes publishing to the
+   * store normally. Writing a fresh connectedField object is what makes
+   * EmbedApp.tsx's connect effect re-fire the check (it's keyed on the
+   * object's identity, not fieldId alone — see that effect's comment). */
   republish(): void
 }
 
@@ -164,6 +188,14 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
   let selectedId: string | null = null
   let requestSeq = 0
   const pending = new Map<string, PendingReplace>()
+  // Off only in the window between resetSession() and the next republish()/
+  // fieldConnected() — the host page keeps running (and can still send
+  // textChanged) while the user is logged out. Gates syncBuffer()'s store
+  // publish so a post-logout host edit cannot leak tracked findings or doc
+  // metrics into a store the login-gated UI shouldn't be showing anyway.
+  // Starts true: a hostDoc that has never gone through a session reset
+  // (every pre-existing call site/test) behaves exactly as before.
+  let sessionActive = true
 
   function toMarkingSpans(): MarkingSpan[] {
     return items.map((item) => ({
@@ -228,8 +260,11 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
   }
 
   /** Full disconnection: resetConnectionState() plus clearing connectedField
-   * and the shim's own field identity — shared by fieldDisconnected (field-
-   * matched) and resetSession (unconditional, session teardown). */
+   * and the shim's own field identity — used by fieldDisconnected
+   * (field-matched: the host itself is telling us the field is gone). NOT
+   * used by resetSession(): a session ending must not discard the shim's
+   * own knowledge of a field the host still believes is connected — see
+   * resetSession()'s comment. */
   function teardown() {
     resetConnectionState()
     useStore.getState().setConnectedField(null)
@@ -248,12 +283,21 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
    * replaceResult's ok:false branch) — that's not a real edit, so it must
    * not re-arm the check scheduler (onInput) or mark metrics/the scorecard
    * dirty. Without this guard, a refused suggestion looks exactly like the
-   * user having typed something, scheduling an unwanted LLM check. */
+   * user having typed something, scheduling an unwanted LLM check.
+   *
+   * The buffer/items resync always runs, even while !sessionActive (a host
+   * edit during the logged-out window is still real and must not be lost
+   * or diffed against stale text once republish() reactivates the
+   * session) — but publishing (onInput, doc metrics, the scorecard, and
+   * the tracked-findings message) is skipped: nothing must leak into the
+   * store, or re-arm the check scheduler, for a session nobody is logged
+   * into right now. */
   function syncBuffer(text: string) {
     if (text === buffer) return
     const splice = deriveSplice(buffer, text)
     items = mapThroughSplice(items, splice)
     buffer = text
+    if (!sessionActive) return
     outbound.onInput()
     const store = useStore.getState()
     store.setDocWords(wordCount(text))
@@ -352,6 +396,11 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
       caps = capabilities
       buffer = text
       connectedUrl = meta?.url ?? null
+      // A fresh connect is always an active session as far as this shim is
+      // concerned (see sessionActive's own comment) — resets the flag in
+      // case the field that just connected is a NEW one arriving while a
+      // prior field's session was left inactive by resetSession().
+      sessionActive = true
       const store = useStore.getState()
       store.setDocWords(wordCount(text))
       store.setDocChars(codePoints(text))
@@ -361,9 +410,13 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
       if (fieldId !== fid) return
       teardown() // sends the cleared findings before fieldId inside it goes null
     },
-    resetSession: teardown,
+    resetSession() {
+      resetConnectionState() // findings/pending/selection/metrics/scorecard — NOT fieldId/caps/buffer/connectedUrl, see this method's own doc comment
+      sessionActive = false
+    },
     republish() {
       if (fieldId === null) return
+      sessionActive = true
       const store = useStore.getState()
       store.setConnectedField({ fieldId, url: connectedUrl })
       store.setDocWords(wordCount(buffer))

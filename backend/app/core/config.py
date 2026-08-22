@@ -241,16 +241,29 @@ class EmbedSettings(BaseModel):
     @field_validator("allowed_ancestors")
     @classmethod
     def _validate_entries(cls, entries: list[str]) -> list[str]:
+        # Accepts the literal (quoted) CSP token 'self' AND the bare word
+        # self -- YAML's `- 'self'` parses to the bare Python string "self"
+        # (the quotes are YAML string delimiters, not part of the value), so
+        # rejecting it would fail the documented, natural way to write this
+        # and leave only the undocumented `- "'self'"` (double-quoting to
+        # preserve the inner quotes) working. Both forms normalize to the
+        # literal 'self' in the stored list, which main.py joins directly
+        # into the frame-ancestors header value.
         pattern = re.compile(
             r"^(?:'self'|[a-z][a-z0-9+.\-]*://[A-Za-z0-9.\-]+(?::\d+)?)$"
         )
+        normalized: list[str] = []
         for entry in entries:
+            if entry == "self":
+                normalized.append("'self'")
+                continue
             if not pattern.fullmatch(entry):
                 raise ValueError(
                     f"embed.allowed_ancestors entry {entry!r} is not 'self' or"
                     " a scheme://host[:port] origin"
                 )
-        return entries
+            normalized.append(entry)
+        return normalized
 
 
 class DatabaseSettings(BaseModel):

@@ -546,6 +546,19 @@ class TestEmbedSettings:
         settings = Settings.model_validate({"embed": {"allowed_ancestors": ["'self'"]}})
         assert settings.embed.allowed_ancestors == ["'self'"]
 
+    # Copilot round 8: YAML `- 'self'` parses to the bare Python string
+    # "self" (the quotes are YAML string delimiters), not the literal
+    # `'self'` CSP token — only the undocumented `- "'self'"` (double-quoted
+    # to preserve the inner quotes) survived the old, bare-rejecting
+    # validator. Bare self must both be accepted AND normalized to the
+    # literal 'self' the CSP header needs (main.py joins the stored list
+    # directly into frame-ancestors) — mutation-verify by reverting the
+    # `entry == "self"` branch to a passthrough: this assertion then fails
+    # because the stored entry stays "self", unquoted.
+    def test_bare_self_accepted_and_normalized(self):
+        settings = Settings.model_validate({"embed": {"allowed_ancestors": ["self"]}})
+        assert settings.embed.allowed_ancestors == ["'self'"]
+
     @pytest.mark.parametrize("entry", [
         "not a url",
         "https://exa mple.com",
@@ -559,6 +572,7 @@ class TestEmbedSettings:
         # every request instead of failing fast at startup.
         "https://good.com\n",
         "'self'\n",
+        "self\n",  # bare self is a special-cased exact match, not a pattern -- a trailing newline must still be rejected
     ])
     def test_invalid_entries_rejected(self, entry):
         with pytest.raises(ValidationError, match="allowed_ancestors"):
