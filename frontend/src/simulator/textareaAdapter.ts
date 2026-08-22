@@ -28,6 +28,12 @@ const MIRRORED_PROPS: (keyof CSSStyleDeclaration)[] = [
   'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'lineHeight',
   'letterSpacing', 'wordSpacing', 'textIndent', 'textTransform',
   'whiteSpace', 'wordWrap', 'wordBreak', 'tabSize',
+  // direction/textAlign are layout-affecting here, not paint-only: they
+  // decide which edge text starts from and how it's justified within the
+  // line box. An RTL or centered textarea whose overlay stayed LTR/
+  // left-aligned would place every character at the wrong x-coordinate,
+  // so highlights would land under the wrong text entirely.
+  'direction', 'textAlign',
   // Layout-affecting, not paint-only: once the textarea's content grows
   // tall enough to show a vertical scrollbar, the space it reserves narrows
   // the available line-wrap width. Without copying these, the overlay (which

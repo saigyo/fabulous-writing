@@ -442,6 +442,18 @@ describe('markingClicked', () => {
     expect(useStore.getState().selectedId).toBeNull()
     expect(outbound.selectCalls).toEqual([])
   })
+
+  // Copilot round 3: a click can arrive as a postMessage that was already
+  // in flight when the tracked findings changed underneath it (a fresh
+  // check, or an edit that dropped the finding). The fieldId still matches,
+  // but the finding id it names is gone — selecting it anyway would store
+  // and echo a selection for a finding that no longer exists.
+  it('ignores a click naming a finding id that is no longer tracked, even when the fieldId matches', () => {
+    const { doc, outbound } = connected('This is very good.', [finding('f1', 8, 12, 'very')])
+    doc.markingClicked('f1', 'stale-finding-id')
+    expect(useStore.getState().selectedId).toBeNull()
+    expect(outbound.selectCalls).toEqual([])
+  })
 })
 
 describe('fieldConnected / fieldDisconnected / connected / capabilities', () => {
