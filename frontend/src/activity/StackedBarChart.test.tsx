@@ -90,4 +90,22 @@ describe('StackedBarChart', () => {
     const labels = container.querySelectorAll('text.chart-xlabel')
     expect(labels.length).toBeLessThanOrEqual(8)
   })
+
+  it('renders one x-axis tick mark per labeled date', () => {
+    const { container } = render(
+      <StackedBarChart days={DAYS} series={threeDaySeries()} ariaLabel="Activity" />,
+    )
+    const ticks = container.querySelectorAll('line.chart-tick')
+    const labels = container.querySelectorAll('text.chart-xlabel')
+    expect(ticks.length).toBe(labels.length)
+  })
+
+  it('anchors the first x-label at its slot start and the last at the plot right edge, so the rightmost date is never clipped', () => {
+    const { container } = render(
+      <StackedBarChart days={DAYS} series={threeDaySeries()} ariaLabel="Activity" />,
+    )
+    const labels = container.querySelectorAll('text.chart-xlabel')
+    expect(labels[0].getAttribute('text-anchor')).toBe('start')
+    expect(labels[labels.length - 1].getAttribute('text-anchor')).toBe('end')
+  })
 })

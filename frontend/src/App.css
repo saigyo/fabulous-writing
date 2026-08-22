@@ -2236,8 +2236,8 @@ dialog.app-dialog h2 {
 
 /* ---- activity chart (B40, #124) ---- */
 .activity-chart { width: 100%; }
-.chart-grid, .chart-baseline { stroke-width: 1; shape-rendering: crispEdges; }
-.chart-xlabel { fill: var(--text-dim); font-size: 10px; }
+.chart-grid, .chart-baseline, .chart-tick { stroke-width: 1; shape-rendering: crispEdges; }
+.chart-xlabel { fill: var(--text-dim); font-size: 9px; }
 
 /* ---- activity view (B40, #124) ---- */
 .activity-view { padding: 1rem 1.5rem; overflow-y: auto; }
