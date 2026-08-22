@@ -15,7 +15,11 @@ from fastapi import FastAPI, HTTPException
 
 from app.api.deps import CurrentUser
 from app.checkers.llm.checker import UnparseableResponseError
-from app.checkers.llm.provider import LLMProvider, MissingApiKeyError
+from app.checkers.llm.provider import (
+    LLMProvider,
+    MissingApiKeyError,
+    TruncatedResponseError,
+)
 from app.core.config import known_provider_names
 from app.core.models import EffectiveLlmReport, LlmSelectionInfo
 from app.core.permissions import (
@@ -52,9 +56,13 @@ def classify_failure(exc: BaseException) -> tuple[str, str]:
     request stage — with its class preserved in the detail for later
     reclassification."""
     detail = _fail_detail(exc)
-    if isinstance(exc, (UnparseableResponseError, json.JSONDecodeError)):
+    if isinstance(
+        exc, (UnparseableResponseError, TruncatedResponseError, json.JSONDecodeError)
+    ):
         # JSONDecodeError on this path means the provider returned a body
         # that fails to decode — broken output on reception (spec §4.3).
+        # Truncated output (stopped at the max_tokens cap) is the same
+        # stage: the provider answered, the answer is unusable.
         return "response", detail
     if isinstance(exc, MissingApiKeyError):
         return "request", detail

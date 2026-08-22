@@ -540,6 +540,20 @@ The LLM's raw response passes through four deterministic stages in
    failed — `_run_llm` reads that attached usage back off the exception to
    settle the failed run's real `input_tokens`/`output_tokens` instead of
    `NULL`.
+
+   Truncation is caught one layer earlier, in the providers themselves:
+   the Claude and Bedrock providers check the API's stop reason and raise
+   `TruncatedResponseError` (`provider.py`) when generation stopped at the
+   `max_tokens` cap, instead of letting the cut-off text reach
+   `parse_response` and masquerade as an unparseable response. Like
+   `UnparseableResponseError`, the exception carries only length metadata
+   in its message and the reported usage in `exc.usage`. The Claude
+   provider's cap is 16384 tokens (`_MAX_TOKENS`, `claude.py`): Sonnet 5 /
+   Opus 5 run adaptive thinking by default and thinking tokens count
+   against `max_tokens`, so the previous 4096 cap starved real answers
+   mid-JSON (every failed production run on 2026-08-22 settled at exactly
+   4096 output tokens). The Bedrock provider sets no explicit cap (its
+   backend default applies) but detects the same `stopReason`.
 2. **Anchor** (`anchoring.py`): LLM-reported offsets are unreliable, so each finding is
    located by its verbatim quote — exact match, then whitespace-tolerant match, then a
    fuzzy sliding-window match (difflib, ratio ≥ 0.8 with edge refinement). Ambiguous
@@ -2142,7 +2156,8 @@ key, connection/timeout, 401/403), `provider` (an in-flight run raised —
 the default for anything unrecognized), or `response` (the provider replied
 but the payload was unusable). An exception raised anywhere in the pipeline
 is mapped to `(fail_stage, fail_detail)` by `classify_failure`
-(`app/api/llm_gate.py`), which recognizes `UnparseableResponseError` and
+(`app/api/llm_gate.py`), which recognizes `UnparseableResponseError`,
+`TruncatedResponseError` (generation stopped at the `max_tokens` cap) and
 `json.JSONDecodeError` as `response`-stage; suggestions' "no JSON array" and
 naming's "no usable title" are not exceptions at all — a value the caller
 recognizes as unusable without the provider raising — so those two set

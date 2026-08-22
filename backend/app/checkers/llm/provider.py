@@ -27,6 +27,26 @@ class MissingApiKeyError(RuntimeError):
     on message text."""
 
 
+class TruncatedResponseError(Exception):
+    """The provider stopped generating at the max_tokens cap, so the text is
+    an incomplete answer — a 'response'-stage failure. Raised by providers
+    that can see the stop reason, instead of letting the cut-off text
+    masquerade as an unparseable response downstream.
+
+    The message carries only metadata (cap and received length), never the
+    text itself: it feeds the ledger's fail_detail."""
+
+    usage: "TokenUsage | None" = None
+
+    def __init__(self, response_chars: int, max_tokens: int | None = None) -> None:
+        # None: the provider hit its backend's default cap (e.g. Bedrock
+        # Converse without an explicit inferenceConfig), value unknown here.
+        cap = f"max_tokens={max_tokens}" if max_tokens is not None else "max_tokens cap"
+        super().__init__(
+            f"LLM response truncated at {cap} ({response_chars} chars received)"
+        )
+
+
 class LLMProvider(Protocol):
     """A pluggable LLM backend for the checking pipeline."""
 
