@@ -295,6 +295,51 @@ describe('createTextareaAdapter: overlapping and nested spans', () => {
 
     adapter.dispose()
   })
+
+  // Copilot round 10: render() switched from an O(F^2) per-boundary filter
+  // to a sweep-line pass that maintains an active set across boundaries.
+  // Three chained overlaps exercise the active set actually accumulating
+  // (not just adding/removing one span at a time) and picking the highest
+  // severity out of three, not just first/last.
+  it('three chained overlapping spans share one segment carrying all three ids at the highest severity', () => {
+    const adapter = createTextareaAdapter(el)
+    // A: [0,10), B: [3,13), C: [6,16) — a three-way chain overlap in [6,10).
+    const spans: MarkingSpan[] = [
+      { id: 'a', from: 0, to: 10, severity: 'suggestion', category: 'style' },
+      { id: 'b', from: 3, to: 13, severity: 'error', category: 'spelling' },
+      { id: 'c', from: 6, to: 16, severity: 'warning', category: 'style' },
+    ]
+    adapter.setMarkings(spans)
+
+    const shared = document.querySelector('[data-finding-ids="a b c"]')
+    expect(shared).not.toBeNull()
+    expect(shared?.textContent).toBe(el.value.slice(6, 10))
+    // error (b) outranks both warning (c) and suggestion (a).
+    expect(shared?.className).toContain('fw-mark-error')
+
+    adapter.dispose()
+  })
+
+  // The sweep-line's tie-break at a shared boundary point (Copilot round
+  // 10's comment: ends before starts) must keep two merely-adjacent spans
+  // from being fused into one shared segment.
+  it('two adjacent (non-overlapping) spans render as separate segments, not one shared segment', () => {
+    const adapter = createTextareaAdapter(el)
+    // D: [0,5), E: [5,10) — D ends exactly where E begins.
+    const spans: MarkingSpan[] = [
+      { id: 'd', from: 0, to: 5, severity: 'warning', category: 'style' },
+      { id: 'e', from: 5, to: 10, severity: 'error', category: 'spelling' },
+    ]
+    adapter.setMarkings(spans)
+
+    expect(document.querySelector('[data-finding-ids="d e"]')).toBeNull()
+    const dMark = document.querySelector('[data-finding-ids="d"]')
+    const eMark = document.querySelector('[data-finding-ids="e"]')
+    expect(dMark?.textContent).toBe(el.value.slice(0, 5))
+    expect(eMark?.textContent).toBe(el.value.slice(5, 10))
+
+    adapter.dispose()
+  })
 })
 
 describe('createTextareaAdapter: flashFinding', () => {

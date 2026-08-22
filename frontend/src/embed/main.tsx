@@ -20,10 +20,13 @@ setDocumentPort(hostDoc)
 // Wires auth/session.ts's logout()/expireSession() to reset this shim
 // without session.ts importing hostDoc.ts — see disconnectSlot.ts.
 setEmbedDisconnectHandler(() => hostDoc.resetSession())
-// Wires auth/session.ts's login() to re-publish this shim's connected-field
-// state after a resetSessionState() that ran before it — see hostDoc.ts's
-// republish() and activateSlot.ts's own comment.
-setEmbedActivateHandler(() => hostDoc.republish())
+// Wires auth/session.ts's login() to clear this shim's session-scoped state
+// (Copilot round 10: without this, a cross-user login would leak the
+// previous user's tracked findings/selection into the new session) and then
+// re-publish its connected-field state after a resetSessionState() that ran
+// before it — see hostDoc.ts's activateSession() and activateSlot.ts's own
+// comment.
+setEmbedActivateHandler(() => hostDoc.activateSession())
 // Deviation from the plan's main.tsx sketch: EmbedApp renders with no props,
 // so it needs a way to reach bridge.outbound (to wire the check scheduler's
 // onInput into it — see embedRef.ts's own comment) without main.tsx passing

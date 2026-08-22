@@ -22,6 +22,7 @@ import { refreshUserNow } from '../auth/refreshSlot'
 import { bumpGeneration, resetAutosaveForTests } from '../documents/autosave'
 import { en as messages } from '../i18n/en'
 import { cancelInFlightCheck } from './cancelSlot'
+import { setClientTag } from './clientTag'
 import { cancelCheck, runCheck } from './controller'
 import { setDocumentPort, type DocumentPort } from './documentPort'
 import { resolveModel } from './routing'
@@ -347,6 +348,20 @@ describe('check controller', () => {
     expect(body.llm_tier).toBeNull()
     expect(body.llm_provider).toBe('fake')
     expect(body.llm_model).toBe('fake-model')
+  })
+
+  // Copilot round 10 (suppressed, test-only): nothing previously asserted
+  // that the request body's `client` field actually carries clientTag()'s
+  // current value rather than, say, a hardcoded 'web'.
+  it('sends the current clientTag() value as the request body\'s client field', async () => {
+    setClientTag('embed')
+    try {
+      await runCheck(true)
+      const body = vi.mocked(postCheck).mock.calls[0][0]
+      expect(body.client).toBe('embed')
+    } finally {
+      setClientTag('web')
+    }
   })
 
   it('lands a degraded effective_llm report in the store', async () => {

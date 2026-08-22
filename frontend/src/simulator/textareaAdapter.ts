@@ -88,14 +88,31 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
   // resulting segment carries every finding that covers it, so a nested or
   // staggered-overlap finding still gets its own addressable (and
   // flashable) DOM node.
+  //
+  // Copilot round 10: re-filtering every span for every boundary segment
+  // was O(F^2) (plus a per-segment array allocation) on every keystroke.
+  // Instead, sweep the boundaries once while maintaining an active set:
+  // build a start/end event per span, sort once (O(F log F)), then walk the
+  // boundaries in order, adding a span to `active` at its start event and
+  // removing it at its end event. Between two consecutive boundaries no
+  // span's own from/to falls strictly in between (boundaries are exactly
+  // the union of every span's from/to plus 0/text.length), so `active`
+  // right after processing a boundary's start/end events is exactly the
+  // original `covering` set for the segment starting there — a span whose
+  // `to` equals this boundary is removed before `active` is read, matching
+  // the original `span.to >= end` (not `>`) semantics. `active` is a Map,
+  // so same-position start events resolve in the stable sort's (== original
+  // array) order, keeping the highest-severity class choice below identical
+  // to the old per-segment filter.
   function render() {
     const text = el.value
     overlay.replaceChildren()
     const clamped = currentSpans
-      .map((span) => ({
+      .map((span, index) => ({
         ...span,
         from: Math.max(0, Math.min(span.from, text.length)),
         to: Math.max(0, Math.min(span.to, text.length)),
+        index,
       }))
       .filter((span) => span.to > span.from)
     if (clamped.length === 0) {
@@ -103,9 +120,19 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
       return
     }
 
+    type ClampedSpan = (typeof clamped)[number]
+    interface SweepEvent { pos: number; kind: 'start' | 'end'; span: ClampedSpan }
+    const events: SweepEvent[] = clamped.flatMap((span) => [
+      { pos: span.from, kind: 'start' as const, span },
+      { pos: span.to, kind: 'end' as const, span },
+    ])
+    events.sort((a, b) => a.pos - b.pos)
+
     const boundaries = [...new Set<number>([0, text.length, ...clamped.flatMap((s) => [s.from, s.to])])]
       .sort((a, b) => a - b)
 
+    const active = new Map<number, ClampedSpan>()
+    let ei = 0
     let plainFrom: number | null = null
     const flushPlain = (end: number) => {
       if (plainFrom !== null && end > plainFrom) {
@@ -117,12 +144,18 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
     for (let i = 0; i < boundaries.length - 1; i++) {
       const start = boundaries[i]
       const end = boundaries[i + 1]
-      const covering = clamped.filter((span) => span.from <= start && span.to >= end)
-      if (covering.length === 0) {
+      while (ei < events.length && events[ei].pos === start) {
+        const event = events[ei]
+        if (event.kind === 'end') active.delete(event.span.index)
+        else active.set(event.span.index, event.span)
+        ei++
+      }
+      if (active.size === 0) {
         if (plainFrom === null) plainFrom = start
         continue
       }
       flushPlain(start)
+      const covering = [...active.values()]
       const topSeverity = covering.reduce(
         (best, span) => (SEVERITIES.indexOf(span.severity) < SEVERITIES.indexOf(best) ? span.severity : best),
         covering[0].severity,
