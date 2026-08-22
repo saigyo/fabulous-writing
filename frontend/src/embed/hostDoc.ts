@@ -100,6 +100,26 @@ export interface HostDoc extends DocumentPort {
    * EmbedApp.tsx's connect effect re-fire the check (it's keyed on the
    * object's identity, not fieldId alone — see that effect's comment). */
   republish(): void
+  /** The login-activation counterpart to resetSession() — wired to
+   * auth/session.ts's login() via embed/activateSlot.ts, in place of
+   * calling republish() directly. A direct user-A -> user-B login() (no
+   * logout in between — e.g. a fresh login from the form while a session
+   * with a connected field is still live, or the password-change silent
+   * re-login in AccountMenu) resets only the Zustand store: resetSessionState()
+   * clears store.tracked/selectedId, but this shim's own private items/
+   * selectedId survive, since resetSession() only runs on logout/expiry
+   * (embed/disconnectSlot.ts). Calling republish() alone at that point
+   * would restore user A's tracked findings and selection into user B's
+   * session until the next check overwrites them — a cross-user leak
+   * (Copilot round 10).
+   *
+   * Runs resetSession()'s session-scoped clear FIRST (tracked findings,
+   * including the host-side empty findings message, selection, and pending
+   * replacements settled 'refused'), then republish() restores the
+   * retained field identity/buffer/metrics with that now-empty tracked
+   * state. Same-user re-login gets identical treatment — harmless, since
+   * the connect effect's next check repopulates immediately. */
+  activateSession(): void
 }
 
 interface Splice {
@@ -329,7 +349,7 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
     return promise
   }
 
-  return {
+  const doc: HostDoc = {
     hasDocument: () => fieldId !== null,
     connected: () => fieldId !== null,
     capabilities: () => caps,
@@ -432,5 +452,10 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
       settlePending(requestId, ok ? 'ok' : 'refused')
       syncBuffer(text)
     },
+    activateSession() {
+      doc.resetSession() // session-scoped clear first — see this method's own doc comment
+      doc.republish()
+    },
   }
+  return doc
 }

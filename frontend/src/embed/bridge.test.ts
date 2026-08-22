@@ -83,6 +83,7 @@ function stubHostDoc(): StubHostDoc {
     },
     resetSession() {},
     republish() {},
+    activateSession() {},
   }
 }
 

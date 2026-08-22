@@ -736,3 +736,45 @@ describe('republish', () => {
     expect(useStore.getState().docChars).toBe('This is very good. Indeed.'.length)
   })
 })
+
+// Copilot round 10: a direct user-A -> user-B login() (no logout() in
+// between) only resets the Zustand store — resetSession() runs solely on
+// logout/expiry (embed/disconnectSlot.ts), so this shim's own private
+// items/selectedId survive untouched. Calling republish() alone from the
+// login-activation path would then restore user A's tracked findings and
+// selection into user B's session. activateSession() (wired to login() via
+// embed/main.tsx in place of a bare republish()) clears that session-scoped
+// state FIRST, so the republish it performs starts from empty.
+describe('activateSession', () => {
+  it('clears a still-connected field\'s tracked findings/selection before republishing, on a login with no logout in between', () => {
+    const { doc, outbound } = connected('This is very good.', [finding('f1', 8, 12, 'very')])
+    doc.selectFinding('f1')
+    // A cross-user login only resets the store (auth/session.ts's
+    // resetSessionState()) — simulated directly here, same as the
+    // republish() describe block above. The shim's own items/selectedId
+    // are untouched by this.
+    useStore.setState({
+      connectedField: null, tracked: [], selectedId: null, docWords: 0, docChars: 0,
+    })
+
+    doc.activateSession()
+
+    // The host-side empty findings message (resetSession()'s clear) went
+    // out before the republish restored connectedField/metrics.
+    expect(outbound.findingsCalls.at(-1)).toEqual({ fieldId: 'f1', findings: [] })
+    expect(useStore.getState().connectedField).toEqual({ fieldId: 'f1', url: null })
+    expect(useStore.getState().docWords).toBe(4)
+    expect(useStore.getState().docChars).toBe('This is very good.'.length)
+    // User A's finding does NOT survive into the new session.
+    expect(useStore.getState().tracked).toEqual([])
+    expect(useStore.getState().selectedId).toBeNull()
+    expect(doc.currentFinding('f1')).toBeNull()
+  })
+
+  it('is a no-op while unconnected', () => {
+    const outbound = fakeOutbound()
+    const doc: HostDoc = createHostDoc(outbound)
+    expect(() => doc.activateSession()).not.toThrow()
+    expect(useStore.getState().connectedField).toBeNull()
+  })
+})
