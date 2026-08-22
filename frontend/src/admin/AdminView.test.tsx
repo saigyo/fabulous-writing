@@ -110,6 +110,22 @@ describe('AdminView', () => {
     expect(screen.getAllByRole('row')).toHaveLength(4) // header + create row + 2 users
   })
 
+  it('the all-users activity control sets subject "all" and switches to the activity view', async () => {
+    vi.mocked(getAdminUsers).mockResolvedValue([])
+    vi.mocked(getAdminTiers).mockResolvedValue([])
+    // Pre-set to values the click must overwrite, so the assertions below
+    // pin an actual change rather than passing on the store's own defaults.
+    useStore.setState({ activitySubject: 42, activitySubjectLabel: 'Stale User', activeView: 'admin' })
+
+    render(<AdminView />)
+    fireEvent.click(screen.getByRole('button', { name: en.adminAllActivity }))
+
+    const state = useStore.getState()
+    expect(state.activitySubject).toBe('all')
+    expect(state.activitySubjectLabel).toBeNull()
+    expect(state.activeView).toBe('activity')
+  })
+
   it('load failure shows adminLoadFailed and no rows', async () => {
     vi.mocked(getAdminUsers).mockRejectedValue(new Error('network down'))
     vi.mocked(getAdminTiers).mockResolvedValue(['basic'])

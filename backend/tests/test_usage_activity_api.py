@@ -85,7 +85,21 @@ class TestShape:
         assert all(len(v) == 30 for v in body["series"]["runs"].values())
         assert len(body["series"]["input_tokens"]) == 30
         assert isinstance(body["series"]["credits"][0], int)
-        assert "per_user" not in body or body.get("per_user") is None
+        # Omitted entirely, not null: the spec reserves per_user for /all —
+        # ActivityResponse (own/{user_id}) does not declare the field at
+        # all, so a wholesale revert to an Optional-with-null-default field
+        # on the shared model fails this.
+        assert "per_user" not in body
+
+    def test_user_activity_omits_per_user(self, client):
+        admin_hdrs = auth_headers(client)
+        second_user_headers(client)  # provisions second@example.com
+        user = client.app.state.user_store.get_by_email(SECOND_USER_EMAIL)
+        assert user is not None
+
+        r = client.get(f"/api/usage/activity/{user.id}?days=30", headers=admin_hdrs)
+        assert r.status_code == 200
+        assert "per_user" not in r.json()
 
     def test_all_has_per_user_with_identity(self, client):
         admin_hdrs = auth_headers(client)

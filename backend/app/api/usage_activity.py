@@ -45,13 +45,21 @@ class PerUserRow(ActivityTotals):
 
 
 class ActivityResponse(BaseModel):
+    """Own/{user_id} shape. per_user is deliberately NOT a field here (not
+    even Optional) — the spec reserves it for /all only, and an Optional
+    default would still serialize as `"per_user": null` on these two routes
+    instead of omitting the key. AllActivityResponse below adds it."""
+
     days: list[str]
     series: ActivitySeriesPayload
     totals: ActivityTotals
-    per_user: list[PerUserRow] | None = None
 
 
-def _series_response(store, user_id, days, end=None):
+class AllActivityResponse(ActivityResponse):
+    per_user: list[PerUserRow]
+
+
+def _series_response(store, user_id, days, end=None) -> ActivityResponse:
     s = store.activity_series(user_id, days=int(days), end=end)
     totals = ActivityTotals(
         runs=sum(sum(v) for v in s.runs.values()),
@@ -78,14 +86,14 @@ def own_activity(request: Request, days: Days = Days.d30,
 # Registered before /{user_id} so "all" never parses as a user id.
 @router.get("/all")
 def all_activity(request: Request, days: Days = Days.d30,
-                 _admin: CurrentUser = Depends(require_admin)) -> ActivityResponse:
+                 _admin: CurrentUser = Depends(require_admin)) -> AllActivityResponse:
     store = request.app.state.usage_store
     # One clock read for BOTH queries: across midnight the series and the
     # per-user table must describe the same range.
     end_day = datetime.now(UTC).date()
-    response = _series_response(store, None, days, end=end_day)
+    base = _series_response(store, None, days, end=end_day)
     users = {u.id: u for u in request.app.state.user_store.list_users()}
-    response.per_user = [
+    per_user = [
         PerUserRow(
             user_id=t.user_id,
             email=users[t.user_id].email if t.user_id in users else "",
@@ -95,7 +103,7 @@ def all_activity(request: Request, days: Days = Days.d30,
         )
         for t in store.activity_user_totals(days=int(days), end=end_day)
     ]
-    return response
+    return AllActivityResponse(**base.model_dump(), per_user=per_user)
 
 
 @router.get("/{user_id}")
