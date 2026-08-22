@@ -1,6 +1,13 @@
 /* App-wide screen-reader-only utility (standard clip pattern) — content is
    present for assistive tech but never visible/laid-out on screen. Added
-   once here rather than per-feature; reuse this instead of a new copy. */
+   once here rather than per-feature; reuse this instead of a new copy.
+   MUST sit on a plain element (div/span), never directly on a <table>:
+   CSS table layout treats width/height as MINIMUMS, so a table with this
+   class still lays out at its content's min-content size — an invisible
+   but full-size, absolutely-positioned box that extends the page's
+   scrollable area (clip-path only hides the paint, not the box). Wrap the
+   table in a div carrying this class instead (activity/ActivityView.tsx's
+   ChartDataTable is the reference — 2026-08-22 scroll bug). */
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -2258,12 +2265,16 @@ dialog.app-dialog h2 {
 .activity-view {
   padding: 1rem 1.5rem;
   overflow-y: auto;
-  /* Content height swings between the loading and data states, and again
-     between a tall all-users table page and a shorter per-user page on
-     subject drill-down (no remount — same scroll container persists).
-     Browser scroll anchoring fights those swings and visibly jumps; the
-     explicit scrollTop reset on subject change (ActivityView.tsx) is the
-     real fix, this just keeps the anchor out of its way. */
+  /* NOT the fix for the 2026-08-22 drill-down scroll bug (phantom empty
+     space / content flickering / a snap) — that bug's real cause was the
+     unwrapped SR <table>s laying out at full min-content size despite
+     .visually-hidden (see that class's own comment); WebKit, where it was
+     reported, has no scroll anchoring at all. This property is a
+     Chrome-side stabilizer only, for the ordinary content-height swings
+     between the loading and data states (and between a tall all-users
+     page and a shorter per-user one) that this same container's height
+     goes through regardless — the scrollTop reset on subject change
+     (ActivityView.tsx) is the real, browser-independent fix for those. */
   overflow-anchor: none;
 }
 .activity-header {
