@@ -181,6 +181,27 @@ class TestClaudeProvider:
         await provider.generate("s", "u")
         assert stub.messages.kwargs["max_tokens"] >= 16384
 
+    async def test_legacy_models_get_caps_they_accept(self) -> None:
+        # list_models() exposes every servable model, including legacy
+        # Claude 3.x ones that reject max_tokens above their output limits
+        # (4096 for claude-3-*, 8192 for claude-3-5-*). Those models don't
+        # think by default, so their original caps are also sufficient.
+        for model, cap in [
+            ("claude-3-haiku-20240307", 4096),
+            ("claude-3-opus-20240229", 4096),
+            ("claude-3-5-sonnet-20241022", 8192),
+            ("claude-3-5-haiku-20241022", 8192),
+        ]:
+            stub = _StubAnthropicClient()
+            await ClaudeProvider(model=model, client=stub).generate("s", "u")
+            assert stub.messages.kwargs["max_tokens"] == cap, model
+        # claude-3-7 already supports 64K output — full headroom applies.
+        stub = _StubAnthropicClient()
+        await ClaudeProvider(
+            model="claude-3-7-sonnet-20250219", client=stub
+        ).generate("s", "u")
+        assert stub.messages.kwargs["max_tokens"] >= 16384
+
     async def test_truncated_response_raises_with_usage(self) -> None:
         class Usage:
             input_tokens = 12
