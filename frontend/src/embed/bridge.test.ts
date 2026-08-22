@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useStore } from '../state/store'
+import { clientTag, setClientTag } from '../checking/clientTag'
 import { startBridge as startBridgeRaw } from './bridge'
 import { PROTOCOL_VERSION } from './protocol'
 import type { HostCapabilities, HostMessage, MarkingSpan } from './protocol'
@@ -103,6 +104,7 @@ const ORIGIN_B = 'https://host-b.example'
 
 afterEach(() => {
   useStore.setState({ tracked: [], checkPhase: 'idle', llmError: null, authStatus: 'authenticated' })
+  setClientTag('web') // reset client tag after each test
 })
 
 describe('startBridge: origin pinning and routing', () => {
@@ -215,6 +217,17 @@ describe('startBridge: origin pinning and routing', () => {
     expect(hostDoc.replaceResultCalls).toEqual([{ requestId: 'r1', ok: true, text: 'abcX' }])
     expect(hostDoc.selectFindingCalls).toEqual(['finding-1'])
     expect(hostDoc.fieldDisconnectedCalls).toEqual(['f1'])
+  })
+
+  it('sets the client tag on hello', () => {
+    const bridge = startBridge()
+    const hostDoc = stubHostDoc()
+    bridge.attach(hostDoc)
+    const source = fakeSource()
+
+    dispatchHost(helloMessage('browser-extension'), ORIGIN_A, source)
+
+    expect(clientTag()).toBe('browser-extension')
   })
 
   it('dispose removes the message listener: a hello after dispose is not answered', () => {

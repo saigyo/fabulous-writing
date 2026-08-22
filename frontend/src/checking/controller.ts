@@ -7,6 +7,7 @@ import { activeProfile, effectiveRuleConfig } from '../profiles/profile'
 import { useStore } from '../state/store'
 import type { Finding } from '../types'
 import { setCancelCheckHandler } from './cancelSlot'
+import { clientTag } from './clientTag'
 import { getDocumentPort } from './documentPort'
 import { resolveModel } from './routing'
 
@@ -119,6 +120,7 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
       llm_provider: state.tier === null && resolution.ok ? resolution.provider : null,
       llm_model: state.tier === null && resolution.ok ? resolution.model : null,
       llm_instructions: profile?.llm_instructions ?? '',
+      client: clientTag(),
     })
   } catch (error) {
     // gen guards session turnover; epoch guards a same-session document
