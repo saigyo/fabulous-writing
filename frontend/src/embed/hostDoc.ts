@@ -239,6 +239,10 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
       buffer = text
       items = []
       selectedId = null
+      const store = useStore.getState()
+      store.setDocWords(wordCount(text))
+      store.setDocChars(codePoints(text))
+      store.clearScorecard() // whole-document replacement: no "old text" left to describe
       publishFindings()
     },
     fieldDisconnected(fid) {
