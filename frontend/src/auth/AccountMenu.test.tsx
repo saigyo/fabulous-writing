@@ -142,6 +142,15 @@ describe('AccountMenu', () => {
     expect(screen.queryByRole('button', { name: en.accountLogOut })).toBeNull()
   })
 
+  it('hideActivity (B43 C1: embed has no activity view) suppresses My activity but keeps change-password and log-out', async () => {
+    const u = userEvent.setup()
+    render(<AccountMenu hideActivity />)
+    await openMenu(u)
+    expect(screen.queryByRole('button', { name: en.accountActivity })).toBeNull()
+    screen.getByRole('button', { name: en.accountChangePassword })
+    screen.getByRole('button', { name: en.accountLogOut })
+  })
+
   it('log-out calls logout(), clearing auth state', async () => {
     const u = userEvent.setup()
     render(<AccountMenu />)

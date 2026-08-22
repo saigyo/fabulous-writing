@@ -43,8 +43,16 @@ function mapChangeError(err: unknown, m: Messages): string {
  * (Task 8). A circular badge (the account-menu-anchor's toggle) opens a
  * popover; "Change password" closes the popover and opens the password form
  * in its own modal dialog (B3) — see PasswordForm below for the completion
- * guards. */
-export function AccountMenu() {
+ * guards.
+ *
+ * hideActivity (B43 C1): the embed entry has no activity view to switch
+ * into (EmbedApp never branches on activeView === 'activity' the way
+ * App.tsx does), so "My activity" would be a dead menu item there —
+ * suppressed rather than forking this component. Password change and
+ * sign-out are unaffected: the embed's session is storage-partition-scoped
+ * to its iframe, and AccountMenu is the only sign-out affordance in the
+ * app, so those two must always be present. */
+export function AccountMenu({ hideActivity = false }: { hideActivity?: boolean } = {}) {
   const m = useMessages()
   const user = useStore((s) => s.user)
   const appVersion = useStore((s) => s.appVersion)
@@ -118,16 +126,18 @@ export function AccountMenu() {
           >
             {m.accountChangePassword}
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              setActivitySubject('self')
-              setActiveView('activity')
-              setOpen(false)
-            }}
-          >
-            {m.accountActivity}
-          </button>
+          {!hideActivity && (
+            <button
+              type="button"
+              onClick={() => {
+                setActivitySubject('self')
+                setActiveView('activity')
+                setOpen(false)
+              }}
+            >
+              {m.accountActivity}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => {
