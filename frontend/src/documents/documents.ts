@@ -64,7 +64,10 @@ export function clearLegacyText(): void {
  * resetProfileApplySuppression()): otherwise a suppression armed by the
  * outgoing session's hydration and still pending when it ends could be
  * consumed by the incoming session's own profile fetch instead. Called by
- * logout() and expireSession() (auth/session.ts), never directly by UI
+ * logout(), expireSession(), and login()'s user-change branch (Copilot
+ * round 12 — a cross-user login leaves an in-flight check's SSE
+ * subscription and the generation guard it relies on otherwise untouched,
+ * see session.ts's own comment) — auth/session.ts, never directly by UI
  * code. */
 export function invalidateDocumentWork(): void {
   cancelDebounce()

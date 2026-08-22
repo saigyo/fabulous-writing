@@ -269,7 +269,15 @@ class EmbedSettings(BaseModel):
                 return False
             if ":" in rest:
                 host, _, port = rest.rpartition(":")
-                if not port.isdigit() or not (1 <= int(port) <= 65535):
+                # isascii() first (Copilot round 12): str.isdigit() accepts
+                # non-ASCII decimal digits too (e.g. Arabic-Indic ١٢٣),
+                # which int() happily parses -- normalized would carry a
+                # non-Latin-1 port straight into the CSP header, where h11
+                # fails to serialize it at request time instead of this
+                # startup validator catching it.
+                if not (port.isascii() and port.isdigit()) or not (
+                    1 <= int(port) <= 65535
+                ):
                     return False
             else:
                 host = rest

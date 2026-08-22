@@ -303,6 +303,52 @@ describe('login', () => {
     await expect(login('a@example.com', 'wrong')).rejects.toThrow()
     expect(spy).not.toHaveBeenCalled()
   })
+
+  // Copilot round 12: a direct A->B login is not guarded by
+  // documents/autosave.ts's currentGeneration() the way logout()/
+  // expireSession() are, and A's SSE check subscription survives until the
+  // React effect that owns it notices the store changed and tears it down
+  // — a window in which A's late check/suggest responses could still land
+  // in B's store. login()'s user-change branch now calls
+  // invalidateDocumentWork() (bumps the generation) and the registered
+  // cancelInFlightCheck handler, before activateEmbed(), exactly like
+  // logout()/expireSession() already do.
+  it('invalidates document work and cancels an in-flight check on a cross-user login, before activating the embed', async () => {
+    useStore.setState({ user: user(1), authStatus: 'authenticated' })
+    const order: string[] = []
+    vi.mocked(invalidateDocumentWork).mockImplementation(() => {
+      order.push('invalidate')
+    })
+    const cancelSpy = vi.fn(() => order.push('cancel'))
+    setCancelCheckHandler(cancelSpy)
+    const activateSpy = vi.fn(() => order.push('activate'))
+    setEmbedActivateHandler(activateSpy)
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok2', refresh_token: null, expires_at: null, user: user(2) })
+
+    await login('b@example.com', 'pw')
+
+    expect(invalidateDocumentWork).toHaveBeenCalledTimes(1)
+    expect(cancelSpy).toHaveBeenCalledTimes(1)
+    expect(order).toEqual(['invalidate', 'cancel', 'activate'])
+  })
+
+  // Pins the flip side: the password-change flow's silent same-user
+  // re-login (auth/AccountMenu.tsx) must NOT invalidate the document
+  // buffer's generation or cancel a check the SAME user is still waiting
+  // on — see resetSessionState()'s and discardForeignBuffer()'s own
+  // comments on why that buffer deliberately survives a same-user
+  // re-login.
+  it('does not invalidate document work or cancel a check on a same-user re-login', async () => {
+    useStore.setState({ user: user(1), authStatus: 'authenticated' })
+    const cancelSpy = vi.fn()
+    setCancelCheckHandler(cancelSpy)
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok2', refresh_token: null, expires_at: null, user: user(1) })
+
+    await login('a@example.com', 'pw')
+
+    expect(invalidateDocumentWork).not.toHaveBeenCalled()
+    expect(cancelSpy).not.toHaveBeenCalled()
+  })
 })
 
 describe('logout', () => {

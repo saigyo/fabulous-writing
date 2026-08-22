@@ -206,6 +206,39 @@ describe('check controller', () => {
     expect(useStore.getState().scorecard).toBeNull()
   })
 
+  it('drops a check (user A) whose postCheck resolves after a cross-user login (Copilot round 12)', async () => {
+    // Direct A->B login twin of the logout/expireSession test above.
+    // Before round 12, login()'s user-change branch called neither
+    // cancelInFlightCheck() nor invalidateDocumentWork()'s generation bump
+    // — A's in-flight check/suggest work rode straight through the
+    // generation guard and could still land in B's store after the login
+    // committed. Reproduces the literal calls login() now makes
+    // (auth/session.ts), same as the logout/expireSession test reproduces
+    // theirs.
+    let resolvePostCheck!: (value: Awaited<ReturnType<typeof postCheck>>) => void
+    vi.mocked(postCheck).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePostCheck = resolve
+        }),
+    )
+    const unsub = vi.fn()
+    vi.mocked(subscribeCheck).mockReturnValue(unsub)
+
+    const runPromise = runCheck(true) // user A's check starts
+
+    // The literal calls login()'s user-change branch makes, before
+    // activateEmbed().
+    cancelInFlightCheck()
+    bumpGeneration()
+
+    resolvePostCheck({ check_id: 'c-a', status: 'running', findings: [] } as never)
+    await runPromise
+
+    expect(subscribeCheck).not.toHaveBeenCalled()
+    expect(useStore.getState().scorecard).toBeNull()
+  })
+
   it('drops a check whose postCheck resolves after a same-session document switch, but still refreshes the quota indicator if it was admitted', async () => {
     // The same-session twin of the test above: no logout, no generation
     // bump. hydrateFromDocument() calls cancelCheck() on every document

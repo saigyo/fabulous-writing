@@ -58,6 +58,26 @@ export async function login(email: string, password: string): Promise<boolean> {
     useStore.getState().setAuth(null, null)
     resetSessionState()
     loadUserPrefs(user.id)
+    // Copilot round 12: a direct A->B login is not guarded by
+    // documents/autosave.ts's currentGeneration() the way logout()/
+    // expireSession() are — login() never bumped it before this line — and
+    // A's SSE check subscription survives until the React effect that owns
+    // it notices the store's connectedField/user changed and tears it
+    // down, which can run well after this synchronous commit. In that
+    // window, A's late check/suggest responses would still pass every
+    // generation guard and repopulate B's store. Only a genuine user
+    // change needs this: a same-user re-login (the password-change flow's
+    // silent re-auth, auth/AccountMenu.tsx) must NOT invalidate the
+    // document buffer or cancel a check the SAME user is still waiting on
+    // — see resetSessionState()'s and discardForeignBuffer()'s own
+    // comments on why that buffer deliberately survives a same-user
+    // re-login. invalidateDocumentWork() bumps the generation B's own
+    // in-flight work will be checked against; cancelInFlightCheck() tears
+    // down A's live SSE subscription outright rather than waiting on it to
+    // notice on its own. Both run before activateEmbed() below, so B's
+    // session never activates over A's still-live check.
+    invalidateDocumentWork()
+    cancelInFlightCheck()
   }
   discardForeignBuffer(user.id)   // keeps this user's own unsaved work
   // Local mode returns refresh_token/expires_at as null (backend/app/api/

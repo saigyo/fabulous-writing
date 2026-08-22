@@ -271,6 +271,30 @@ describe('Header profilesReady', () => {
     expect(useStore.getState().profiles).toHaveLength(0)
   })
 
+  it('keeps the existing profiles on a same-language, same-user transient fetch failure (Copilot round 12)', async () => {
+    // Round 11 made this effect re-run on every authGeneration bump,
+    // including the password-change flow's silent same-user re-login
+    // (login() bumps authGeneration unconditionally). Round 11 also made
+    // its failure branch clear profiles unconditionally — which erased the
+    // still-valid active profile configuration on a transient failure of
+    // that same-user refetch. Only a real language switch or a user
+    // turnover may clear profiles on failure; this one is neither.
+    useStore.setState({ user: user({ id: 1 }) })
+    vi.mocked(getProfiles).mockResolvedValueOnce([profile()])
+    render(<Header />)
+    await waitFor(() => expect(useStore.getState().profiles).toHaveLength(1))
+    expect(useStore.getState().profilesReady).toBe(true)
+
+    vi.mocked(getProfiles).mockRejectedValueOnce(new Error('network down'))
+    // Same user, same language: bumping authGeneration alone simulates the
+    // password-change flow's silent re-login re-firing this effect.
+    useStore.getState().bumpAuthGeneration()
+    await waitFor(() => expect(getProfiles).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(useStore.getState().profilesReady).toBe(true))
+
+    expect(useStore.getState().profiles).toHaveLength(1) // survives the transient failure
+  })
+
   it('a profile-save setProfiles call during a pending language fetch does not flip readiness (Copilot round 6)', async () => {
     // Pins the fix: setProfiles used to flip profilesReady true as a side
     // effect, so a profile save (ProfileSelector.tsx's saveOverrides,
