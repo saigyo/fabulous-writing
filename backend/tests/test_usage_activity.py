@@ -107,6 +107,21 @@ class TestActivityUserTotals:
         assert totals[0].runs == 2                 # settled runs incl. failed
         assert totals[0].credits == 5
 
+    def test_started_row_excluded(self, store):
+        # Copilot (PR #125): no fixture here previously seeded a 'started'
+        # row, so _select_activity_user_totals's `status != 'started'`
+        # predicate had no independent guard — dropping it from just that
+        # query stayed green (activity_series's own started-exclusion test
+        # covers a different query entirely). An in-flight run must not
+        # count toward /all's per_user runs or credits.
+        _row(store, user_id=1, day="2026-08-22")
+        _row(store, user_id=1, day="2026-08-22", status="started",
+             input_tokens=999, credits=999)
+        totals = store.activity_user_totals(days=30, end=END)
+        assert [t.user_id for t in totals] == [1]
+        assert totals[0].runs == 1                  # the started row excluded
+        assert totals[0].credits == 5                # not 5 + 999
+
 
 class TestActivityAll:
     def test_single_snapshot_totals_agree_with_series(self, store):
