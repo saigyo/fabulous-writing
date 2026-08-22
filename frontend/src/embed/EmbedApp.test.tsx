@@ -242,4 +242,44 @@ describe('EmbedApp', () => {
 
     expect(runCheck).not.toHaveBeenCalled()
   })
+
+  // Copilot round 2: a same-field reconnect writes a brand-new
+  // connectedField object with the SAME fieldId (store.ts's own comment on
+  // setConnectedField), so keying the scheduler-lifecycle effect on
+  // connectedField?.fieldId alone would leave the prior document's scheduler
+  // — and its armed timer — alive across the reconnect. Depending on the
+  // connectedField object itself re-runs the effect on every connect,
+  // disposing the old scheduler before the timer's deadline.
+  it('a same-field reconnect (new connectedField object, same fieldId) disposes the prior scheduler so its armed timer does not fire at the old deadline', () => {
+    vi.useFakeTimers()
+    const outbound = fakeOutbound()
+    setEmbedOutbound(outbound)
+    useStore.setState({ connectedField: { fieldId: 'field-a', url: null } })
+
+    render(<EmbedApp />)
+    vi.mocked(runCheck).mockClear()
+
+    // Arm the scheduler with the first document's text.
+    act(() => {
+      outbound.onInput()
+    })
+    // 400ms in: the host reconnects to the SAME fieldId with a replacement
+    // document (e.g. undo/redo, or a fresh load into the same field) — a
+    // brand-new connectedField object — before the 1000ms fast-check
+    // deadline armed against the OLD text.
+    act(() => {
+      vi.advanceTimersByTime(400)
+      useStore.setState({ connectedField: { fieldId: 'field-a', url: null } })
+    })
+    vi.mocked(runCheck).mockClear() // drop the reconnect-triggered runCheck(false)
+
+    // Advance past where the original timer would have fired (400 + 700 =
+    // 1100ms since arming) without the replacement document ever calling
+    // onInput itself.
+    act(() => {
+      vi.advanceTimersByTime(700)
+    })
+
+    expect(runCheck).not.toHaveBeenCalled()
+  })
 })
