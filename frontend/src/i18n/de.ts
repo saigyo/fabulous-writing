@@ -326,4 +326,8 @@ export const de: Messages = {
   resetUpdateFailedRetry: 'Das Speichern hat noch nicht geklappt — versuch es bitte erneut.',
   dialogCancel: 'Abbrechen',
   dialogConfirm: 'Bestätigen',
+
+  embedWaiting: 'Warte auf die Host-Anwendung…',
+  embedDisconnected: 'Kein Textfeld verbunden.',
+  embedReplaceFailed: 'Die Host-Anwendung konnte die Änderung nicht übernehmen — der Text hat sich vielleicht geändert.',
 }

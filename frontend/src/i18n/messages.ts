@@ -306,4 +306,9 @@ export interface Messages {
   // Dialog
   dialogCancel: string
   dialogConfirm: string
+
+  // Embed (B43 C1)
+  embedWaiting: string
+  embedDisconnected: string
+  embedReplaceFailed: string
 }

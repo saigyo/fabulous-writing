@@ -1,10 +1,21 @@
 /// <reference types="vitest/config" />
+import { resolve } from 'node:path'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      input: {
+        main: resolve(import.meta.dirname, 'index.html'),
+        // simulator.html (Task 7) is deliberately NOT a build input —
+        // dev-server-only.
+        embed: resolve(import.meta.dirname, 'embed.html'),
+      },
+    },
+  },
   test: {
     setupFiles: ['./vitest.setup.ts'],
     coverage: {

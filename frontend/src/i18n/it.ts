@@ -325,4 +325,8 @@ export const it: Messages = {
   resetUpdateFailedRetry: 'Il salvataggio non ha ancora funzionato — riprova.',
   dialogCancel: 'Annulla',
   dialogConfirm: 'Conferma',
+
+  embedWaiting: "In attesa dell'applicazione ospite…",
+  embedDisconnected: 'Nessun campo di testo collegato.',
+  embedReplaceFailed: "L'applicazione ospite non ha potuto applicare la modifica — forse il testo è cambiato.",
 }

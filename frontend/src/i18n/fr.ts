@@ -331,4 +331,8 @@ export const fr: Messages = {
   resetUpdateFailedRetry: "L'enregistrement n'a pas encore fonctionné — réessaie.",
   dialogCancel: 'Annuler',
   dialogConfirm: 'Confirmer',
+
+  embedWaiting: "En attente de l'application hôte…",
+  embedDisconnected: 'Aucun champ de texte connecté.',
+  embedReplaceFailed: "L'application hôte n'a pas pu appliquer la modification — le texte a peut-être changé.",
 }

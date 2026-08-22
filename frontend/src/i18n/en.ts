@@ -310,4 +310,8 @@ export const en: Messages = {
   resetUpdateFailedRetry: "Saving didn't work yet — please try again.",
   dialogCancel: 'Cancel',
   dialogConfirm: 'Confirm',
+
+  embedWaiting: 'Waiting for the host application…',
+  embedDisconnected: 'No text field connected.',
+  embedReplaceFailed: "The host application couldn't apply the change — the text may have changed.",
 }

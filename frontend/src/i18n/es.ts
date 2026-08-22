@@ -330,4 +330,8 @@ export const es: Messages = {
   resetUpdateFailedRetry: 'Guardar no funcionó todavía — vuelve a intentarlo.',
   dialogCancel: 'Cancelar',
   dialogConfirm: 'Confirmar',
+
+  embedWaiting: 'Esperando a la aplicación anfitriona…',
+  embedDisconnected: 'Ningún campo de texto conectado.',
+  embedReplaceFailed: 'La aplicación anfitriona no pudo aplicar el cambio; puede que el texto haya cambiado.',
 }

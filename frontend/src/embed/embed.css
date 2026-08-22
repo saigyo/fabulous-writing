@@ -1,0 +1,49 @@
+/* Embed entry layout (B43 C1): single column, stacked top-to-bottom —
+   header row, connection strip, then the findings sidebar filling the rest
+   of the frame. The embed runs inside an arbitrary host's iframe, often
+   narrow, so this deliberately does not reuse App.css's three-column
+   .workspace layout (DocumentSidebar + editor + Sidebar side by side). */
+
+.embed-app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.embed-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.5rem 0.75rem;
+  padding: 0.5rem 0.75rem;
+  min-height: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+/* App.css's .header-controls assumes the full header's fixed height and a
+   nav row to align against (margin-left: auto, a negative top offset) —
+   neither applies here, and both must be undone so the row wraps instead
+   of overflowing a narrow host frame. */
+.embed-header .header-controls {
+  margin-left: 0;
+  top: 0;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.embed-connection-strip {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+
+/* Full-width instead of App.css's fixed 22rem side panel — the embed has
+   no editor pane to sit beside. */
+.embed-app .sidebar {
+  width: 100%;
+  flex: 1;
+  border-left: none;
+}

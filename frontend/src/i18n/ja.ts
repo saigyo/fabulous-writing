@@ -316,4 +316,8 @@ export const ja: Messages = {
   resetUpdateFailedRetry: '保存がまだ完了していません。もう一度お試しください。',
   dialogCancel: 'キャンセル',
   dialogConfirm: '確認',
+
+  embedWaiting: 'ホストアプリケーションを待っています…',
+  embedDisconnected: '接続されているテキスト欄はありません。',
+  embedReplaceFailed: 'ホストアプリケーションが変更を適用できませんでした。テキストが変わった可能性があります。',
 }
