@@ -103,9 +103,29 @@ command → adapter applies it to the field and echoes the new text back.
    unconditionally — embeddability and clickjacking hardening land in the same
    commit. Entries are validated at startup (same spirit as the trusted-proxies
    guard); malformed entries fail boot.
+
+   > **Amendment (amended during C1, 2026-08-22):** shipped as the YAML key
+   > `embed.allowed_ancestors` (`EmbedSettings` in `app/core/config.py`), not an
+   > env var — `load_settings()` is YAML-only (`backend/config.yaml`, or
+   > wherever `FW_CONFIG_FILE` points); there is no per-key environment
+   > overlay anywhere in `Settings`, and `FW_EMBED_ALLOWED_ANCESTORS` was never
+   > going to be the exception. Entries are `fullmatch`-validated at startup
+   > against `'self'` or a `scheme://host[:port]` origin; malformed entries
+   > still fail boot. `config.example.yaml` documents the key under its own
+   > `embed:` block. The C2 manifest note below, which also names
+   > `FW_EMBED_ALLOWED_ANCESTORS`, is stale for the same reason.
 3. Optional **`client` tag** on `CheckRequest` (`"web"` default,
    `"browser-extension"`, later `"vscode"`, `"jetbrains"`), enum-validated,
    recorded in the usage ledger so activity diagrams can attribute traffic.
+
+   > **Amendment (amended during C1, 2026-08-22):** the `client` tag shipped
+   > enum-validated on `CheckRequest` (`Literal["web", "embed",
+   > "browser-extension", "vscode", "jetbrains", "simulator"]`,
+   > `app/api/checks.py`) but is **not yet recorded** anywhere — `llm_usage`
+   > has no `client` column. Ledger persistence is deferred to the next
+   > schema-touching story, landing together with B41's day-first index
+   > (#126); until then the field is accepted for forward compatibility and
+   > otherwise unused.
 
 ## Bridge protocol (normative)
 
@@ -136,6 +156,13 @@ Host → embed:
 | `replaceResult` | `requestId`, `ok`, resulting full text — mandatory echo for every replacement |
 | `markingClicked` | `fieldId`, finding `id` (only when the host declared interactive markings) |
 | `fieldDisconnected` | `fieldId` |
+
+> **Amendment (amended during C1, 2026-08-22):** capabilities ship on
+> `fieldConnected`, not `hello` (`protocol.ts`'s
+> `FieldConnectedMessage.payload.capabilities`) — matching this table's own
+> description of them as *per-field* capabilities: `hello` is a one-time,
+> whole-host greeting with no field in scope yet, so it cannot carry a
+> per-field value. `hello` carries only `{ host: { kind, version } }`.
 
 Embed → host:
 
@@ -232,8 +259,12 @@ installs.
 - **Backend (pytest, mutation-verified):** embed serving paths + `/api`
   precedence; `frame-ancestors 'none'` defaults on embed and main-app routes;
   configured allowlist rendering; malformed ancestor entries fail boot; `client`
-  tag validation and ledger recording; fly-config guard if the env var ships
-  there.
+  tag validation; fly-config guard if the env var ships there.
+
+  > **Amendment (amended during C1, 2026-08-22):** "ledger recording" moved
+  > with the amendment above — `client` tag validation shipped in C1 and is
+  > tested; ledger recording is deferred to the next schema-touching story
+  > (with B41, #126) and has no tests here yet.
 - **Embed (vitest):** shim diff derivation; offset mapping/drop semantics
   (porting the `editor/findings.ts` cases so both implementations provably share
   behavior); code-point→UTF-16 conversion with astral characters; replacement
