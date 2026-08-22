@@ -13,9 +13,10 @@ from app.api.llm_gate import (
     classify_failure,
     effective_llm_report,
     get_effective_provider,
+    usage_from_exception,
 )
-from app.checkers.llm.checker import LLMChecker, UnparseableResponseError
-from app.checkers.llm.provider import LLMProvider, TokenUsage, TruncatedResponseError
+from app.checkers.llm.checker import LLMChecker
+from app.checkers.llm.provider import LLMProvider, TokenUsage
 from app.checkers.pipeline import drop_duplicates
 from app.checkers.rules.engine import RuleConfig
 from app.checkers.terminology import TerminologyChecker
@@ -204,11 +205,7 @@ async def _run_llm(
         # An unparseable or truncated response carries the usage the
         # provider already obtained (see LLMChecker.check and the provider
         # stop-reason checks) — settle those real counts.
-        if (
-            isinstance(exc, (UnparseableResponseError, TruncatedResponseError))
-            and exc.usage is not None
-        ):
-            usage = exc.usage
+        usage = usage_from_exception(exc) or usage
         error = str(exc) or type(exc).__name__
         logger.warning("llm check failed (provider %s): %s", provider.name, error)
         job.emit("checker_error", {"checker": "llm", "error": error})

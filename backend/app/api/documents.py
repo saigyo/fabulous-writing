@@ -7,7 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, get_current_user
-from app.api.llm_gate import classify_failure, get_effective_provider
+from app.api.llm_gate import (
+    classify_failure,
+    get_effective_provider,
+    usage_from_exception,
+)
 from app.api.validation import validate_name
 from app.checkers.llm.prompts import build_title_prompt
 from app.checkers.llm.provider import TokenUsage
@@ -276,6 +280,10 @@ async def generate_name(
                 except Exception as exc:
                     name_status = "failed"
                     fail_stage, fail_detail = classify_failure(exc)
+                    # A truncated/unparseable response carries the usage the
+                    # provider already obtained — settle those real counts
+                    # (spec §3.3).
+                    usage = usage_from_exception(exc) or usage
                     raise
                 finally:
                     reservation.finish(

@@ -4557,18 +4557,27 @@ budget went to invisible reasoning, the JSON envelope was truncated, and
 the parse error masqueraded as garbage output. ~27% of Sonnet 5 check
 runs failed this way; even completed runs peaked at 4064/4096.
 
-Fix (TDD, 7 new tests each watched red first): Claude cap raised to
+Fix (TDD, 10 new tests each watched red first): Claude cap raised to
 16384 (`_MAX_TOKENS`) and both Claude paths now raise a new
 `TruncatedResponseError` (metadata-only message, usage attached) on
 `stop_reason == "max_tokens"`; Bedrock detects the same `stopReason` on
 both paths (no explicit cap there — Converse family limits differ);
-`classify_failure` files it as `response`-stage; `_run_llm` settles the
-exception-carried real token counts like the unparseable case. The
-checks-path usage-carry guard was mutation-verified (guard removed →
-test fails → restored) after a first attempt silently no-op'd (`python`
-not on PATH) and its `git checkout` cleanup briefly reverted the legit
-edits — restore surgically, not via git, when the tree is dirty.
-Verification: backend 1549 passed / 179 skipped.
+`classify_failure` files it as `response`-stage; all three LLM
+endpoints settle the exception-carried real token counts via a shared
+`usage_from_exception` helper. The checks-path usage-carry guard was
+mutation-verified (guard removed → test fails → restored) after a
+first attempt silently no-op'd (`python` not on PATH) and its
+`git checkout` cleanup briefly reverted the legit edits — restore
+surgically, not via git, when the tree is dirty.
+
+Copilot contributed two real findings across two rounds: the 16384 cap
+would be rejected by legacy Claude 3.x models still selectable via
+`list_models()` (fixed with a model-aware `_max_tokens_for`: 4096 for
+claude-3-*, 8192 for claude-3-5-*, full headroom from claude-3-7 on),
+and the usage carry initially covered only the checks path while
+suggestions and naming settled NULL counts on the same failure (fixed
+via the shared helper + per-endpoint ledger tests).
+Verification: backend 1552 passed / 179 skipped.
 
 Follow-up filed as #132: benchmark and configure per-tier thinking
 effort (`output_config.effort`) — checks burn thousands of billed,

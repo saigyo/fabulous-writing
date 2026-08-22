@@ -18,6 +18,7 @@ from app.checkers.llm.checker import UnparseableResponseError
 from app.checkers.llm.provider import (
     LLMProvider,
     MissingApiKeyError,
+    TokenUsage,
     TruncatedResponseError,
 )
 from app.core.config import known_provider_names
@@ -79,6 +80,15 @@ def classify_failure(exc: BaseException) -> tuple[str, str]:
     if names & _REQUEST_STAGE_CLASS_NAMES:
         return "request", detail
     return "provider", detail
+
+
+def usage_from_exception(exc: BaseException) -> "TokenUsage | None":
+    """The usage the provider had already obtained when the failure was
+    raised — UnparseableResponseError and TruncatedResponseError carry it
+    (spec §3.3: settle whatever usage was obtained before the failure).
+    Every LLM-invoking endpoint settles it the same way; None otherwise."""
+    usage = getattr(exc, "usage", None)
+    return usage if isinstance(usage, TokenUsage) else None
 
 
 def _status_of(exc: BaseException) -> int | None:

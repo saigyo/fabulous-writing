@@ -537,9 +537,10 @@ The LLM's raw response passes through four deterministic stages in
    verbatim as the ledger's `fail_detail`; `LLMChecker.check` also attaches
    `result.usage` to the exception (`exc.usage`) before re-raising, since
    `generate()` already succeeded and burned real tokens before the parse
-   failed — `_run_llm` reads that attached usage back off the exception to
-   settle the failed run's real `input_tokens`/`output_tokens` instead of
-   `NULL`.
+   failed — all three LLM-invoking endpoints (checks, suggestions, naming)
+   read that attached usage back off the exception via
+   `usage_from_exception` (`app/api/llm_gate.py`) to settle the failed
+   run's real `input_tokens`/`output_tokens` instead of `NULL`.
 
    Truncation is caught one layer earlier, in the providers themselves:
    the Claude and Bedrock providers check the API's stop reason and raise
