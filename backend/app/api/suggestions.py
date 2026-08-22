@@ -6,7 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from app.api.deps import CurrentUser, get_current_user
-from app.api.llm_gate import classify_failure, get_effective_provider
+from app.api.llm_gate import (
+    classify_failure,
+    get_effective_provider,
+    usage_from_exception,
+)
 from app.checkers.llm.checker import extract_json_array
 from app.checkers.llm.prompts import build_rewrite_prompt, build_suggestion_prompt
 from app.checkers.llm.provider import TokenUsage
@@ -168,6 +172,9 @@ async def create_suggestions(
     except Exception as exc:
         status = "failed"
         fail_stage, fail_detail = classify_failure(exc)
+        # A truncated/unparseable response carries the usage the provider
+        # already obtained — settle those real counts (spec §3.3).
+        usage = usage_from_exception(exc) or usage
         detail = str(exc) or type(exc).__name__
         raise HTTPException(502, f"LLM request failed: {detail}") from exc
     finally:

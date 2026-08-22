@@ -512,6 +512,40 @@ class TestSuggestionsMetering:
         assert rows[0]["fail_stage"] == "provider"
         assert rows[0]["fail_detail"] == "RuntimeError: model exploded"
 
+    def test_truncated_response_settles_carried_usage(self, tmp_path: Path) -> None:
+        # The provider raises TruncatedResponseError with the usage the API
+        # already reported attached (max_tokens truncation detection); the
+        # failed suggestion run settles those real counts instead of NULL,
+        # mirroring the checks path.
+        from app.checkers.llm.provider import TruncatedResponseError
+
+        class TruncatingProvider:
+            name = "truncating"
+
+            async def generate(
+                self, system: str, user: str, on_progress=None
+            ) -> GenerationResult:
+                exc = TruncatedResponseError(120, 16384)
+                exc.usage = TokenUsage(input_tokens=33, output_tokens=16384)
+                raise exc
+
+        settings = Settings(db_path=tmp_path / "test.db", rules_dir=tmp_path / "rules")
+        app = create_app(settings)
+        app.state.provider_factory = lambda name=None, model=None: TruncatingProvider()
+        client = TestClient(app)
+        client.headers.update(auth_headers(client))
+
+        response = client.post("/api/suggestions", json=suggestion_request())
+        assert response.status_code == 502
+
+        rows = _read_usage_rows(settings.db_path)
+        assert len(rows) == 1
+        assert rows[0]["status"] == "failed"
+        assert rows[0]["fail_stage"] == "response"
+        assert "TruncatedResponseError" in rows[0]["fail_detail"]
+        assert rows[0]["input_tokens"] == 33
+        assert rows[0]["output_tokens"] == 16384
+
     def test_vetting_crash_writes_failed_and_returns_5xx(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

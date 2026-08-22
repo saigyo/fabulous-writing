@@ -340,6 +340,38 @@ def test_generate_name_settles_usage(authed_client):
     assert rows[0]["output_tokens"] == 8
 
 
+def test_generate_name_truncated_response_settles_carried_usage(authed_client):
+    # The provider raises TruncatedResponseError with the usage the API
+    # already reported attached; the failed naming run settles those real
+    # counts instead of NULL while the document still gets its silent
+    # local fallback name.
+    from app.checkers.llm.provider import TruncatedResponseError
+
+    class TruncatingProvider:
+        name = "truncating"
+
+        async def generate(self, system, user, on_progress=None) -> GenerationResult:
+            exc = TruncatedResponseError(3, 16384)
+            exc.usage = TokenUsage(input_tokens=21, output_tokens=16384)
+            raise exc
+
+    doc = make_doc(authed_client, text="alpha beta gamma delta epsilon zeta eta")
+    authed_client.app.state.provider_factory = lambda name=None, model=None: (
+        TruncatingProvider()
+    )
+    response = authed_client.post(f"/api/documents/{doc['id']}/generate-name")
+    assert response.status_code == 200
+    assert response.json()["name_source"] == "fallback"
+
+    rows = _read_usage_rows(authed_client.app.state.settings.db_path)
+    assert len(rows) == 1
+    assert rows[0]["status"] == "failed"
+    assert rows[0]["fail_stage"] == "response"
+    assert "TruncatedResponseError" in rows[0]["fail_detail"]
+    assert rows[0]["input_tokens"] == 21
+    assert rows[0]["output_tokens"] == 16384
+
+
 def test_generate_name_unusable_title_falls_back_and_marks_run_failed(authed_client):
     # The provider call succeeds, but clean_title rejects the response (here:
     # quote marks with nothing usable inside) -- a burned-token run that
