@@ -4462,3 +4462,80 @@ gate still 18/18) and the measured figure — and its CI run doubled as
 the live proof of the round-1 Copilot fix, the backend gate firing on a
 `deploy/fly/**`-only diff. Copilot: clean first round, zero posted,
 zero suppressed.
+
+## 2026-08-22 — PR #123: always-on fly machine (retro-entry)
+
+Merged without its own entry, recorded here per convention: one day of
+operation disproved scale-to-zero's idle premise — internet background
+scans woke the demo machine constantly, so it paid for most of the
+runtime anyway plus a ~32 s model-reload cold start per wake (502-risk
+windows, a recurring proxy-unreachable dashboard banner). The config
+flipped to `auto_stop_machines = "off"` + `min_machines_running = 1`
+(~$11–12/month), Markus applied the equivalent `fly machine update
+--autostop=off` live, and the PR made it deploy-durable with the test
+pins updated and mutation-verified in both directions. Copilot's only
+objection in two rounds was a false "future-dated" claim — its UTC
+clock against the repo's CEST datestamps — adjudicated with a rebuttal
+on the PR.
+
+## 2026-08-22 — B40: activity/usage diagrams (PR #125)
+
+The ledger became visible: every user gets **My activity** in the
+account menu — runs by category (check/suggestion/name, failures
+distinct), input/output tokens, and credits as stacked daily SVG bars
+over 30/90/365 days — and admins get an all-users aggregate in the
+admin section with a sortable per-user table that drills into any
+individual screen. All of it reads the existing `llm_usage` rows: one
+`GROUP BY day` per request through the db seam, UTC buckets
+zero-filled, in-flight rows excluded everywhere, `/all` pinning both
+projections to one snapshot via the `credits_used` transaction idiom
+(guarded by a live-PG isolation test with a mid-method second-
+connection write; sqlite's rollback-journal locking makes the same
+race structurally impossible — verified empirically, documented at the
+`BEGIN` branch). Authorization is layered: the client collapses
+non-admins to their own subject before any fetch, and the admin-only
+endpoints enforce independently.
+
+The plan pipeline paid for itself before a line shipped: two
+probe-backed Opus rounds executed the plan's verbatim tests against
+its verbatim artifacts and caught, among 16 findings, two would-be CI
+breakers — a `Literal[30,90,365]` query param that 422s on every
+explicit `?days=` value on the pinned FastAPI/pydantic (now an
+IntEnum), and a fixture asserting 250 tokens where the correct SQL
+returns 350 on both backends, which also made a mutation vacuous.
+Execution then ran four tasks with four clean reviews and zero fix
+rounds; the final whole-branch Opus review (APPROVE) re-ran both
+gates itself and swept authz, adversarial markup, and DST by
+construction.
+
+Interactive testing with Markus reshaped the visuals live: smaller
+axis labels with an unclipped rightmost date and axis ticks;
+locale-formatted dates (dd.mm.yyyy in German) via cached
+`Intl.DateTimeFormat` with the UTC-midnight parsing trap engineered
+around and later pinned by a west-of-UTC timezone test; and — after
+he correctly rejected a 3:1-compliant single-hue ramp because its
+steps became indistinguishable — a machine-validated 4-hue categorical
+palette (violet kept for check, amber for failed; WCAG ≥3:1 on both
+surfaces, CVD ΔE ≥17 adjacent) chosen from visual-companion mockups
+and validated with the dataviz palette script, plus 2px surface gaps
+between stacked segments. The best story is the drill-down scroll bug:
+two plausible theories (scroll anchoring, table sizing) each fixed
+something real but not the symptom; live Playwright DOM measurement
+against the dev server found the truth — the absolutely-positioned
+sr-only wrappers escaped the unpositioned scroll container and
+extended the *document's* scroll range (scrollHeight 1323 vs 838
+viewport), creating a second scroll context. One line
+(`position: relative` on the container), proven live before commit
+(1323 → 838) and re-verified after.
+
+Copilot took 14 rounds to a fully clean read (5→2→1→2→0…0 posted, with
+suppressed comments staying real findings to the end): the
+auth-generation refetch gap, `per_user` leaking as `null` off `/all`,
+request-keyed rendering against stale-frame flashes, a visible
+data-table toggle for sighted keyboard users, `aria-sort`, row-header
+semantics, a WCAG-failing error red (fixed via a new `--error-text`
+token; the ~16 pre-existing failing sites became the B42 sweep, #129),
+and the deferred all-users index became B41 (#126). Verification:
+backend 1546 passed / 175 skipped zero warnings, live-PG 1719 passed,
+frontend 684 tests + oxlint + `tsc -b` clean; 20+ guard mutations
+verified across the branch.
