@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { AccountMenu } from '../auth/AccountMenu'
 import { llmDisabled } from '../auth/policy'
 import { cancelCheck, runCheck } from '../checking/controller'
 import { createCheckScheduler } from '../checking/scheduler'
@@ -109,6 +110,11 @@ export function EmbedApp() {
           >
             {store.checkPhase === 'idle' ? m.check : m.checking}
           </button>
+          {/* hideActivity: EmbedApp has no activity view to switch into —
+              see AccountMenu's own comment. Password change and sign-out
+              stay: the embed's session is storage-partition-scoped to its
+              iframe, and this is the only sign-out affordance in the app. */}
+          <AccountMenu hideActivity />
         </div>
       </header>
       <div className="embed-connection-strip">

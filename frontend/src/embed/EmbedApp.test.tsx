@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { MeResponse } from '../api/client'
 
 // Only the catalog fetches useHeaderData()'s mount effects fire are
 // replaced — everything else in api/client stays real but unused here
@@ -24,6 +25,8 @@ import { setDocumentPort } from '../checking/documentPort'
 import { en } from '../i18n/en'
 import { useStore } from '../state/store'
 import { EmbedApp } from './EmbedApp'
+import { setEmbedOutbound } from './embedRef'
+import type { HostDocOutbound } from './hostDoc'
 
 function fakePort(): DocumentPort {
   return {
@@ -39,9 +42,40 @@ function fakePort(): DocumentPort {
   }
 }
 
+function fakeOutbound(): HostDocOutbound {
+  return {
+    sendApplyReplacement: () => {},
+    sendSelectFinding: () => {},
+    sendFindings: () => {},
+    onInput: () => {},
+  }
+}
+
+function user(overrides: Partial<MeResponse> = {}): MeResponse {
+  return {
+    id: 1,
+    email: 'ada@example.com',
+    display_name: null,
+    tier: 'basic',
+    is_admin: false,
+    policy: { llm: { tiers: null, providers: null, models: null }, features: [] },
+    usage: { label: 'Basic', windows: [{ window: 'day', used_percent: 0 }] },
+    limits: {
+      max_document_chars: 200000,
+      max_llm_document_chars: 200000,
+      concurrent_llm_runs: 5,
+    },
+    allow_additional_admins: false,
+    db_backend: 'sqlite',
+    ...overrides,
+  }
+}
+
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  vi.useRealTimers()
+  setEmbedOutbound(null)
 })
 
 beforeEach(() => {
@@ -99,5 +133,60 @@ describe('EmbedApp', () => {
 
     expect(cancelCheck).toHaveBeenCalled()
     expect(runCheck).toHaveBeenCalledWith(false)
+  })
+
+  // AccountMenu is the app's only sign-out affordance, and the embed
+  // iframe's session is storage-partition-scoped — without it, a user who
+  // logs in inside a host panel would have no way to end that session.
+  // hideActivity suppresses "My activity" only: EmbedApp has no activity
+  // view to switch into (unlike App.tsx, it never branches on
+  // activeView === 'activity').
+  it('renders AccountMenu with the activity item hidden while sign-out stays available', () => {
+    useStore.setState({
+      connectedField: { fieldId: 'f1', url: null },
+      user: user(),
+    })
+    render(<EmbedApp />)
+
+    fireEvent.click(screen.getByRole('button', { name: en.accountMenu }))
+
+    expect(screen.queryByRole('button', { name: en.accountActivity })).toBeNull()
+    expect(screen.getByRole('button', { name: en.accountChangePassword })).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.accountLogOut })).toBeTruthy()
+  })
+
+  // main.tsx renders <EmbedApp /> with no props, so it reaches the bridge's
+  // outbound sender via embedRef.ts's module-level singleton (see its own
+  // comment) — this is the seam a test can drive without a real bridge.
+  it('wires the check scheduler into the bridge outbound: onInput debounces a fast check', () => {
+    vi.useFakeTimers()
+    const outbound = fakeOutbound()
+    setEmbedOutbound(outbound)
+
+    const { unmount } = render(<EmbedApp />)
+    expect(runCheck).not.toHaveBeenCalled()
+
+    // Simulate what hostDoc.ts:syncBuffer does on every textChanged/
+    // replaceResult: call the outbound's onInput, which EmbedApp's mount
+    // effect replaced with the scheduler's onInput.
+    act(() => {
+      outbound.onInput()
+    })
+    expect(runCheck).not.toHaveBeenCalled() // debounced, not yet due
+
+    act(() => {
+      vi.advanceTimersByTime(1000)
+    })
+    expect(runCheck).toHaveBeenCalledWith(false)
+
+    // Unmount's cleanup resets outbound.onInput to a no-op: a stale
+    // reference to a torn-down scheduler must never fire a check.
+    unmount()
+    vi.mocked(runCheck).mockClear()
+    act(() => {
+      outbound.onInput()
+      vi.advanceTimersByTime(2000)
+    })
+    expect(runCheck).not.toHaveBeenCalled()
   })
 })
