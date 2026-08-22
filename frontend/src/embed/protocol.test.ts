@@ -71,4 +71,73 @@ describe('parseHostMessage', () => {
       }),
     ).not.toBeNull()
   })
+
+  // Copilot round 1: meta.url/meta.fieldKind must both be strings.
+  it('rejects fieldConnected with missing or malformed meta', () => {
+    const base = {
+      fw: PROTOCOL_VERSION,
+      type: 'fieldConnected',
+      payload: { fieldId: 'f1', text: 't', capabilities: caps },
+    }
+    expect(parseHostMessage(base)).toBeNull() // no meta at all
+    expect(
+      parseHostMessage({
+        ...base,
+        payload: { ...base.payload, meta: { fieldKind: 'textarea' } },
+      }),
+    ).toBeNull() // missing url
+    expect(
+      parseHostMessage({
+        ...base,
+        payload: { ...base.payload, meta: { url: 'https://host.example', fieldKind: 1 } },
+      }),
+    ).toBeNull() // fieldKind not a string
+    expect(
+      parseHostMessage({
+        ...base,
+        payload: { ...base.payload, meta: { url: 'https://host.example', fieldKind: 'textarea' } },
+      }),
+    ).not.toBeNull()
+  })
+
+  // Copilot round 1: markingClicked requires a string id, validated
+  // separately from fieldDisconnected's fieldId-only shape.
+  it('rejects markingClicked with a missing or non-string id', () => {
+    expect(
+      parseHostMessage({
+        fw: PROTOCOL_VERSION, type: 'markingClicked', payload: { fieldId: 'f1' },
+      }),
+    ).toBeNull()
+    expect(
+      parseHostMessage({
+        fw: PROTOCOL_VERSION, type: 'markingClicked', payload: { fieldId: 'f1', id: 1 },
+      }),
+    ).toBeNull()
+    expect(
+      parseHostMessage({
+        fw: PROTOCOL_VERSION, type: 'markingClicked', payload: { fieldId: 'f1', id: 'finding-1' },
+      }),
+    ).not.toBeNull()
+  })
+
+  // Copilot round 1: replaceResult.payload.fieldId is the shim's
+  // stale-field guard — reject at the parser when it's missing.
+  it('rejects replaceResult without a string payload.fieldId', () => {
+    expect(
+      parseHostMessage({
+        fw: PROTOCOL_VERSION,
+        type: 'replaceResult',
+        requestId: 'r1',
+        payload: { ok: true, text: 'hi' },
+      }),
+    ).toBeNull()
+    expect(
+      parseHostMessage({
+        fw: PROTOCOL_VERSION,
+        type: 'replaceResult',
+        requestId: 'r1',
+        payload: { fieldId: 'f1', ok: true, text: 'hi' },
+      }),
+    ).not.toBeNull()
+  })
 })

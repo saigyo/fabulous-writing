@@ -125,7 +125,11 @@ describe('EmbedApp', () => {
 
   it('a fresh connection cancels any in-flight check and runs a fast one', () => {
     render(<EmbedApp />)
-    expect(cancelCheck).not.toHaveBeenCalled()
+    // cancelCheck also runs on the mount effect itself (every transition,
+    // including the initial no-field state) — clear it so this test isolates
+    // the connect transition specifically.
+    vi.mocked(cancelCheck).mockClear()
+    vi.mocked(runCheck).mockClear()
 
     act(() => {
       useStore.setState({ connectedField: { fieldId: 'f1', url: null } })
@@ -133,6 +137,23 @@ describe('EmbedApp', () => {
 
     expect(cancelCheck).toHaveBeenCalled()
     expect(runCheck).toHaveBeenCalledWith(false)
+  })
+
+  // Copilot round 1: cancelCheck() must run on EVERY connection-state
+  // transition, not just connect — a check left in flight against a field
+  // that just disconnected must not resolve and publish stale findings.
+  it('a disconnect also triggers cancelCheck, without running a new check', () => {
+    useStore.setState({ connectedField: { fieldId: 'f1', url: null } })
+    render(<EmbedApp />)
+    vi.mocked(cancelCheck).mockClear()
+    vi.mocked(runCheck).mockClear()
+
+    act(() => {
+      useStore.setState({ connectedField: null })
+    })
+
+    expect(cancelCheck).toHaveBeenCalled()
+    expect(runCheck).not.toHaveBeenCalled()
   })
 
   // AccountMenu is the app's only sign-out affordance, and the embed
@@ -187,6 +208,38 @@ describe('EmbedApp', () => {
       outbound.onInput()
       vi.advanceTimersByTime(2000)
     })
+    expect(runCheck).not.toHaveBeenCalled()
+  })
+
+  // Copilot round 1: scheduler timers must not cross field boundaries. A
+  // timer armed by field A's onInput must be disposed, not left to fire,
+  // once the connected field's identity changes to field B.
+  it('onInput armed before a field switch does not fire runCheck after the switch, at the old deadline', () => {
+    vi.useFakeTimers()
+    const outbound = fakeOutbound()
+    setEmbedOutbound(outbound)
+    useStore.setState({ connectedField: { fieldId: 'field-a', url: null } })
+
+    render(<EmbedApp />)
+    vi.mocked(runCheck).mockClear()
+
+    // Arm field A's scheduler.
+    act(() => {
+      outbound.onInput()
+    })
+    // 400ms in: switch to field B before A's 1000ms fast-check deadline.
+    act(() => {
+      vi.advanceTimersByTime(400)
+      useStore.setState({ connectedField: { fieldId: 'field-b', url: null } })
+    })
+    vi.mocked(runCheck).mockClear() // drop the connect-triggered runCheck(false) for field B
+
+    // Advance past where field A's original timer would have fired
+    // (400 + 700 = 1100ms since arming) without B ever calling onInput.
+    act(() => {
+      vi.advanceTimersByTime(700)
+    })
+
     expect(runCheck).not.toHaveBeenCalled()
   })
 })

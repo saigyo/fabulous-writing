@@ -45,6 +45,43 @@ describe('createTextareaAdapter: extract/onChange', () => {
   })
 })
 
+describe('createTextareaAdapter: ResizeObserver geometry sync', () => {
+  it('observes the textarea and disconnects on dispose', () => {
+    const observe = vi.fn()
+    const disconnect = vi.fn()
+    const unobserve = vi.fn()
+    const OriginalResizeObserver = (globalThis as { ResizeObserver?: unknown }).ResizeObserver
+    class StubResizeObserver {
+      observe = observe
+      disconnect = disconnect
+      unobserve = unobserve
+    }
+    ;(globalThis as { ResizeObserver: unknown }).ResizeObserver = StubResizeObserver
+
+    const adapter = createTextareaAdapter(el)
+    expect(observe).toHaveBeenCalledWith(el)
+    expect(disconnect).not.toHaveBeenCalled()
+
+    adapter.dispose()
+    expect(disconnect).toHaveBeenCalledTimes(1)
+
+    ;(globalThis as { ResizeObserver: unknown }).ResizeObserver = OriginalResizeObserver
+  })
+
+  it('is a no-op (no throw) when ResizeObserver is unavailable', () => {
+    const OriginalResizeObserver = (globalThis as { ResizeObserver?: unknown }).ResizeObserver
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    delete (globalThis as any).ResizeObserver
+
+    expect(() => {
+      const adapter = createTextareaAdapter(el)
+      adapter.dispose()
+    }).not.toThrow()
+
+    ;(globalThis as { ResizeObserver: unknown }).ResizeObserver = OriginalResizeObserver
+  })
+})
+
 describe('createTextareaAdapter: applyReplacement', () => {
   it('happy path: matching expectedText mutates the value and reports the new text', () => {
     const adapter = createTextareaAdapter(el)
@@ -64,6 +101,23 @@ describe('createTextareaAdapter: applyReplacement', () => {
     adapter.applyReplacement(4, 9, 'quick', 'quikc')
 
     expect(cb).toHaveBeenCalledTimes(1)
+    adapter.dispose()
+  })
+
+  it('happy path dispatches an InputEvent that bubbles to a document-level (delegation-style) listener', () => {
+    const adapter = createTextareaAdapter(el)
+    const docListener = vi.fn()
+    document.addEventListener('input', docListener)
+
+    adapter.applyReplacement(4, 9, 'quick', 'quikc')
+
+    expect(docListener).toHaveBeenCalledTimes(1)
+    const event = docListener.mock.calls[0][0] as Event
+    expect(event).toBeInstanceOf(InputEvent)
+    expect(event.bubbles).toBe(true)
+    expect(event.target).toBe(el)
+
+    document.removeEventListener('input', docListener)
     adapter.dispose()
   })
 

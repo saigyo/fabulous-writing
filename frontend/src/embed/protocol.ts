@@ -143,18 +143,28 @@ export function parseHostMessage(data: unknown): HostMessage | null {
       if (typeof host.kind !== 'string' || typeof host.version !== 'string') return null
       break
     }
-    case 'fieldConnected':
+    case 'fieldConnected': {
       if (typeof pay.fieldId !== 'string' || typeof pay.text !== 'string') return null
       if (!validCapabilities(pay.capabilities)) return null
+      if (typeof pay.meta !== 'object' || pay.meta === null) return null
+      const meta = pay.meta as Record<string, unknown>
+      if (typeof meta.url !== 'string' || typeof meta.fieldKind !== 'string') return null
       break
+    }
     case 'textChanged':
       if (typeof pay.fieldId !== 'string' || typeof pay.text !== 'string') return null
       break
     case 'replaceResult':
+      // fieldId is the shim's stale-field guard (hostDoc.ts's replaceResult
+      // ignores any echo whose fieldId doesn't match the connected field) —
+      // reject here at the parser rather than let a malformed payload reach
+      // that guard with fieldId silently undefined.
       if (typeof d.requestId !== 'string' || typeof pay.ok !== 'boolean'
-        || typeof pay.text !== 'string') return null
+        || typeof pay.text !== 'string' || typeof pay.fieldId !== 'string') return null
       break
     case 'markingClicked':
+      if (typeof pay.fieldId !== 'string' || typeof pay.id !== 'string') return null
+      break
     case 'fieldDisconnected':
       if (typeof pay.fieldId !== 'string') return null
       break
