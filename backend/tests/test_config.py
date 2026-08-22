@@ -542,6 +542,37 @@ class TestEmbedSettings:
             "https://example.com:8443",
         ]
 
+    @pytest.mark.parametrize("entry", [
+        "chrome-extension://abcdefgh",
+        "https://example.com:8443",
+        "http://localhost:5199",
+    ])
+    def test_valid_origin_controls_accepted(self, entry):
+        settings = Settings.model_validate({"embed": {"allowed_ancestors": [entry]}})
+        assert settings.embed.allowed_ancestors == [entry]
+
+    # Copilot round 9: the old single regex's permissive host character
+    # class (`[A-Za-z0-9.\-]+`) and unbounded `(:\d+)?` port group full-match
+    # strings that are not valid origins, silently emitting a CSP source
+    # that can never match a real Origin header. Real parsing (scheme,
+    # per-label hostname, numeric 1-65535 port) rejects all three.
+    @pytest.mark.parametrize("entry", [
+        "https://example.com:99999",  # port above 65535
+        "https://-bad.example",  # label starting with a hyphen
+        "https://.",  # empty labels
+    ])
+    def test_non_origin_vectors_rejected(self, entry):
+        with pytest.raises(ValidationError, match="allowed_ancestors"):
+            Settings.model_validate({"embed": {"allowed_ancestors": [entry]}})
+
+    # Mutation-verify: reverting `1 <= int(port) <= 65535` to a passthrough
+    # (or dropping the range check entirely) makes this pass instead of
+    # raising -- confirms the range bound, not just port digit-ness, is
+    # actually enforced.
+    def test_port_zero_rejected(self):
+        with pytest.raises(ValidationError, match="allowed_ancestors"):
+            Settings.model_validate({"embed": {"allowed_ancestors": ["https://example.com:0"]}})
+
     def test_self_accepted(self):
         settings = Settings.model_validate({"embed": {"allowed_ancestors": ["'self'"]}})
         assert settings.embed.allowed_ancestors == ["'self'"]

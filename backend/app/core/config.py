@@ -249,20 +249,46 @@ class EmbedSettings(BaseModel):
         # preserve the inner quotes) working. Both forms normalize to the
         # literal 'self' in the stored list, which main.py joins directly
         # into the frame-ancestors header value.
-        pattern = re.compile(
-            r"^(?:'self'|[a-z][a-z0-9+.\-]*://[A-Za-z0-9.\-]+(?::\d+)?)$"
-        )
+        #
+        # The origin case is real parsing, not one regex (Copilot round 9):
+        # a single `scheme://host(:port)?` pattern with a permissive host
+        # character class full-matches strings that are not valid origins —
+        # e.g. "https://example.com:99999" (port out of the 1-65535 range),
+        # "https://-bad.example" (a label starting with a hyphen), and
+        # "https://." (empty labels) — silently emitting a CSP source that
+        # can never match any real Origin header, so the entry is dead
+        # weight at best and a false sense of restriction at worst. Scheme,
+        # each hostname label, and the port are therefore validated
+        # separately below.
+        scheme_pattern = re.compile(r"[a-z][a-z0-9+.\-]*")
+        label_pattern = re.compile(r"[A-Za-z0-9]([A-Za-z0-9\-]*[A-Za-z0-9])?")
+
+        def is_valid_origin(entry: str) -> bool:
+            scheme, sep, rest = entry.partition("://")
+            if not sep or not scheme_pattern.fullmatch(scheme) or not rest:
+                return False
+            if ":" in rest:
+                host, _, port = rest.rpartition(":")
+                if not port.isdigit() or not (1 <= int(port) <= 65535):
+                    return False
+            else:
+                host = rest
+            if not host:
+                return False
+            return all(label_pattern.fullmatch(label) for label in host.split("."))
+
         normalized: list[str] = []
         for entry in entries:
             if entry == "self":
                 normalized.append("'self'")
                 continue
-            if not pattern.fullmatch(entry):
-                raise ValueError(
-                    f"embed.allowed_ancestors entry {entry!r} is not 'self' or"
-                    " a scheme://host[:port] origin"
-                )
-            normalized.append(entry)
+            if entry == "'self'" or is_valid_origin(entry):
+                normalized.append(entry)
+                continue
+            raise ValueError(
+                f"embed.allowed_ancestors entry {entry!r} is not 'self' or"
+                " a scheme://host[:port] origin"
+            )
         return normalized
 
 

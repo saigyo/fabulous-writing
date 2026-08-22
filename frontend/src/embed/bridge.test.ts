@@ -90,6 +90,20 @@ function fakeSource(): Window {
   return { postMessage: vi.fn() } as unknown as Window
 }
 
+// The bridge now pins a hello only when it comes from window.parent AND the
+// page is actually framed (window.parent !== window) — see bridge.ts's
+// handleMessage. jsdom/happy-dom's top-level window has window.parent ===
+// window by default, so any test that expects a hello to pin must first
+// make window.parent a distinct object and use that same object as the
+// dispatched event's source. Restored to the real window (the unframed
+// default) in the afterEach below so later tests don't leak an "embedded"
+// state.
+function embeddedParent(): Window {
+  const parent = { postMessage: vi.fn() } as unknown as Window
+  Object.defineProperty(window, 'parent', { value: parent, configurable: true })
+  return parent
+}
+
 function dispatchHost(data: unknown, origin: string, source: Window) {
   window.dispatchEvent(new MessageEvent('message', { data, origin, source }))
 }
@@ -113,6 +127,7 @@ const ORIGIN_B = 'https://host-b.example'
 afterEach(() => {
   useStore.setState({ tracked: [], checkPhase: 'idle', llmError: null, authStatus: 'authenticated' })
   setClientTag('web') // reset client tag after each test
+  Object.defineProperty(window, 'parent', { value: window, configurable: true })
 })
 
 describe('startBridge: origin pinning and routing', () => {
@@ -136,7 +151,7 @@ describe('startBridge: origin pinning and routing', () => {
     const bridge = startBridge()
     const hostDoc = stubHostDoc()
     bridge.attach(hostDoc)
-    const source = fakeSource()
+    const source = embeddedParent()
 
     dispatchHost(helloMessage(), ORIGIN_A, source)
 
@@ -159,19 +174,22 @@ describe('startBridge: origin pinning and routing', () => {
 
   // F6 (final review): a hello with a null source must not half-pin —
   // pinnedOrigin getting set with no matching source is a state that can
-  // never complete the handshake (postToHost requires both).
+  // never complete the handshake (postToHost requires both). This is now
+  // subsumed by the parent-only check (event.source === window.parent, and
+  // window.parent is never null), but we still dispatch it under an
+  // embedded window.parent to prove the null source alone is rejected.
   it('a hello with a null source does not pin, and a later real hello still pins and gets ready', () => {
     const bridge = startBridge()
     const hostDoc = stubHostDoc()
     bridge.attach(hostDoc)
+    const parent = embeddedParent()
 
     dispatchHost(helloMessage(), ORIGIN_A, null as unknown as Window)
 
-    const realSource = fakeSource()
-    dispatchHost(helloMessage(), ORIGIN_A, realSource)
+    dispatchHost(helloMessage(), ORIGIN_A, parent)
 
-    expect(realSource.postMessage).toHaveBeenCalled()
-    const [replyPayload] = (realSource.postMessage as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(parent.postMessage).toHaveBeenCalled()
+    const [replyPayload] = (parent.postMessage as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(replyPayload).toEqual({
       fw: PROTOCOL_VERSION,
       type: 'ready',
@@ -179,11 +197,49 @@ describe('startBridge: origin pinning and routing', () => {
     })
   })
 
+  // Security (Copilot round 9): frame-ancestors restricts framing, not
+  // WindowProxy access — a hostile popup or sibling frame could still hold
+  // a reference to this window and post a hello. Even while embedded
+  // (window.parent !== window), only a hello whose source is exactly
+  // window.parent may pin.
+  it('ignores a hello whose source is not window.parent, even when embedded', () => {
+    const bridge = startBridge()
+    const hostDoc = stubHostDoc()
+    bridge.attach(hostDoc)
+    const parent = embeddedParent()
+    const impostor = fakeSource() // e.g. a same-origin popup or sibling frame
+
+    dispatchHost(helloMessage(), ORIGIN_A, impostor)
+
+    expect(impostor.postMessage).not.toHaveBeenCalled()
+    expect(bridge.hostKind()).toBe('web')
+
+    // The real parent can still pin afterward.
+    dispatchHost(helloMessage(), ORIGIN_A, parent)
+    expect(parent.postMessage).toHaveBeenCalled()
+  })
+
+  // Security (Copilot round 9): when the page is not framed at all
+  // (window.parent === window, jsdom/happy-dom's default for a top-level
+  // window), no hello is ever accepted — direct navigation to /embed is not
+  // a supported host context.
+  it('accepts no hello when the page is not framed (window.parent === window)', () => {
+    const bridge = startBridge()
+    const hostDoc = stubHostDoc()
+    bridge.attach(hostDoc)
+    const source = fakeSource()
+
+    dispatchHost(helloMessage(), ORIGIN_A, source)
+
+    expect(source.postMessage).not.toHaveBeenCalled()
+    expect(bridge.hostKind()).toBe('web')
+  })
+
   it('drops post-hello messages whose origin differs from the pinned origin', () => {
     const bridge = startBridge()
     const hostDoc = stubHostDoc()
     bridge.attach(hostDoc)
-    const pinnedSource = fakeSource()
+    const pinnedSource = embeddedParent()
     dispatchHost(helloMessage(), ORIGIN_A, pinnedSource)
 
     const foreignSource = fakeSource()
@@ -200,7 +256,7 @@ describe('startBridge: origin pinning and routing', () => {
     const bridge = startBridge()
     const hostDoc = stubHostDoc()
     bridge.attach(hostDoc)
-    const source = fakeSource()
+    const source = embeddedParent()
     dispatchHost(helloMessage(), ORIGIN_A, source)
 
     dispatchHost(
@@ -216,7 +272,7 @@ describe('startBridge: origin pinning and routing', () => {
     const bridge = startBridge()
     const hostDoc = stubHostDoc()
     bridge.attach(hostDoc)
-    const source = fakeSource()
+    const source = embeddedParent()
     dispatchHost(helloMessage(), ORIGIN_A, source)
 
     dispatchHost(
@@ -264,7 +320,7 @@ describe('startBridge: origin pinning and routing', () => {
     const bridge = startBridge()
     const hostDoc = stubHostDoc()
     bridge.attach(hostDoc)
-    const source = fakeSource()
+    const source = embeddedParent()
     dispatchHost(helloMessage(), ORIGIN_A, source)
 
     dispatchHost(
@@ -283,7 +339,7 @@ describe('startBridge: origin pinning and routing', () => {
     const bridge = startBridge()
     const hostDoc = stubHostDoc()
     bridge.attach(hostDoc)
-    const source = fakeSource()
+    const source = embeddedParent()
 
     dispatchHost(helloMessage('browser-extension'), ORIGIN_A, source)
 
@@ -328,7 +384,7 @@ describe('startBridge: outbound', () => {
     const bridge = startBridge()
     const hostDoc = stubHostDoc()
     bridge.attach(hostDoc)
-    const source = fakeSource()
+    const source = embeddedParent()
     dispatchHost(helloMessage(), ORIGIN_A, source)
     ;(source.postMessage as ReturnType<typeof vi.fn>).mockClear()
 
@@ -360,7 +416,7 @@ describe('startBridge: status stream', () => {
     const bridge = startBridge()
     const hostDoc = stubHostDoc()
     bridge.attach(hostDoc)
-    const source = fakeSource()
+    const source = embeddedParent()
     dispatchHost(helloMessage(), ORIGIN_A, source)
     ;(source.postMessage as ReturnType<typeof vi.fn>).mockClear()
     return { bridge, source }

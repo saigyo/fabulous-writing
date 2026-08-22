@@ -125,12 +125,24 @@ export function startBridge(): Bridge {
     if (!msg) return
     if (!pinnedSource || !pinnedOrigin) {
       if (msg.type !== 'hello') return
-      // F6 (final review): a null source (e.g. the sending window/frame has
-      // already gone away by the time this handler runs) can never be
-      // postMessage'd back to — pinning it anyway leaves pinnedOrigin set
-      // with no way to ever complete the handshake (a half-pinned state). A
-      // later hello with a real source still pins normally.
-      if (!event.source) return
+      // Security (Copilot round 9): the CSP's frame-ancestors directive
+      // restricts who may FRAME this page — it is not an access-control on
+      // the WindowProxy. Any window holding a reference to this one can
+      // still postMessage into it: a hostile same-origin page can
+      // window.open('/embed.html') as a top-level popup (which shares this
+      // origin's authenticated storage, so window.parent === window there
+      // too) or hold a sibling frame's proxy, then send a valid `hello` and
+      // get pinned — driving checks under the user's session (credit burn),
+      // receiving status/findings geometry, and seeing replacement text
+      // slices. A hello is therefore accepted ONLY when this page is
+      // actually embedded (window.parent !== window) AND the sender is
+      // exactly the embedding parent (event.source === window.parent).
+      // When not framed, no hello is ever accepted — direct navigation to
+      // /embed is not a supported host context. This subsumes the earlier
+      // null-source guard (F6, final review): window.parent is never null,
+      // so a null event.source can never equal it.
+      if (window.parent === window) return
+      if (event.source !== window.parent) return
       pinnedSource = event.source
       pinnedOrigin = event.origin
     } else if (event.source !== pinnedSource || event.origin !== pinnedOrigin) {
