@@ -18,6 +18,7 @@ vi.mock('../api/client', async (importOriginal) => ({
 
 import { getAllActivity, getOwnActivity, getUserActivity } from '../api/client'
 import { ActivityView } from './ActivityView'
+import { formatDay } from './formatDay'
 
 function user(overrides: Partial<MeResponse> = {}): MeResponse {
   return {
@@ -142,9 +143,9 @@ describe('ActivityView: self subject', () => {
     render(<ActivityView />)
 
     await waitFor(() => expect(getOwnActivity).toHaveBeenCalledWith(30))
-    await screen.findByText(en.activityRuns)
-    screen.getByText(en.activityTokens)
-    screen.getByText(en.activityCredits)
+    await screen.findByText(en.activityRuns, { selector: '.activity-panel-label' })
+    screen.getByText(en.activityTokens, { selector: '.activity-panel-label' })
+    screen.getByText(en.activityCredits, { selector: '.activity-panel-label' })
     screen.getByText(
       `8 ${en.activityTotalRuns} · 600 ${en.activityInput} / 300 ${en.activityOutput} · 6 ${en.activityTableCredits}`,
     )
@@ -160,12 +161,15 @@ describe('ActivityView: non-admin client-side gate', () => {
     vi.mocked(getOwnActivity).mockResolvedValue(selfFixture())
     useStore.setState({ user: user({ is_admin: false }), activitySubject: 'all' })
 
-    render(<ActivityView />)
+    const { container } = render(<ActivityView />)
 
     await waitFor(() => expect(getOwnActivity).toHaveBeenCalledWith(30))
     expect(getAllActivity).not.toHaveBeenCalled()
-    await screen.findByText(en.activityRuns)
-    expect(screen.queryByRole('table')).toBeNull()
+    await screen.findByText(en.activityRuns, { selector: '.activity-panel-label' })
+    // Every panel's visually-hidden SR data table still renders regardless
+    // of subject — only the sortable ALL-USERS table (`.activity-table`) is
+    // gated, so that's the one to assert absent here.
+    expect(container.querySelector('table.activity-table')).toBeNull()
     expect(screen.queryByText(en.activityBack)).toBeNull()
   })
 })
@@ -176,10 +180,13 @@ describe('ActivityView: admin, all-users subject', () => {
     vi.mocked(getUserActivity).mockResolvedValue(userActivityFixture())
     useStore.setState({ user: user({ is_admin: true }), activitySubject: 'all' })
 
-    render(<ActivityView />)
+    const { container } = render(<ActivityView />)
 
     await waitFor(() => expect(getAllActivity).toHaveBeenCalledWith(30))
-    const table = await screen.findByRole('table')
+    // Every panel's visually-hidden SR data table is also a <table> now —
+    // scope to the sortable ALL-USERS table specifically (`.activity-table`).
+    await waitFor(() => expect(container.querySelector('table.activity-table')).not.toBeNull())
+    const table = container.querySelector('table.activity-table') as HTMLTableElement
     // Default sort: credits desc — Bea (9) before Ada (1).
     let rows = within(table).getAllByRole('row').slice(1) // drop header row
     expect(within(rows[0]).getByText('Bea')).toBeTruthy()
@@ -188,7 +195,7 @@ describe('ActivityView: admin, all-users subject', () => {
     // Header click flips the sort order. The button's accessible name now
     // carries a trailing sort-direction indicator (▲/▼), so match on the
     // label prefix rather than the exact translated string.
-    fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${en.activityTableCredits}`) }))
+    fireEvent.click(within(table).getByRole('button', { name: new RegExp(`^${en.activityTableCredits}`) }))
     rows = within(table).getAllByRole('row').slice(1)
     expect(within(rows[0]).getByText('Ada')).toBeTruthy()
     expect(within(rows[1]).getByText('Bea')).toBeTruthy()
@@ -196,12 +203,12 @@ describe('ActivityView: admin, all-users subject', () => {
     fireEvent.click(within(rows[0]).getByText('Ada'))
     await waitFor(() => expect(getUserActivity).toHaveBeenCalledWith(1, 30))
     await screen.findByText('Ada')
-    expect(screen.queryByRole('table')).toBeNull()
+    expect(container.querySelector('table.activity-table')).toBeNull()
     const back = screen.getByRole('button', { name: en.activityBack })
 
     fireEvent.click(back)
     await waitFor(() => expect(getAllActivity).toHaveBeenCalledTimes(2))
-    await screen.findByRole('table')
+    await waitFor(() => expect(container.querySelector('table.activity-table')).not.toBeNull())
   })
 })
 
@@ -239,9 +246,9 @@ describe('ActivityView: all-zero response', () => {
 
     const { container } = render(<ActivityView />)
 
-    await screen.findByText(en.activityRuns)
-    screen.getByText(en.activityTokens)
-    screen.getByText(en.activityCredits)
+    await screen.findByText(en.activityRuns, { selector: '.activity-panel-label' })
+    screen.getByText(en.activityTokens, { selector: '.activity-panel-label' })
+    screen.getByText(en.activityCredits, { selector: '.activity-panel-label' })
     expect(container.querySelectorAll('svg.activity-chart').length).toBe(3)
   })
 })
@@ -268,16 +275,19 @@ describe('ActivityView: sort-state accessibility', () => {
     vi.mocked(getAllActivity).mockResolvedValue(allFixture())
     useStore.setState({ user: user({ is_admin: true }), activitySubject: 'all' })
 
-    render(<ActivityView />)
-    await screen.findByRole('table')
+    const { container } = render(<ActivityView />)
+    await waitFor(() => expect(container.querySelector('table.activity-table')).not.toBeNull())
+    const table = container.querySelector('table.activity-table') as HTMLTableElement
 
     // Default sort: credits, descending — pinned by the fixed-fixture test
-    // above via row order; here the header itself must say so.
-    const creditsHeader = screen.getByRole('columnheader', {
+    // above via row order; here the header itself must say so. Scoped to
+    // the sortable table: the credits panel's SR data table also has a
+    // "Credits" <th>, but it carries no aria-sort at all.
+    const creditsHeader = within(table).getByRole('columnheader', {
       name: new RegExp(`^${en.activityTableCredits}`),
     })
     expect(creditsHeader.getAttribute('aria-sort')).toBe('descending')
-    const runsHeader = screen.getByRole('columnheader', {
+    const runsHeader = within(table).getByRole('columnheader', {
       name: new RegExp(`^${en.activityTotalRuns}`),
     })
     expect(runsHeader.getAttribute('aria-sort')).toBe('none')
@@ -335,7 +345,7 @@ describe('ActivityView: locale-aware date rendering', () => {
     const { container } = render(<ActivityView />)
 
     await waitFor(() => expect(getOwnActivity).toHaveBeenCalledWith(30))
-    await screen.findByText(de.activityRuns)
+    await screen.findByText(de.activityRuns, { selector: '.activity-panel-label' })
     // selfFixture's last day is 2026-07-26 — de formats it dd.mm.yyyy, not
     // the raw ISO string.
     const labels = Array.from(container.querySelectorAll('text.chart-xlabel')).map(
@@ -343,5 +353,61 @@ describe('ActivityView: locale-aware date rendering', () => {
     )
     expect(labels).toContain('26.07.2026')
     expect(labels).not.toContain('2026-07-26')
+  })
+})
+
+describe('ActivityView: chart legend and screen-reader data table', () => {
+  it('renders one legend swatch+label per series for the runs panel', async () => {
+    vi.mocked(getOwnActivity).mockResolvedValue(selfFixture())
+
+    const { container } = render(<ActivityView />)
+
+    await waitFor(() => expect(getOwnActivity).toHaveBeenCalledWith(30))
+    await screen.findByText(en.activityRuns, { selector: '.activity-panel-label' })
+
+    const runsPanel = container.querySelectorAll('.activity-panel')[0]
+    const items = runsPanel.querySelectorAll('.chart-legend-item')
+    expect(items.length).toBe(4)
+    const labels = Array.from(items).map((el) => el.textContent)
+    expect(labels).toEqual([
+      en.activityCheck,
+      en.activitySuggestion,
+      en.activityName,
+      en.activityFailed,
+    ])
+    // Every entry carries a swatch element.
+    expect(runsPanel.querySelectorAll('.chart-legend-swatch').length).toBe(4)
+  })
+
+  it('gives each panel a visually-hidden data table mirroring the chart props, with the fixture\'s first-day values', async () => {
+    vi.mocked(getOwnActivity).mockResolvedValue(selfFixture())
+
+    const { container } = render(<ActivityView />)
+
+    await waitFor(() => expect(getOwnActivity).toHaveBeenCalledWith(30))
+    await screen.findByText(en.activityRuns, { selector: '.activity-panel-label' })
+
+    const runsPanel = container.querySelectorAll('.activity-panel')[0]
+    const table = runsPanel.querySelector('table')
+    expect(table).not.toBeNull()
+    expect(table?.classList.contains('visually-hidden')).toBe(true)
+    expect(table?.querySelector('caption')?.textContent).toBe(en.activityRuns)
+
+    const rows = table?.querySelectorAll('tr') ?? []
+    // 3 fixture days + 1 header row.
+    expect(rows.length).toBe(4)
+
+    const headerCells = Array.from(rows[0].querySelectorAll('th')).map((el) => el.textContent)
+    expect(headerCells).toEqual([
+      en.windowName('day'),
+      en.activityCheck,
+      en.activitySuggestion,
+      en.activityName,
+      en.activityFailed,
+    ])
+
+    // First data row: 2026-07-24 — check=1, suggestion=0, name=0, failed=0.
+    const firstDataCells = Array.from(rows[1].querySelectorAll('td')).map((el) => el.textContent)
+    expect(firstDataCells).toEqual([formatDay('2026-07-24', 'en'), '1', '0', '0', '0'])
   })
 })

@@ -1767,7 +1767,13 @@ constructs a local date (`new Date(y, m - 1, d)`) before handing it to
 the rendered text changes: the underlying ISO `days` strings stay the data model's keys
 everywhere else (indexing, sorting, the `?days=` API parameter) — this is presentation
 only, distinct from the totals line's numbers (below), which stay deliberately
-unlocalized.
+unlocalized. Each panel additionally renders, from the exact same `ChartSeries` array the
+chart receives, a visible `.chart-legend` (swatch + label per series — a series added
+later needs no second list to stay in sync) and a `.visually-hidden` data table (an
+app-wide SR-only utility, `App.css`) with a caption reusing the panel title, a header row
+of date + series labels, and one row per day — the screen-reader-accessible counterpart
+to the SVG's pointer-only `<title>` tooltip (accessibility follow-up, 2026-08-22; spec
+R4's amendment).
 
 **Totals line and the all-users table.** The totals line
 (`` `${runs} ${m.activityTotalRuns} · ${input} ${m.activityInput} / ${output}
