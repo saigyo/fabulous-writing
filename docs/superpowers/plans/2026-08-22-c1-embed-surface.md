@@ -408,9 +408,10 @@ export function toCodePointSpan(
 - Modify: `frontend/src/checking/controller.ts` (all `getEditorView()`/dispatch sites)
 - Modify: `frontend/src/checking/suggest.ts` (text + tracked-item + span reads)
 - Modify: `frontend/src/documents/autosave.ts` (its `getEditorView()` text read — this module IS in the embed graph via `controller.ts`/`suggest.ts` imports, and its `editorRef` import would drag `@codemirror/*` into the embed bundle)
-- Modify: `frontend/src/sidebar/Sidebar.tsx` (3 imports from `editorRef` → the port)
+- Modify: `frontend/src/documents/hydration.ts` (same reason, deeper chain: `LoginGate → auth/session.ts → documents/documents.ts → hydration.ts` value-imports `getEditorView` + `setFindingsEffect` — without this the embed bundle can NEVER be CodeMirror-free; its editor writes go through the new `port.setDocument`)
+- Modify: `frontend/src/sidebar/Sidebar.tsx` (3 imports from `editorRef` → the port; note `apply()`/`applyHeldBack()` in `RewriteArea` become `async` because `applyRewrite` now returns a Promise — no existing test exercises those paths, but say so in the commit message)
 - Modify: `frontend/src/main.tsx` (side-effect import `./editor/editorPort` — NOT in `Editor.tsx`: component tests `vi.mock` the Editor module wholesale, which would silently skip registration)
-- Modify: `frontend/src/checking/controller.test.ts`, `frontend/src/checking/suggest.test.ts` (register a fake port instead of faking an EditorView)
+- Modify: `frontend/src/checking/controller.test.ts`, `frontend/src/checking/suggest.test.ts`, AND the three suites that currently feed `collectSnapshot` through `vi.mock('../editor/editorRef')` and would go inert once autosave reads the port — `frontend/src/documents/autosave.test.ts:22-24`, `frontend/src/documents/documents.test.ts:45-47`, `frontend/src/auth/session.integration.test.ts:25-27` (all five register a fake port instead of faking an EditorView/editorRef)
 - Test: existing suites are the net; add `frontend/src/checking/documentPort.test.ts` for registration semantics
 
 **Interfaces:**
@@ -430,7 +431,17 @@ import type { Finding, Source } from '../types'
 export type ApplyResult = 'ok' | 'not-found' | 'refused'
 
 export interface DocumentPort {
+  /** False when no real document is behind the port (no EditorView / no
+   * connected field / null object). Guards that previously read "is there
+   * a view?" MUST use this — getText() === '' is NOT a substitute: an
+   * empty string is also a legitimate empty document, and autosave PUTting
+   * '' over a real document would be data loss. */
+  hasDocument(): boolean
   getText(): string
+  /** Replace the whole document and its findings (document-manager
+   * hydration path). No-op in the embed shim — the document manager never
+   * runs there. */
+  setDocument(text: string, findings: Finding[]): void
   /** The finding's current tracked state (live document state, not the
    * store's post-hoc mirror), or null if it was dropped. */
   currentFinding(id: string): TrackedFinding | null
@@ -448,7 +459,9 @@ export interface DocumentPort {
 }
 
 const nullPort: DocumentPort = {
+  hasDocument: () => false,
   getText: () => '',
+  setDocument: () => {},
   currentFinding: () => null,
   serverSpan: () => null,
   mergeFindings: () => {},
@@ -462,7 +475,7 @@ export function setDocumentPort(p: DocumentPort | null): void { port = p ?? null
 export function getDocumentPort(): DocumentPort { return port }
 ```
 
-- [ ] **Step 1: Write `documentPort.test.ts`** — default port returns `''`/`null`/`'not-found'` and no-ops; the registered instance is returned after `setDocumentPort(fake)`; `setDocumentPort(null)` restores the null object. Run: FAIL (module missing).
+- [ ] **Step 1: Write `documentPort.test.ts`** — default port returns `false`/`''`/`null`/`'not-found'` and no-ops (`hasDocument()` false is the load-bearing one — autosave's data-loss guard); the registered instance is returned after `setDocumentPort(fake)`; `setDocumentPort(null)` restores the null object. Run: FAIL (module missing).
 - [ ] **Step 2: Create `checking/documentPort.ts`** exactly as above; test PASSES.
 - [ ] **Step 3: Create `editor/editorPort.ts`** — the CodeMirror implementation, registered at module load:
 
@@ -471,7 +484,7 @@ export function getDocumentPort(): DocumentPort { return port }
 import type { DocumentPort } from '../checking/documentPort'
 import { setDocumentPort } from '../checking/documentPort'
 import { applyRewrite, applySuggestion, getEditorView, selectFinding } from './editorRef'
-import { findingsField, mergeFindingsEffect } from './findings'
+import { findingsField, mergeFindingsEffect, setFindingsEffect } from './findings'
 
 function item(id: string) {
   const view = getEditorView()
@@ -479,7 +492,20 @@ function item(id: string) {
 }
 
 const cmPort: DocumentPort = {
+  hasDocument: () => getEditorView() !== null,
   getText: () => getEditorView()?.state.doc.toString() ?? '',
+  setDocument(text, findings) {
+    // The hydration path's editor writes, moved behind the port: replace
+    // the whole doc and set the findings in one place. Implementer lifts
+    // the exact dispatch sequence from documents/hydration.ts (doc
+    // replacement + setFindingsEffect) — semantics unchanged.
+    const view = getEditorView()
+    if (!view) return
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: text },
+      effects: setFindingsEffect.of(findings),
+    })
+  },
   currentFinding: item,
   // Unconverted, matching the app's existing (latently astral-buggy)
   // behavior — the fix is tracked, out of scope here.
@@ -507,10 +533,11 @@ setDocumentPort(cmPort)
 - [ ] **Step 4: Rewire consumers.** Mechanical mapping, preserving every guard comment:
   - `controller.ts`: drop the `getEditorView`/`mergeFindingsEffect` imports; `const view = getEditorView(); if (!view) return` → `const port = getDocumentPort()` (no null check — null object); `view.state.doc.toString()` → `port.getText()`; the empty-text branch's dispatch → `port.mergeFindings(['rule', 'terminology', 'llm'], [])`; `applyFindings()` keeps its snapshot compare (`port.getText() !== checkedText → return`) then `port.mergeFindings(sources, findings)`; **`onScorecard`**: the current guard is `if (view && view.state.doc.toString() !== text)` — with the null port `getText()` is `''`, which `!== text` for any non-empty check, so the rewrite must keep an explicit connected-document notion. Use `if (port.getText() !== text)` ONLY after confirming the runCheck early-return already filtered the empty-document case (it does: `!text.trim()` returns before any subscription) — a null-port scorecard arriving mid-teardown marks stale, which is harmless and matches "document gone".
   - `suggest.ts`: text via `port.getText()`; the tracked item via `port.currentFinding(id)` (it needs `item.finding.message` and `item.finding.rule_id`, not just the span — see its own test fake); the REQUEST span via `port.serverSpan(id)` (code points outbound).
-  - `autosave.ts`: `collectSnapshot()` keeps its `docMeta` guard first, then reads text via `getDocumentPort().getText()`; delete the `editorRef` import. (Behavior unchanged in the app; in the embed `docMeta` is never set, so `flush()` still no-ops.)
+  - `autosave.ts`: `collectSnapshot()` becomes `if (!getDocumentPort().hasDocument() || !state.docMeta || !state.user) return null` — the `hasDocument()` check REPLACES the current `!view` check one-for-one. Dropping it would let the null-object port produce a snapshot with `text: ''` that `flush()` (beforeunload, document switch, post-check) PUTs over a real document — a data-loss shape, which is exactly why the port has `hasDocument()`. Then read text via `getDocumentPort().getText()`; delete the `editorRef` import.
+  - `hydration.ts`: its editor writes (doc replacement + `setFindingsEffect` dispatch) become `getDocumentPort().setDocument(text, findings)`; any view-existence guard becomes `hasDocument()`; delete the `editorRef`/`findings` imports. This is what actually severs the `LoginGate → session → documents → hydration → editorRef → @codemirror/*` chain from the embed bundle.
   - `Sidebar.tsx`: `import { getDocumentPort } from '../checking/documentPort'`; call sites `void getDocumentPort().applySuggestion(...)` etc. — the RESULT handling changes land in Task 6 (this task is behavior-neutral; `applyRewrite`'s existing false-branch maps to `result !== 'ok'` for now).
   - `main.tsx`: add `import './editor/editorPort'`.
-- [ ] **Step 5: Adapt `controller.test.ts` / `suggest.test.ts`** — replace EditorView fakes with `setDocumentPort(fakePort)` in setup and `setDocumentPort(null)` in teardown. The fake records `mergeFindings` calls and serves `getText`/`currentFinding`/`serverSpan`.
+- [ ] **Step 5: Adapt `controller.test.ts` / `suggest.test.ts`** — replace EditorView fakes with `setDocumentPort(fakePort)` in setup and `setDocumentPort(null)` in teardown. The fake records `mergeFindings` calls and serves `hasDocument` (true), `getText`, `currentFinding`, `serverSpan`. In the three document/session suites the fake's `getText` must return the same text their old `editorRef` mocks returned, and its `hasDocument` must be true — otherwise `collectSnapshot` yields null and every content assertion drifts.
 - [ ] **Step 6: Full frontend gate** — `npm run test`, `rtk proxy npm run lint`, `npm run build`. Everything green: this task changes NO behavior.
 - [ ] **Step 7: Mutation check** — temporarily remove the snapshot compare in `applyFindings`; the existing stale-findings controller test must fail; restore.
 - [ ] **Step 8: Commit** — `refactor(frontend): document-port indirection for checking, autosave + sidebar (B43 C1)`
@@ -552,12 +579,18 @@ Note: there is NO separate merge method — the shim's `DocumentPort.mergeFindin
 implementation itself converts incoming spans via `convertFindingOffsets(buffer, findings)`
 before tracking (the controller's snapshot guard guarantees the buffer equals the checked
 text at that moment). `serverSpan` converts outbound via `toCodePointSpan(buffer, from, to)`.
+Port members from Task 3's extension: `hasDocument()` delegates to `connected()`;
+`setDocument()` is a documented no-op (the document manager never runs in the embed).
 
 **Behavior spec (port of `editor/findings.ts` semantics to a single-splice world):**
 
 - `textChanged` derives the splice as an algorithm, no post-hoc correction:
   `p` = longest common prefix length; then scan backwards for the longest
-  common suffix `s` with the explicit bound `s < min(oldLen, newLen) - p`.
+  common suffix `s` with the explicit bound `s <= min(oldLen, newLen) - p`
+  (INCLUSIVE — the strict form is off by one: a pure insertion/deletion has
+  `p + s == min(oldLen, newLen)` exactly, and clamping `s` one short widens
+  the splice by one character, wrongly dropping an adjacent finding that
+  CodeMirror's insertion mapping keeps).
   Old range `[p, oldLen - s)` replaced by `new.slice(p, newLen - s)`.
 - Tracked findings map through the splice:
   - `item.to < spliceFrom` → unchanged; `item.from > spliceTo` → shift by `insertLen - (spliceTo - spliceFrom)`.
@@ -577,7 +610,7 @@ text at that moment). `serverSpan` converts outbound via `toCodePointSpan(buffer
 - `fieldConnected` resets: clears tracked findings (store + host gets empty `findings`), sets buffer. `cancelCheck()` is NOT called here — the embed app does that (Task 6) to keep the shim free of controller imports.
 
 - [ ] **Step 1: Write failing tests.** Cover at minimum:
-  - splice derivation: typing in middle/start/end, deletion, paste-replacing-everything, no-op text, and the degenerate vectors `"aa" → "a"`, `"a" → "aa"`, `"" → "x"`, `"x" → ""`
+  - splice derivation: typing in middle/start/end, deletion, paste-replacing-everything, no-op text, and the degenerate vectors `"aa" → "a"`, `"a" → "aa"`, `"" → "x"`, `"x" → ""`; PLUS the suffix-bound guard vector: `"the cat" → "theX cat"` with a finding on `"cat"` `[4,7)` — the splice must be a pure insertion at 3 and the finding must SURVIVE shifted to `[5,8)` (an off-by-one suffix bound widens the splice and wrongly drops it; this is the mutation-verification target for the bound)
   - mapping: finding before / after / overlapping / adjacent to the splice; zero-length drop (port the scenario list from the existing `findings` tests so both implementations share vectors); the rightmost-splice divergence case as a documented expectation
   - `mergeFindings`: source replacement, selection persistence, astral conversion end-to-end (server code points → UTF-16 tracked spans)
   - `serverSpan`: astral round-trip — the code-point span it returns slices the same substring in a Python-semantics sense (compare against `[...buffer]` slicing)
@@ -702,7 +735,7 @@ createRoot(document.getElementById('root')!).render(
 
 `EmbedApp.tsx` composes: a compact header row (`LocaleSwitcher`, `ProfileSelector`, language `<select>` + `DomainMultiSelect` + `LlmSelector` + auto-toggle + Check button — reuse the exact JSX shapes from `Header`, calling `useHeaderData()`), a connection strip (connected field's page URL, or `m.embedWaiting` / `m.embedDisconnected`), then `<Sidebar />`. The scheduler is created in an effect (`fastDelayMs: 1000, llmDelayMs: 5000`, `llmEnabled: () => useStore.getState().llmAuto`) and handed to the hostDoc outbound's `onInput`; `fieldConnected` triggers `cancelCheck()` + an immediate `runCheck(false)`. `embed.css`: single-column layout, sidebar full-width, header controls wrapping.
 - [ ] **Step 5: Surface replacement failures in the Sidebar** (this is where `ApplyResult` becomes user-visible; without it a refused/timed-out replacement is silently swallowed and `embedReplaceFailed` would be a dead string):
-  - `SuggestionArea` (and the equivalent apply sites at `Sidebar.tsx:279-282, 322`): `const result = await getDocumentPort().applySuggestion(...)`; on `'refused'` → `store.setSuggestError(finding.id, m.embedReplaceFailed)` (the existing `suggest-error` slot at `Sidebar.tsx:314-318` renders it); `'not-found'` stays silent (matches today's behavior).
+  - `SuggestionArea` (and the equivalent apply sites at `Sidebar.tsx:279-282, 322`): `const result = await getDocumentPort().applySuggestion(...)`; on `'refused'` → `store.setSuggestError(finding.id, m.embedReplaceFailed)`; `'not-found'` stays silent (matches today's behavior). **Render-site caveat:** the existing `suggest-error` `<p>` (`Sidebar.tsx:314-318`) sits in `SuggestionArea`'s no-suggestions return and is UNREACHABLE while `suggestions.length > 0` — which is exactly when the apply buttons exist. Add the same `<p className="suggest-error">{error}</p>` element to the has-suggestions branch (`Sidebar.tsx:271-288` return), keeping the cached suggestions on screen (do NOT clear them the way `RewriteArea` clears its rewrite — losing fetched suggestions on a host refusal would force a re-fetch).
   - `RewriteArea`: `'not-found'` keeps the existing `m.sentenceChangedRewriteAgain`; `'refused'` sets `m.embedReplaceFailed` instead. The discriminated `ApplyResult` (Task 3) is exactly what makes these two distinguishable.
   - Component test: a fake port resolving `'refused'` renders the failure string; resolving `'not-found'` on rewrite renders the sentence-changed string.
 - [ ] **Step 6: i18n** — add to `Messages` + all locales (informal register; the interface makes a missing locale a compile error):
@@ -748,7 +781,7 @@ createRoot(document.getElementById('root')!).render(
 - Modify: `backend/app/core/config.py` (new `EmbedSettings`, wired into `Settings`)
 - Modify: `backend/app/main.py` (catch-all + CSP headers)
 - Modify: `backend/config.example.yaml` (commented `embed:` block — the documented surface for every other settings block)
-- Test: extend `backend/tests/test_container_serving.py` (it already has the `make_dist(tmp_path)` / `make_app(tmp_path, dist)` fixtures with a safe `db_path` — REUSE them: add an `embed: bool = True` parameter to `make_dist`, add a `TestEmbedServing` class, and add the `frame-ancestors 'none'` assertions to the existing `TestSpaServing` cases). Config-validator tests go in the config test module next to the other `Settings` validators.
+- Test: extend `backend/tests/test_container_serving.py` (it already has the `make_dist(tmp_path)` / `make_app(tmp_path, dist)` fixtures with a safe `db_path` — REUSE them: add an `embed: bool = True` parameter to `make_dist`, an `ancestors: list[str] | None = None` parameter to `make_app` (merged into the `Settings` it builds — it has no override hook today), add a `TestEmbedServing` class, and add the `frame-ancestors 'none'` assertions to the existing `TestSpaServing` cases). Config-validator tests go in the config test module next to the other `Settings` validators.
 
 **Interfaces:**
 - Produces: `settings.embed.allowed_ancestors: list[str]` (YAML key `embed.allowed_ancestors`; set later in `deploy/fly/config.yaml` when C2 pins the extension ID — the `test_fly_config.py` guard lands then).
@@ -860,7 +893,7 @@ Add `embed: EmbedSettings = Field(default_factory=EmbedSettings)` to `Settings`,
 **Files:**
 - Modify: `docs/backend-architecture.md` (embed serving + CSP config + client tag, in the serving/config sections)
 - Modify: `docs/frontend-architecture.md` (new section: embed surface — document port, shim, bridge, protocol, simulator; update the module map)
-- Modify: `docs/superpowers/specs/2026-08-22-b43-embeddable-clients-design.md` — three amendment notes, each marked "(amended during C1)": (a) `FW_EMBED_ALLOWED_ANCESTORS` env → YAML key `embed.allowed_ancestors` (no per-key env overlay exists); (b) capabilities travel on `fieldConnected` (per field), not `hello`, matching the spec's own prose; (c) `client` tag ledger persistence deferred to the next schema-touching story (with B41).
+- Modify: `docs/superpowers/specs/2026-08-22-b43-embeddable-clients-design.md` — three amendment notes, each marked "(amended during C1)": (a) `FW_EMBED_ALLOWED_ANCESTORS` env → YAML key `embed.allowed_ancestors` (no per-key env overlay exists); (b) capabilities travel on `fieldConnected` (per field), not `hello`, matching the spec's own prose; (c) `client` tag ledger persistence deferred to the next schema-touching story (with B41) — amend BOTH the feature bullet and the Testing bullet that promises "`client` tag validation and ledger recording" (the recording half moves to the deferred story).
 
 - [ ] **Step 1: Write the updates** (follow each doc's existing style: prose + file references).
 - [ ] **Step 2: Commit** — `docs(architecture,specs): embed surface, document port, C1 spec amendments (B43 C1)`
