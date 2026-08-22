@@ -2233,3 +2233,8 @@ dialog.app-dialog h2 {
   color: var(--text-dim);
   margin: 0;
 }
+
+/* ---- activity chart (B40, #124) ---- */
+.activity-chart { width: 100%; }
+.chart-grid, .chart-baseline { stroke-width: 1; shape-rendering: crispEdges; }
+.chart-xlabel { fill: var(--text-dim); font-size: 10px; }

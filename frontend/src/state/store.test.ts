@@ -210,6 +210,24 @@ describe('ActiveView', () => {
   })
 })
 
+describe('activitySubject', () => {
+  it('setActivitySubject sets both fields and resets to self/null on session reset', () => {
+    useStore.getState().setActivitySubject(7, 'ada@example.com')
+    expect(useStore.getState().activitySubject).toBe(7)
+    expect(useStore.getState().activitySubjectLabel).toBe('ada@example.com')
+    resetSessionState()
+    expect(useStore.getState().activitySubject).toBe('self')
+    expect(useStore.getState().activitySubjectLabel).toBeNull()
+  })
+
+  it('setActivitySubject nulls the label when none is given', () => {
+    useStore.getState().setActivitySubject(7, 'ada@example.com')
+    useStore.getState().setActivitySubject('all')
+    expect(useStore.getState().activitySubject).toBe('all')
+    expect(useStore.getState().activitySubjectLabel).toBeNull()
+  })
+})
+
 describe('resetSessionState', () => {
   it('resets the whole data half of the store, not just the persisted slice', () => {
     useStore.setState({

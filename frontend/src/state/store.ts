@@ -28,7 +28,17 @@ import type {
 } from '../types'
 
 export type CheckPhase = 'idle' | 'fast' | 'llm'
-export type ActiveView = 'editor' | 'rules' | 'terminology' | 'profiles' | 'admin'
+export type ActiveView =
+  | 'editor'
+  | 'rules'
+  | 'terminology'
+  | 'profiles'
+  | 'admin'
+  | 'activity'
+
+// 'self' = the signed-in user's own activity; 'all' = every user
+// (admin-only, aggregated); a number = one drilled-into user's id.
+export type ActivitySubject = 'self' | 'all' | number
 
 export interface DocMeta {
   id: number
@@ -106,6 +116,13 @@ interface AppStateData {
   folders: Folder[]
   // Collapsed folder groups in the document sidebar (folder ids).
   docFoldersCollapsed: number[]
+
+  // Which subject the activity view is showing (B40, #124).
+  activitySubject: ActivitySubject
+  // The drilled-into user's email/display_name, for the view heading; null
+  // for 'self'/'all' and whenever setActivitySubject() is called without a
+  // label.
+  activitySubjectLabel: string | null
 
   // Auth. token, refreshToken and tokenExpiresAt are the three of these
   // eight persisted — each in its own localStorage key (prefsStorage.ts),
@@ -200,6 +217,9 @@ interface AppStateActions {
   setDocListError: (docListError: boolean) => void
   setFolders: (folders: Folder[]) => void
   toggleFolderCollapsed: (id: number) => void
+  // Nulls activitySubjectLabel unless label is given — see its field
+  // comment above.
+  setActivitySubject: (subject: ActivitySubject, label?: string | null) => void
   // authStatus is derived: 'authenticated' when both token and user are
   // present, 'anonymous' otherwise. sessionExpired is deliberately left
   // untouched here — only expireSession() sets it and only login() clears
@@ -339,6 +359,8 @@ export const INITIAL_DATA: Omit<
   docListError: false,
   folders: [],
   docFoldersCollapsed: [],
+  activitySubject: 'self',
+  activitySubjectLabel: null,
 }
 
 /** Resets the whole data half of the store — not just the formerly
@@ -495,6 +517,8 @@ export const useStore = create<AppState>()((set) => ({
         ? state.docFoldersCollapsed.filter((f) => f !== id)
         : [...state.docFoldersCollapsed, id],
     })),
+  setActivitySubject: (activitySubject, label = null) =>
+    set({ activitySubject, activitySubjectLabel: label }),
   setAuth: (token, user) =>
     set({
       token,
