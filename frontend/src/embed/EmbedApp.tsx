@@ -44,8 +44,13 @@ export function EmbedApp() {
     // matching hostDoc.ts's whole-document-replacement semantics on
     // reconnect. StrictMode's double-invoked mount is tolerated: cancelCheck
     // + a fresh runCheck(false) is harmless to repeat.
-    if (!connectedField) return
+    //
+    // cancelCheck() runs on EVERY transition, including disconnect: a check
+    // in flight against a field that just went away must not resolve and
+    // publish stale findings for a document nobody is looking at anymore.
+    // runCheck(false) only makes sense when a field is actually connected.
     cancelCheck()
+    if (!connectedField) return
     void runCheck(false)
   }, [connectedField])
 
@@ -53,6 +58,12 @@ export function EmbedApp() {
     // Mirrors editor/Editor.tsx's scheduler wiring, minus the CodeMirror
     // update listener: the host shim's onInput is called from
     // hostDoc.ts:syncBuffer on every textChanged/replaceResult instead.
+    //
+    // Keyed on the connected field's identity (not just mounted once): a
+    // timer armed by field A's onInput must never fire runCheck against
+    // field B's document after the host switches fields. Recreating the
+    // scheduler on every field change disposes A's pending timers before B
+    // gets a fresh, empty one.
     const scheduler = createCheckScheduler({
       fastDelayMs: 1000,
       llmDelayMs: 5000,
@@ -66,7 +77,7 @@ export function EmbedApp() {
       if (outbound) outbound.onInput = () => {}
       scheduler.dispose()
     }
-  }, [])
+  }, [connectedField?.fieldId])
 
   return (
     <div className="embed-app">

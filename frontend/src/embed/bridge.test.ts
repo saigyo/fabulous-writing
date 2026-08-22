@@ -36,6 +36,7 @@ interface StubHostDoc extends HostDoc {
   replaceResultCalls: { requestId: string; ok: boolean; text: string; fieldId: string }[]
   fieldDisconnectedCalls: string[]
   selectFindingCalls: (string | null)[]
+  markingClickedCalls: { fieldId: string; id: string }[]
 }
 
 function stubHostDoc(): StubHostDoc {
@@ -44,12 +45,14 @@ function stubHostDoc(): StubHostDoc {
   const replaceResultCalls: StubHostDoc['replaceResultCalls'] = []
   const fieldDisconnectedCalls: string[] = []
   const selectFindingCalls: (string | null)[] = []
+  const markingClickedCalls: StubHostDoc['markingClickedCalls'] = []
   return {
     fieldConnectedCalls,
     textChangedCalls,
     replaceResultCalls,
     fieldDisconnectedCalls,
     selectFindingCalls,
+    markingClickedCalls,
     hasDocument: () => true,
     connected: () => true,
     capabilities: () => CAPS,
@@ -74,6 +77,9 @@ function stubHostDoc(): StubHostDoc {
     },
     selectFinding(id) {
       selectFindingCalls.push(id)
+    },
+    markingClicked(fieldId, id) {
+      markingClickedCalls.push({ fieldId, id })
     },
     resetSession() {},
   }
@@ -244,8 +250,32 @@ describe('startBridge: origin pinning and routing', () => {
       { fieldId: 'f1', text: 'abc', capabilities: CAPS, meta: { url: 'u', fieldKind: 'textarea' } },
     ])
     expect(hostDoc.replaceResultCalls).toEqual([{ requestId: 'r1', ok: true, text: 'abcX', fieldId: 'f1' }])
-    expect(hostDoc.selectFindingCalls).toEqual(['finding-1'])
+    expect(hostDoc.markingClickedCalls).toEqual([{ fieldId: 'f1', id: 'finding-1' }])
     expect(hostDoc.fieldDisconnectedCalls).toEqual(['f1'])
+  })
+
+  // Copilot round 1: the bridge passes the payload's fieldId through
+  // unconditionally — it's markingClicked's own field-match guard (hostDoc's
+  // job, tested there) that rejects a stale-field click. Here we assert the
+  // bridge routes the fieldId it was given, not whatever field is currently
+  // connected in the shim.
+  it('markingClicked passes the payload fieldId through to hostDoc', () => {
+    const bridge = startBridge()
+    const hostDoc = stubHostDoc()
+    bridge.attach(hostDoc)
+    const source = fakeSource()
+    dispatchHost(helloMessage(), ORIGIN_A, source)
+
+    dispatchHost(
+      hostEnvelope({
+        type: 'markingClicked' as const,
+        payload: { fieldId: 'stale-field', id: 'finding-9' },
+      }),
+      ORIGIN_A,
+      source,
+    )
+
+    expect(hostDoc.markingClickedCalls).toEqual([{ fieldId: 'stale-field', id: 'finding-9' }])
   })
 
   it('sets the client tag on hello', () => {

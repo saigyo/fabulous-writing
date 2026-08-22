@@ -112,7 +112,7 @@ export function startBridge(): Bridge {
         hostDoc?.replaceResult(msg.requestId, msg.payload.ok, msg.payload.text, msg.payload.fieldId)
         break
       case 'markingClicked':
-        hostDoc?.selectFinding(msg.payload.id)
+        hostDoc?.markingClicked(msg.payload.fieldId, msg.payload.id)
         break
       case 'fieldDisconnected':
         hostDoc?.fieldDisconnected(msg.payload.fieldId)

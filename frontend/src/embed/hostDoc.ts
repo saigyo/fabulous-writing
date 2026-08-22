@@ -46,6 +46,12 @@ export interface HostDoc extends DocumentPort {
     meta?: { url: string; fieldKind: string },
   ): void
   fieldDisconnected(fieldId: string): void
+  /** A markingClicked message routed from the bridge — verifies fieldId
+   * still matches the connected field before selecting, so a click on a
+   * marking rendered for a field the host already disconnected (a stale
+   * postMessage still in flight) can never select a finding against
+   * whatever field is connected now. */
+  markingClicked(fieldId: string, id: string): void
   textChanged(fieldId: string, text: string): void
   replaceResult(requestId: string, ok: boolean, text: string, fieldId: string): void
   connected(): boolean
@@ -157,6 +163,12 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
     if (fieldId) outbound.sendFindings(fieldId, toMarkingSpans())
   }
 
+  function doSelectFinding(id: string | null) {
+    selectedId = id
+    useStore.getState().setTracked(items, selectedId)
+    if (fieldId) outbound.sendSelectFinding(fieldId, id)
+  }
+
   function currentFinding(id: string): TrackedFinding | null {
     return items.find((item) => item.finding.id === id) ?? null
   }
@@ -212,8 +224,15 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
   /** Apply a fresh host-truth text snapshot: derive the splice, map
    * findings through it, resync the buffer, and republish — used by both
    * textChanged and a replaceResult echo (the host's echoed text is a
-   * fresh textChanged in every way that matters here). */
+   * fresh textChanged in every way that matters here).
+   *
+   * A refused replaceResult echoes the text back UNCHANGED (see
+   * replaceResult's ok:false branch) — that's not a real edit, so it must
+   * not re-arm the check scheduler (onInput) or mark metrics/the scorecard
+   * dirty. Without this guard, a refused suggestion looks exactly like the
+   * user having typed something, scheduling an unwanted LLM check. */
   function syncBuffer(text: string) {
+    if (text === buffer) return
     const splice = deriveSplice(buffer, text)
     items = mapThroughSplice(items, splice)
     buffer = text
@@ -226,6 +245,11 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
   }
 
   function sendReplace(from: number, to: number, insert: string): Promise<ApplyResult> {
+    // A field whose capabilities declare replace: 'none' (e.g. mark-only,
+    // no programmatic edit support) can never honor an applyReplacement —
+    // resolve refused immediately rather than post a wire message the host
+    // will never answer and wait out the full 2s timeout for nothing.
+    if (caps?.replace === 'none') return Promise.resolve('refused')
     requestSeq += 1
     const requestId = `r${requestSeq}`
     const expectedText = buffer.slice(from, to)
@@ -266,10 +290,10 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
       }
       publishFindings()
     },
-    selectFinding(id) {
-      selectedId = id
-      useStore.getState().setTracked(items, selectedId)
-      if (fieldId) outbound.sendSelectFinding(fieldId, id)
+    selectFinding: doSelectFinding,
+    markingClicked(fid, id) {
+      if (fieldId !== fid) return
+      doSelectFinding(id)
     },
     applySuggestion(id, suggestion) {
       const item = currentFinding(id)

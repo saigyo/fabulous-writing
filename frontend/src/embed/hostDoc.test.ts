@@ -289,6 +289,18 @@ describe('replacement round-trip', () => {
     await expect(promise).resolves.toBe('refused')
   })
 
+  // A refused echo re-sends the UNCHANGED text (no real splice) — it must
+  // not arm the check scheduler (the 1s/5s debounce) or touch metrics/the
+  // scorecard, since nothing actually changed on the page.
+  it('a refused echo with unchanged text does not call onInput', async () => {
+    const { doc, outbound } = connected('This is very good.', [finding('f1', 8, 12, 'very')])
+    const before = outbound.inputCalls
+    const promise = doc.applySuggestion('f1', 'extremely')
+    doc.replaceResult(outbound.applyReplacements[0].requestId, false, 'This is very good.', 'f1')
+    await promise
+    expect(outbound.inputCalls).toBe(before)
+  })
+
   it('resolves refused after a 2000ms timeout with no echo', async () => {
     const { doc } = connected('This is very good.', [finding('f1', 8, 12, 'very')])
     const promise = doc.applySuggestion('f1', 'extremely')
@@ -342,6 +354,34 @@ describe('replacement round-trip', () => {
   })
 })
 
+describe('replace: none capability', () => {
+  const MARK_ONLY_CAPS = { mark: 'overlay' as const, replace: 'none' as const }
+
+  it('applySuggestion resolves refused immediately, without posting a wire message', async () => {
+    const outbound = fakeOutbound()
+    const doc = createHostDoc(outbound)
+    doc.fieldConnected('f1', 'This is very good.', MARK_ONLY_CAPS)
+    doc.mergeFindings(['rule'], [finding('f1', 8, 12, 'very')])
+
+    const result = await doc.applySuggestion('f1', 'extremely')
+
+    expect(result).toBe('refused')
+    expect(outbound.applyReplacements).toEqual([])
+  })
+
+  it('applyRewrite resolves refused immediately, without posting a wire message', async () => {
+    const outbound = fakeOutbound()
+    const doc = createHostDoc(outbound)
+    doc.fieldConnected('f1', 'This is very good.', MARK_ONLY_CAPS)
+    doc.mergeFindings(['rule'], [finding('f1', 8, 12, 'very')])
+
+    const result = await doc.applyRewrite('f1', 'very', 'extremely')
+
+    expect(result).toBe('refused')
+    expect(outbound.applyReplacements).toEqual([])
+  })
+})
+
 describe('applyRewrite', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
@@ -381,6 +421,26 @@ describe('selectFinding', () => {
     expect(useStore.getState().selectedId).toBe('f1')
     expect(outbound.selectCalls).toEqual([{ fieldId: 'f1', id: 'f1' }])
     expect(outbound.findingsCalls.length).toBe(before)
+  })
+})
+
+describe('markingClicked', () => {
+  it('selects the finding when the fieldId matches the connected field', () => {
+    const { doc, outbound } = connected('This is very good.', [finding('f1', 8, 12, 'very')])
+    doc.markingClicked('f1', 'f1')
+    expect(useStore.getState().selectedId).toBe('f1')
+    expect(outbound.selectCalls).toEqual([{ fieldId: 'f1', id: 'f1' }])
+  })
+
+  // A stale-field click can arrive as a postMessage that was already in
+  // flight when the host disconnected field 'f1' and connected a different
+  // one — it must not select a finding against whatever field is connected
+  // now (or against no field at all).
+  it('ignores a click for a fieldId that does not match the connected field', () => {
+    const { doc, outbound } = connected('This is very good.', [finding('f1', 8, 12, 'very')])
+    doc.markingClicked('stale-field', 'f1')
+    expect(useStore.getState().selectedId).toBeNull()
+    expect(outbound.selectCalls).toEqual([])
   })
 })
 

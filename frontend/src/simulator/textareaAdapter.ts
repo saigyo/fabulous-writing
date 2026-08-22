@@ -45,6 +45,17 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
   el.insertAdjacentElement('beforebegin', overlay)
   syncOverlayGeometry(el, overlay)
 
+  // Geometry is otherwise captured once at creation time — a host resizing
+  // the textarea (a flex/grid layout reflow, a manual drag-resize handle)
+  // would leave the mirror painting highlights at stale coordinates.
+  // jsdom/happy-dom don't implement ResizeObserver, so this is guarded and
+  // simply never fires under test; dispose() still tears it down whenever it
+  // ran.
+  const resizeObserver = typeof ResizeObserver !== 'undefined'
+    ? new ResizeObserver(() => syncOverlayGeometry(el, overlay))
+    : null
+  resizeObserver?.observe(el)
+
   let changeCb: (() => void) | null = null
   let currentSpans: MarkingSpan[] = []
 
@@ -96,7 +107,10 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
         return { ok: false, text: el.value }
       }
       el.setRangeText(insert, from, to, 'end')
-      el.dispatchEvent(new Event('input'))
+      // Must bubble: React/host frameworks delegate their input listeners to
+      // the document root, not the element itself — a non-bubbling Event
+      // (or InputEvent without bubbles: true) never reaches them.
+      el.dispatchEvent(new InputEvent('input', { bubbles: true }))
       return { ok: true, text: el.value }
     },
     setMarkings(spans) {
@@ -118,6 +132,7 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
     dispose() {
       el.removeEventListener('input', handleInput)
       el.removeEventListener('scroll', handleScroll)
+      resizeObserver?.disconnect()
       overlay.remove()
     },
   }
