@@ -552,8 +552,13 @@ The LLM's raw response passes through four deterministic stages in
    Opus 5 run adaptive thinking by default and thinking tokens count
    against `max_tokens`, so the previous 4096 cap starved real answers
    mid-JSON (every failed production run on 2026-08-22 settled at exactly
-   4096 output tokens). The Bedrock provider sets no explicit cap (its
-   backend default applies) but detects the same `stopReason`.
+   4096 output tokens). Legacy Claude 3.x models — still selectable via
+   `list_models()` — reject `max_tokens` above their output limits, so
+   `_max_tokens_for` keeps them on their original caps (4096 for
+   `claude-3-*`, 8192 for `claude-3-5-*`); they don't think by default,
+   so those caps are also sufficient. The Bedrock provider sets no
+   explicit cap (its backend default applies) but detects the same
+   `stopReason`.
 2. **Anchor** (`anchoring.py`): LLM-reported offsets are unreliable, so each finding is
    located by its verbatim quote — exact match, then whitespace-tolerant match, then a
    fuzzy sliding-window match (difflib, ratio ≥ 0.8 with edge refinement). Ambiguous

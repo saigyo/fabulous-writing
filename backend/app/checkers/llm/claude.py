@@ -15,6 +15,20 @@ from .provider import (
 _MAX_TOKENS = 16384
 
 
+def _max_tokens_for(model: str) -> int:
+    """Legacy Claude 3.x models reject max_tokens above their output limits
+    (4096 for claude-3-*, 8192 for claude-3-5-*) — and they don't think by
+    default, so their original caps are also sufficient. claude-3-7 and
+    everything after accept the full headroom."""
+    if model.startswith("claude-3-5-"):
+        return 8192
+    if model.startswith("claude-3-7-"):
+        return _MAX_TOKENS
+    if model.startswith("claude-3-"):
+        return 4096
+    return _MAX_TOKENS
+
+
 def _usage_of(source: Any) -> TokenUsage:
     """Read input/output token counts off an SDK usage object, tolerating
     absence — missing telemetry is never an error."""
@@ -25,8 +39,10 @@ def _usage_of(source: Any) -> TokenUsage:
     )
 
 
-def _truncated(response_chars: int, usage: TokenUsage) -> TruncatedResponseError:
-    exc = TruncatedResponseError(response_chars, _MAX_TOKENS)
+def _truncated(
+    response_chars: int, usage: TokenUsage, max_tokens: int
+) -> TruncatedResponseError:
+    exc = TruncatedResponseError(response_chars, max_tokens)
     exc.usage = usage
     return exc
 
@@ -61,9 +77,10 @@ class ClaudeProvider:
     async def generate(
         self, system: str, user: str, on_progress: ProgressCallback | None = None
     ) -> GenerationResult:
+        max_tokens = _max_tokens_for(self.model)
         kwargs: dict[str, Any] = dict(
             model=self.model,
-            max_tokens=_MAX_TOKENS,
+            max_tokens=max_tokens,
             system=system,
             messages=[{"role": "user", "content": user}],
         )
@@ -74,7 +91,7 @@ class ClaudeProvider:
             block.text for block in response.content if block.type == "text"
         )
         if getattr(response, "stop_reason", None) == "max_tokens":
-            raise _truncated(len(text), _usage_of(response))
+            raise _truncated(len(text), _usage_of(response), max_tokens)
         return GenerationResult(text=text, usage=_usage_of(response))
 
     async def list_models(self) -> list[str]:
@@ -105,5 +122,5 @@ class ClaudeProvider:
                 ) or stop_reason
         usage = TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens)
         if stop_reason == "max_tokens":
-            raise _truncated(len("".join(parts)), usage)
+            raise _truncated(len("".join(parts)), usage, kwargs["max_tokens"])
         return GenerationResult(text="".join(parts), usage=usage)
