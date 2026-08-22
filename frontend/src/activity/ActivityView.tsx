@@ -1,7 +1,7 @@
 // Sixth activeView (B40, #124): per-user and all-users activity charts. See
 // docs/frontend-architecture.md's "Activity view" section for the subject
 // model this component reads from the store.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   getAllActivity,
   getOwnActivity,
@@ -159,6 +159,20 @@ export function ActivityView() {
   const [sortKey, setSortKey] = useState<SortKey>('credits')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
 
+  const scrollRef = useRef<HTMLDivElement>(null)
+  // A subject change is navigation (self <-> all <-> a drilled-into user),
+  // not a filter like `days` — deliberately excluded from these deps. The
+  // `.activity-view` container persists across it (no remount), so it
+  // keeps whatever scrollTop the PREVIOUS page left behind; the all-users
+  // table page can be much taller than a per-user page, and the new
+  // page's loading-then-data transition swings its height under that now
+  // out-of-range offset, which drags browser scroll anchoring into a
+  // visible jump/snap. Resetting on navigation is simpler and more
+  // reliable than fighting the anchor.
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0
+  }, [effectiveSubject])
+
   useEffect(() => {
     setData(null)
     setError(false)
@@ -251,7 +265,7 @@ export function ActivityView() {
     effectiveSubject === 'all' && data?.per_user ? sortRows(data.per_user, sortKey, sortDir) : null
 
   return (
-    <div className="activity-view">
+    <div className="activity-view" ref={scrollRef}>
       <div className="activity-header">
         <h2>{heading}</h2>
         <div className="activity-range-picker">
