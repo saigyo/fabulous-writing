@@ -4,7 +4,7 @@
 
 **Goal:** Serve an embeddable login+sidebar UI at `/embed/` with a versioned postMessage bridge, a host-document shim replacing CodeMirror, backend CSP/serving support, and a host-simulator page proving the full check→findings→replace loop.
 
-**Architecture:** A second Vite entry composes existing auth/header/sidebar modules over a new host-document shim; a document-port indirection (same pattern as `checking/cancelSlot.ts`) lets `controller.ts`, `suggest.ts`, and `Sidebar.tsx` run against either CodeMirror or the shim. The backend serves `embed.html` under `/embed*` with a configurable `frame-ancestors` CSP, default-deny.
+**Architecture:** A second Vite entry composes existing auth/header/sidebar modules over a new host-document shim; a document-port indirection (a leaf module in the spirit of `checking/cancelSlot.ts`) lets `controller.ts`, `suggest.ts`, `autosave.ts`, and `Sidebar.tsx` run against either CodeMirror or the shim. The backend serves `embed.html` under `/embed*` with a configurable `frame-ancestors` CSP, default-deny.
 
 **Tech Stack:** React 19 + TS + Vite multi-page, zustand, vitest; FastAPI + pytest.
 
@@ -21,10 +21,10 @@
 - Commit trailers on EVERY commit:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>` and
   `Claude-Session: https://claude.ai/code/session_01JXiCFTQQmJeJt3MB8qZdGA`
-- Protocol offsets are **UTF-16 code units** (spec, normative). Backend `Finding.span` offsets are Python code points; conversion happens ONLY in the embed shim (Task 4).
-- New user-facing strings: informal register (Du/tu/tú), added to ALL 7 locales; the `Messages` interface makes omissions a compile error.
-- i18n note: the three `embed*` strings are status text, not direct address; match each locale's existing status-message tone.
-- **Scope ruling (deviation from spec, deliberate):** the `client` tag is added to the API (validated, default `"web"`) but NOT persisted — `llm_usage` has no `client` column and adding one is a schema change, which per house policy ships with the next schema-touching story together with B41's day-first index (#126). Task 9 documents this in code.
+- Protocol offsets are **UTF-16 code units** (spec, normative). Backend spans are Python code points. The embed shim converts in BOTH directions: inbound findings (code points → UTF-16, Task 2/4) and outbound suggestion spans (UTF-16 → code points, Task 2/3/4). The CodeMirror port stays unconverted in both directions (its latent astral bug is out of scope — Deferred).
+- New user-facing strings: informal register (Du/tu/tú), added to ALL 7 locales; the `Messages` interface makes omissions a compile error. The three `embed*` strings are status text, not direct address; match each locale's existing status-message tone.
+- **Scope ruling (deviation from spec, deliberate):** the `client` tag is added to the API (validated, default `"web"`) but NOT persisted — `llm_usage` has no `client` column and adding one is a schema change, which per house policy ships with the next schema-touching story together with B41's day-first index (#126). Task 9 documents this in code; the spec amendment lands in Task 10.
+- **Config deviation from spec (deliberate):** the spec names an env var `FW_EMBED_ALLOWED_ANCESTORS`, but `load_settings()` (config.py:573-586) reads YAML only — there is no per-key env overlay in `Settings`. The setting is the YAML key `embed.allowed_ancestors`. Task 10 amends the spec.
 
 ---
 
@@ -43,6 +43,8 @@
 // frontend/src/embed/protocol.test.ts
 import { describe, expect, it } from 'vitest'
 import { parseHostMessage, PROTOCOL_VERSION } from './protocol'
+
+const caps = { mark: 'overlay', replace: 'reliable' }
 
 describe('parseHostMessage', () => {
   it('accepts a well-formed hello', () => {
@@ -67,6 +69,25 @@ describe('parseHostMessage', () => {
       parseHostMessage({ fw: PROTOCOL_VERSION, type: 'textChanged', payload: { fieldId: 'f1' } }),
     ).toBeNull()
   })
+
+  it('rejects fieldConnected with missing or malformed capabilities', () => {
+    const base = { fw: PROTOCOL_VERSION, type: 'fieldConnected' }
+    expect(
+      parseHostMessage({ ...base, payload: { fieldId: 'f1', text: 't', meta: { url: '', fieldKind: '' } } }),
+    ).toBeNull()
+    expect(
+      parseHostMessage({
+        ...base,
+        payload: { fieldId: 'f1', text: 't', capabilities: { mark: 'sparkly', replace: 'reliable' }, meta: { url: '', fieldKind: '' } },
+      }),
+    ).toBeNull()
+    expect(
+      parseHostMessage({
+        ...base,
+        payload: { fieldId: 'f1', text: 't', capabilities: caps, meta: { url: '', fieldKind: '' } },
+      }),
+    ).not.toBeNull()
+  })
 })
 ```
 
@@ -84,8 +105,10 @@ import type { Category, Severity } from '../types'
 
 export const PROTOCOL_VERSION = 1
 
-export type MarkCapability = 'overlay' | 'native' | 'none'
-export type ReplaceCapability = 'reliable' | 'best-effort' | 'none'
+export const MARK_CAPABILITIES = ['overlay', 'native', 'none'] as const
+export const REPLACE_CAPABILITIES = ['reliable', 'best-effort', 'none'] as const
+export type MarkCapability = (typeof MARK_CAPABILITIES)[number]
+export type ReplaceCapability = (typeof REPLACE_CAPABILITIES)[number]
 
 export interface HostCapabilities {
   mark: MarkCapability
@@ -188,6 +211,15 @@ const HOST_TYPES = new Set([
   'markingClicked', 'fieldDisconnected',
 ])
 
+function validCapabilities(value: unknown): value is HostCapabilities {
+  if (typeof value !== 'object' || value === null) return false
+  const c = value as Record<string, unknown>
+  return (
+    MARK_CAPABILITIES.includes(c.mark as MarkCapability) &&
+    REPLACE_CAPABILITIES.includes(c.replace as ReplaceCapability)
+  )
+}
+
 /** Validate an incoming postMessage payload. Returns null for anything that
  * is not a current-version host message with the fields its type requires —
  * the bridge drops those silently (foreign frames post all kinds of data). */
@@ -205,6 +237,7 @@ export function parseHostMessage(data: unknown): HostMessage | null {
       break
     case 'fieldConnected':
       if (typeof pay.fieldId !== 'string' || typeof pay.text !== 'string') return null
+      if (!validCapabilities(pay.capabilities)) return null
       break
     case 'textChanged':
       if (typeof pay.fieldId !== 'string' || typeof pay.text !== 'string') return null
@@ -224,6 +257,9 @@ export function parseHostMessage(data: unknown): HostMessage | null {
 // ---- the host-side adapter contract (spec: "Field adapters") ----
 // Lives here (not in the extension) so the simulator's reference adapter and
 // every later host implement the same shape the protocol was designed for.
+// Deviation from the spec's protocol table, recorded in Task 10: capabilities
+// travel on fieldConnected (per field), not on hello — matching the spec's
+// own prose ("per-field capabilities").
 export interface FieldAdapter {
   capabilities(): HostCapabilities
   extract(): string
@@ -239,18 +275,21 @@ export interface FieldAdapter {
 ```
 
 - [ ] **Step 4: Run test, expect PASS.**
-- [ ] **Step 5: Commit** — `feat(embed): bridge protocol module + FieldAdapter contract (B43 C1)`
+- [ ] **Step 5: Mutation-verify** — drop the `validCapabilities` call; the fieldConnected test must fail; restore.
+- [ ] **Step 6: Commit** — `feat(embed): bridge protocol module + FieldAdapter contract (B43 C1)`
 
 ---
 
-### Task 2: Code-point → UTF-16 offset conversion
+### Task 2: Offset conversion, both directions
 
 **Files:**
 - Create: `frontend/src/embed/offsets.ts`
 - Test: `frontend/src/embed/offsets.test.ts`
 
 **Interfaces:**
-- Produces: `convertFindingOffsets(text: string, findings: Finding[]): Finding[]` — input spans in code points (backend convention), output spans in UTF-16 units against the same `text`. Consumed by Task 4.
+- Produces (consumed by Task 4):
+  - `convertFindingOffsets(text: string, findings: Finding[]): Finding[]` — spans in code points (backend) → UTF-16 units against the same `text`.
+  - `toCodePointSpan(text: string, from: number, to: number): { start: number; end: number }` — UTF-16 units → code points (for outbound `/api/suggestions` spans).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -258,7 +297,7 @@ export interface FieldAdapter {
 // frontend/src/embed/offsets.test.ts
 import { describe, expect, it } from 'vitest'
 import type { Finding } from '../types'
-import { convertFindingOffsets } from './offsets'
+import { convertFindingOffsets, toCodePointSpan } from './offsets'
 
 function finding(start: number, end: number, text: string): Finding {
   return {
@@ -287,6 +326,18 @@ describe('convertFindingOffsets', () => {
     expect(convertFindingOffsets('abc', [finding(0, 2, 'zz')])).toEqual([])
   })
 })
+
+describe('toCodePointSpan', () => {
+  it('is identity for BMP-only text', () => {
+    expect(toCodePointSpan('hello', 1, 3)).toEqual({ start: 1, end: 3 })
+  })
+
+  it('inverts convertFindingOffsets across astral text', () => {
+    const text = '𝔸 bad'
+    // UTF-16 [3,6) is 'bad'; code points [2,5)
+    expect(toCodePointSpan(text, 3, 6)).toEqual({ start: 2, end: 5 })
+  })
+})
 ```
 
 - [ ] **Step 2: Run, expect FAIL.**
@@ -296,24 +347,30 @@ describe('convertFindingOffsets', () => {
 // frontend/src/embed/offsets.ts
 import type { Finding } from '../types'
 
+// Backend spans are code-point offsets (Python); the bridge protocol and the
+// shim work in UTF-16 units (spec B43). Both directions are needed: findings
+// come IN as code points, suggestion-request spans go OUT as code points.
+
+function codePointToUtf16Map(text: string): number[] | null {
+  // Fast path: no astral characters -> code points == UTF-16 units.
+  if (!/[\uD800-\uDBFF]/.test(text)) return null
+  const map: number[] = []
+  let utf16 = 0
+  for (const cp of text) {
+    map.push(utf16)
+    utf16 += cp.length
+  }
+  map.push(utf16) // end-of-text sentinel: span.end may equal text length
+  return map
+}
+
 /**
- * Backend spans are code-point offsets (Python); the bridge protocol and the
- * shim work in UTF-16 units (spec B43). Convert against the checked-text
+ * Convert backend findings to UTF-16 spans against the checked-text
  * snapshot. Findings whose converted slice does not equal span.text are
  * dropped — the "spans are exact" invariant must hold after conversion too.
  */
 export function convertFindingOffsets(text: string, findings: Finding[]): Finding[] {
-  // Fast path: no astral characters -> code points == UTF-16 units.
-  let map: number[] | null = null
-  if (/[\uD800-\uDBFF]/.test(text)) {
-    map = []
-    let utf16 = 0
-    for (const cp of text) {
-      map.push(utf16)
-      utf16 += cp.length
-    }
-    map.push(utf16) // end-of-text sentinel: span.end may equal text length
-  }
+  const map = codePointToUtf16Map(text)
   const out: Finding[] = []
   for (const f of findings) {
     const start = map ? map[f.span.start] : f.span.start
@@ -324,72 +381,111 @@ export function convertFindingOffsets(text: string, findings: Finding[]): Findin
   }
   return out
 }
+
+/** UTF-16 [from,to) in `text` -> the same range in code points. */
+export function toCodePointSpan(
+  text: string, from: number, to: number,
+): { start: number; end: number } {
+  if (!/[\uD800-\uDBFF]/.test(text)) return { start: from, end: to }
+  // Counting code points in the prefixes is O(n) and runs only on the
+  // suggestion-request path — no cache needed.
+  const start = [...text.slice(0, from)].length
+  const end = start + [...text.slice(from, to)].length
+  return { start, end }
+}
 ```
 
 - [ ] **Step 4: Run, expect PASS.**
-- [ ] **Step 5: Commit** — `feat(embed): code-point to UTF-16 finding-offset conversion (B43 C1)`
+- [ ] **Step 5: Commit** — `feat(embed): two-way code-point/UTF-16 offset conversion (B43 C1)`
 
 ---
 
 ### Task 3: Document port indirection (refactor, no behavior change)
 
 **Files:**
-- Create: `frontend/src/document/port.ts`
+- Create: `frontend/src/checking/documentPort.ts` (NOT `src/document/` — a sibling of the existing `src/documents/` package would invite permanent misreading)
 - Create: `frontend/src/editor/editorPort.ts`
 - Modify: `frontend/src/checking/controller.ts` (all `getEditorView()`/dispatch sites)
-- Modify: `frontend/src/checking/suggest.ts` (text + span reads)
-- Modify: `frontend/src/sidebar/Sidebar.tsx` (3 imports from `editorRef` → `document/port`)
-- Modify: `frontend/src/editor/Editor.tsx` (side-effect import of `editorPort`)
+- Modify: `frontend/src/checking/suggest.ts` (text + tracked-item + span reads)
+- Modify: `frontend/src/documents/autosave.ts` (its `getEditorView()` text read — this module IS in the embed graph via `controller.ts`/`suggest.ts` imports, and its `editorRef` import would drag `@codemirror/*` into the embed bundle)
+- Modify: `frontend/src/sidebar/Sidebar.tsx` (3 imports from `editorRef` → the port)
+- Modify: `frontend/src/main.tsx` (side-effect import `./editor/editorPort` — NOT in `Editor.tsx`: component tests `vi.mock` the Editor module wholesale, which would silently skip registration)
 - Modify: `frontend/src/checking/controller.test.ts`, `frontend/src/checking/suggest.test.ts` (register a fake port instead of faking an EditorView)
-- Test: existing suites are the net; add `frontend/src/document/port.test.ts` for registration semantics
+- Test: existing suites are the net; add `frontend/src/checking/documentPort.test.ts` for registration semantics
 
 **Interfaces:**
 - Produces (consumed by Tasks 4, 5, 6):
 
 ```ts
-// frontend/src/document/port.ts
-// Leaf module (same pattern as checking/cancelSlot.ts): the checking layer
+// frontend/src/checking/documentPort.ts
+// Leaf module in the spirit of checking/cancelSlot.ts: the checking layer
 // and the sidebar talk to "the document" through this port; the main app
-// registers a CodeMirror implementation (editor/editorPort.ts), the embed
-// registers the host-document shim. No module imports both sides.
+// registers a CodeMirror implementation (editor/editorPort.ts) from
+// main.tsx, the embed registers the host-document shim. No module imports
+// both sides. Like cancelSlot, the default is a null object, not null —
+// call sites never null-check, and "no port" behaves as an empty document.
+import type { TrackedFinding } from '../editor/findings' // type-only: erases
 import type { Finding, Source } from '../types'
+
+export type ApplyResult = 'ok' | 'not-found' | 'refused'
 
 export interface DocumentPort {
   getText(): string
-  /** Current mapped span of a finding, or null if it was dropped. */
-  currentSpan(id: string): { from: number; to: number } | null
+  /** The finding's current tracked state (live document state, not the
+   * store's post-hoc mirror), or null if it was dropped. */
+  currentFinding(id: string): TrackedFinding | null
+  /** The finding's span in BACKEND offsets (code points) for outbound
+   * requests. Identity with the tracked span in the CodeMirror port. */
+  serverSpan(id: string): { start: number; end: number } | null
   /** Replace all findings of the given sources (no staleness check — the
    * caller compares getText() against its checked snapshot first). */
   mergeFindings(replaceSources: Source[], findings: Finding[]): void
   selectFinding(id: string | null): void
-  /** Resolve true when the replacement was applied, false when it could not
-   * be (span gone / sentence changed / host refused). */
-  applySuggestion(id: string, suggestion: string): Promise<boolean>
-  applyRewrite(id: string, original: string, replacement: string): Promise<boolean>
+  /** 'ok' = applied; 'not-found' = the finding/sentence is gone (stale);
+   * 'refused' = the host declined or timed out (embed only). */
+  applySuggestion(id: string, suggestion: string): Promise<ApplyResult>
+  applyRewrite(id: string, original: string, replacement: string): Promise<ApplyResult>
 }
 
-let port: DocumentPort | null = null
-export function setDocumentPort(p: DocumentPort | null): void { port = p }
-export function getDocumentPort(): DocumentPort | null { return port }
+const nullPort: DocumentPort = {
+  getText: () => '',
+  currentFinding: () => null,
+  serverSpan: () => null,
+  mergeFindings: () => {},
+  selectFinding: () => {},
+  applySuggestion: () => Promise.resolve('not-found'),
+  applyRewrite: () => Promise.resolve('not-found'),
+}
+
+let port: DocumentPort = nullPort
+export function setDocumentPort(p: DocumentPort | null): void { port = p ?? nullPort }
+export function getDocumentPort(): DocumentPort { return port }
 ```
 
-- [ ] **Step 1: Write `port.test.ts`** — `getDocumentPort()` returns null before registration, the registered instance after, null again after `setDocumentPort(null)`. Run: FAIL (module missing).
-- [ ] **Step 2: Create `document/port.ts`** exactly as above; test PASSES.
+- [ ] **Step 1: Write `documentPort.test.ts`** — default port returns `''`/`null`/`'not-found'` and no-ops; the registered instance is returned after `setDocumentPort(fake)`; `setDocumentPort(null)` restores the null object. Run: FAIL (module missing).
+- [ ] **Step 2: Create `checking/documentPort.ts`** exactly as above; test PASSES.
 - [ ] **Step 3: Create `editor/editorPort.ts`** — the CodeMirror implementation, registered at module load:
 
 ```ts
 // frontend/src/editor/editorPort.ts
-import type { DocumentPort } from '../document/port'
-import { setDocumentPort } from '../document/port'
+import type { DocumentPort } from '../checking/documentPort'
+import { setDocumentPort } from '../checking/documentPort'
 import { applyRewrite, applySuggestion, getEditorView, selectFinding } from './editorRef'
 import { findingsField, mergeFindingsEffect } from './findings'
 
+function item(id: string) {
+  const view = getEditorView()
+  return view?.state.field(findingsField).items.find((it) => it.finding.id === id) ?? null
+}
+
 const cmPort: DocumentPort = {
   getText: () => getEditorView()?.state.doc.toString() ?? '',
-  currentSpan(id) {
-    const view = getEditorView()
-    const item = view?.state.field(findingsField).items.find((it) => it.finding.id === id)
-    return item ? { from: item.from, to: item.to } : null
+  currentFinding: item,
+  // Unconverted, matching the app's existing (latently astral-buggy)
+  // behavior — the fix is tracked, out of scope here.
+  serverSpan(id) {
+    const it = item(id)
+    return it ? { start: it.from, end: it.to } : null
   },
   mergeFindings(replaceSources, findings) {
     getEditorView()?.dispatch({
@@ -397,27 +493,27 @@ const cmPort: DocumentPort = {
     })
   },
   selectFinding,
-  applySuggestion: (id, suggestion) => {
-    const view = getEditorView()
-    if (!view) return Promise.resolve(false)
+  applySuggestion(id, suggestion) {
+    if (!item(id)) return Promise.resolve('not-found')
     applySuggestion(id, suggestion)
-    return Promise.resolve(true)
+    return Promise.resolve('ok')
   },
   applyRewrite: (id, original, replacement) =>
-    Promise.resolve(applyRewrite(id, original, replacement)),
+    Promise.resolve(applyRewrite(id, original, replacement) ? 'ok' : 'not-found'),
 }
 setDocumentPort(cmPort)
 ```
 
 - [ ] **Step 4: Rewire consumers.** Mechanical mapping, preserving every guard comment:
-  - `controller.ts`: drop the `getEditorView`/`mergeFindingsEffect` imports; `const view = getEditorView(); if (!view) return` → `const port = getDocumentPort(); if (!port) return`; `view.state.doc.toString()` → `port.getText()`; the empty-text branch's dispatch → `port.mergeFindings(['rule', 'terminology', 'llm'], [])`; `applyFindings()` keeps its snapshot compare (`port.getText() !== checkedText → return`) then calls `port.mergeFindings(sources, findings)`; the `onScorecard` staleness check uses `port.getText()`.
-  - `suggest.ts`: text via `port.getText()`, the finding's current span via `port.currentSpan(id)` (bail, as today, when null).
-  - `Sidebar.tsx`: `import { applyRewrite, applySuggestion, selectFinding } from '../document/port'` becomes calls through `getDocumentPort()` — add a tiny local helper `const port = () => getDocumentPort()`; call sites `await port()?.applySuggestion(...)`; the rewrite call site keeps its false-branch UI (`Sidebar.tsx:396-412`) with `const ok = (await port()?.applyRewrite(...)) ?? false`.
-  - `Editor.tsx`: add `import './editorPort'` (side-effect registration).
-- [ ] **Step 5: Adapt `controller.test.ts` / `suggest.test.ts`** — replace EditorView fakes with `setDocumentPort(fakePort)` in setup and `setDocumentPort(null)` in teardown. The fake records `mergeFindings` calls and serves `getText`.
+  - `controller.ts`: drop the `getEditorView`/`mergeFindingsEffect` imports; `const view = getEditorView(); if (!view) return` → `const port = getDocumentPort()` (no null check — null object); `view.state.doc.toString()` → `port.getText()`; the empty-text branch's dispatch → `port.mergeFindings(['rule', 'terminology', 'llm'], [])`; `applyFindings()` keeps its snapshot compare (`port.getText() !== checkedText → return`) then `port.mergeFindings(sources, findings)`; **`onScorecard`**: the current guard is `if (view && view.state.doc.toString() !== text)` — with the null port `getText()` is `''`, which `!== text` for any non-empty check, so the rewrite must keep an explicit connected-document notion. Use `if (port.getText() !== text)` ONLY after confirming the runCheck early-return already filtered the empty-document case (it does: `!text.trim()` returns before any subscription) — a null-port scorecard arriving mid-teardown marks stale, which is harmless and matches "document gone".
+  - `suggest.ts`: text via `port.getText()`; the tracked item via `port.currentFinding(id)` (it needs `item.finding.message` and `item.finding.rule_id`, not just the span — see its own test fake); the REQUEST span via `port.serverSpan(id)` (code points outbound).
+  - `autosave.ts`: `collectSnapshot()` keeps its `docMeta` guard first, then reads text via `getDocumentPort().getText()`; delete the `editorRef` import. (Behavior unchanged in the app; in the embed `docMeta` is never set, so `flush()` still no-ops.)
+  - `Sidebar.tsx`: `import { getDocumentPort } from '../checking/documentPort'`; call sites `void getDocumentPort().applySuggestion(...)` etc. — the RESULT handling changes land in Task 6 (this task is behavior-neutral; `applyRewrite`'s existing false-branch maps to `result !== 'ok'` for now).
+  - `main.tsx`: add `import './editor/editorPort'`.
+- [ ] **Step 5: Adapt `controller.test.ts` / `suggest.test.ts`** — replace EditorView fakes with `setDocumentPort(fakePort)` in setup and `setDocumentPort(null)` in teardown. The fake records `mergeFindings` calls and serves `getText`/`currentFinding`/`serverSpan`.
 - [ ] **Step 6: Full frontend gate** — `npm run test`, `rtk proxy npm run lint`, `npm run build`. Everything green: this task changes NO behavior.
 - [ ] **Step 7: Mutation check** — temporarily remove the snapshot compare in `applyFindings`; the existing stale-findings controller test must fail; restore.
-- [ ] **Step 8: Commit** — `refactor(frontend): document-port indirection for checking + sidebar (B43 C1)`
+- [ ] **Step 8: Commit** — `refactor(frontend): document-port indirection for checking, autosave + sidebar (B43 C1)`
 
 ---
 
@@ -428,8 +524,8 @@ setDocumentPort(cmPort)
 - Test: `frontend/src/embed/hostDoc.test.ts`
 
 **Interfaces:**
-- Consumes: `DocumentPort` (Task 3), `convertFindingOffsets` (Task 2), `MarkingSpan`/`HostCapabilities` (Task 1), store `setTracked` (existing).
-- Produces (consumed by Task 5):
+- Consumes: `DocumentPort`/`ApplyResult` (Task 3), `convertFindingOffsets`/`toCodePointSpan` (Task 2), `MarkingSpan`/`HostCapabilities` (Task 1), store `setTracked` (existing).
+- Produces (consumed by Tasks 5, 6):
 
 ```ts
 export interface HostDocOutbound {
@@ -452,36 +548,44 @@ export interface HostDoc extends DocumentPort {
 }
 ```
 
-Note: there is NO separate `mergeServerFindings` — the shim's `DocumentPort.mergeFindings`
+Note: there is NO separate merge method — the shim's `DocumentPort.mergeFindings`
 implementation itself converts incoming spans via `convertFindingOffsets(buffer, findings)`
 before tracking (the controller's snapshot guard guarantees the buffer equals the checked
-text at that moment). The CodeMirror port keeps its existing unconverted behavior — that
-latent astral bug is explicitly out of scope (Global Constraints / Deferred).
+text at that moment). `serverSpan` converts outbound via `toCodePointSpan(buffer, from, to)`.
 
 **Behavior spec (port of `editor/findings.ts` semantics to a single-splice world):**
 
-- `textChanged` computes the minimal splice between old and new buffer: longest common prefix `p`, longest common suffix `s` over the remainder → old range `[p, oldLen - s)` replaced by new slice `[p, newLen - s)`. Guard `p + s` overshoot (`p = min(p, oldLen - s, newLen - s)` after computing `s` capped to `min(oldLen, newLen) - p`).
-- Tracked findings map through the splice exactly like the CodeMirror field:
+- `textChanged` derives the splice as an algorithm, no post-hoc correction:
+  `p` = longest common prefix length; then scan backwards for the longest
+  common suffix `s` with the explicit bound `s < min(oldLen, newLen) - p`.
+  Old range `[p, oldLen - s)` replaced by `new.slice(p, newLen - s)`.
+- Tracked findings map through the splice:
   - `item.to < spliceFrom` → unchanged; `item.from > spliceTo` → shift by `insertLen - (spliceTo - spliceFrom)`.
-  - Any overlap **or adjacency** with the replaced range (`item.from <= spliceTo && spliceFrom <= item.to`) when the splice is a real change → drop (mirrors `touchesRange`, which counts touching boundaries).
+  - Any overlap **or adjacency** with the replaced range (`item.from <= spliceTo && spliceFrom <= item.to`) when the splice is a real change → drop (same predicate `touchesRange` uses, including the insertion-at-boundary drop).
   - Zero-length results drop.
+  - Parity claim, precise form: identical to CodeMirror for every splice the
+    diff recovers. The diff recovers the RIGHTMOST of several equivalent
+    edits, so a finding inside a duplicated region may survive an edit
+    CodeMirror would drop — the span text still matches by construction.
+    One such case is a documented-expected-divergence test, not a bug.
 - `mergeFindings` mirrors `mergeFindingsEffect`, converting offsets first (`convertFindingOffsets` against the current buffer): filter spans exceeding buffer length or empty, replace listed sources, keep selection if the id survives (re-selection-by-equivalence uses the existing `findEquivalent` helper on the tracked shapes).
 - After EVERY tracked-state change: `useStore.getState().setTracked(items, selectedId)` AND `outbound.sendFindings(fieldId, markingSpans)`.
-- `applySuggestion(id, s)`: look up current span; no span → resolve false. Send `applyReplacement` with fresh `requestId`, `expectedText = buffer.slice(from, to)`; store the pending resolver; **2000 ms timeout resolves false**. `replaceResult(ok, text)`: resolve pending with `ok`; treat `text` as a `textChanged` (host text is truth) — on `ok`, the edit self-invalidates the finding exactly as in the editor.
-- `applyRewrite(id, original, replacement)`: locate `original` in the buffer by the same overlap-scan as `rewriteChange` (`findings.ts:121-143`, reuse its loop shape verbatim); not found → resolve false (sidebar shows "sentence changed"); found → same replacement round-trip.
+- `applySuggestion(id, s)`: `currentFinding(id)` null → resolve `'not-found'`. Send `applyReplacement` with fresh `requestId`, `expectedText = buffer.slice(from, to)`; store the pending resolver; **2000 ms timeout resolves `'refused'`**. `replaceResult(ok, text)`: resolve pending with `ok ? 'ok' : 'refused'`; treat `text` as a `textChanged` (host text is truth) — on ok, the edit self-invalidates the finding exactly as in the editor.
+- `applyRewrite(id, original, replacement)`: locate `original` in the buffer by the same overlap-scan as `rewriteChange` (`findings.ts:121-143`, reuse its loop shape verbatim); not found → resolve `'not-found'`; found → same replacement round-trip (`'ok'`/`'refused'`).
 - `selectFinding(id)`: update selection, `setTracked`, `sendSelectFinding`.
 - `textChanged` also calls `outbound.onInput()` (debounce hook) and updates `setDocChars`/`setDocWords` via the existing `scoring/score.ts` helpers, and `markScorecardStale()` — mirroring `Editor.tsx:36-44` minus autosave (`noteChange` is document-manager-only and MUST NOT be called).
-- `fieldConnected` resets: clears tracked findings (store + host gets empty `findings`), sets buffer, `cancelCheck()` is NOT called here — the embed app does that (Task 6) to keep the shim free of controller imports.
+- `fieldConnected` resets: clears tracked findings (store + host gets empty `findings`), sets buffer. `cancelCheck()` is NOT called here — the embed app does that (Task 6) to keep the shim free of controller imports.
 
 - [ ] **Step 1: Write failing tests.** Cover at minimum:
-  - splice derivation: typing in middle/start/end, deletion, paste-replacing-everything, no-op text
-  - mapping: finding before / after / overlapping / adjacent to the splice; zero-length drop (port the scenario list from the existing `findings` tests so both implementations share vectors)
+  - splice derivation: typing in middle/start/end, deletion, paste-replacing-everything, no-op text, and the degenerate vectors `"aa" → "a"`, `"a" → "aa"`, `"" → "x"`, `"x" → ""`
+  - mapping: finding before / after / overlapping / adjacent to the splice; zero-length drop (port the scenario list from the existing `findings` tests so both implementations share vectors); the rightmost-splice divergence case as a documented expectation
   - `mergeFindings`: source replacement, selection persistence, astral conversion end-to-end (server code points → UTF-16 tracked spans)
-  - replacement round-trip: ok echo, refused echo, timeout → false, echo text re-syncs buffer
-  - rewrite: found-overlapping occurrence replaced; edited sentence → false
-  - stale-check integration: after `textChanged`, `getText()` differs from an old snapshot (the controller's guard does the rest — no shim logic needed, but assert `getText()` reflects the newest echo)
+  - `serverSpan`: astral round-trip — the code-point span it returns slices the same substring in a Python-semantics sense (compare against `[...buffer]` slicing)
+  - replacement round-trip: ok echo → `'ok'`; refused echo → `'refused'`; timeout → `'refused'`; echo text re-syncs buffer
+  - rewrite: found-overlapping occurrence replaced; edited sentence → `'not-found'`
+  - `getText()` reflects the newest echo after a replacement
 - [ ] **Step 2: Run, expect FAIL.**
-- [ ] **Step 3: Implement `hostDoc.ts`** per the behavior spec (~200 lines).
+- [ ] **Step 3: Implement `hostDoc.ts`** per the behavior spec (~220 lines).
 - [ ] **Step 4: Run, expect PASS.**
 - [ ] **Step 5: Mutation-verify** — break the adjacency-drop condition (`<=` → `<`) and the `expectedText` slice; one named test each must fail; restore.
 - [ ] **Step 6: Commit** — `feat(embed): host document shim — splice mapping, replacement round-trip (B43 C1)`
@@ -495,17 +599,33 @@ latent astral bug is explicitly out of scope (Global Constraints / Deferred).
 - Test: `frontend/src/embed/bridge.test.ts`
 
 **Interfaces:**
-- Consumes: `parseHostMessage`, `envelope` (Task 1), `HostDoc` (Task 4), store (`checkPhase`, `tracked`, `authStatus` via `useStore.subscribe`).
-- Produces: `startBridge(hostDoc: HostDoc): () => void` (returns teardown), and `hostClientKind(): string` for Task 9. Consumed by Task 6.
+- Consumes: `parseHostMessage`, `envelope` (Task 1), `HostDoc`/`HostDocOutbound` (Task 4 — type-only for `HostDoc`), store (`checkPhase`, `tracked`, `authStatus`, `llmError` via `useStore.subscribe`), `setClientTag` (Task 9; until Task 9 lands, keep a local no-op TODO-free stub by simply not calling it — the bridge records `host.kind` internally either way).
+- Produces (consumed by Task 6):
+
+```ts
+export interface Bridge {
+  /** Outbound sender set — hand to createHostDoc(). No-ops until pinned. */
+  outbound: HostDocOutbound
+  /** Wire the message routing to a HostDoc and start listening. */
+  attach(hostDoc: HostDoc): void
+  dispose(): void
+  hostKind(): string // 'web' until a hello arrives
+}
+export function startBridge(): Bridge
+```
+
+This breaks the Task 4 ↔ Task 5 construction cycle: `main.tsx` (Task 6) reads
+`const bridge = startBridge(); const doc = createHostDoc(bridge.outbound); bridge.attach(doc); setDocumentPort(doc)`.
+Task 4's tests use a plain stub outbound; Task 5's tests use a stub HostDoc.
 
 **Behavior:**
-- `window.addEventListener('message', …)`; before the first valid `hello`: parse, accept ONLY `hello`, then pin `event.source` and `event.origin`; afterwards drop any event whose `source`/`origin` differ from the pinned pair.
-- On `hello`: reply `ready` via `(pinnedSource as Window).postMessage(envelope(...), pinnedOrigin)`; record `host.kind` (exposed via `hostClientKind()`, default `'web'`).
-- Route `fieldConnected`/`textChanged`/`replaceResult`/`fieldDisconnected`/`markingClicked` to the matching `HostDoc` methods (`markingClicked` → `hostDoc.selectFinding(id)` so a host click selects in the sidebar).
-- `status` emission: subscribe to the store; map `checkPhase` (`'fast'|'llm'` → `'checking'`/`'llm-running'`, else `'idle'`), `authStatus !== 'authenticated'` → `'signed-out'`, `llmError` present → `'error'`; include `tracked.length`. Emit only on change.
+- `window.addEventListener('message', …)` (registered in `attach`); before the first valid `hello`: parse, accept ONLY `hello`, then pin `event.source` and `event.origin`; afterwards drop any event whose `source`/`origin` differ from the pinned pair.
+- On `hello`: reply `ready` via `(pinnedSource as Window).postMessage(envelope(...), pinnedOrigin)`; record `host.kind`.
+- Route `fieldConnected`/`textChanged`/`replaceResult`/`fieldDisconnected` to the matching `HostDoc` methods; `markingClicked` → `hostDoc.selectFinding(id)` so a host click selects in the sidebar.
+- `status` emission: subscribe to the store; map `checkPhase` (`'fast'` → `'checking'`, `'llm'` → `'llm-running'`, else `'idle'`), `authStatus !== 'authenticated'` → `'signed-out'` (wins), `llmError` present → `'error'`; include `tracked.length`. Emit only on change.
 - All outbound sends no-op until pinned.
 
-- [ ] **Step 1: Write failing tests** — dispatch `MessageEvent`s directly at the handler (export it for tests or use `window.dispatchEvent`): pre-hello non-hello messages ignored; hello pins and answers `ready`; post-hello messages from a different origin ignored; `textChanged` reaches a stub `HostDoc`; teardown removes the listener.
+- [ ] **Step 1: Write failing tests** — dispatch `MessageEvent`s via `window.dispatchEvent`: pre-hello non-hello messages ignored; hello pins and answers `ready`; post-hello messages from a different origin ignored; `textChanged` reaches the stub `HostDoc`; `dispose` removes the listener.
 - [ ] **Step 2: Run, FAIL.** **Step 3: Implement.** **Step 4: Run, PASS.**
 - [ ] **Step 5: Mutation-verify** the origin pinning (accept-all mutation must fail the foreign-origin test); restore.
 - [ ] **Step 6: Commit** — `feat(embed): postMessage bridge with origin pinning + status stream (B43 C1)`
@@ -517,16 +637,22 @@ latent astral bug is explicitly out of scope (Global Constraints / Deferred).
 **Files:**
 - Create: `frontend/embed.html` (copy `index.html`, `<div id="root">`, script `/src/embed/main.tsx`, title "Fabulous Writing — Embed")
 - Create: `frontend/src/embed/main.tsx`, `frontend/src/embed/EmbedApp.tsx`, `frontend/src/embed/embed.css`
+- Create: `frontend/src/i18n/LocaleSwitcher.tsx` (extraction — it is currently a module-LOCAL function in `App.tsx:274`; importing `App.tsx` from the embed would pull the entire app graph)
 - Create: `frontend/src/header/useHeaderData.ts` (extraction)
-- Modify: `frontend/src/App.tsx` (Header uses the extracted hook — code move, comments preserved verbatim)
+- Modify: `frontend/src/App.tsx` (imports `LocaleSwitcher`, `Header` uses the extracted hook — code moves, comments preserved verbatim)
+- Modify: `frontend/src/sidebar/Sidebar.tsx` (surface `ApplyResult` failures — see Step 5)
 - Modify: `frontend/vite.config.ts` (multi-page input)
 - Modify: `frontend/src/i18n/messages.ts` + all 7 locale files
 - Test: `frontend/src/embed/EmbedApp.test.tsx`
 
 **Interfaces:**
-- Consumes: Tasks 3-5, existing `LoginGate`, `ProfileSelector`, `DomainMultiSelect`, `LlmSelector`, `LocaleSwitcher`, `AccountMenu`, `Sidebar`, `createCheckScheduler`, `runCheck`, `cancelCheck`.
+- Consumes: Tasks 3-5, existing `LoginGate`, `ProfileSelector`, `DomainMultiSelect`, `LlmSelector`, `AccountMenu`, `Sidebar`, `createCheckScheduler`, `runCheck`, `cancelCheck`.
 
-- [ ] **Step 1: Extract `useHeaderData()`** — move the two effects from `Header` (`App.tsx:94-164`: catalog fetches keyed on `authGeneration`; profile fetch keyed on `language`) into `frontend/src/header/useHeaderData.ts`, comments intact; `Header` calls the hook. Run the full frontend suite (`App.domains-guard.test.tsx` is the net) — green before proceeding. Commit separately: `refactor(frontend): extract useHeaderData from Header (B43 C1)`.
+- [ ] **Step 1: Extractions (one commit, before the embed entry).**
+  - Move `LocaleSwitcher` from `App.tsx` to `frontend/src/i18n/LocaleSwitcher.tsx` (export it); `App.tsx` imports it.
+  - Move the two `Header` effects (`App.tsx:94-164`) into `frontend/src/header/useHeaderData.ts` — INCLUDING the `prevLanguage` ref between them (`App.tsx:127`), which belongs to the second effect and keeps it StrictMode-correct; comments intact; `Header` calls the hook.
+  - Run the full frontend suite (`App.domains-guard.test.tsx` is the net — its `vi.mock('./api/client', …)` still applies to the hook, Vitest mocks by resolved module id) — green before proceeding.
+  - Commit: `refactor(frontend): extract LocaleSwitcher + useHeaderData from App (B43 C1)`.
 - [ ] **Step 2: Vite config** — add:
 
 ```ts
@@ -555,15 +681,15 @@ import '../App.css'
 import './embed.css'
 import { LoginGate } from '../auth/LoginGate.tsx'
 import { initPrefsPersistence } from '../state/prefsPersistence.ts'
-import { setDocumentPort } from '../document/port'
+import { setDocumentPort } from '../checking/documentPort'
 import { createHostDoc } from './hostDoc'
 import { startBridge } from './bridge'
 import { EmbedApp } from './EmbedApp'
-// ... create hostDoc with outbound wired to the bridge sender, register:
-//   setDocumentPort(hostDoc); startBridge(hostDoc)
-// (construction order: bridge exposes its senders to hostDoc's outbound —
-//  createHostDoc takes the outbound object; bridge.ts exports the senders
-//  bound lazily so the two can be built in either order)
+
+const bridge = startBridge()
+const hostDoc = createHostDoc(bridge.outbound)
+bridge.attach(hostDoc)
+setDocumentPort(hostDoc)
 initPrefsPersistence()
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -575,13 +701,16 @@ createRoot(document.getElementById('root')!).render(
 ```
 
 `EmbedApp.tsx` composes: a compact header row (`LocaleSwitcher`, `ProfileSelector`, language `<select>` + `DomainMultiSelect` + `LlmSelector` + auto-toggle + Check button — reuse the exact JSX shapes from `Header`, calling `useHeaderData()`), a connection strip (connected field's page URL, or `m.embedWaiting` / `m.embedDisconnected`), then `<Sidebar />`. The scheduler is created in an effect (`fastDelayMs: 1000, llmDelayMs: 5000`, `llmEnabled: () => useStore.getState().llmAuto`) and handed to the hostDoc outbound's `onInput`; `fieldConnected` triggers `cancelCheck()` + an immediate `runCheck(false)`. `embed.css`: single-column layout, sidebar full-width, header controls wrapping.
-- [ ] **Step 5: i18n** — add to `Messages` + all locales (informal register; the interface makes a missing locale a compile error):
+- [ ] **Step 5: Surface replacement failures in the Sidebar** (this is where `ApplyResult` becomes user-visible; without it a refused/timed-out replacement is silently swallowed and `embedReplaceFailed` would be a dead string):
+  - `SuggestionArea` (and the equivalent apply sites at `Sidebar.tsx:279-282, 322`): `const result = await getDocumentPort().applySuggestion(...)`; on `'refused'` → `store.setSuggestError(finding.id, m.embedReplaceFailed)` (the existing `suggest-error` slot at `Sidebar.tsx:314-318` renders it); `'not-found'` stays silent (matches today's behavior).
+  - `RewriteArea`: `'not-found'` keeps the existing `m.sentenceChangedRewriteAgain`; `'refused'` sets `m.embedReplaceFailed` instead. The discriminated `ApplyResult` (Task 3) is exactly what makes these two distinguishable.
+  - Component test: a fake port resolving `'refused'` renders the failure string; resolving `'not-found'` on rewrite renders the sentence-changed string.
+- [ ] **Step 6: i18n** — add to `Messages` + all locales (informal register; the interface makes a missing locale a compile error):
   - `embedWaiting` — en "Waiting for the host application…", de "Warte auf die Host-Anwendung…", fr "En attente de l'application hôte…", es "Esperando a la aplicación anfitriona…", it "In attesa dell'applicazione ospite…", ja "ホストアプリケーションを待っています…", zh "正在等待宿主应用…"
   - `embedDisconnected` — en "No text field connected.", de "Kein Textfeld verbunden.", fr "Aucun champ de texte connecté.", es "Ningún campo de texto conectado.", it "Nessun campo di testo collegato.", ja "接続されているテキスト欄はありません。", zh "未连接文本框。"
   - `embedReplaceFailed` — en "The host application couldn't apply the change — the text may have changed.", de "Die Host-Anwendung konnte die Änderung nicht übernehmen — der Text hat sich vielleicht geändert.", fr "L'application hôte n'a pas pu appliquer la modification — le texte a peut-être changé.", es "La aplicación anfitriona no pudo aplicar el cambio; puede que el texto haya cambiado.", it "L'applicazione ospite non ha potuto applicare la modifica — forse il testo è cambiato.", ja "ホストアプリケーションが変更を適用できませんでした。テキストが変わった可能性があります。", zh "宿主应用无法应用此更改——文本可能已更改。"
-  (`embedReplaceFailed` surfaces via the Sidebar's existing rewrite-failure slot when `applySuggestion`/`applyRewrite` resolve false in embed context — reuse the failure-path UI, don't build a new toast.)
-- [ ] **Step 6: Gates** — `npm run test`, lint, `npm run build`; verify `dist/embed.html` exists and `dist/index.html` unchanged behavior (`npm run build` output lists both entries).
-- [ ] **Step 7: Commit** — `feat(embed): /embed entry — login, selectors, sidebar over the host shim (B43 C1)`
+- [ ] **Step 7: Gates + bundle guard** — `npm run test`, lint, `npm run build`; verify `dist/embed.html` exists. Then the CodeMirror-free assertion (this is the spec's tree-shaking claim, and it MUST be checked, or Task 3's autosave fix can silently regress): enable `build.manifest: true` (or read the rollup output), walk the chunk graph reachable from the `embed` entry, and assert no chunk sources `@codemirror/`. Add it as a small node script `frontend/scripts/check-embed-bundle.mjs` invoked in the build step of CI later (C2); for C1 run it manually and paste the result into the PR.
+- [ ] **Step 8: Commit** — `feat(embed): /embed entry — login, selectors, sidebar over the host shim (B43 C1)`
 
 ---
 
@@ -603,6 +732,7 @@ createRoot(document.getElementById('root')!).render(
   - `applyReplacement(from, to, insert, expectedText)`: `el.value.slice(from, to) !== expectedText` → `{ok: false, text: el.value}`; else `el.setRangeText(insert, from, to, 'end')`, dispatch an `input` event, `{ok: true, text: el.value}`
   - `setMarkings`: mirror-overlay div behind the textarea — same font/padding/size (copied via `getComputedStyle`), text split into spans, `fw-mark-<severity>` classes, scroll synced on the textarea's `scroll` event; `flashFinding` scrolls the mark into view and pulses a CSS class
 - `main.ts`: instantiate the adapter, wire the protocol over `iframe.contentWindow.postMessage` (targetOrigin `location.origin`): send `hello` on iframe `load` (retry until `ready` arrives), `fieldConnected` on Connect click, `textChanged` on adapter change, answer `applyReplacement` via the adapter with a `replaceResult`, render `findings` through `setMarkings`, `selectFinding` → `flashFinding`, clicks on marks → `markingClicked`.
+- **Desync hook for the e2e negative probe** (without it the `expectedText` mismatch is unreachable from the UI — the simulator's echo loop is synchronous): with `simulator.html?desync=1`, `main.ts` suppresses the next `textChanged` after a keystroke and mutates the textarea (prepend one character) upon receiving the next `applyReplacement`, before handing it to the adapter — guaranteeing the mismatch branch and a `replaceResult ok:false`.
 
 - [ ] **Step 1: Write failing adapter tests** (jsdom): extract/onChange; `applyReplacement` happy path mutates value and reports new text; `expectedText` mismatch refuses and leaves value untouched.
 - [ ] **Step 2: Run, FAIL.** **Step 3: Implement adapter.** **Step 4: Run, PASS.**
@@ -617,20 +747,21 @@ createRoot(document.getElementById('root')!).render(
 **Files:**
 - Modify: `backend/app/core/config.py` (new `EmbedSettings`, wired into `Settings`)
 - Modify: `backend/app/main.py` (catch-all + CSP headers)
-- Test: `backend/tests/test_embed_serving.py`
+- Modify: `backend/config.example.yaml` (commented `embed:` block — the documented surface for every other settings block)
+- Test: extend `backend/tests/test_container_serving.py` (it already has the `make_dist(tmp_path)` / `make_app(tmp_path, dist)` fixtures with a safe `db_path` — REUSE them: add an `embed: bool = True` parameter to `make_dist`, add a `TestEmbedServing` class, and add the `frame-ancestors 'none'` assertions to the existing `TestSpaServing` cases). Config-validator tests go in the config test module next to the other `Settings` validators.
 
 **Interfaces:**
-- Produces: `settings.embed.allowed_ancestors: list[str]` (config key `embed.allowed_ancestors`, set later in `deploy/fly/config.yaml` when C2 pins the extension ID).
+- Produces: `settings.embed.allowed_ancestors: list[str]` (YAML key `embed.allowed_ancestors`; set later in `deploy/fly/config.yaml` when C2 pins the extension ID — the `test_fly_config.py` guard lands then).
 
-- [ ] **Step 1: Write failing tests** (fixtures build a fake `dist/` in `tmp_path` with `index.html`, `embed.html`, `assets/`):
+- [ ] **Step 1: Write failing tests:**
   - `GET /embed`, `/embed/`, `/embed/anything`, `/embed.html` → 200, body is embed.html's content
   - default config: those responses carry `Content-Security-Policy: frame-ancestors 'none'`
   - `allowed_ancestors=["chrome-extension://abc", "https://example.com"]` → embed responses carry `frame-ancestors chrome-extension://abc https://example.com`; `index.html` fallback and `/` STILL carry `frame-ancestors 'none'`
-  - `/api/nope` still 404 JSON; `/assets/*` unaffected (no CSP header required)
-  - `Settings.model_validate({"embed": {"allowed_ancestors": ["not a url"]}})` raises; same for entries with spaces, wildcards, or quotes; `'self'` is accepted
-  - a dist WITHOUT `embed.html` still boots and serves the SPA; `/embed` then falls back to `index.html` with `'none'` (forward-compat: old dist + new backend must not 500)
+  - `/api/nope` still 404 JSON; `/assets/*` unaffected (no CSP header required); non-HTML exact files carry no CSP header
+  - `Settings.model_validate({"embed": {"allowed_ancestors": ["not a url"]}})` raises; same for entries with spaces, wildcards, or quotes-in-the-middle; `'self'` is accepted
+  - a dist WITHOUT `embed.html` still boots and serves the SPA; `/embed` then falls back to `index.html` with `'none'` (forward-compat: old dist + new backend must not 500) — `make_dist(embed=False)`
 - [ ] **Step 2: Run, FAIL.**
-- [ ] **Step 3: Implement config**
+- [ ] **Step 3: Implement config** (style matches `ProviderCreditSettings`/`DatabaseSettings`: `field_validator` + `@classmethod` + `extra="forbid"`):
 
 ```python
 class EmbedSettings(BaseModel):
@@ -657,13 +788,14 @@ class EmbedSettings(BaseModel):
         return entries
 ```
 
-Add `embed: EmbedSettings = Field(default_factory=EmbedSettings)` to `Settings`.
+Add `embed: EmbedSettings = Field(default_factory=EmbedSettings)` to `Settings`, and the commented block to `config.example.yaml`.
 - [ ] **Step 4: Implement serving** — in `create_app`'s static block:
 
 ```python
             ancestors = settings.embed.allowed_ancestors
             embed_csp = "frame-ancestors " + (" ".join(ancestors) if ancestors else "'none'")
             embed_page = dist / "embed.html"
+            embed_available = embed_page.is_file()
 
             @app.get("/{full_path:path}", include_in_schema=False)
             def spa(full_path: str) -> FileResponse:
@@ -676,7 +808,7 @@ Add `embed: EmbedSettings = Field(default_factory=EmbedSettings)` to `Settings`.
                 # must never be frameable.
                 if (
                     full_path in ("embed", "embed.html") or full_path.startswith("embed/")
-                ) and embed_page.is_file():
+                ) and embed_available:
                     return FileResponse(
                         embed_page, headers={"Content-Security-Policy": embed_csp}
                     )
@@ -689,7 +821,6 @@ Add `embed: EmbedSettings = Field(default_factory=EmbedSettings)` to `Settings`.
                 )
 ```
 
-(The `embed_page.is_file()` probe is startup-time state like `spa_files` — hoist it: `embed_available = embed_page.is_file()`.)
 - [ ] **Step 5: Run, PASS. Full backend gate, zero warnings.**
 - [ ] **Step 6: Mutation-verify** — swap `embed_csp` for the `'none'` constant on the embed branch: the allowlist test must fail; drop the `.html`-suffix guard: the index-CSP test must fail. Restore both.
 - [ ] **Step 7: Commit** — `feat(backend): serve /embed with configurable frame-ancestors, main SPA 'none' (B43 C1)`
@@ -702,6 +833,7 @@ Add `embed: EmbedSettings = Field(default_factory=EmbedSettings)` to `Settings`.
 - Modify: `backend/app/api/checks.py` (`CheckRequest`)
 - Modify: `frontend/src/api/client.ts` (`CheckRequest` interface)
 - Modify: `frontend/src/checking/controller.ts` (send the tag)
+- Modify: `frontend/src/embed/bridge.ts` (call `setClientTag(hostKind)` on hello)
 - Create: `frontend/src/checking/clientTag.ts`
 - Test: `backend/tests/test_checks_client_tag.py` (or extend the existing checks API test module), `frontend/src/checking/clientTag.test.ts`
 
@@ -718,36 +850,47 @@ Add `embed: EmbedSettings = Field(default_factory=EmbedSettings)` to `Settings`.
 ```
 
 - [ ] **Step 3: Failing frontend test** — `clientTag()` defaults to `'web'`; after `setClientTag('browser-extension')` it returns that; unknown values fall back to `'web'`.
-- [ ] **Step 4: Implement frontend** — `clientTag.ts` (leaf get/set with an allowlist mirroring the backend Literal); `bridge.ts` calls `setClientTag(host.kind)` on `hello` (Task 5's `hostClientKind` folds into this module); `client.ts` adds `client?: string` to its `CheckRequest`; `controller.ts` adds `client: clientTag()` to the `postCheck` body.
+- [ ] **Step 4: Implement frontend** — `clientTag.ts` (leaf get/set with an allowlist mirroring the backend Literal); `bridge.ts` calls `setClientTag(host.kind)` on `hello`; `client.ts` adds `client?: string` to its `CheckRequest`; `controller.ts` adds `client: clientTag()` to the `postCheck` body.
 - [ ] **Step 5: Both gates green. Commit** — `feat(checks): client tag on check requests, persistence deferred (B43 C1)`
 
 ---
 
-### Task 10: Architecture docs
+### Task 10: Docs — architecture + spec amendments
 
 **Files:**
 - Modify: `docs/backend-architecture.md` (embed serving + CSP config + client tag, in the serving/config sections)
 - Modify: `docs/frontend-architecture.md` (new section: embed surface — document port, shim, bridge, protocol, simulator; update the module map)
+- Modify: `docs/superpowers/specs/2026-08-22-b43-embeddable-clients-design.md` — three amendment notes, each marked "(amended during C1)": (a) `FW_EMBED_ALLOWED_ANCESTORS` env → YAML key `embed.allowed_ancestors` (no per-key env overlay exists); (b) capabilities travel on `fieldConnected` (per field), not `hello`, matching the spec's own prose; (c) `client` tag ledger persistence deferred to the next schema-touching story (with B41).
 
-- [ ] **Step 1: Write both updates** (follow each doc's existing style: prose + file references, no marketing).
-- [ ] **Step 2: Commit** — `docs(architecture): embed surface, document port, bridge protocol (B43 C1)`
+- [ ] **Step 1: Write the updates** (follow each doc's existing style: prose + file references).
+- [ ] **Step 2: Commit** — `docs(architecture,specs): embed surface, document port, C1 spec amendments (B43 C1)`
 
 ---
 
 ### Task 11: End-to-end verification round (not CI)
 
-No new files; a scripted verification protocol against the dev stack. Ports: NEVER 5173/8000 — use 5199 (vite) and the already-running dev backend at 8000 is NOT touched; instead run a second backend on 8199 with a `tmp`-derived config (sqlite db under the scratchpad, `environment: dev`, `cors.origins: ["http://localhost:5199"]`, auth mode local with `ephemeral_secret: true` and a seeded admin) — the e2e goal is the embed loop, not supabase.
+No new files; a scripted verification protocol against a scratch stack. Ports: NEVER 5173/8000 — use 5199 (vite) and 8199 (a second backend with a scratch config: sqlite db under the scratchpad, `environment: dev`, `cors.origins: ["http://localhost:5199"]`, `auth.mode: local` with `ephemeral_secret: true`).
 
-- [ ] **Step 1:** Start backend on 8199 with that config; start `vite dev --port 5199` with `VITE_API_URL=http://localhost:8199`.
-- [ ] **Step 2:** Drive `http://localhost:5199/simulator.html` with Playwright (house headless recipe): Connect → log in inside the iframe (seeded admin) → assert findings rows appear for the demo text's planted errors → assert overlay marks in the textarea mirror → click a finding in the sidebar (textarea mark flashes) → apply a suggestion → assert the textarea value changed and the finding disappeared → type into the textarea → assert a re-check fires (status strip) and stale findings dropped.
-- [ ] **Step 3:** Negative probe: edit the textarea mid-flight so `expectedText` mismatches (scripted: mutate value between `applyReplacement` and the echo) → the sidebar shows the failure string, text untouched.
+- [ ] **Step 1:** Start the backend on 8199. Boot REQUIRES the admin-seed env vars (names only here; `seed_admin` raises without them): `FW_ADMIN_EMAIL` and `FW_ADMIN_PASSWORD`, and the password must be ≥ 12 characters (`ADMIN_SET_MIN_PASSWORD_LENGTH`, app/core/auth.py) — an 8-char value is a boot failure, not a login page. Then `vite dev --port 5199` with `VITE_API_URL=http://localhost:8199`.
+- [ ] **Step 2:** Drive `http://localhost:5199/simulator.html` with Playwright (house headless recipe): Connect → log in inside the iframe (the seeded admin) → assert findings rows appear for the demo text's planted errors → assert overlay marks in the textarea mirror → click a finding in the sidebar (textarea mark flashes) → apply a suggestion → assert the textarea value changed and the finding disappeared → type into the textarea → assert a re-check fires (status strip) and stale findings dropped.
+- [ ] **Step 3:** Negative probe via the desync hook: reload as `simulator.html?desync=1`, apply a suggestion → the host refuses (`expectedText` mismatch) → the sidebar shows the `embedReplaceFailed` string; textarea text untouched.
 - [ ] **Step 4:** Capture screenshots; kill both servers (only the ones started here).
 - [ ] **Step 5:** Commit any fixes found, re-run the relevant unit gates.
 
 ---
 
-## Deferred / follow-ups created by this plan
+### Task 12: Wrap-up — PR, review rounds, issues, LOGBOOK
+
+- [ ] **Step 1:** Push `b43-embed-c1`; open the PR against `main` (body: what C1 delivers, the two spec deviations, test evidence incl. the bundle-guard output and e2e screenshots, session trailer; reference the B43/C1 tracking issue on its own line).
+- [ ] **Step 2:** Request Copilot review; spawn the background watcher (house convention). Reply to and resolve EVERY comment thread; triage suppressed comments each round.
+- [ ] **Step 3:** Whole-branch review by an Opus agent (adversarial: port-refactor regressions, bridge origin pinning, CSP correctness, shim mapping edge cases); fix round + scoped re-review.
+- [ ] **Step 4:** Open GH issues for the three deferred items: (a) `llm_usage.client` column + activity attribution (with B41 #126), (b) main-app astral-offset fix, (c) `deploy/fly/config.yaml` `embed.allowed_ancestors` + `test_fly_config.py` guard (lands in C2 with the pinned extension ID).
+- [ ] **Step 5:** On Markus's cue: LOGBOOK entry by PR number as the LAST commit on the branch. Owner merges (rebase-merge — large structured branch).
+
+---
+
+## Deferred / follow-ups created by this plan (become GH issues in Task 12)
 
 - `client` column on `llm_usage` + activity attribution — with the next schema-touching story, alongside B41 (#126).
-- Main-app astral-offset fix (`editor/findings.ts` consumes backend code points unconverted) — pre-existing, now half-fixed (embed path only); backlog issue on merge.
+- Main-app astral-offset fix (`editor/findings.ts` consumes backend code points unconverted; `suggest.ts` sends UTF-16 spans back — uniformly wrong in both directions today, so it cancels out there; the embed path is correct after this plan) — pre-existing, backlog issue on merge.
 - `deploy/fly/config.yaml` gains `embed.allowed_ancestors` only in C2 (needs the pinned extension ID); `test_fly_config.py` guard lands then.
