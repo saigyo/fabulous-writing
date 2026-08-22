@@ -101,29 +101,40 @@ function ChartDataTable({
   formatDay: (iso: string) => string
 }) {
   return (
-    <table className="visually-hidden">
-      <caption>{caption}</caption>
-      <thead>
-        <tr>
-          <th>{dateHeader}</th>
-          {series.map((s) => (
-            <th key={s.key}>{s.label}</th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {days.map((day, i) => (
-          <tr key={day}>
-            {/* Row header, not a plain cell: AT announces this day together
-                with each series column's value as it reads across the row. */}
-            <th scope="row">{formatDay(day)}</th>
+    // .visually-hidden sits on this wrapper div, NOT the <table> (2026-08-22
+    // scroll bug): CSS table layout treats width/height as MINIMUMS, so a
+    // 1x1 table still lays out at its content's min-content size — an
+    // invisible-but-full-size (~600x1000px at 30 days, worse at 365)
+    // absolutely-positioned box that extended the page's scrollable
+    // overflow (clip-path only hides the paint, not the box). A div obeys
+    // 1x1 + overflow:hidden and fully contains the table; this is the
+    // standard sr-only-table pattern.
+    <div className="visually-hidden">
+      <table>
+        <caption>{caption}</caption>
+        <thead>
+          <tr>
+            <th>{dateHeader}</th>
             {series.map((s) => (
-              <td key={s.key}>{s.values[i] ?? 0}</td>
+              <th key={s.key}>{s.label}</th>
             ))}
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {days.map((day, i) => (
+            <tr key={day}>
+              {/* Row header, not a plain cell: AT announces this day
+                  together with each series column's value as it reads
+                  across the row. */}
+              <th scope="row">{formatDay(day)}</th>
+              {series.map((s) => (
+                <td key={s.key}>{s.values[i] ?? 0}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   )
 }
 

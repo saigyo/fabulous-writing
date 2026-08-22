@@ -388,9 +388,15 @@ describe('ActivityView: chart legend and screen-reader data table', () => {
     await screen.findByText(en.activityRuns, { selector: '.activity-panel-label' })
 
     const runsPanel = container.querySelectorAll('.activity-panel')[0]
-    const table = runsPanel.querySelector('table')
+    // .visually-hidden sits on the WRAPPER div, not the <table> itself:
+    // CSS table layout treats width/height as minimums, so a table
+    // carrying the class directly still lays out at full min-content size
+    // (2026-08-22 scroll bug) — a div is what actually clips to 1x1.
+    const wrapper = runsPanel.querySelector('div.visually-hidden')
+    expect(wrapper).not.toBeNull()
+    const table = wrapper?.querySelector('table')
     expect(table).not.toBeNull()
-    expect(table?.classList.contains('visually-hidden')).toBe(true)
+    expect(table?.classList.contains('visually-hidden')).toBe(false)
     expect(table?.querySelector('caption')?.textContent).toBe(en.activityRuns)
 
     const rows = table?.querySelectorAll('tr') ?? []
