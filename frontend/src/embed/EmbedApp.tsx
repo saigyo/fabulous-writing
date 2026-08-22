@@ -26,6 +26,7 @@ export function EmbedApp() {
   const store = useStore()
   const m = useMessages()
   const connectedField = useStore((s) => s.connectedField)
+  const profilesReady = useStore((s) => s.profilesReady)
   // Distinguishes "no host has ever connected a field" (embedWaiting) from
   // "a field was connected and then went away" (embedDisconnected) — purely
   // local to this component; nothing else needs to know the difference.
@@ -48,11 +49,19 @@ export function EmbedApp() {
     // cancelCheck() runs on EVERY transition, including disconnect: a check
     // in flight against a field that just went away must not resolve and
     // publish stale findings for a document nobody is looking at anymore.
-    // runCheck(false) only makes sense when a field is actually connected.
+    //
+    // runCheck(false) is additionally gated on profilesReady (Copilot round
+    // 4): on a cold authenticated mount the profiles fetch (header/
+    // useHeaderData.ts) is still in flight when a field connects, and
+    // nothing else re-checks once the profile (and its rule_config) later
+    // applies — firing the check anyway would silently run the FIRST check
+    // without it. profilesReady is in the dep list so this effect re-fires
+    // (cancelCheck + runCheck) the moment profiles resolve for an
+    // already-connected field, not just on the next connect.
     cancelCheck()
-    if (!connectedField) return
+    if (!connectedField || !profilesReady) return
     void runCheck(false)
-  }, [connectedField])
+  }, [connectedField, profilesReady])
 
   useEffect(() => {
     // Mirrors editor/Editor.tsx's scheduler wiring, minus the CodeMirror

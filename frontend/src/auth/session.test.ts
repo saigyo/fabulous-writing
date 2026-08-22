@@ -24,6 +24,7 @@ vi.mock('../documents/documents', () => ({
 
 import { getMe, postLogin, postLogout, postRefresh } from '../api/client'
 import { setCancelCheckHandler } from '../checking/cancelSlot'
+import { setEmbedActivateHandler } from '../embed/activateSlot'
 import { setEmbedDisconnectHandler } from '../embed/disconnectSlot'
 import { clearLegacyText, invalidateDocumentWork } from '../documents/documents'
 import { clearSnapshot, readSnapshot, writeSnapshot } from '../documents/buffer'
@@ -103,6 +104,7 @@ beforeEach(() => {
   clearSnapshot()
   setCancelCheckHandler(() => {})
   setEmbedDisconnectHandler(() => {})
+  setEmbedActivateHandler(() => {})
   useStore.setState({
     token: null,
     refreshToken: null,
@@ -278,6 +280,28 @@ describe('login', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  // Copilot round 4: a field can connect while the login form is showing
+  // (the embed bridge attaches regardless of auth status). A cross-user
+  // login's resetSessionState() clears store.connectedField even though the
+  // embed shim (hostDoc.ts) is still connected — login() must call through
+  // the registered embed/activateSlot.ts handler, post-commit, so the shim
+  // can republish it.
+  it('calls the registered activateEmbed handler after a successful login', async () => {
+    const spy = vi.fn()
+    setEmbedActivateHandler(spy)
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok', refresh_token: null, expires_at: null, user: user(1) })
+    await login('a@example.com', 'pw')
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not call the registered activateEmbed handler when login fails', async () => {
+    const spy = vi.fn()
+    setEmbedActivateHandler(spy)
+    vi.mocked(postLogin).mockRejectedValue(new HttpError(401, 'Invalid email or password'))
+    await expect(login('a@example.com', 'wrong')).rejects.toThrow()
+    expect(spy).not.toHaveBeenCalled()
   })
 })
 

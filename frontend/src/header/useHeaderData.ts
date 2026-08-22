@@ -60,6 +60,12 @@ export function useHeaderData(): void {
     // under StrictMode's double-invoked effects.
     const isSwitch = prevLanguage.current !== null && prevLanguage.current !== language
     prevLanguage.current = language
+    // A real switch re-fires the fetch below for a new language's profile
+    // list — the embed's connect-time check (EmbedApp.tsx) gates on
+    // profilesReady, so it must go false again the instant a fresh fetch
+    // starts, not just while a document is loading for the first time
+    // (Copilot round 4).
+    if (isSwitch) useStore.getState().setProfilesReady(false)
     // Captured before the request goes out: a session ending mid-request
     // (logout/expiry — see documents/autosave.ts's currentGeneration()) must
     // not let user A's profile list and header selection (language,
@@ -88,6 +94,11 @@ export function useHeaderData(): void {
         // gets to see it.
         if (gen !== currentGeneration()) return
         consumeProfileApplySuppression()
+        // The embed's connect-time check is gated on profilesReady
+        // (Copilot round 4) — a failed fetch must still flip it, or a
+        // connected field would wait on a profile list that is never
+        // coming.
+        useStore.getState().setProfilesReady(true)
       })
   }, [store.language])
 }

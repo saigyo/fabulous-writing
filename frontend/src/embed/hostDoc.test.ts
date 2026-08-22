@@ -598,3 +598,54 @@ describe('resetSession', () => {
     expect(useStore.getState().tracked).toEqual([])
   })
 })
+
+// Copilot round 4: a field can connect while the login form is still
+// showing (the bridge attaches regardless of auth status). login()'s
+// resetSessionState() (on a cross-user login) clears store.connectedField/
+// tracked/docWords/docChars even though this shim is still connected —
+// republish() restores the store's view of it without tearing down the
+// shim's own private fieldId/buffer/items.
+describe('republish', () => {
+  it('is a no-op while unconnected', () => {
+    const outbound = fakeOutbound()
+    const doc: HostDoc = createHostDoc(outbound)
+    expect(() => doc.republish()).not.toThrow()
+    expect(useStore.getState().connectedField).toBeNull()
+  })
+
+  it('restores connectedField, doc metrics, and tracked findings after a login reset — and textChanged still tracks the field', () => {
+    const { doc } = connected('This is very good.', [finding('f1', 8, 12, 'very')])
+    doc.selectFinding('f1')
+    // Simulate the store half of login()'s reset: resetSessionState() wipes
+    // these fields; the shim's own fieldId/buffer/items/selectedId are
+    // untouched (they live outside the store).
+    useStore.setState({
+      connectedField: null, tracked: [], selectedId: null, docWords: 0, docChars: 0,
+    })
+
+    doc.republish()
+
+    expect(useStore.getState().connectedField).toEqual({ fieldId: 'f1', url: null })
+    expect(useStore.getState().docWords).toBe(4)
+    expect(useStore.getState().docChars).toBe('This is very good.'.length)
+    expect(useStore.getState().tracked).toHaveLength(1)
+    expect(useStore.getState().selectedId).toBe('f1')
+
+    doc.textChanged('f1', 'This is very good. Indeed.')
+    expect(doc.getText()).toBe('This is very good. Indeed.')
+  })
+
+  it('restores the page URL published at fieldConnected time', () => {
+    const outbound = fakeOutbound()
+    const doc: HostDoc = createHostDoc(outbound)
+    doc.fieldConnected('f1', 'hello', CAPS, { url: 'https://host.example/doc', fieldKind: 'textarea' })
+    useStore.setState({ connectedField: null })
+
+    doc.republish()
+
+    expect(useStore.getState().connectedField).toEqual({
+      fieldId: 'f1',
+      url: 'https://host.example/doc',
+    })
+  })
+})

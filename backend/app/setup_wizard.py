@@ -439,6 +439,16 @@ def run_wizard(
         )
     }
 
+    # Preserve a manually configured embed allowlist across reruns (Copilot
+    # round 4): the wizard never prompts for this key, and config_data is
+    # rebuilt fresh from the template on every run (like providers_section
+    # and routing above) — the template's embed.allowed_ancestors starts
+    # empty by design, so without this an operator's hand-edited allowlist
+    # would be silently wiped the next time they ran the wizard.
+    existing_ancestors = (existing_config.get("embed") or {}).get("allowed_ancestors")
+    if existing_ancestors:
+        config_data.setdefault("embed", {})["allowed_ancestors"] = existing_ancestors
+
     _backup(env_path)
     _backup(config_path)
     _write_env(env_path, env_values)

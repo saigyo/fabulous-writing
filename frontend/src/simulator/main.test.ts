@@ -42,16 +42,18 @@ beforeEach(() => {
 // against the simulator's stale belief that a field is still connected.
 describe('simulator main: iframe load resets stale ready/connected state', () => {
   it('a second load event re-disables Connect, clears markings, and prompts reconnect', async () => {
-    await import('./main')
     const iframeEl = document.getElementById('embed') as HTMLIFrameElement
-    const connectBtn = document.getElementById('connect') as HTMLButtonElement
-    const statusEl = document.getElementById('sim-status') as HTMLElement
     // happy-dom's bare (src-less) iframe gets a real contentWindow at a
     // 'null' origin — a genuine cross-origin postMessage from the test's
     // http://localhost origin would throw. main.ts's own send() isn't under
     // test here (bridge.test.ts covers the wire format); stub it so hello's
-    // fire-and-forget postMessage doesn't blow up the load handler.
+    // fire-and-forget postMessage doesn't blow up. Installed BEFORE import:
+    // main.ts now also sends an eager hello at module load time (Copilot
+    // round 4), ahead of any 'load' event.
     vi.spyOn(iframeEl.contentWindow!, 'postMessage').mockImplementation(() => {})
+    await import('./main')
+    const connectBtn = document.getElementById('connect') as HTMLButtonElement
+    const statusEl = document.getElementById('sim-status') as HTMLElement
 
     // First load: the embed boots, readies, and the host connects.
     iframeEl.dispatchEvent(new Event('load'))
@@ -81,10 +83,10 @@ describe('simulator main: iframe load resets stale ready/connected state', () =>
 
   it('a stale ready from before the reload no longer re-enables Connect ahead of the fresh shim (old hello timer cleared)', async () => {
     vi.useFakeTimers()
-    await import('./main')
     const iframeEl = document.getElementById('embed') as HTMLIFrameElement
-    const connectBtn = document.getElementById('connect') as HTMLButtonElement
     vi.spyOn(iframeEl.contentWindow!, 'postMessage').mockImplementation(() => {})
+    await import('./main')
+    const connectBtn = document.getElementById('connect') as HTMLButtonElement
 
     iframeEl.dispatchEvent(new Event('load'))
     embedMessage(iframeEl, { type: 'ready' })
@@ -94,6 +96,39 @@ describe('simulator main: iframe load resets stale ready/connected state', () =>
     expect(connectBtn.disabled).toBe(true)
 
     // The fresh shim readies for real — Connect becomes available again.
+    embedMessage(iframeEl, { type: 'ready' })
+    expect(connectBtn.disabled).toBe(false)
+
+    vi.useRealTimers()
+  })
+})
+
+// Copilot round 4: main.ts is a deferred module script, so a cached
+// /embed.html can finish loading and register its own message listener
+// before this script's 'load' listener even runs — waiting for 'load' alone
+// to arm the hello-retry loop can miss that window entirely. The loop must
+// start eagerly too.
+describe('simulator main: eager hello retry loop', () => {
+  it('sends hello and can be answered by a ready before any load event fires', async () => {
+    vi.useFakeTimers()
+    const iframeEl = document.getElementById('embed') as HTMLIFrameElement
+    const postMessage = vi
+      .spyOn(iframeEl.contentWindow!, 'postMessage')
+      .mockImplementation(() => {})
+
+    await import('./main')
+    const connectBtn = document.getElementById('connect') as HTMLButtonElement
+
+    // The eager hello fires at import time, with no 'load' event dispatched.
+    expect(postMessage).toHaveBeenCalled()
+    const [message] = postMessage.mock.calls[0]
+    expect((message as { type: string }).type).toBe('hello')
+
+    // The retry loop is live too, not just the one-shot call.
+    postMessage.mockClear()
+    vi.advanceTimersByTime(250)
+    expect(postMessage).toHaveBeenCalled()
+
     embedMessage(iframeEl, { type: 'ready' })
     expect(connectBtn.disabled).toBe(false)
 

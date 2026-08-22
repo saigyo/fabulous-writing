@@ -83,6 +83,14 @@ interface AppStateData {
   domains: Domain[]
   languages: LanguageInfo[]
   profiles: Profile[]
+  // True once the profiles fetch for the current language has settled
+  // (success OR failure) — see header/useHeaderData.ts. The embed's
+  // connect-time check (EmbedApp.tsx) waits on this so a cold authenticated
+  // mount can't run its first check before the profile (and its
+  // rule_config) is known, with no re-check once it arrives (Copilot round
+  // 4). Reset false at the start of a real language switch, where the fetch
+  // re-fires; also false across a session reset (INITIAL_DATA below).
+  profilesReady: boolean
   profileId: number | null
   lastProfileByLanguage: Record<string, number>
   // Collapsed rules-view sections (category names and `pack:<name>` keys).
@@ -202,6 +210,7 @@ interface AppStateActions {
   setDomains: (domains: Domain[]) => void
   setLanguages: (languages: LanguageInfo[]) => void
   setProfiles: (profiles: Profile[]) => void
+  setProfilesReady: (profilesReady: boolean) => void
   selectProfile: (profile: Profile, apply: boolean) => void
   toggleRuleSection: (key: string) => void
   setRulesCollapsed: (keys: string[]) => void
@@ -353,6 +362,7 @@ export const INITIAL_DATA: Omit<
   domains: [],
   languages: FALLBACK_LANGUAGES,
   profiles: [],
+  profilesReady: false,
   profileId: null,
   lastProfileByLanguage: {},
   rulesCollapsed: [],
@@ -447,7 +457,8 @@ export const useStore = create<AppState>()((set) => ({
   setProviders: (providers) => set({ providers }),
   setDomains: (domains) => set({ domains }),
   setLanguages: (languages) => set({ languages }),
-  setProfiles: (profiles) => set({ profiles }),
+  setProfiles: (profiles) => set({ profiles, profilesReady: true }),
+  setProfilesReady: (profilesReady) => set({ profilesReady }),
   // apply=true copies the profile's values into the header selectors.
   selectProfile: (profile, apply) =>
     set((state) => ({

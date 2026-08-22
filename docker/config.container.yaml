@@ -10,3 +10,11 @@ cors:
   origins: []
 providers:
   default_provider: ollama
+# CSP frame-ancestors entries for /embed (spec B43): controls which origins
+# may iframe the embed surface. Empty (the default) disables embedding —
+# uncomment and list scheme://host[:port] origins (or 'self') to allow one,
+# e.g.:
+#   allowed_ancestors:
+#     - "https://your-host.example"
+embed:
+  allowed_ancestors: []

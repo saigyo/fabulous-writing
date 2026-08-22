@@ -274,6 +274,31 @@ class TestReRun:
         assert (config_dir / "fabulous.env.bak").read_text(encoding="utf-8") == original_env
         assert (config_dir / "config.yaml.bak").is_file()
 
+    def test_rerun_preserves_embed_allowed_ancestors(self, tmp_path, template):
+        # The wizard never prompts for embed.allowed_ancestors, and rebuilds
+        # config.yaml fresh from the template (whose embed block starts
+        # empty) on every run — without an explicit merge, a hand-configured
+        # allowlist would be silently wiped on the next `setup` rerun.
+        import yaml as yaml_module
+
+        config_dir = self.first_run(tmp_path, template)  # ollama first run
+        config_path = config_dir / "config.yaml"
+        data = yaml_module.safe_load(config_path.read_text(encoding="utf-8"))
+        data["embed"] = {"allowed_ancestors": ["https://host.example"]}
+        config_path.write_text(yaml_module.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+        # Keep-everything re-run: email, provider, base URL, model, rotate n.
+        rc = run_wizard(
+            config_dir,
+            template,
+            input_fn=scripted(["", "", "", "", "n"]),
+            getpass_fn=scripted([""]),
+            fetch_models=fetch_fail,
+        )
+        assert rc == 0
+        data = yaml_module.safe_load(config_path.read_text(encoding="utf-8"))
+        assert data["embed"]["allowed_ancestors"] == ["https://host.example"]
+
     def test_config_only_rerun_prefills_provider(self, tmp_path, template, capsys):
         # fabulous.env deleted, config.yaml survives (B21 #78 item 4):
         # still a re-run — provider/model prefills come from the config.

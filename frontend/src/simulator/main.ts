@@ -84,6 +84,19 @@ iframeEl.addEventListener('load', () => {
   helloTimer = setInterval(sendHello, HELLO_RETRY_MS)
 })
 
+// Eagerly arm the retry loop too (Copilot round 4), not just on 'load':
+// this script is a deferred module, so a cached /embed.html can finish
+// loading and register its own message listener before this script's
+// 'load' listener above ever fires — waiting for 'load' alone can miss
+// that window and leave the embed never hearing a hello. Posting to a
+// contentWindow that hasn't loaded yet simply goes nowhere (postMessage is
+// fire-and-forget), and the loop is idempotent — it self-clears the moment
+// 'ready' arrives — so starting it here as well is harmless: a genuine
+// later 'load' (e.g. a manual reload) still clears this timer and arms its
+// own via the listener above.
+sendHello()
+helloTimer = setInterval(sendHello, HELLO_RETRY_MS)
+
 connectBtn.disabled = true
 connectBtn.addEventListener('click', () => {
   if (!ready) return
