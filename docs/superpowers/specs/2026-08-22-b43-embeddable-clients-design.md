@@ -164,6 +164,19 @@ Host → embed:
 > whole-host greeting with no field in scope yet, so it cannot carry a
 > per-field value. `hello` carries only `{ host: { kind, version } }`.
 
+> **Amendment (amended during C1, 2026-08-22):** `replaceResult`'s
+> `requestId` lives at the **envelope** level — sibling to `payload`, per
+> the `Envelope: { fw, type, requestId?, payload }` shape above — not
+> inside `payload`, as is true for every message in these tables that
+> carries a `requestId` (this table's own row lists it undifferentiated
+> from the payload fields that follow it). The payload itself is `{
+> fieldId, ok, text }`, and **`payload.fieldId` is required, not optional**
+> (`protocol.ts`'s `parseHostMessage`, case `'replaceResult'`): the parser
+> rejects any echo missing it, at which point the `applyReplacement` call
+> that requested it never sees a reply and times out. A host built from
+> this table's original row alone — `requestId`, `ok`, resulting text, no
+> `fieldId` — would have every replacement silently refused.
+
 Embed → host:
 
 | type | payload |
@@ -173,6 +186,17 @@ Embed → host:
 | `findings` | `fieldId`, array of `{id, from, to, severity, category}` — geometry only; messages/suggestions render in the sidebar |
 | `applyReplacement` | `requestId`, `fieldId`, `from`, `to`, `insert`, `expectedText` — the exact text believed to occupy `[from,to)`; the adapter MUST verify `expectedText` before mutating and refuse otherwise. Answered by `replaceResult` |
 | `selectFinding` | `fieldId`, `id` — host scrolls/flashes that overlay |
+
+> **Amendment (amended during C1, 2026-08-22):** as with `replaceResult`
+> above, `applyReplacement`'s `requestId` is an **envelope-level** field
+> (sibling to `payload`), not a payload field — this row's payload is `{
+> fieldId, from, to, insert, expectedText }`.
+>
+> Separately, `selectFinding`'s `id` is `string | null`
+> (`protocol.ts`'s `SelectFindingMessage`), not always a `string`: `null`
+> clears the selection, sent when the currently-selected finding is
+> clicked again (a toggle-off), not only when a different finding is
+> newly selected.
 
 Message types live in one **shared TS module** imported by both the embed and
 the extension, so a breaking protocol change fails compilation, not runtime.

@@ -270,6 +270,38 @@ describe('Header profilesReady', () => {
 
     expect(useStore.getState().profiles).toHaveLength(0)
   })
+
+  it('a profile-save setProfiles call during a pending language fetch does not flip readiness (Copilot round 6)', async () => {
+    // Pins the fix: setProfiles used to flip profilesReady true as a side
+    // effect, so a profile save (ProfileSelector.tsx's saveOverrides,
+    // RulesView.tsx, ProfilesView.tsx) landing while a NEWER language's
+    // profiles fetch was still in flight would prematurely re-settle
+    // readiness — letting the embed's connect-time check run against the
+    // previous language's profile before the new language's fetch actually
+    // resolved.
+    vi.mocked(getProfiles).mockResolvedValueOnce([profile()])
+    render(<Header />)
+    await waitFor(() => expect(useStore.getState().profilesReady).toBe(true))
+
+    let resolveProfiles!: (p: Profile[]) => void
+    vi.mocked(getProfiles).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveProfiles = resolve
+        }),
+    )
+    useStore.setState({ language: 'de' })
+    await waitFor(() => expect(getProfiles).toHaveBeenCalledTimes(2))
+    expect(useStore.getState().profilesReady).toBe(false)
+
+    // A profile-save write lands mid-flight — data-only, must not resettle
+    // readiness while the language fetch is still pending.
+    useStore.getState().setProfiles([profile({ domain_ids: [42] })])
+    expect(useStore.getState().profilesReady).toBe(false)
+
+    resolveProfiles([profile({ language: 'de' })])
+    await waitFor(() => expect(useStore.getState().profilesReady).toBe(true))
+  })
 })
 
 describe('Header LLM-phase gating', () => {
