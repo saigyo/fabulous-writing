@@ -4586,3 +4586,12 @@ Follow-up filed as #132: benchmark and configure per-tier thinking
 effort (`output_config.effort`) — checks burn thousands of billed,
 invisible thinking tokens at the default `high`, which also explains
 the 30–45 s latency users noticed on short texts.
+
+## 2026-08-22 — v0.6.1 rollout: truncation fix deployed (PR #133)
+
+Release v0.6.1 cut immediately after PR #131 merged (tag push →
+release workflow, buildcache kept it under ten minutes), fly.toml
+bumped locally and deployed first (`fly deploy --ha=false`), config
+committed through this PR afterwards — deploy-then-commit, as agreed.
+Verified post-deploy: single machine, checks 1/1, `/api/health` 200,
+image digest reports 0.6.1.
