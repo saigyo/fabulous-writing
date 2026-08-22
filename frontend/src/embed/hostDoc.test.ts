@@ -1,8 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Scorecard } from '../scoring/score'
 import { useStore } from '../state/store'
 import type { Finding, Source } from '../types'
 import { createHostDoc, type HostDoc, type HostDocOutbound } from './hostDoc'
 import type { MarkingSpan } from './protocol'
+
+const FAKE_SCORECARD: Scorecard = {
+  consistency: { score: 4, note: '' },
+  flow: { score: 4, note: '' },
+  clarity: { score: 4, note: '' },
+  vividness: { score: 4, note: '' },
+  tone: { score: 4, note: '' },
+  structure: { score: 4, note: '' },
+}
 
 const CAPS = { mark: 'overlay' as const, replace: 'reliable' as const }
 
@@ -362,6 +372,23 @@ describe('fieldConnected / fieldDisconnected / connected / capabilities', () => 
     expect(useStore.getState().tracked).toEqual([])
     const last = outbound.findingsCalls.at(-1)
     expect(last).toEqual({ fieldId: 'f1', findings: [] })
+  })
+
+  it('fieldConnected sets doc metrics for pre-existing text and clears a stale scorecard — the mutation-verification target for clearScorecard', () => {
+    useStore.setState({ scorecard: FAKE_SCORECARD, scorecardStale: false })
+    const outbound = fakeOutbound()
+    const doc: HostDoc = createHostDoc(outbound)
+    doc.fieldConnected('f1', 'four short words', CAPS)
+    expect(useStore.getState().docWords).toBe(3)
+    expect(useStore.getState().docChars).toBe(16)
+    expect(useStore.getState().scorecard).toBeNull()
+  })
+
+  it('fieldConnected does not call onInput (the embed app schedules its own check on connect)', () => {
+    const outbound = fakeOutbound()
+    const doc: HostDoc = createHostDoc(outbound)
+    doc.fieldConnected('f1', 'hello', CAPS)
+    expect(outbound.inputCalls).toBe(0)
   })
 
   it('fieldDisconnected clears connection state for the matching field', () => {
