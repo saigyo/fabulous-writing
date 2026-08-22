@@ -101,19 +101,26 @@ export function ActivityView() {
   // 'all'" — there is no other path to a numeric subject in this view.
   const showBack = typeof effectiveSubject === 'number'
 
+  // A numeric subject only ever arrives via openUser(), which always passes
+  // a label (display_name ?? email) — the subject itself is never
+  // persisted/reloaded with a bare id, so activitySubjectLabel is never
+  // null here.
   const heading =
     effectiveSubject === 'self'
       ? m.accountActivity
       : effectiveSubject === 'all'
         ? m.activityTitleAll
-        : (activitySubjectLabel ?? String(effectiveSubject))
+        : activitySubjectLabel
 
+  // `?? []` guards each category: the runs dict is the extension point
+  // (see usage.py's activity_series comment) — a category missing or
+  // renamed server-side should render as zeros, not throw mid-render.
   const runSeries: ChartSeries[] = data
     ? [
-        { key: 'check', label: m.activityCheck, cssVar: '--accent', values: data.series.runs.check },
-        { key: 'suggestion', label: m.activitySuggestion, cssVar: '--accent-mid', values: data.series.runs.suggestion },
-        { key: 'name', label: m.activityName, cssVar: '--accent-faint', values: data.series.runs.name },
-        { key: 'failed', label: m.activityFailed, cssVar: '--held-back', values: data.series.runs.failed },
+        { key: 'check', label: m.activityCheck, cssVar: '--accent', values: data.series.runs.check ?? [] },
+        { key: 'suggestion', label: m.activitySuggestion, cssVar: '--accent-mid', values: data.series.runs.suggestion ?? [] },
+        { key: 'name', label: m.activityName, cssVar: '--accent-faint', values: data.series.runs.name ?? [] },
+        { key: 'failed', label: m.activityFailed, cssVar: '--held-back', values: data.series.runs.failed ?? [] },
       ]
     : []
   const tokenSeries: ChartSeries[] = data
@@ -123,7 +130,7 @@ export function ActivityView() {
       ]
     : []
   const creditSeries: ChartSeries[] = data
-    ? [{ key: 'credits', label: m.activityCredits, cssVar: '--accent-mid', values: data.series.credits }]
+    ? [{ key: 'credits', label: m.activityTableCredits, cssVar: '--accent-mid', values: data.series.credits }]
     : []
 
   const rows =

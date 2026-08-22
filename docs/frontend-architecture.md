@@ -1725,12 +1725,14 @@ held in the store next to the subject — `activitySubjectLabel`, set by
 `setActivitySubject(userId, label)` from the clicked `per_user` row — rather than in
 local component state, because local state would lose the heading the moment the user
 switches to another view and back while the numeric subject survives in the store.
-`setActivitySubject('self' | 'all')` (no second argument) nulls the label; the heading
-falls back to the bare numeric id if it's ever null on a user subject (e.g. a reload
-path). A numeric subject can only ever arise by clicking a row in the all-users table
-below, so its mere presence already implies "the previous subject was `'all'`" — the back
-control's visibility condition is just `typeof effectiveSubject === 'number'`, with no
-separate history to track.
+`setActivitySubject('self' | 'all')` (no second argument) nulls the label. A numeric
+subject can only ever arise via `openUser()`, which always passes a label
+(`display_name ?? email`) — the subject itself is never persisted/reloaded with a bare
+id — so the heading renders `activitySubjectLabel` directly for a numeric subject with no
+fallback needed. That same "only via `openUser()`" fact means a numeric subject's mere
+presence already implies "the previous subject was `'all'`" — the back control's
+visibility condition is just `typeof effectiveSubject === 'number'`, with no separate
+history to track.
 
 **Charts.** Three `StackedBarChart` panels stack full-width in spec order — runs, tokens,
 credits — each under an uppercase `.activity-panel-label`. Runs splits into four

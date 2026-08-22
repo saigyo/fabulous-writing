@@ -108,7 +108,7 @@ export function StackedBarChart(props: {
       </text>
       {days.map((day, i) => {
         const nonZero = series
-          .map((s) => ({ label: s.label, cssVar: s.cssVar, value: s.values[i] ?? 0 }))
+          .map((s) => ({ key: s.key, label: s.label, cssVar: s.cssVar, value: s.values[i] ?? 0 }))
           .filter((e) => e.value > 0)
         const title =
           nonZero.length === 0
@@ -123,7 +123,7 @@ export function StackedBarChart(props: {
               cursorY -= height
               return (
                 <rect
-                  key={e.label}
+                  key={e.key}
                   className="chart-seg"
                   x={segX}
                   y={cursorY}
