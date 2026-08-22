@@ -28,8 +28,9 @@ the same screen for any user, plus an all-users aggregate.
 - **Navigation:** own activity via an **account-menu entry** (admins
   included; the header bar stays uncrowded); all-users via a **control
   in the admin section**, with per-user drill-down from its table.
-- **Failed runs** (`status != 'ok'` in a settled state) are a visible
-  runs-category; their tokens/credits count as the ledger recorded them.
+- **Failed runs** (settled with `status` `'failed'`, `'cancelled'`, or
+  `'abandoned'` — see R1) are a visible runs-category; their
+  tokens/credits count as the ledger recorded them.
 
 ## Requirements
 
