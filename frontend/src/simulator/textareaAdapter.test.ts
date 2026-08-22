@@ -108,6 +108,25 @@ describe('createTextareaAdapter: overlay reserves the textarea scrollbar gutter'
   })
 })
 
+// Copilot round 3: direction/text-align decide which edge text starts from
+// and how it's justified — an RTL or centered textarea whose overlay stayed
+// LTR/left-aligned would place its mirrored text at the wrong x-coordinate,
+// misaligning every highlight from the real text underneath.
+describe('createTextareaAdapter: overlay mirrors direction and text-align', () => {
+  it('copies direction and text-align from the textarea onto the overlay', () => {
+    el.style.direction = 'rtl'
+    el.style.textAlign = 'center'
+
+    const adapter = createTextareaAdapter(el)
+
+    const overlay = document.querySelector('.fw-mirror-overlay') as HTMLDivElement
+    expect(overlay.style.direction).toBe('rtl')
+    expect(overlay.style.textAlign).toBe('center')
+
+    adapter.dispose()
+  })
+})
+
 describe('createTextareaAdapter: applyReplacement', () => {
   it('happy path: matching expectedText mutates the value and reports the new text', () => {
     const adapter = createTextareaAdapter(el)

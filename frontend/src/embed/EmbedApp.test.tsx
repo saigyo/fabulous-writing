@@ -114,6 +114,17 @@ describe('EmbedApp', () => {
     expect(screen.getByText(en.check)).toBeTruthy()
   })
 
+  // Copilot round 3: protocol.ts's parser accepts an empty-string meta.url
+  // (the field-connected message just requires it to be a string), and a
+  // `??` fallback treats '' as present — rendering a blank connection strip
+  // instead of falling back to the documented fieldId.
+  it('falls back to the fieldId when the connected field has an empty-string url', () => {
+    useStore.setState({ connectedField: { fieldId: 'f1', url: '' } })
+    render(<EmbedApp />)
+
+    expect(screen.getByText('f1')).toBeTruthy()
+  })
+
   it('Check button calls runCheck(true)', () => {
     useStore.setState({ connectedField: { fieldId: 'f1', url: null } })
     render(<EmbedApp />)

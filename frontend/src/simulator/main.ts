@@ -7,6 +7,7 @@
 // probe hooks into via ?desync=1 (see below).
 import { PROTOCOL_VERSION } from '../embed/protocol'
 import type { EmbedMessage, HostCapabilities, HostMessage, MarkingSpan } from '../embed/protocol'
+import { findingIdAt } from './clickHitTest'
 import { createTextareaAdapter } from './textareaAdapter'
 
 const FIELD_ID = 'sim-field'
@@ -53,13 +54,32 @@ let desyncPendingMutate = false
 let ready = false
 let connected = false
 let currentFindings: MarkingSpan[] = []
+let selectedFindingId: string | null = null
 let helloTimer: ReturnType<typeof setInterval> | null = null
 
 function sendHello() {
   send({ type: 'hello', payload: { host: { kind: 'simulator', version: '0.0.1' } } })
 }
 
+// Fires on the FIRST load (the initial /embed.html navigation) and on every
+// subsequent one (a manual iframe reload during a hand-check). A reload
+// replaces the embed with a fresh shim that has no memory of this session —
+// it won't ready/connect on its own, and it will silently ignore any
+// textChanged sent against the old (now-stale) belief that a field is still
+// connected. Without resetting here, the simulator keeps showing "connected"
+// and stale marks against an embed that has already forgotten everything.
 iframeEl.addEventListener('load', () => {
+  if (helloTimer !== null) {
+    clearInterval(helloTimer)
+    helloTimer = null
+  }
+  ready = false
+  connected = false
+  currentFindings = []
+  selectedFindingId = null
+  adapter.clearMarkings()
+  connectBtn.disabled = true
+  statusEl.textContent = 'embed reloaded — reconnect needed'
   sendHello()
   helloTimer = setInterval(sendHello, HELLO_RETRY_MS)
 })
@@ -97,8 +117,10 @@ adapter.onChange(() => {
 fieldEl.addEventListener('click', () => {
   if (!connected) return
   const pos = fieldEl.selectionStart ?? 0
-  const hit = currentFindings.find((f) => pos >= f.from && pos < f.to)
-  if (hit) send({ type: 'markingClicked', payload: { fieldId: FIELD_ID, id: hit.id } })
+  const hitId = findingIdAt(currentFindings, selectedFindingId, pos)
+  if (hitId === null) return
+  selectedFindingId = hitId
+  send({ type: 'markingClicked', payload: { fieldId: FIELD_ID, id: hitId } })
 })
 
 window.addEventListener('message', (event) => {
@@ -127,8 +149,13 @@ window.addEventListener('message', (event) => {
       adapter.setMarkings(msg.payload.findings)
       break
     case 'selectFinding':
-      if (msg.payload.fieldId !== FIELD_ID || msg.payload.id === null) break
-      adapter.flashFinding(msg.payload.id)
+      if (msg.payload.fieldId !== FIELD_ID) break
+      // Tracks the embed's authoritative selection (not just our own click
+      // guess) so findingIdAt's cycling stays correct even when the
+      // selection changed some other way (e.g. picked in the embed's own
+      // sidebar).
+      selectedFindingId = msg.payload.id
+      if (msg.payload.id !== null) adapter.flashFinding(msg.payload.id)
       break
     case 'applyReplacement': {
       if (desyncPendingMutate) {

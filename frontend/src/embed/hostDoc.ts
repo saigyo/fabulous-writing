@@ -293,6 +293,12 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
     selectFinding: doSelectFinding,
     markingClicked(fid, id) {
       if (fieldId !== fid) return
+      // A delayed click can arrive as a postMessage that was already in
+      // flight when the tracked findings changed underneath it (a fresh
+      // check's mergeFindings, or an edit that dropped/shifted the
+      // finding) — guard against selecting (and echoing back) an id that
+      // no longer names a currently tracked finding.
+      if (!currentFinding(id)) return
       doSelectFinding(id)
     },
     applySuggestion(id, suggestion) {

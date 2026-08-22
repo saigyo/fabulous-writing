@@ -138,7 +138,7 @@ export function EmbedApp() {
       </header>
       <div className="embed-connection-strip">
         {connectedField
-          ? (connectedField.url ?? connectedField.fieldId)
+          ? (connectedField.url || connectedField.fieldId)
           : everConnected
             ? m.embedDisconnected
             : m.embedWaiting}
