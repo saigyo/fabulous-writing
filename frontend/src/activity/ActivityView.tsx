@@ -81,6 +81,12 @@ export function ActivityView() {
   useEffect(() => {
     setData(null)
     setError(false)
+    // `cancelled` closes the slow-old-request-overwrites-new race: a subject
+    // or range switch (or unmount) must stop THIS invocation's response
+    // from committing once a newer one has started, even though both share
+    // the same sessionGeneration() (a subject/range change is not a session
+    // turnover, so that guard alone doesn't cover it).
+    let cancelled = false
     const gen = sessionGeneration()
     const call =
       effectiveSubject === 'self'
@@ -90,11 +96,14 @@ export function ActivityView() {
           : getUserActivity(effectiveSubject, days)
     call
       .then((response) => {
-        if (sessionGeneration() === gen) setData(response)
+        if (!cancelled && sessionGeneration() === gen) setData(response)
       })
       .catch(() => {
-        if (sessionGeneration() === gen) setError(true)
+        if (!cancelled && sessionGeneration() === gen) setError(true)
       })
+    return () => {
+      cancelled = true
+    }
   }, [effectiveSubject, days, authGeneration])
 
   function toggleSort(key: SortKey) {

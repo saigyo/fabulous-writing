@@ -285,3 +285,43 @@ describe('ActivityView: sort-state accessibility', () => {
     expect(creditsHeader.getAttribute('aria-sort')).toBe('ascending')
   })
 })
+
+describe('ActivityView: out-of-order fetch resolution', () => {
+  it('keeps the newer response when an older in-flight request settles after it (latest-wins)', async () => {
+    let resolveFirst!: (value: ActivityResponse) => void
+    let resolveSecond!: (value: ActivityResponse) => void
+    vi.mocked(getOwnActivity).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirst = resolve
+        }),
+    )
+
+    render(<ActivityView />)
+    await waitFor(() => expect(getOwnActivity).toHaveBeenCalledTimes(1))
+
+    vi.mocked(getOwnActivity).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSecond = resolve
+        }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: en.activityDays90 }))
+    await waitFor(() => expect(getOwnActivity).toHaveBeenCalledTimes(2))
+
+    const newerLine = `42 ${en.activityTotalRuns} · 1 ${en.activityInput} / 1 ${en.activityOutput} · 1 ${en.activityTableCredits}`
+    const staleLine = `999 ${en.activityTotalRuns} · 2 ${en.activityInput} / 2 ${en.activityOutput} · 2 ${en.activityTableCredits}`
+
+    // The newer (second) request settles first...
+    resolveSecond({ ...selfFixture(), totals: { runs: 42, input_tokens: 1, output_tokens: 1, credits: 1 } })
+    await screen.findByText(newerLine)
+
+    // ...then the older (first, now-superseded) request settles late. Without
+    // the effect's cleanup flag, this would overwrite the newer numbers.
+    resolveFirst({ ...selfFixture(), totals: { runs: 999, input_tokens: 2, output_tokens: 2, credits: 2 } })
+    await new Promise((r) => setTimeout(r, 0))
+
+    screen.getByText(newerLine)
+    expect(screen.queryByText(staleLine)).toBeNull()
+  })
+})

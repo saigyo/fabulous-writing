@@ -106,3 +106,19 @@ class TestActivityUserTotals:
         assert [t.user_id for t in totals] == [1]
         assert totals[0].runs == 2                 # settled runs incl. failed
         assert totals[0].credits == 5
+
+
+class TestActivityAll:
+    def test_single_snapshot_totals_agree_with_series(self, store):
+        # Two users, in-range and out-of-range rows for user 2 — the
+        # out-of-range row must be excluded from BOTH halves of the
+        # returned tuple, or the settled-run sum below silently disagrees.
+        _row(store, user_id=1, day="2026-08-22")
+        _row(store, user_id=1, day="2026-08-22", source="suggestion")
+        _row(store, user_id=2, day="2026-08-22", status="failed", credits=0)
+        _row(store, user_id=2, day="2026-07-01")   # outside the 30-day range
+        series, totals = store.activity_all(days=30, end=END)
+        assert {t.user_id for t in totals} == {1, 2}
+        settled_from_series = sum(sum(v) for v in series.runs.values())
+        settled_from_totals = sum(t.runs for t in totals)
+        assert settled_from_series == settled_from_totals == 3

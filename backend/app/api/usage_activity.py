@@ -59,28 +59,31 @@ class AllActivityResponse(ActivityResponse):
     per_user: list[PerUserRow]
 
 
-def _series_response(store, user_id, days, end=None) -> ActivityResponse:
-    s = store.activity_series(user_id, days=int(days), end=end)
-    totals = ActivityTotals(
+def _totals(s) -> ActivityTotals:
+    return ActivityTotals(
         runs=sum(sum(v) for v in s.runs.values()),
         input_tokens=sum(s.input_tokens),
         output_tokens=sum(s.output_tokens),
         credits=sum(s.credits),
     )
+
+
+def _activity_response(s) -> ActivityResponse:
     return ActivityResponse(
         days=s.days,
         series=ActivitySeriesPayload(
             runs=s.runs, input_tokens=s.input_tokens,
             output_tokens=s.output_tokens, credits=s.credits,
         ),
-        totals=totals,
+        totals=_totals(s),
     )
 
 
 @router.get("")
 def own_activity(request: Request, days: Days = Days.d30,
                  user: CurrentUser = Depends(get_current_user)) -> ActivityResponse:
-    return _series_response(request.app.state.usage_store, user.id, days)
+    store = request.app.state.usage_store
+    return _activity_response(store.activity_series(user.id, days=int(days)))
 
 
 # Registered before /{user_id} so "all" never parses as a user id.
@@ -89,9 +92,12 @@ def all_activity(request: Request, days: Days = Days.d30,
                  _admin: CurrentUser = Depends(require_admin)) -> AllActivityResponse:
     store = request.app.state.usage_store
     # One clock read for BOTH queries: across midnight the series and the
-    # per-user table must describe the same range.
+    # per-user table must describe the same range. activity_all (not the
+    # two separate activity_series/activity_user_totals calls) also pins
+    # both queries to one DB snapshot — see its own docstring for why that
+    # matters beyond the shared end_day.
     end_day = datetime.now(UTC).date()
-    base = _series_response(store, None, days, end=end_day)
+    series, user_totals = store.activity_all(days=int(days), end=end_day)
     users = {u.id: u for u in request.app.state.user_store.list_users()}
     per_user = [
         PerUserRow(
@@ -101,14 +107,15 @@ def all_activity(request: Request, days: Days = Days.d30,
             runs=t.runs, input_tokens=t.input_tokens,
             output_tokens=t.output_tokens, credits=t.credits,
         )
-        for t in store.activity_user_totals(days=int(days), end=end_day)
+        for t in user_totals
     ]
-    return AllActivityResponse(**base.model_dump(), per_user=per_user)
+    return AllActivityResponse(**_activity_response(series).model_dump(), per_user=per_user)
 
 
 @router.get("/{user_id}")
 def user_activity(request: Request, user_id: int, days: Days = Days.d30,
                   _admin: CurrentUser = Depends(require_admin)) -> ActivityResponse:
+    store = request.app.state.usage_store
     if request.app.state.user_store.get_user(user_id) is None:
         raise HTTPException(404, "User not found")
-    return _series_response(request.app.state.usage_store, user_id, days)
+    return _activity_response(store.activity_series(user_id, days=int(days)))
