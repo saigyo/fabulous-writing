@@ -103,6 +103,72 @@ describe('simulator main: iframe load resets stale ready/connected state', () =>
   })
 })
 
+// Copilot round 11: applyReplacement used to call the adapter unconditionally,
+// even for a delayed/mismatched request arriving after a disconnect/reload —
+// unlike the other field-scoped handlers (findings, selectFinding), which all
+// check payload.fieldId. A stale or mismatched-field request could still
+// mutate the live textarea.
+describe('simulator main: applyReplacement is scoped to connected + fieldId', () => {
+  it('a mismatched-field request leaves the textarea untouched and answers ok:false', async () => {
+    const iframeEl = document.getElementById('embed') as HTMLIFrameElement
+    const postMessage = vi
+      .spyOn(iframeEl.contentWindow!, 'postMessage')
+      .mockImplementation(() => {})
+    await import('./main')
+    const fieldEl = document.getElementById('field') as HTMLTextAreaElement
+
+    iframeEl.dispatchEvent(new Event('load'))
+    embedMessage(iframeEl, { type: 'ready' })
+    const connectBtn = document.getElementById('connect') as HTMLButtonElement
+    connectBtn.click()
+
+    const before = fieldEl.value
+    postMessage.mockClear()
+    embedMessage(iframeEl, {
+      type: 'applyReplacement',
+      requestId: 'req-1',
+      payload: { fieldId: 'not-sim-field', from: 0, to: 5, insert: 'xxxxx', expectedText: 'hello' },
+    })
+
+    expect(fieldEl.value).toBe(before) // untouched
+    const [message] = postMessage.mock.calls[0]
+    expect(message).toMatchObject({
+      type: 'replaceResult',
+      requestId: 'req-1',
+      payload: { fieldId: 'sim-field', ok: false, text: before },
+    })
+  })
+
+  it('a request while not connected leaves the textarea untouched and answers ok:false', async () => {
+    const iframeEl = document.getElementById('embed') as HTMLIFrameElement
+    const postMessage = vi
+      .spyOn(iframeEl.contentWindow!, 'postMessage')
+      .mockImplementation(() => {})
+    await import('./main')
+    const fieldEl = document.getElementById('field') as HTMLTextAreaElement
+
+    iframeEl.dispatchEvent(new Event('load'))
+    embedMessage(iframeEl, { type: 'ready' })
+    // Deliberately not clicking Connect — never transitions to connected.
+
+    const before = fieldEl.value
+    postMessage.mockClear()
+    embedMessage(iframeEl, {
+      type: 'applyReplacement',
+      requestId: 'req-2',
+      payload: { fieldId: 'sim-field', from: 0, to: 5, insert: 'xxxxx', expectedText: 'hello' },
+    })
+
+    expect(fieldEl.value).toBe(before)
+    const [message] = postMessage.mock.calls[0]
+    expect(message).toMatchObject({
+      type: 'replaceResult',
+      requestId: 'req-2',
+      payload: { fieldId: 'sim-field', ok: false, text: before },
+    })
+  })
+})
+
 // Copilot round 4: main.ts is a deferred module script, so a cached
 // /embed.html can finish loading and register its own message listener
 // before this script's 'load' listener even runs — waiting for 'load' alone

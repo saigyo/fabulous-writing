@@ -171,12 +171,29 @@ window.addEventListener('message', (event) => {
       if (msg.payload.id !== null) adapter.flashFinding(msg.payload.id)
       break
     case 'applyReplacement': {
+      const { requestId } = msg
+      const { from, to, insert, expectedText } = msg.payload
+      // Copilot round 11: unlike the other field-scoped handlers above
+      // (findings, selectFinding), this one used to call the adapter
+      // unconditionally. A delayed or mismatched request — e.g. one queued
+      // before a disconnect/reload and only delivered after — could still
+      // mutate the live textarea with no connected field to own it, or with
+      // a stale requester's fieldId. Refuse it the same way the adapter
+      // itself refuses an expectedText mismatch: ok:false with the CURRENT
+      // (unmodified) text, so the shim's own retry/desync handling on the
+      // other end sees an ordinary refusal rather than a crash.
+      if (!connected || msg.payload.fieldId !== FIELD_ID) {
+        send({
+          type: 'replaceResult',
+          requestId,
+          payload: { fieldId: FIELD_ID, ok: false, text: adapter.extract() },
+        })
+        break
+      }
       if (desyncPendingMutate) {
         desyncPendingMutate = false
         fieldEl.value = `_${fieldEl.value}`
       }
-      const { requestId } = msg
-      const { from, to, insert, expectedText } = msg.payload
       const result = adapter.applyReplacement(from, to, insert, expectedText)
       send({
         type: 'replaceResult',

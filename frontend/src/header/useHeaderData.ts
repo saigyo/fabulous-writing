@@ -54,6 +54,19 @@ export function useHeaderData(): void {
 
   const prevLanguage = useRef<Language | null>(null)
   useEffect(() => {
+    // Also re-runs on every authGeneration bump (Copilot round 11) — the
+    // same key the catalog effect above depends on, and for the identical
+    // reason: login() bumps authGeneration unconditionally (see its own
+    // comment there), including a SAME-language A->B login, which changes
+    // neither store.language nor `language` below. Without this, that login
+    // left this effect un-rerun: resetSessionState() had already cleared
+    // profiles/profileId/lastProfileByLanguage/profilesReady for B, but
+    // nothing ever fired a fresh fetch to resettle them — profilesReady
+    // stayed false for the rest of B's session — and worse, A's still
+    // in-flight, owner-scoped response could itself land in B's store once
+    // it resolved, since (before this fix) the guard below was
+    // documents/autosave.ts's currentGeneration(), which login() never
+    // bumps at all.
     const language = store.language
     // Apply profile values only on a real language switch. Comparing the
     // previous language (instead of a consumed boolean) keeps this correct
@@ -67,11 +80,22 @@ export function useHeaderData(): void {
     // (Copilot round 4).
     if (isSwitch) useStore.getState().setProfilesReady(false)
     // Captured before the request goes out: a session ending mid-request
-    // (logout/expiry — see documents/autosave.ts's currentGeneration()) must
-    // not let user A's profile list and header selection (language,
+    // (logout/expiry — see documents/autosave.ts's currentGeneration())
+    // must not let user A's profile list and header selection (language,
     // domainIds, provider, model, tier) land in user B's store, where the
     // live subscription below would autosave them onto B's open document.
+    // Copilot round 11: currentGeneration() alone missed a DIRECT login
+    // landing mid-request — it is bumped only by logout()/expireSession()
+    // (via invalidateDocumentWork()), never by login(), so a same-language
+    // A->B login left this check blind to the turnover. sessionGeneration()
+    // (auth/session.ts, the same guard the catalog effect's domains fetch
+    // above uses) bumps on all three transitions, so it is captured too and
+    // checked alongside currentGeneration() below rather than replacing it
+    // — the existing synthetic-turnover tests in App.test.tsx exercise the
+    // currentGeneration() path directly (via autosave.ts's bumpGeneration())
+    // without going through a real login()/logout(), so both guards stay.
     const gen = currentGeneration()
+    const sessionGen = sessionGeneration()
     // Per-effect-instance cancellation flag (Copilot round 5): the
     // generation guard above only protects against a SESSION turnover, not
     // a second language switch racing ahead of this one. Without this, a
@@ -85,7 +109,7 @@ export function useHeaderData(): void {
     let cancelled = false
     getProfiles(language)
       .then((profiles) => {
-        if (gen !== currentGeneration()) return // session ended: do not write
+        if (gen !== currentGeneration() || sessionGen !== sessionGeneration()) return // session ended (or a new login landed): do not write
         if (cancelled) return // superseded by a newer language switch: do not write
         const s = useStore.getState()
         s.setProfiles(profiles)
@@ -111,7 +135,7 @@ export function useHeaderData(): void {
         // the *incoming* session has since armed for its own document open,
         // silently discarding it before that session's own profile fetch
         // gets to see it.
-        if (gen !== currentGeneration()) return
+        if (gen !== currentGeneration() || sessionGen !== sessionGeneration()) return
         if (cancelled) return // superseded by a newer language switch: ignore
         consumeProfileApplySuppression()
         // A failed language-switch fetch must not leave the PREVIOUS
@@ -130,5 +154,5 @@ export function useHeaderData(): void {
     return () => {
       cancelled = true
     }
-  }, [store.language])
+  }, [store.language, store.authGeneration])
 }
