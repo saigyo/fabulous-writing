@@ -31,8 +31,14 @@ export function StackedBarChart(props: {
   days: string[]
   series: ChartSeries[]
   ariaLabel: string
+  // Renders one ISO day string for display (x-axis labels, tooltip prefix)
+  // — kept as an injected prop rather than formatting internally so this
+  // component stays pure/locale-agnostic; ActivityView binds the current UI
+  // locale (see activity/formatDay.ts). Internal keys (days[], indexing,
+  // sorting) are never touched by it.
+  formatDay: (iso: string) => string
 }) {
-  const { days, series, ariaLabel } = props
+  const { days, series, ariaLabel, formatDay } = props
 
   const plotLeft = PAD_LEFT
   const plotRight = VIEWBOX_W - PAD_RIGHT
@@ -112,8 +118,8 @@ export function StackedBarChart(props: {
           .filter((e) => e.value > 0)
         const title =
           nonZero.length === 0
-            ? day
-            : `${day} — ${nonZero.map((e) => `${e.label} ${e.value}`).join(', ')}`
+            ? formatDay(day)
+            : `${formatDay(day)} — ${nonZero.map((e) => `${e.label} ${e.value}`).join(', ')}`
         const segX = plotLeft + i * barSlot + segGap
         let cursorY = plotBottom
         return (
@@ -173,7 +179,7 @@ export function StackedBarChart(props: {
             : plotLeft + i * barSlot + barSlot / 2
         return (
           <text key={i} className="chart-xlabel" x={x} y={VIEWBOX_H - 4} textAnchor={textAnchor}>
-            {days[i]}
+            {formatDay(days[i])}
           </text>
         )
       })}
