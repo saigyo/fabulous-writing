@@ -86,9 +86,14 @@ def usage_from_exception(exc: BaseException) -> "TokenUsage | None":
     """The usage the provider had already obtained when the failure was
     raised — UnparseableResponseError and TruncatedResponseError carry it
     (spec §3.3: settle whatever usage was obtained before the failure).
-    Every LLM-invoking endpoint settles it the same way; None otherwise."""
-    usage = getattr(exc, "usage", None)
-    return usage if isinstance(usage, TokenUsage) else None
+    Every LLM-invoking endpoint settles it the same way; None otherwise.
+    Never raises (like _status_of): a hostile `usage` property must not
+    replace the original failure inside an exception handler."""
+    try:
+        usage = getattr(exc, "usage", None)
+        return usage if isinstance(usage, TokenUsage) else None
+    except Exception:
+        return None
 
 
 def _status_of(exc: BaseException) -> int | None:
