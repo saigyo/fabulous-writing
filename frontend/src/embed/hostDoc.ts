@@ -340,11 +340,18 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
       return Promise.resolve('not-found')
     },
     fieldConnected(fid, text, capabilities, meta) {
-      fieldId = fid // set first: resetConnectionState's wire send targets this new field
+      // resetConnectionState() runs FIRST, while fieldId is still the OLD
+      // field (Copilot round 5): it addresses its empty-findings clear to
+      // whichever field is currently connected, so the field that is about
+      // to disappear gets told to drop its overlays — installing the new
+      // fieldId before this call sent that clear to the field that was
+      // about to connect instead, leaving the old field's adapter stuck
+      // with stale marks it would never receive another update for.
+      resetConnectionState() // whole-document replacement: no "old text"/findings/pending left to describe
+      fieldId = fid
       caps = capabilities
       buffer = text
       connectedUrl = meta?.url ?? null
-      resetConnectionState() // whole-document replacement: no "old text"/findings/pending left to describe
       const store = useStore.getState()
       store.setDocWords(wordCount(text))
       store.setDocChars(codePoints(text))
