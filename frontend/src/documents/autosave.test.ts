@@ -19,15 +19,25 @@ vi.mock('../api/client', async (importOriginal) => ({
   updateDocument: vi.fn(),
   generateDocumentName: vi.fn(),
 }))
-vi.mock('../editor/editorRef', () => ({
-  getEditorView: () => ({ state: { doc: { toString: () => docText } } }),
-}))
 vi.mock('../auth/refreshSlot', () => ({ refreshUserNow: vi.fn() }))
 
 import { generateDocumentName, updateDocument } from '../api/client'
 import { refreshUserNow } from '../auth/refreshSlot'
+import { setDocumentPort, type DocumentPort } from '../checking/documentPort'
 
 let docText = 'hello world'
+
+const fakePort: DocumentPort = {
+  hasDocument: () => true,
+  getText: () => docText,
+  setDocument: () => {},
+  currentFinding: () => null,
+  serverSpan: () => null,
+  mergeFindings: () => {},
+  selectFinding: () => {},
+  applySuggestion: () => Promise.resolve('not-found'),
+  applyRewrite: () => Promise.resolve('not-found'),
+}
 
 const USER = {
   id: 1,
@@ -82,12 +92,14 @@ beforeEach(() => {
   clearSnapshot()
   docText = 'hello world'
   seedStore()
+  setDocumentPort(fakePort)
   vi.mocked(updateDocument).mockResolvedValue(serverDoc(3) as never)
   vi.mocked(generateDocumentName).mockResolvedValue(serverDoc(3) as never)
 })
 
 afterEach(() => {
   vi.useRealTimers()
+  setDocumentPort(null)
 })
 
 describe('autosave', () => {

@@ -4,8 +4,8 @@ import { effectiveLabel } from '../checking/effectiveLabel'
 import { skipNoticeText } from '../checking/skipNotice'
 import { llmStatusLabel } from '../checking/status'
 import { fetchRewrite, fetchSuggestions } from '../checking/suggest'
+import { getDocumentPort } from '../checking/documentPort'
 import { heldBackReason } from '../checking/vetMessage'
-import { applyRewrite, applySuggestion, selectFinding } from '../editor/editorRef'
 import { groupByCategory } from '../findings/group'
 import { countBySeverity, filterBySeverity, SEVERITIES } from '../findings/severity'
 import {
@@ -232,7 +232,7 @@ function FindingRow({ finding, selected }: { finding: Finding; selected: boolean
     <div
       ref={ref}
       className={`finding-row${selected ? ' selected' : ''}`}
-      onClick={() => selectFinding(selected ? null : finding.id)}
+      onClick={() => getDocumentPort().selectFinding(selected ? null : finding.id)}
     >
       <div className="finding-quote">
         “{truncate(finding.span.text, 60)}”
@@ -278,7 +278,7 @@ function SuggestionArea({ finding }: { finding: Finding }) {
             className="suggestion-button"
             onClick={(event) => {
               event.stopPropagation()
-              applySuggestion(finding.id, suggestion)
+              void getDocumentPort().applySuggestion(finding.id, suggestion)
             }}
           >
             {suggestion}
@@ -319,7 +319,7 @@ function SuggestionArea({ finding }: { finding: Finding }) {
       {error && heldBack.length > 0 && (
         <HeldBackList
           candidates={heldBack}
-          onApply={(text) => applySuggestion(finding.id, text)}
+          onApply={(text) => void getDocumentPort().applySuggestion(finding.id, text)}
         />
       )}
       <AdviceNotes notes={advice} />
@@ -393,18 +393,20 @@ function RewriteArea({ finding }: { finding: Finding }) {
   const heldBack = useStore((s) => s.rewriteHeldBack[finding.id])
   const advice = useStore((s) => s.rewriteAdvice[finding.id]) ?? NO_ADVICE
 
-  function apply(option: string) {
+  async function apply(option: string) {
     if (!rewrite) return
-    if (!applyRewrite(finding.id, rewrite.original, option)) {
+    const result = await getDocumentPort().applyRewrite(finding.id, rewrite.original, option)
+    if (result !== 'ok') {
       const store = useStore.getState()
       store.setRewrite(finding.id, null)
       store.setRewriteError(finding.id, m.sentenceChangedRewriteAgain)
     }
   }
 
-  function applyHeldBack(option: string) {
+  async function applyHeldBack(option: string) {
     if (!heldBack) return
-    if (!applyRewrite(finding.id, heldBack.original, option)) {
+    const result = await getDocumentPort().applyRewrite(finding.id, heldBack.original, option)
+    if (result !== 'ok') {
       const store = useStore.getState()
       store.setRewriteHeldBack(finding.id, null)
       store.setRewriteError(finding.id, m.sentenceChangedRewriteAgain)
@@ -424,7 +426,7 @@ function RewriteArea({ finding }: { finding: Finding }) {
             title={m.applyRewriteTitle}
             onClick={(event) => {
               event.stopPropagation()
-              apply(option)
+              void apply(option)
             }}
           >
             {option}

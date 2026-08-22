@@ -7,7 +7,7 @@
 // truly writes nothing, or that logging out for real actually removes
 // fabulous-writing-text from localStorage rather than just calling a mock
 // that claims to.
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MeResponse } from '../api/client'
 import { clearSnapshot, readSnapshot } from '../documents/buffer'
 import { resetAutosaveForTests, flush } from '../documents/autosave'
@@ -22,12 +22,21 @@ vi.mock('../api/client', async (importOriginal) => ({
   postLogout: vi.fn().mockResolvedValue(undefined),
   updateDocument: vi.fn(),
 }))
-vi.mock('../editor/editorRef', () => ({
-  getEditorView: () => ({ state: { doc: { toString: () => 'hello world' } } }),
-}))
-
 import { postLogin, updateDocument } from '../api/client'
+import { setDocumentPort, type DocumentPort } from '../checking/documentPort'
 import { login, logout } from './session'
+
+const fakePort: DocumentPort = {
+  hasDocument: () => true,
+  getText: () => 'hello world',
+  setDocument: () => {},
+  currentFinding: () => null,
+  serverSpan: () => null,
+  mergeFindings: () => {},
+  selectFinding: () => {},
+  applySuggestion: () => Promise.resolve('not-found'),
+  applyRewrite: () => Promise.resolve('not-found'),
+}
 
 const USER: MeResponse = {
   id: 1,
@@ -51,6 +60,7 @@ beforeEach(() => {
   resetAutosaveForTests()
   localStorage.clear()
   clearSnapshot()
+  setDocumentPort(fakePort)
   useStore.setState({
     token: 'tok',
     user: USER,
@@ -72,6 +82,10 @@ beforeEach(() => {
       updated_at: '2026-07-10T00:00:00+00:00',
     },
   ])
+})
+
+afterEach(() => {
+  setDocumentPort(null)
 })
 
 // A real logout() (and login() as a different user) resets `user` and

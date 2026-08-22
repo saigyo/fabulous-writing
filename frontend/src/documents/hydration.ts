@@ -6,8 +6,7 @@ import {
   type DocumentFull,
 } from '../api/client'
 import { cancelCheck } from '../checking/controller'
-import { getEditorView } from '../editor/editorRef'
-import { setFindingsEffect } from '../editor/findings'
+import { getDocumentPort } from '../checking/documentPort'
 import { currentMessages } from '../i18n'
 import { useStore } from '../state/store'
 import {
@@ -126,16 +125,13 @@ export async function hydrateFromDocument(doc: HydrateSource, gen: number): Prom
       nameSource: doc.name_source,
       revision: doc.revision,
     })
-    const view = getEditorView()
-    if (view) {
+    const port = getDocumentPort()
+    if (port.hasDocument()) {
       const findings = doc.last_findings.map((saved) => ({
         ...saved.finding,
         span: { ...saved.finding.span, start: saved.from, end: saved.to },
       }))
-      view.dispatch({
-        changes: { from: 0, to: view.state.doc.length, insert: doc.text },
-        effects: setFindingsEffect.of(findings),
-      })
+      port.setDocument(doc.text, findings)
     }
     if (doc.scorecard) {
       useStore.getState().setScorecard(doc.scorecard.card)

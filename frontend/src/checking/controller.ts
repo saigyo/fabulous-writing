@@ -2,13 +2,12 @@ import { HttpError, postCheck, subscribeCheck } from '../api/client'
 import { llmDisabled, tierAllowed } from '../auth/policy'
 import { refreshUserNow } from '../auth/refreshSlot'
 import { currentGeneration, flush } from '../documents/autosave'
-import { getEditorView } from '../editor/editorRef'
-import { mergeFindingsEffect } from '../editor/findings'
 import { currentMessages } from '../i18n'
 import { activeProfile, effectiveRuleConfig } from '../profiles/profile'
 import { useStore } from '../state/store'
 import type { Finding } from '../types'
 import { setCancelCheckHandler } from './cancelSlot'
+import { getDocumentPort } from './documentPort'
 import { resolveModel } from './routing'
 
 let currentCheckId: string | null = null
@@ -55,10 +54,9 @@ setCancelCheckHandler(cancelCheck)
  * supersedes any in-flight one.
  */
 export async function runCheck(includeLlm: boolean): Promise<void> {
-  const view = getEditorView()
-  if (!view) return
+  const port = getDocumentPort()
   const state = useStore.getState()
-  const text = view.state.doc.toString()
+  const text = port.getText()
 
   unsubscribe?.()
   unsubscribe = null
@@ -66,12 +64,7 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
   const epoch = checkEpoch
 
   if (!text.trim()) {
-    view.dispatch({
-      effects: mergeFindingsEffect.of({
-        replaceSources: ['rule', 'terminology', 'llm'],
-        findings: [],
-      }),
-    })
+    port.mergeFindings(['rule', 'terminology', 'llm'], [])
     useStore.setState({ llmEffective: null })
     return
   }
@@ -228,12 +221,15 @@ export async function runCheck(includeLlm: boolean): Promise<void> {
     },
     onScorecard(scorecard) {
       if (currentCheckId !== checkId) return
-      const view = getEditorView()
       useStore.getState().setScorecard(scorecard)
       // The scorecard describes the checked snapshot; if the user kept
       // typing it is immediately outdated (unlike findings it has no
-      // offsets, so it is kept rather than discarded).
-      if (view && view.state.doc.toString() !== text) {
+      // offsets, so it is kept rather than discarded). The runCheck()
+      // early-return above already filters the empty-document case
+      // (`!text.trim()` returns before any subscription), so a null port's
+      // getText() === '' arriving here mid-teardown just marks stale —
+      // harmless, and matches "document gone".
+      if (port.getText() !== text) {
         useStore.getState().markScorecardStale()
       }
       void flush()
@@ -269,12 +265,9 @@ function applyFindings(
   sources: ('rule' | 'terminology' | 'llm')[],
   findings: Finding[],
 ): void {
-  const view = getEditorView()
-  if (!view) return
+  const port = getDocumentPort()
   // Findings are anchored to the checked snapshot; if the user kept typing,
   // the offsets no longer apply, so stale results are discarded.
-  if (view.state.doc.toString() !== checkedText) return
-  view.dispatch({
-    effects: mergeFindingsEffect.of({ replaceSources: sources, findings }),
-  })
+  if (port.getText() !== checkedText) return
+  port.mergeFindings(sources, findings)
 }

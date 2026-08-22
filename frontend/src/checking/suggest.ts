@@ -2,11 +2,10 @@ import { HttpError, postSuggestions } from '../api/client'
 import { tierAllowed } from '../auth/policy'
 import { refreshUserNow } from '../auth/refreshSlot'
 import { currentGeneration } from '../documents/autosave'
-import { getEditorView } from '../editor/editorRef'
-import { findingsField } from '../editor/findings'
 import { currentMessages } from '../i18n'
 import { activeProfile } from '../profiles/profile'
 import { useStore } from '../state/store'
+import { getDocumentPort } from './documentPort'
 import { resolveModel } from './routing'
 import { skipNoticeText } from './skipNotice'
 import { noReliableSuggestionMessage } from './vetMessage'
@@ -164,12 +163,11 @@ export function llmActionPending(): boolean {
 }
 
 async function requestForFinding(findingId: string, scope: 'span' | 'sentence') {
-  const view = getEditorView()
-  if (!view) return null
-  const item = view.state
-    .field(findingsField)
-    .items.find((it) => it.finding.id === findingId)
+  const port = getDocumentPort()
+  const item = port.currentFinding(findingId)
   if (!item) return null
+  const span = port.serverSpan(findingId)
+  if (!span) return null
   const state = useStore.getState()
   const resolution = resolveModel(state)
   // Same off-plan bypass as controller.ts's runCheck(): an off-plan tier's
@@ -181,8 +179,8 @@ async function requestForFinding(findingId: string, scope: 'span' | 'sentence') 
     throw new Error(currentMessages().llmSkipped(resolution.reason))
   }
   return postSuggestions({
-    text: view.state.doc.toString(),
-    span: { start: item.from, end: item.to },
+    text: port.getText(),
+    span,
     message: item.finding.message,
     language: state.language,
     scope,
