@@ -229,6 +229,30 @@ class AuthSettings(BaseModel):
     supabase: SupabaseSettings | None = None
 
 
+class EmbedSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")  # a typo'd key must fail loudly
+    # CSP frame-ancestors entries for /embed (spec B43): origins allowed to
+    # iframe the embed surface, e.g. "chrome-extension://<extension-id>".
+    # Empty (the default) renders 'none' — embedding is off until a
+    # deployment opts in. Validated at startup: a malformed entry would
+    # silently disable the whole CSP directive in some browsers.
+    allowed_ancestors: list[str] = Field(default_factory=list)
+
+    @field_validator("allowed_ancestors")
+    @classmethod
+    def _validate_entries(cls, entries: list[str]) -> list[str]:
+        pattern = re.compile(
+            r"^(?:'self'|[a-z][a-z0-9+.\-]*://[A-Za-z0-9.\-]+(?::\d+)?)$"
+        )
+        for entry in entries:
+            if not pattern.match(entry):
+                raise ValueError(
+                    f"embed.allowed_ancestors entry {entry!r} is not 'self' or"
+                    " a scheme://host[:port] origin"
+                )
+        return entries
+
+
 class DatabaseSettings(BaseModel):
     """Database backend selection (B15). The Postgres DSN is NOT config —
     it carries a password and lives exclusively in the FW_DATABASE_URL
@@ -508,6 +532,7 @@ class Settings(BaseModel):
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     cors: CorsSettings = Field(default_factory=CorsSettings)
     frontend: FrontendSettings = Field(default_factory=FrontendSettings)
+    embed: EmbedSettings = Field(default_factory=EmbedSettings)
 
     # User tiers (spec §6.1): policy per tiers-of-service name. Distinct from
     # the quality tiers in TIERS. Empty (the default) = no policy anywhere —

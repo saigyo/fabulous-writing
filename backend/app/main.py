@@ -309,13 +309,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 for name in names
             }
 
+            ancestors = settings.embed.allowed_ancestors
+            embed_csp = "frame-ancestors " + (" ".join(ancestors) if ancestors else "'none'")
+            embed_page = dist / "embed.html"
+            embed_available = embed_page.is_file()
+
             @app.get("/{full_path:path}", include_in_schema=False)
             def spa(full_path: str) -> FileResponse:
                 # /api/* never falls back to HTML: a missing API route must
                 # stay a JSON 404, not a 200 page.
                 if full_path == "api" or full_path.startswith("api/"):
                     raise HTTPException(status_code=404)
-                return FileResponse(spa_files.get(full_path) or dist / "index.html")
+                # The embed surface (spec B43): its own HTML entry, its own
+                # frame-ancestors policy. Everything else is the main SPA and
+                # must never be frameable.
+                if (
+                    full_path in ("embed", "embed.html") or full_path.startswith("embed/")
+                ) and embed_available:
+                    return FileResponse(
+                        embed_page, headers={"Content-Security-Policy": embed_csp}
+                    )
+                target = spa_files.get(full_path)
+                if target is not None and target.suffix != ".html":
+                    return FileResponse(target)
+                return FileResponse(
+                    target or dist / "index.html",
+                    headers={"Content-Security-Policy": "frame-ancestors 'none'"},
+                )
 
         return app
     except BaseException:

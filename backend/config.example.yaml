@@ -114,6 +114,16 @@ auth:
 #   origins:
 #     - http://localhost:5173
 
+# Embed surface (B43): origins allowed to iframe /embed, sent as the
+# frame-ancestors CSP directive. Empty (the default) renders 'none' —
+# embedding is off until a deployment opts in. Each entry is 'self' or a
+# scheme://host[:port] origin (no wildcards, no paths). The main SPA is
+# never frameable, regardless of this setting.
+# embed:
+#   allowed_ancestors:
+#     - chrome-extension://<extension-id>
+#     - https://example.com
+
 # Required environment variables (never stored in this file). FW_AUTH_SECRET
 # is the only one with an escape hatch: ephemeral_secret above (dev only).
 # The two admin variables are always required while the users table is empty.

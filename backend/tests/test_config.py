@@ -524,3 +524,40 @@ class TestDatabaseSettings:
     def test_unknown_key_rejected(self):
         with pytest.raises(ValidationError):
             Settings(database={"backend": "sqlite", "pool_size": 3})
+
+
+class TestEmbedSettings:
+    def test_default_is_empty(self):
+        assert Settings().embed.allowed_ancestors == []
+
+    def test_valid_origins_accepted(self):
+        settings = Settings.model_validate(
+            {"embed": {"allowed_ancestors": [
+                "chrome-extension://abc", "https://example.com",
+                "https://example.com:8443",
+            ]}}
+        )
+        assert settings.embed.allowed_ancestors == [
+            "chrome-extension://abc", "https://example.com",
+            "https://example.com:8443",
+        ]
+
+    def test_self_accepted(self):
+        settings = Settings.model_validate({"embed": {"allowed_ancestors": ["'self'"]}})
+        assert settings.embed.allowed_ancestors == ["'self'"]
+
+    @pytest.mark.parametrize("entry", [
+        "not a url",
+        "https://exa mple.com",
+        "*",
+        "https://*.example.com",
+        "https://exa\"mple.com",
+        "example.com",
+    ])
+    def test_invalid_entries_rejected(self, entry):
+        with pytest.raises(ValidationError, match="allowed_ancestors"):
+            Settings.model_validate({"embed": {"allowed_ancestors": [entry]}})
+
+    def test_unknown_key_rejected(self):
+        with pytest.raises(ValidationError):
+            Settings.model_validate({"embed": {"allowed_ancestor": ["'self'"]}})
