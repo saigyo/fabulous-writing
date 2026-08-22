@@ -90,10 +90,6 @@ _MIGRATED_COLUMNS = [
 # created when the app runs without schema management (B36 spec R3).
 _REQUIRED_SCHEMA = {"llm_usage": _MIGRATED_COLUMNS}
 
-# The OK categories mirror config._CREDIT_SOURCES exactly; a NEW source
-# added there must be added here too or its completed runs vanish from
-# every chart (the failed bucket is status-based and unaffected).
-_RUN_CATEGORIES = ("check", "suggestion", "name", "failed")
 _SETTLED_FAILED = "('failed','cancelled','abandoned')"
 
 
@@ -447,6 +443,12 @@ class UsageStore:
             params.append(user_id)
         with self.db.connect() as conn:
             rows = conn.execute(
+                # The three OK categories mirror config._CREDIT_SOURCES; a
+                # NEW source added there must be added to this CASE list
+                # AND the runs dict below, or its completed runs appear in
+                # the tokens/credits series but in no runs category, and
+                # /all's totals.runs will disagree with the per-user
+                # table's COUNT(*) (activity_user_totals).
                 "SELECT day,"
                 " SUM(CASE WHEN status = 'completed' AND source = 'check' THEN 1 ELSE 0 END),"
                 " SUM(CASE WHEN status = 'completed' AND source = 'suggestion' THEN 1 ELSE 0 END),"
