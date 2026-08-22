@@ -81,11 +81,30 @@ export function EmbedApp() {
     // field B's document after the host switches (or reconnects) fields.
     // Recreating the scheduler on every field change disposes the prior
     // pending timers before the new one gets a fresh, empty scheduler.
+    // Copilot round 7: onFast/onFull must not bypass the same profilesReady
+    // gate as the connect-time check above — a host textChanged during a
+    // cold profile load or language switch would otherwise arm these timers
+    // and run against stale/empty profile config (onFull could even run an
+    // unnecessary LLM call). Read connectedField/profilesReady fresh via
+    // getState() at fire time (mirrors llmEnabled below), not from the
+    // closed-over connectedField prop, since a timer can fire after the
+    // field disconnects. A check dropped here is fine to lose silently: the
+    // connect-time effect above re-runs runCheck(false) itself the moment
+    // profilesReady flips for an already-connected field, so no typing is
+    // lost — see that effect's comment.
+    function readyToCheck() {
+      const s = useStore.getState()
+      return Boolean(s.connectedField) && s.profilesReady
+    }
     const scheduler = createCheckScheduler({
       fastDelayMs: 1000,
       llmDelayMs: 5000,
-      onFast: () => void runCheck(false),
-      onFull: () => void runCheck(true),
+      onFast: () => {
+        if (readyToCheck()) void runCheck(false)
+      },
+      onFull: () => {
+        if (readyToCheck()) void runCheck(true)
+      },
       llmEnabled: () => useStore.getState().llmAuto,
     })
     const outbound = getEmbedOutbound()
@@ -133,7 +152,11 @@ export function EmbedApp() {
           )}
           <button
             className="check-button"
-            disabled={store.checkPhase !== 'idle'}
+            // Copilot round 7: same readiness gate as the scheduler timers
+            // above — the manual button must not be clickable with no field
+            // connected or while profiles are still loading (stale/empty
+            // profile config).
+            disabled={!connectedField || !profilesReady || store.checkPhase !== 'idle'}
             onClick={() => void runCheck(true)}
           >
             {store.checkPhase === 'idle' ? m.check : m.checking}

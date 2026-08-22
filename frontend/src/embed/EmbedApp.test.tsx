@@ -135,6 +135,37 @@ describe('EmbedApp', () => {
     expect(runCheck).toHaveBeenCalledWith(true)
   })
 
+  // Copilot round 7: the manual Check button bypassed the profilesReady gate
+  // that the connect-time and scheduler-timer checks already respect, and
+  // was clickable with no field connected at all.
+  describe('Check button disabled state gated on connection + profilesReady', () => {
+    it('is disabled when no field is connected', () => {
+      render(<EmbedApp />)
+
+      expect((screen.getByRole('button', { name: en.check }) as HTMLButtonElement).disabled).toBe(
+        true,
+      )
+    })
+
+    it('is disabled while profiles are still loading, even with a field connected', () => {
+      useStore.setState({ connectedField: { fieldId: 'f1', url: null }, profilesReady: false })
+      render(<EmbedApp />)
+
+      expect((screen.getByRole('button', { name: en.check }) as HTMLButtonElement).disabled).toBe(
+        true,
+      )
+    })
+
+    it('is enabled once a field is connected and profiles are ready', () => {
+      useStore.setState({ connectedField: { fieldId: 'f1', url: null }, profilesReady: true })
+      render(<EmbedApp />)
+
+      expect((screen.getByRole('button', { name: en.check }) as HTMLButtonElement).disabled).toBe(
+        false,
+      )
+    })
+  })
+
   it('a fresh connection cancels any in-flight check and runs a fast one', () => {
     render(<EmbedApp />)
     // cancelCheck also runs on the mount effect itself (every transition,
@@ -195,9 +226,15 @@ describe('EmbedApp', () => {
     vi.useFakeTimers()
     const outbound = fakeOutbound()
     setEmbedOutbound(outbound)
+    // A field must be connected for the readiness-gated onFast callback
+    // (Copilot round 7) to run — profilesReady is already true by default.
+    useStore.setState({ connectedField: { fieldId: 'f1', url: null } })
 
     const { unmount } = render(<EmbedApp />)
-    expect(runCheck).not.toHaveBeenCalled()
+    // Mount also triggers the connect-time check (connectedField +
+    // profilesReady are both already truthy here) — clear it so this test
+    // isolates the scheduler's own debounce behavior.
+    vi.mocked(runCheck).mockClear()
 
     // Simulate what hostDoc.ts:syncBuffer does on every textChanged/
     // replaceResult: call the outbound's onInput, which EmbedApp's mount
@@ -221,6 +258,56 @@ describe('EmbedApp', () => {
       vi.advanceTimersByTime(2000)
     })
     expect(runCheck).not.toHaveBeenCalled()
+  })
+
+  // Copilot round 7: onFast/onFull must not bypass the same profilesReady
+  // gate the connect-time check already respects (Copilot round 4) — a host
+  // textChanged during a cold profile load or language switch would
+  // otherwise arm these timers and run against stale/empty profile config.
+  describe('scheduler timers gated on profilesReady', () => {
+    it('a fast-check timer that fires while profilesReady is false does not run a check', () => {
+      vi.useFakeTimers()
+      const outbound = fakeOutbound()
+      setEmbedOutbound(outbound)
+      useStore.setState({
+        connectedField: { fieldId: 'f1', url: null },
+        profilesReady: false,
+      })
+
+      render(<EmbedApp />)
+      vi.mocked(runCheck).mockClear() // drop the connect-time check attempt (also gated, doesn't fire)
+
+      act(() => {
+        outbound.onInput()
+        vi.advanceTimersByTime(1000)
+      })
+
+      expect(runCheck).not.toHaveBeenCalled()
+    })
+
+    it('after profilesReady flips true, the next onInput-armed timer runs the check', () => {
+      vi.useFakeTimers()
+      const outbound = fakeOutbound()
+      setEmbedOutbound(outbound)
+      useStore.setState({
+        connectedField: { fieldId: 'f1', url: null },
+        profilesReady: false,
+      })
+
+      render(<EmbedApp />)
+
+      act(() => {
+        useStore.setState({ profilesReady: true })
+      })
+      vi.mocked(runCheck).mockClear() // drop the connect-time re-check triggered by the flip
+
+      act(() => {
+        outbound.onInput()
+        vi.advanceTimersByTime(1000)
+      })
+
+      expect(runCheck).toHaveBeenCalledWith(false)
+    })
   })
 
   // Copilot round 1: scheduler timers must not cross field boundaries. A
