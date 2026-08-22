@@ -1751,8 +1751,9 @@ credits — each under an uppercase `.activity-panel-label`. Runs splits into fo
 `--accent-faint`/`--held-back`); tokens into input/output (`--accent`/`--accent-faint`);
 credits is a single series (`--accent-mid`). `StackedBarChart` itself (`activity/
 StackedBarChart.tsx`) is a pure, state-free SVG component: it derives bar heights, a
-1-day-max fallback (so an all-zero response still draws real axes instead of a 0/0 one),
-and thinned x-axis labels entirely from props, with a per-day `<title>` for hover detail.
+y-axis maximum that falls back to 1 when all values are zero (so an all-zero response
+still draws real axes instead of a 0/0 one), and thinned x-axis labels entirely from
+props, with a per-day `<title>` for hover detail.
 
 **Totals line and the all-users table.** The totals line
 (`` `${runs} ${m.activityTotalRuns} · ${input} ${m.activityInput} / ${output}

@@ -20,8 +20,15 @@ const DAY_OPTIONS: ActivityDays[] = [30, 90, 365]
 type SortKey = 'user' | 'runs' | 'input_tokens' | 'output_tokens' | 'credits'
 type SortDir = 'asc' | 'desc'
 
+// display_name can be empty/whitespace through the admin API (AdminUserPatch
+// allows any string) — `??` alone treats "" as a usable value, showing (and
+// sorting/labeling by) a blank instead of falling through to the email.
+function userLabel(row: PerUserActivity): string {
+  return row.display_name?.trim() || row.email
+}
+
 const SORT_VALUE: Record<SortKey, (row: PerUserActivity) => string | number> = {
-  user: (row) => row.display_name ?? row.email,
+  user: userLabel,
   runs: (row) => row.runs,
   input_tokens: (row) => row.input_tokens,
   output_tokens: (row) => row.output_tokens,
@@ -122,7 +129,7 @@ export function ActivityView() {
   }
 
   function openUser(row: PerUserActivity) {
-    setActivitySubject(row.user_id, row.display_name ?? row.email)
+    setActivitySubject(row.user_id, userLabel(row))
   }
 
   // A numeric subject only ever arises by drilling into a row from the
@@ -131,7 +138,7 @@ export function ActivityView() {
   const showBack = typeof effectiveSubject === 'number'
 
   // A numeric subject only ever arrives via openUser(), which always passes
-  // a label (display_name ?? email) — the subject itself is never
+  // a label (userLabel(row)) — the subject itself is never
   // persisted/reloaded with a bare id, so activitySubjectLabel is never
   // null here.
   const heading =
@@ -251,7 +258,7 @@ export function ActivityView() {
                   <tr key={row.user_id}>
                     <td>
                       <button type="button" onClick={() => openUser(row)}>
-                        {row.display_name ?? row.email}
+                        {userLabel(row)}
                       </button>
                     </td>
                     <td>{row.runs}</td>

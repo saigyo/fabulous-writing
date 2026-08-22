@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -122,3 +122,77 @@ class TestActivityAll:
         settled_from_series = sum(sum(v) for v in series.runs.values())
         settled_from_totals = sum(t.runs for t in totals)
         assert settled_from_series == settled_from_totals == 3
+
+
+class TestPostgresActivityAllIsolation:
+    def test_repeatable_read_pins_one_snapshot_across_series_and_totals(
+        self, pg_database, monkeypatch
+    ):
+        """Copilot round 3 (PR #125): TestActivityAll above seeds every row
+        BEFORE calling activity_all, so it passes even without the
+        BEGIN/REPEATABLE READ pinning — it does not guard the snapshot
+        itself. This test does, mirroring
+        TestPostgresCreditsUsedIsolation's mechanism exactly
+        (test_usage.py): a second, independent connection commits a new row
+        BETWEEN activity_all's two internal queries (series, then totals),
+        landing inside the requested day range. Under REPEATABLE READ, the
+        whole transaction reads one snapshot taken on the first
+        data-touching query (the series SELECT) — a row committed after
+        that point stays invisible to the LATER totals SELECT too, even
+        though it runs after the commit. Under READ COMMITTED, the totals
+        SELECT (which takes its own fresh snapshot) would see it while the
+        already-run series SELECT would not, so the two projections would
+        diverge instead of both reflecting the original snapshot.
+
+        Mutation contract: replacing activity_all's SET TRANSACTION
+        ISOLATION LEVEL statement with `pass` makes the final assertions
+        fail — totals picks up the injected row, series does not.
+        """
+        import psycopg
+
+        import app.services.usage as usage_module
+
+        store = UsageStore(pg_database)
+        moment = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
+        # Baseline row, visible before either internal query runs. Through
+        # the seam (store.db.connect()), so '?' — not '%s' — is canonical
+        # (PostgresConnection.execute translates it; see db/postgres.py).
+        with store.db.connect() as conn:
+            conn.execute(
+                """INSERT INTO llm_usage (user_id, day, created_at, status,
+                       provider, model, text_chars, input_tokens,
+                       output_tokens, source, run_id, credits)
+                   VALUES (?, ?, ?, 'completed', 'p', 'm', 0, 10, 5,
+                           'check', 'baseline', 5)""",
+                (1, moment.strftime("%Y-%m-%d"), moment.isoformat(timespec="seconds")),
+            )
+
+        real_select_totals = usage_module._select_activity_user_totals
+        dsn = pg_database._pool.conninfo
+
+        def spy_select_totals(conn, *, days, end=None):
+            # Runs after the series SELECT has already executed (activity_all
+            # calls series first) but before the totals SELECT below it —
+            # exactly the gap credits_used's spy_window_start exploits
+            # between the 'hour' and 'week' SELECTs.
+            with psycopg.connect(dsn, autocommit=True) as injector:
+                injector.execute(
+                    """INSERT INTO llm_usage (user_id, day, created_at,
+                           status, provider, model, text_chars,
+                           input_tokens, output_tokens, source, run_id,
+                           credits)
+                       VALUES (%s, %s, %s, 'completed', 'p', 'm', 0, 10, 5,
+                               'check', 'injected', 1000)""",
+                    (2, moment.strftime("%Y-%m-%d"), moment.isoformat(timespec="seconds")),
+                )
+            return real_select_totals(conn, days=days, end=end)
+
+        monkeypatch.setattr(usage_module, "_select_activity_user_totals", spy_select_totals)
+
+        series, totals = store.activity_all(days=30, end=moment.date())
+
+        # Both projections must reflect the ORIGINAL (pre-injection)
+        # snapshot: the injected user never appears in either.
+        assert {t.user_id for t in totals} == {1}
+        assert sum(t.credits for t in totals) == 5
+        assert sum(series.credits) == 5

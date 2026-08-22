@@ -217,9 +217,15 @@ interface AppStateActions {
   setDocListError: (docListError: boolean) => void
   setFolders: (folders: Folder[]) => void
   toggleFolderCollapsed: (id: number) => void
-  // Nulls activitySubjectLabel unless label is given — see its field
-  // comment above.
-  setActivitySubject: (subject: ActivitySubject, label?: string | null) => void
+  // Overloaded so a numeric subject can never be set without its label at
+  // the type level — a bare setActivitySubject(5) would render an empty
+  // <h2> in ActivityView (the heading has no id fallback; see
+  // activity/ActivityView.tsx). 'self'/'all' take no label (nulling it —
+  // see activitySubjectLabel's field comment above); the implementation
+  // below stays permissive (label optional) since one function body must
+  // satisfy both call shapes.
+  setActivitySubject(subject: 'self' | 'all'): void
+  setActivitySubject(subject: number, label: string): void
   // authStatus is derived: 'authenticated' when both token and user are
   // present, 'anonymous' otherwise. sessionExpired is deliberately left
   // untouched here — only expireSession() sets it and only login() clears
@@ -517,7 +523,7 @@ export const useStore = create<AppState>()((set) => ({
         ? state.docFoldersCollapsed.filter((f) => f !== id)
         : [...state.docFoldersCollapsed, id],
     })),
-  setActivitySubject: (activitySubject, label = null) =>
+  setActivitySubject: (activitySubject: ActivitySubject, label: string | null = null) =>
     set({ activitySubject, activitySubjectLabel: label }),
   setAuth: (token, user) =>
     set({
