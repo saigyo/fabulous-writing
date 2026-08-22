@@ -85,6 +85,7 @@ beforeEach(() => {
     language: 'en',
     domainIds: [],
     profiles: [],
+    profilesReady: true,
     profileId: null,
     user: null,
     checkPhase: 'idle',
@@ -292,5 +293,45 @@ describe('EmbedApp', () => {
     })
 
     expect(runCheck).not.toHaveBeenCalled()
+  })
+
+  // Copilot round 4: on a cold authenticated mount, the profiles fetch
+  // (header/useHeaderData.ts) can still be in flight when a field connects
+  // — the connect-time check must wait for it, or the first check omits
+  // the profile's rule_config with nothing to re-check once it applies.
+  describe('connect-time check gated on profilesReady', () => {
+    it('defers the check until profilesReady, even though a field is connected', () => {
+      useStore.setState({ connectedField: { fieldId: 'f1', url: null }, profilesReady: false })
+      render(<EmbedApp />)
+
+      expect(runCheck).not.toHaveBeenCalled()
+    })
+
+    it('fires once profiles resolve for an already-connected field', () => {
+      useStore.setState({ connectedField: { fieldId: 'f1', url: null }, profilesReady: false })
+      render(<EmbedApp />)
+      vi.mocked(runCheck).mockClear()
+
+      act(() => {
+        useStore.setState({ profilesReady: true })
+      })
+
+      expect(runCheck).toHaveBeenCalledWith(false)
+    })
+
+    it('fires anyway when the profiles fetch fails (profilesReady still flips true)', () => {
+      // useHeaderData.ts's catch branch sets profilesReady true on a failed
+      // fetch too — simulated directly here since the fetch itself is mocked
+      // out at the top of this file.
+      useStore.setState({ connectedField: { fieldId: 'f1', url: null }, profilesReady: false })
+      render(<EmbedApp />)
+      vi.mocked(runCheck).mockClear()
+
+      act(() => {
+        useStore.setState({ profilesReady: true })
+      })
+
+      expect(runCheck).toHaveBeenCalledWith(false)
+    })
   })
 })

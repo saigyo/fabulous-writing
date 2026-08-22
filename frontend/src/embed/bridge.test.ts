@@ -82,6 +82,7 @@ function stubHostDoc(): StubHostDoc {
       markingClickedCalls.push({ fieldId, id })
     },
     resetSession() {},
+    republish() {},
   }
 }
 

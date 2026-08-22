@@ -90,6 +90,7 @@ beforeEach(() => {
     model: null,
     tier: 'balanced',
     profiles: [],
+    profilesReady: false,
     profileId: null,
     lastProfileByLanguage: {},
     docMeta: null,
@@ -178,6 +179,44 @@ describe('Header profile-fetch generation guard', () => {
     await new Promise((r) => setTimeout(r, 0))
 
     expect(consumeProfileApplySuppression()).toBe(true)
+  })
+})
+
+// Copilot round 4: EmbedApp.tsx gates its connect-time check on
+// store.profilesReady so a cold authenticated mount can't run the check
+// before a profile's rule_config is known — these pin the three ways
+// useHeaderData.ts drives that flag.
+describe('Header profilesReady', () => {
+  it('flips true once the profiles fetch resolves', async () => {
+    vi.mocked(getProfiles).mockResolvedValue([profile()])
+    render(<Header />)
+    await waitFor(() => expect(useStore.getState().profilesReady).toBe(true))
+  })
+
+  it('flips true even when the profiles fetch fails', async () => {
+    vi.mocked(getProfiles).mockRejectedValue(new Error('network down'))
+    render(<Header />)
+    await waitFor(() => expect(useStore.getState().profilesReady).toBe(true))
+  })
+
+  it('goes false again the instant a real language switch re-fires the fetch', async () => {
+    vi.mocked(getProfiles).mockResolvedValueOnce([profile()])
+    render(<Header />)
+    await waitFor(() => expect(useStore.getState().profilesReady).toBe(true))
+
+    let resolveProfiles!: (p: Profile[]) => void
+    vi.mocked(getProfiles).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveProfiles = resolve
+        }),
+    )
+    useStore.setState({ language: 'de' })
+    await waitFor(() => expect(getProfiles).toHaveBeenCalledTimes(2))
+    expect(useStore.getState().profilesReady).toBe(false)
+
+    resolveProfiles([profile({ language: 'de' })])
+    await waitFor(() => expect(useStore.getState().profilesReady).toBe(true))
   })
 })
 

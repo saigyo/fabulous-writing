@@ -64,6 +64,18 @@ export interface HostDoc extends DocumentPort {
    * buffer/items survive a logout and the first textChanged after a
    * re-login republishes pre-logout findings. */
   resetSession(): void
+  /** Re-publishes the currently connected field's state to the store —
+   * wired to auth/session.ts's login() via embed/activateSlot.ts. A field
+   * can connect while the login form is still showing (the bridge attaches
+   * regardless of auth status), and a cross-user login's resetSessionState()
+   * clears store.connectedField/tracked/docWords/docChars even though this
+   * shim is still connected — the strip would show "waiting" forever and
+   * the connect-time check would never re-fire. A no-op while unconnected,
+   * so it is safe to call unconditionally on every login. Deliberately NOT
+   * teardown: the host still believes it is connected and has no reconnect
+   * affordance, so the fix is to make the store agree with the shim again,
+   * not to disconnect. */
+  republish(): void
 }
 
 interface Splice {
@@ -143,6 +155,11 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
   let fieldId: string | null = null
   let caps: HostCapabilities | null = null
   let buffer = ''
+  // The page URL from fieldConnected's meta, kept alongside fieldId/caps/
+  // buffer purely so republish() can re-write store.connectedField without
+  // the caller having to pass meta again — mirrors setConnectedField's own
+  // {fieldId, url} shape (state/store.ts).
+  let connectedUrl: string | null = null
   let items: TrackedFinding[] = []
   let selectedId: string | null = null
   let requestSeq = 0
@@ -219,6 +236,7 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
     fieldId = null
     caps = null
     buffer = ''
+    connectedUrl = null
   }
 
   /** Apply a fresh host-truth text snapshot: derive the splice, map
@@ -325,17 +343,26 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
       fieldId = fid // set first: resetConnectionState's wire send targets this new field
       caps = capabilities
       buffer = text
+      connectedUrl = meta?.url ?? null
       resetConnectionState() // whole-document replacement: no "old text"/findings/pending left to describe
       const store = useStore.getState()
       store.setDocWords(wordCount(text))
       store.setDocChars(codePoints(text))
-      store.setConnectedField({ fieldId: fid, url: meta?.url ?? null })
+      store.setConnectedField({ fieldId: fid, url: connectedUrl })
     },
     fieldDisconnected(fid) {
       if (fieldId !== fid) return
       teardown() // sends the cleared findings before fieldId inside it goes null
     },
     resetSession: teardown,
+    republish() {
+      if (fieldId === null) return
+      const store = useStore.getState()
+      store.setConnectedField({ fieldId, url: connectedUrl })
+      store.setDocWords(wordCount(buffer))
+      store.setDocChars(codePoints(buffer))
+      store.setTracked(items, selectedId)
+    },
     textChanged(fid, text) {
       if (fieldId !== fid) return
       syncBuffer(text)

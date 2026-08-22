@@ -2,6 +2,7 @@ import { getMe, HttpError, postLogin, postLogout, postRefresh, setUnauthorizedHa
 import { cancelInFlightCheck } from '../checking/cancelSlot'
 import { clearLegacyText, invalidateDocumentWork } from '../documents/documents'
 import { clearSnapshot, readSnapshot } from '../documents/buffer'
+import { activateEmbed } from '../embed/activateSlot'
 import { disconnectEmbed } from '../embed/disconnectSlot'
 import { loadUserPrefs } from '../state/prefsPersistence'
 import {
@@ -77,6 +78,14 @@ export async function login(email: string, password: string): Promise<boolean> {
   // the current user while they stay mounted.
   useStore.getState().bumpAuthGeneration()
   scheduleRefresh()
+  // Post-resetSessionState, post-auth-commit: a field connected while the
+  // login form was showing survives this reset in the embed shim itself
+  // (hostDoc.ts) even though the store's connectedField/tracked/docWords/
+  // docChars just got cleared above (on a cross-user login) — republish
+  // restores the store's view of it. A no-op in the main app and while
+  // nothing is connected (embed/activateSlot.ts), so this stays unguarded
+  // for every login, including the same-user re-login branch.
+  activateEmbed()
   return true
 }
 

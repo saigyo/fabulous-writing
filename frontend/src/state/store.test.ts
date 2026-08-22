@@ -265,6 +265,29 @@ describe('resetSessionState', () => {
     resetSessionState()
     expect(useStore.getState().appVersion).toBe('1.2.3')
   })
+
+  // Copilot round 4: EmbedApp.tsx's connect-time check gates on this — a
+  // session turnover must not leave it stuck true from the departed session.
+  it('resets profilesReady to false', () => {
+    useStore.setState({ profilesReady: true })
+    resetSessionState()
+    expect(useStore.getState().profilesReady).toBe(false)
+  })
+})
+
+describe('setProfiles / setProfilesReady', () => {
+  it('setProfiles flips profilesReady true as a side effect', () => {
+    useStore.setState({ profilesReady: false })
+    useStore.getState().setProfiles([])
+    expect(useStore.getState().profilesReady).toBe(true)
+  })
+
+  it('setProfilesReady sets the flag directly, independent of the profiles list', () => {
+    useStore.getState().setProfilesReady(false)
+    expect(useStore.getState().profilesReady).toBe(false)
+    useStore.getState().setProfilesReady(true)
+    expect(useStore.getState().profilesReady).toBe(true)
+  })
 })
 
 describe('setSessionTokens', () => {

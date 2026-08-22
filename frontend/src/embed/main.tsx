@@ -9,6 +9,7 @@ import { setDocumentPort } from '../checking/documentPort'
 import { createHostDoc } from './hostDoc'
 import { startBridge } from './bridge'
 import { setEmbedDisconnectHandler } from './disconnectSlot'
+import { setEmbedActivateHandler } from './activateSlot'
 import { setEmbedOutbound } from './embedRef'
 import { EmbedApp } from './EmbedApp'
 
@@ -19,6 +20,10 @@ setDocumentPort(hostDoc)
 // Wires auth/session.ts's logout()/expireSession() to reset this shim
 // without session.ts importing hostDoc.ts — see disconnectSlot.ts.
 setEmbedDisconnectHandler(() => hostDoc.resetSession())
+// Wires auth/session.ts's login() to re-publish this shim's connected-field
+// state after a resetSessionState() that ran before it — see hostDoc.ts's
+// republish() and activateSlot.ts's own comment.
+setEmbedActivateHandler(() => hostDoc.republish())
 // Deviation from the plan's main.tsx sketch: EmbedApp renders with no props,
 // so it needs a way to reach bridge.outbound (to wire the check scheduler's
 // onInput into it — see embedRef.ts's own comment) without main.tsx passing
