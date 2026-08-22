@@ -1,3 +1,18 @@
+/* App-wide screen-reader-only utility (standard clip pattern) — content is
+   present for assistive tech but never visible/laid-out on screen. Added
+   once here rather than per-feature; reuse this instead of a new copy. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 .app {
   display: flex;
   flex-direction: column;
@@ -2281,6 +2296,23 @@ dialog.app-dialog h2 {
   letter-spacing: 0.04em;
   color: var(--text-dim);
   margin-bottom: 0.3rem;
+}
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  margin-bottom: 0.4rem;
+}
+.chart-legend-item { display: inline-flex; align-items: center; gap: 0.35rem; }
+.chart-legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  /* Border keeps a light/near-white swatch (e.g. --accent-faint in light
+     mode) visible against the panel background instead of vanishing. */
+  border: 1px solid var(--border);
 }
 .activity-table { margin-top: 1.5rem; border-collapse: collapse; width: 100%; }
 .activity-table th, .activity-table td {

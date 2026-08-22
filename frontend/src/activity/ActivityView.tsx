@@ -60,6 +60,71 @@ function sortAriaValue(key: SortKey, activeKey: SortKey, dir: SortDir): 'ascendi
   return dir === 'asc' ? 'ascending' : 'descending'
 }
 
+// Visible color legend for one chart panel — composed from the exact same
+// ChartSeries array the panel's <StackedBarChart> receives, so a series
+// added there (or renamed/recolored) appears here automatically with no
+// second list to keep in sync. Swatch color is per-series data, not a fixed
+// set of classes, hence the inline style (the app avoids inline style
+// elsewhere; this is the one case where the color truly is a runtime value).
+function ChartLegend({ series }: { series: ChartSeries[] }) {
+  return (
+    <div className="chart-legend">
+      {series.map((s) => (
+        <span key={s.key} className="chart-legend-item">
+          <span
+            className="chart-legend-swatch"
+            style={{ background: `var(${s.cssVar})` }}
+            aria-hidden="true"
+          />
+          {s.label}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+// The SVG (role="img", per-day <title>) gives pointer users a hover
+// tooltip but no screen-reader-accessible numbers — this table is the SR
+// data path, hidden visually (`.visually-hidden`) but reading the exact
+// same days/series props the chart renders, so the two can never disagree.
+function ChartDataTable({
+  caption,
+  dateHeader,
+  days,
+  series,
+  formatDay,
+}: {
+  caption: string
+  dateHeader: string
+  days: string[]
+  series: ChartSeries[]
+  formatDay: (iso: string) => string
+}) {
+  return (
+    <table className="visually-hidden">
+      <caption>{caption}</caption>
+      <thead>
+        <tr>
+          <th>{dateHeader}</th>
+          {series.map((s) => (
+            <th key={s.key}>{s.label}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {days.map((day, i) => (
+          <tr key={day}>
+            <td>{formatDay(day)}</td>
+            {series.map((s) => (
+              <td key={s.key}>{s.values[i] ?? 0}</td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
 export function ActivityView() {
   const user = useStore((s) => s.user)
   const activitySubject = useStore((s) => s.activitySubject)
@@ -219,15 +284,39 @@ export function ActivityView() {
           </p>
           <div className="activity-panel">
             <div className="activity-panel-label">{m.activityRuns}</div>
+            <ChartLegend series={runSeries} />
             <StackedBarChart days={data.days} series={runSeries} ariaLabel={m.activityRuns} formatDay={formatChartDay} />
+            <ChartDataTable
+              caption={m.activityRuns}
+              dateHeader={m.windowName('day')}
+              days={data.days}
+              series={runSeries}
+              formatDay={formatChartDay}
+            />
           </div>
           <div className="activity-panel">
             <div className="activity-panel-label">{m.activityTokens}</div>
+            <ChartLegend series={tokenSeries} />
             <StackedBarChart days={data.days} series={tokenSeries} ariaLabel={m.activityTokens} formatDay={formatChartDay} />
+            <ChartDataTable
+              caption={m.activityTokens}
+              dateHeader={m.windowName('day')}
+              days={data.days}
+              series={tokenSeries}
+              formatDay={formatChartDay}
+            />
           </div>
           <div className="activity-panel">
             <div className="activity-panel-label">{m.activityCredits}</div>
+            <ChartLegend series={creditSeries} />
             <StackedBarChart days={data.days} series={creditSeries} ariaLabel={m.activityCredits} formatDay={formatChartDay} />
+            <ChartDataTable
+              caption={m.activityCredits}
+              dateHeader={m.windowName('day')}
+              days={data.days}
+              series={creditSeries}
+              formatDay={formatChartDay}
+            />
           </div>
           {rows && (
             <table className="activity-table">

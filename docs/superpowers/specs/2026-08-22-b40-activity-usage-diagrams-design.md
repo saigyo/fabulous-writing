@@ -159,6 +159,22 @@ small number of ticks. Rendering is pure (data in, SVG out) so tests
 assert on the DOM with the house idioms (`getByText`,
 `querySelector`); no snapshot tests.
 
+> **Amendment (accessibility follow-up, 2026-08-22):** the hover tooltip
+> above was, until this amendment, the ONLY way to read a chart's actual
+> numbers — fine for a pointer user, useless for a screen-reader user (the
+> SVG's `role="img"` + `aria-label` names the chart, not its data) and for
+> anyone who wants the category colors named without hovering every bar.
+> Markus requested both gaps closed. Each panel now also renders: a
+> visible color legend (swatch + label per series, composed from the same
+> `ChartSeries` array the chart itself receives, so it can never drift
+> from the bars it explains) placed above the chart; and a
+> screen-reader-only data table (`.visually-hidden`, the house's one clip-
+> pattern SR utility) with a caption reusing the panel title, a header row
+> of date + series labels, and one row per day — the real SR data path the
+> tooltip alone never provided. Both reuse the exact `days`/`series` props
+> the `<StackedBarChart>` in the same panel receives; there is no second
+> data source to keep in sync.
+
 ### R5 — i18n
 
 New message keys × 7 locales, informal register per the standing rule:
