@@ -1,10 +1,12 @@
 // Dedicated file (there is no shared formatDay.test.ts to merge into)
-// because this sets process.env.TZ before any Date use — vitest isolates
-// test files per worker/process, so this cannot leak into other files'
-// Date behavior. Runtime TZ changes are honored by Node/V8's Date and Intl
-// implementations on the linux/macOS runners this repo's gates run on
-// (Date/Intl read TZ lazily, not just at process startup); this would need
-// revisiting on a runtime where that isn't true.
+// because this sets process.env.TZ before any Date use. Vitest workers CAN
+// be reused across files rather than one-process-per-file, so the override
+// is paired with an `afterAll` restore below (originalTZ) — without it, a
+// later date-sensitive test landing in the same worker would silently
+// inherit America/New_York. Runtime TZ changes are honored by Node/V8's
+// Date and Intl implementations on the linux/macOS runners this repo's
+// gates run on (Date/Intl read TZ lazily, not just at process startup);
+// this would need revisiting on a runtime where that isn't true.
 //
 // Why this file exists: the west-of-UTC regression formatDay.ts guards
 // against (see its own TIMEZONE TRAP comment) is invisible to a test suite
@@ -17,10 +19,20 @@
 // pulling in @types/node globally for this one Node runtime global
 // (present at test-run time regardless); same idiom as api/sse.test.ts.
 declare const process: { env: Record<string, string | undefined> }
+const originalTZ = process.env.TZ
 process.env.TZ = 'America/New_York'
 
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 import { formatDay } from './formatDay'
+
+// Vitest workers can be reused across files (not guaranteed one-process-
+// per-file the way this file's own top comment describes isolation) — the
+// override above must not leak into a later, date-sensitive test that
+// happens to land in the same worker after this file finishes.
+afterAll(() => {
+  if (originalTZ === undefined) delete process.env.TZ
+  else process.env.TZ = originalTZ
+})
 
 describe('formatDay: west-of-UTC guard (America/New_York)', () => {
   it('does not roll the date back a day (mid-year, DST)', () => {

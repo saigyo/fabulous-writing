@@ -460,11 +460,15 @@ export function ActivityView() {
               <tbody>
                 {rows.map((row) => (
                   <tr key={row.user_id}>
-                    <td>
+                    {/* Row header, not a plain cell — matches the chart data
+                        tables' semantics (ChartDataTable above): AT announces
+                        this user together with each column's value as it
+                        reads across the row. */}
+                    <th scope="row">
                       <button type="button" onClick={() => openUser(row)}>
                         {userLabel(row)}
                       </button>
-                    </td>
+                    </th>
                     <td>{row.runs}</td>
                     <td>{row.input_tokens}</td>
                     <td>{row.output_tokens}</td>
