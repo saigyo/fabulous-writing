@@ -6,7 +6,7 @@ import pytest
 
 from app.checkers.llm.claude import ClaudeProvider
 from app.checkers.llm.ollama import OllamaProvider
-from app.checkers.llm.provider import TokenUsage
+from app.checkers.llm.provider import TokenUsage, TruncatedResponseError
 
 
 class TestOllamaProvider:
@@ -172,6 +172,44 @@ class TestClaudeProvider:
         result = await provider.generate("s", "u")
         assert result.usage == TokenUsage(input_tokens=55, output_tokens=9)
 
+    async def test_generate_requests_headroom_for_thinking(self) -> None:
+        # Sonnet 5 / Opus 5 run adaptive thinking by default and thinking
+        # tokens count against max_tokens; a 4096 cap starved the visible
+        # answer mid-JSON (every failed prod run settled at exactly 4096).
+        stub = _StubAnthropicClient()
+        provider = ClaudeProvider(model="claude-sonnet-5", client=stub)
+        await provider.generate("s", "u")
+        assert stub.messages.kwargs["max_tokens"] >= 16384
+
+    async def test_truncated_response_raises_with_usage(self) -> None:
+        class Usage:
+            input_tokens = 12
+            output_tokens = 4096
+
+        class Block:
+            type = "text"
+            text = '{"findings": [{"cat'
+
+        class Response:
+            content = [Block()]
+            usage = Usage()
+            stop_reason = "max_tokens"
+
+        class Messages:
+            async def create(self, **kwargs: Any) -> Any:
+                return Response()
+
+        class Client:
+            messages = Messages()
+
+        provider = ClaudeProvider(model="claude-sonnet-5", client=Client())
+        with pytest.raises(TruncatedResponseError) as excinfo:
+            await provider.generate("s", "u")
+        # The usage the API reported still settles on the failed run.
+        assert excinfo.value.usage == TokenUsage(input_tokens=12, output_tokens=4096)
+        assert "max_tokens" in str(excinfo.value)
+        assert "findings" not in str(excinfo.value)  # metadata only, never text
+
 
 class TestOllamaStreaming:
     async def test_generate_streams_and_reports_progress(self) -> None:
@@ -280,3 +318,53 @@ class TestClaudeStreaming:
         provider = ClaudeProvider(model="claude-sonnet-5", client=Client())
         result = await provider.generate("s", "u", on_progress=lambda n: None)
         assert result.usage == TokenUsage(input_tokens=44, output_tokens=12)
+
+    async def test_streaming_truncation_raises_with_usage(self) -> None:
+        class Messages:
+            async def create(self, **kwargs: Any) -> Any:
+                assert kwargs["stream"] is True
+
+                class StartUsage:
+                    input_tokens = 44
+
+                class StartMessage:
+                    usage = StartUsage()
+
+                class Start:
+                    type = "message_start"
+                    message = StartMessage()
+
+                class TextDelta:
+                    type = "text_delta"
+                    text = '{"findings": ['
+
+                class ContentDelta:
+                    type = "content_block_delta"
+                    delta = TextDelta()
+
+                class FinalDelta:
+                    stop_reason = "max_tokens"
+
+                class FinalUsage:
+                    output_tokens = 4096
+
+                class Final:
+                    type = "message_delta"
+                    delta = FinalDelta()
+                    usage = FinalUsage()
+
+                async def stream() -> Any:
+                    yield Start()
+                    yield ContentDelta()
+                    yield Final()
+
+                return stream()
+
+        class Client:
+            messages = Messages()
+
+        provider = ClaudeProvider(model="claude-sonnet-5", client=Client())
+        with pytest.raises(TruncatedResponseError) as excinfo:
+            await provider.generate("s", "u", on_progress=lambda n: None)
+        assert excinfo.value.usage == TokenUsage(input_tokens=44, output_tokens=4096)
+        assert "findings" not in str(excinfo.value)  # metadata only, never text

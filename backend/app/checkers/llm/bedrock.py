@@ -1,7 +1,18 @@
 import asyncio
 from typing import Any
 
-from .provider import GenerationResult, ProgressCallback, TokenUsage
+from .provider import (
+    GenerationResult,
+    ProgressCallback,
+    TokenUsage,
+    TruncatedResponseError,
+)
+
+
+def _truncated(response_chars: int, usage: TokenUsage) -> TruncatedResponseError:
+    exc = TruncatedResponseError(response_chars)
+    exc.usage = usage
+    return exc
 
 
 def credentials_available() -> bool:
@@ -88,13 +99,13 @@ class BedrockProvider:
         blocks = response["output"]["message"]["content"]
         text = "".join(block.get("text", "") for block in blocks)
         usage = response.get("usage") or {}
-        return GenerationResult(
-            text=text,
-            usage=TokenUsage(
-                input_tokens=usage.get("inputTokens"),
-                output_tokens=usage.get("outputTokens"),
-            ),
+        token_usage = TokenUsage(
+            input_tokens=usage.get("inputTokens"),
+            output_tokens=usage.get("outputTokens"),
         )
+        if response.get("stopReason") == "max_tokens":
+            raise _truncated(len(text), token_usage)
+        return GenerationResult(text=text, usage=token_usage)
 
     def _stream_sync(
         self, kwargs: dict[str, Any], report: ProgressCallback
@@ -102,6 +113,7 @@ class BedrockProvider:
         parts: list[str] = []
         input_tokens: int | None = None
         output_tokens: int | None = None
+        stop_reason: str | None = None
         response = self._get_client().converse_stream(**kwargs)
         for event in response["stream"]:
             if "contentBlockDelta" in event:
@@ -109,6 +121,10 @@ class BedrockProvider:
                 if text:
                     parts.append(text)
                     report(len(parts))
+            elif "messageStop" in event:
+                # messageStop precedes the final metadata event; keep
+                # consuming so the trailing usage counts still land.
+                stop_reason = event["messageStop"].get("stopReason")
             elif "metadata" in event:
                 usage = event["metadata"].get("usage", {})
                 # Report only a count this event actually carries — never
@@ -117,7 +133,7 @@ class BedrockProvider:
                     report(usage["outputTokens"])
                 input_tokens = usage.get("inputTokens", input_tokens)
                 output_tokens = usage.get("outputTokens", output_tokens)
-        return GenerationResult(
-            text="".join(parts),
-            usage=TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens),
-        )
+        usage_counts = TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens)
+        if stop_reason == "max_tokens":
+            raise _truncated(len("".join(parts)), usage_counts)
+        return GenerationResult(text="".join(parts), usage=usage_counts)

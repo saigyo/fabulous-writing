@@ -6,6 +6,7 @@ import time
 import uuid
 from contextlib import closing
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -980,6 +981,39 @@ class TestCheckMetering:
         assert "could not find" not in row["fail_detail"]  # guardrail
         assert row["input_tokens"] == 90   # usage survives the parse failure
         assert row["output_tokens"] == 15
+
+    def test_truncated_response_settles_usage_as_response_failure(
+        self, tmp_path: Path
+    ) -> None:
+        # A provider that detects stop_reason=max_tokens raises with the
+        # usage the API reported attached; the ledger settles those real
+        # counts on the failed run just like the unparseable case.
+        from app.checkers.llm.provider import TruncatedResponseError
+
+        class TruncatingProvider(FakeProvider):
+            async def generate(
+                self, system: str, user: str, on_progress: Any = None
+            ) -> GenerationResult:
+                exc = TruncatedResponseError(2973, 4096)
+                exc.usage = TokenUsage(input_tokens=88, output_tokens=4096)
+                raise exc
+
+        with make_client(tmp_path, TruncatingProvider("")) as client:
+            post = client.post(
+                "/api/checks",
+                json={"text": "This is very nice.", "language": "en",
+                      "checkers": ["llm"]},
+            )
+            check_id = post.json()["check_id"]
+            with client.stream("GET", f"/api/checks/{check_id}/events") as stream:
+                events = _read_sse_events(stream)
+            assert any(name == "checker_error" for name, _ in events)
+        (row,) = _read_usage_rows(tmp_path / "test.db")
+        assert row["status"] == "failed"
+        assert row["fail_stage"] == "response"
+        assert "TruncatedResponseError" in row["fail_detail"]
+        assert row["input_tokens"] == 88
+        assert row["output_tokens"] == 4096
 
     def test_empty_findings_envelope_still_completes(self, tmp_path: Path) -> None:
         with make_client(tmp_path, FakeProvider('{"findings": []}')) as client:

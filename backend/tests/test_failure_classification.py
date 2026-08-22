@@ -7,7 +7,7 @@ import httpx
 
 from app.api.llm_gate import classify_failure
 from app.checkers.llm.checker import UnparseableResponseError
-from app.checkers.llm.provider import MissingApiKeyError
+from app.checkers.llm.provider import MissingApiKeyError, TruncatedResponseError
 
 
 class TestStageMapping:
@@ -16,6 +16,15 @@ class TestStageMapping:
         assert stage == "response"
         assert "UnparseableResponseError" in detail
         assert "1234" in detail
+
+    def test_truncated_response_is_response_stage(self) -> None:
+        # A response cut off at the max_tokens cap is broken output on
+        # reception — 'response', like the unparseable case it used to
+        # masquerade as.
+        stage, detail = classify_failure(TruncatedResponseError(2973, 4096))
+        assert stage == "response"
+        assert "TruncatedResponseError" in detail
+        assert "4096" in detail
 
     def test_missing_api_key_is_request_stage(self) -> None:
         stage, _ = classify_failure(MissingApiKeyError("No API key for 'openai'"))

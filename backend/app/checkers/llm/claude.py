@@ -1,6 +1,18 @@
 from typing import Any
 
-from .provider import GenerationResult, MissingApiKeyError, ProgressCallback, TokenUsage
+from .provider import (
+    GenerationResult,
+    MissingApiKeyError,
+    ProgressCallback,
+    TokenUsage,
+    TruncatedResponseError,
+)
+
+# Sonnet 5 / Opus 5 run adaptive thinking by default and thinking tokens
+# count against max_tokens, so the cap needs headroom well beyond the
+# visible answer (a 4096 cap starved real responses mid-JSON in production).
+# Only generated tokens are billed; the cap is a safety ceiling.
+_MAX_TOKENS = 16384
 
 
 def _usage_of(source: Any) -> TokenUsage:
@@ -11,6 +23,12 @@ def _usage_of(source: Any) -> TokenUsage:
         input_tokens=getattr(usage, "input_tokens", None),
         output_tokens=getattr(usage, "output_tokens", None),
     )
+
+
+def _truncated(response_chars: int, usage: TokenUsage) -> TruncatedResponseError:
+    exc = TruncatedResponseError(response_chars, _MAX_TOKENS)
+    exc.usage = usage
+    return exc
 
 
 class ClaudeProvider:
@@ -45,7 +63,7 @@ class ClaudeProvider:
     ) -> GenerationResult:
         kwargs: dict[str, Any] = dict(
             model=self.model,
-            max_tokens=4096,
+            max_tokens=_MAX_TOKENS,
             system=system,
             messages=[{"role": "user", "content": user}],
         )
@@ -55,6 +73,8 @@ class ClaudeProvider:
         text = "".join(
             block.text for block in response.content if block.type == "text"
         )
+        if getattr(response, "stop_reason", None) == "max_tokens":
+            raise _truncated(len(text), _usage_of(response))
         return GenerationResult(text=text, usage=_usage_of(response))
 
     async def list_models(self) -> list[str]:
@@ -69,6 +89,7 @@ class ClaudeProvider:
         parts: list[str] = []
         input_tokens: int | None = None
         output_tokens: int | None = None
+        stop_reason: str | None = None
         stream = await self._get_client().messages.create(**kwargs, stream=True)
         async for event in stream:
             if event.type == "content_block_delta" and event.delta.type == "text_delta":
@@ -79,7 +100,10 @@ class ClaudeProvider:
                 # Cumulative; the last one is the final count.
                 output_tokens = event.usage.output_tokens
                 on_progress(event.usage.output_tokens)
-        return GenerationResult(
-            text="".join(parts),
-            usage=TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens),
-        )
+                stop_reason = getattr(
+                    getattr(event, "delta", None), "stop_reason", None
+                ) or stop_reason
+        usage = TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens)
+        if stop_reason == "max_tokens":
+            raise _truncated(len("".join(parts)), usage)
+        return GenerationResult(text="".join(parts), usage=usage)

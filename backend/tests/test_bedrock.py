@@ -1,8 +1,10 @@
 import asyncio
 from typing import Any
 
+import pytest
+
 from app.checkers.llm.bedrock import BedrockProvider
-from app.checkers.llm.provider import TokenUsage
+from app.checkers.llm.provider import TokenUsage, TruncatedResponseError
 
 
 class _FakeRuntimeClient:
@@ -81,3 +83,33 @@ class TestBedrockProvider:
         )
         result = await provider.generate("s", "u", on_progress=lambda n: None)
         assert result.usage == TokenUsage(input_tokens=66, output_tokens=5)
+
+    async def test_truncated_converse_response_raises_with_usage(self) -> None:
+        class Client(_FakeRuntimeClient):
+            def converse(self, **kwargs: Any) -> dict[str, Any]:
+                response = super().converse(**kwargs)
+                response["stopReason"] = "max_tokens"
+                response["usage"] = {"inputTokens": 9, "outputTokens": 4096}
+                return response
+
+        provider = BedrockProvider(model="m", client=Client())
+        with pytest.raises(TruncatedResponseError) as excinfo:
+            await provider.generate("s", "u")
+        assert excinfo.value.usage == TokenUsage(input_tokens=9, output_tokens=4096)
+        assert "max_tokens" in str(excinfo.value)
+
+    async def test_truncated_stream_raises_with_usage(self) -> None:
+        # Converse streams emit messageStop before the final metadata event;
+        # usage from that trailing event must still land on the exception.
+        events = [
+            {"contentBlockDelta": {"delta": {"text": '{"findings": ['}}},
+            {"messageStop": {"stopReason": "max_tokens"}},
+            {"metadata": {"usage": {"inputTokens": 7, "outputTokens": 4096}}},
+        ]
+        provider = BedrockProvider(
+            model="m", client=_FakeRuntimeClient(stream_events=events)
+        )
+        with pytest.raises(TruncatedResponseError) as excinfo:
+            await provider.generate("s", "u", on_progress=lambda n: None)
+        assert excinfo.value.usage == TokenUsage(input_tokens=7, output_tokens=4096)
+        assert "findings" not in str(excinfo.value)  # metadata only, never text
