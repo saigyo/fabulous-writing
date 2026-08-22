@@ -553,6 +553,12 @@ class TestEmbedSettings:
         "https://*.example.com",
         "https://exa\"mple.com",
         "example.com",
+        # Python's `$` anchor matches before a trailing newline, not only at
+        # the true end of string — `match()` alone would let these through,
+        # and the newline would then blow up h11 header serialization on
+        # every request instead of failing fast at startup.
+        "https://good.com\n",
+        "'self'\n",
     ])
     def test_invalid_entries_rejected(self, entry):
         with pytest.raises(ValidationError, match="allowed_ancestors"):
