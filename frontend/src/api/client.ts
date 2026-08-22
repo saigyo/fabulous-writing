@@ -821,3 +821,41 @@ export const moveDocument = (id: number, folderId: number | null) =>
     method: 'POST',
     body: JSON.stringify({ folder_id: folderId }),
   })
+
+// ---- activity (B40, #124) ----
+
+export interface ActivitySeries {
+  runs: Record<string, number[]>
+  input_tokens: number[]
+  output_tokens: number[]
+  credits: number[]
+}
+
+export interface ActivityTotals {
+  runs: number
+  input_tokens: number
+  output_tokens: number
+  credits: number
+}
+
+export interface PerUserActivity extends ActivityTotals {
+  user_id: number
+  email: string
+  display_name: string | null
+}
+
+export interface ActivityResponse {
+  days: string[]
+  series: ActivitySeries
+  totals: ActivityTotals
+  per_user?: PerUserActivity[] | null
+}
+
+export type ActivityDays = 30 | 90 | 365
+
+export const getOwnActivity = (days: ActivityDays) =>
+  request<ActivityResponse>(`/api/usage/activity?days=${days}`)
+export const getAllActivity = (days: ActivityDays) =>
+  request<ActivityResponse>(`/api/usage/activity/all?days=${days}`)
+export const getUserActivity = (userId: number, days: ActivityDays) =>
+  request<ActivityResponse>(`/api/usage/activity/${userId}?days=${days}`)
