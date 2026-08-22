@@ -417,3 +417,28 @@ describe('ActivityView: chart legend and screen-reader data table', () => {
     expect(firstDataCells).toEqual([formatDay('2026-07-24', 'en'), '1', '0', '0', '0'])
   })
 })
+
+describe('ActivityView: scroll reset on subject navigation', () => {
+  it('resets .activity-view scrollTop to 0 when drilling from the all-users table into a user', async () => {
+    vi.mocked(getAllActivity).mockResolvedValue(allFixture())
+    vi.mocked(getUserActivity).mockResolvedValue(userActivityFixture())
+    useStore.setState({ user: user({ is_admin: true }), activitySubject: 'all' })
+
+    const { container } = render(<ActivityView />)
+
+    await waitFor(() => expect(getAllActivity).toHaveBeenCalledWith(30))
+    await waitFor(() => expect(container.querySelector('table.activity-table')).not.toBeNull())
+    const table = container.querySelector('table.activity-table') as HTMLTableElement
+    const scrollEl = container.querySelector('.activity-view') as HTMLDivElement
+
+    // Simulates the tall all-users table page having been scrolled down
+    // before the drill-down click below — the bug this guards against.
+    scrollEl.scrollTop = 500
+
+    const rows = within(table).getAllByRole('row').slice(1)
+    fireEvent.click(within(rows[0]).getByRole('button'))
+    await waitFor(() => expect(getUserActivity).toHaveBeenCalled())
+
+    expect(scrollEl.scrollTop).toBe(0)
+  })
+})

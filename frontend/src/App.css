@@ -2255,7 +2255,17 @@ dialog.app-dialog h2 {
 .chart-xlabel { fill: var(--text-dim); font-size: 9px; }
 
 /* ---- activity view (B40, #124) ---- */
-.activity-view { padding: 1rem 1.5rem; overflow-y: auto; }
+.activity-view {
+  padding: 1rem 1.5rem;
+  overflow-y: auto;
+  /* Content height swings between the loading and data states, and again
+     between a tall all-users table page and a shorter per-user page on
+     subject drill-down (no remount — same scroll container persists).
+     Browser scroll anchoring fights those swings and visibly jumps; the
+     explicit scrollTop reset on subject change (ActivityView.tsx) is the
+     real fix, this just keeps the anchor out of its way. */
+  overflow-anchor: none;
+}
 .activity-header {
   display: flex;
   align-items: baseline;
