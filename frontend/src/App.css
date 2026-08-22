@@ -2265,16 +2265,25 @@ dialog.app-dialog h2 {
 .activity-view {
   padding: 1rem 1.5rem;
   overflow-y: auto;
-  /* NOT the fix for the 2026-08-22 drill-down scroll bug (phantom empty
-     space / content flickering / a snap) — that bug's real cause was the
-     unwrapped SR <table>s laying out at full min-content size despite
-     .visually-hidden (see that class's own comment); WebKit, where it was
-     reported, has no scroll anchoring at all. This property is a
-     Chrome-side stabilizer only, for the ordinary content-height swings
-     between the loading and data states (and between a tall all-users
-     page and a shorter per-user one) that this same container's height
-     goes through regardless — the scrollTop reset on subject change
-     (ActivityView.tsx) is the real, browser-independent fix for those. */
+  /* The 2026-08-22 drill-down scroll bug (phantom empty space, content
+     flickering, a snap — reproduced in every browser) was the .visually-
+     hidden SR wrappers inside (ChartDataTable, three per view) escaping
+     THIS container. They are `position: absolute`; without a positioned
+     ancestor their containing block is the document, so each sat at its
+     static position in DOCUMENT coordinates instead of this container's —
+     live-measured 2026-08-22 via Playwright: the third wrapper laid out at
+     document y=1322, stretching documentElement.scrollHeight to 1323
+     against an 838px (100vh) app root, a second window-level scroll
+     context riding on top of this container's own. Setting `position:
+     relative` below made this element their containing block instead,
+     collapsing document scrollHeight 1323 -> 838 instantly (confirmed
+     live) — that's the actual fix; two earlier, wrong theories (table
+     min-content sizing, then scroll anchoring) preceded finding this one. */
+  position: relative;
+  /* Chrome-side stabilizer for the ordinary content-height swings this
+     container's own scrollable area still goes through (loading -> data,
+     and a tall all-users page -> a shorter per-user one) — secondary now
+     that the escaping-wrapper bug above is fixed, but harmless to keep. */
   overflow-anchor: none;
 }
 .activity-header {
