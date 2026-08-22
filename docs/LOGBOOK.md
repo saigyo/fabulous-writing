@@ -4570,14 +4570,17 @@ first attempt silently no-op'd (`python` not on PATH) and its
 `git checkout` cleanup briefly reverted the legit edits — restore
 surgically, not via git, when the tree is dirty.
 
-Copilot contributed two real findings across two rounds: the 16384 cap
-would be rejected by legacy Claude 3.x models still selectable via
+Copilot contributed three real findings across three rounds, then a
+clean 🟢 fourth round (15/15 files, 0 comments): the 16384 cap would be
+rejected by legacy Claude 3.x models still selectable via
 `list_models()` (fixed with a model-aware `_max_tokens_for`: 4096 for
-claude-3-*, 8192 for claude-3-5-*, full headroom from claude-3-7 on),
-and the usage carry initially covered only the checks path while
+claude-3-*, 8192 for claude-3-5-*, full headroom from claude-3-7 on);
+the usage carry initially covered only the checks path while
 suggestions and naming settled NULL counts on the same failure (fixed
-via the shared helper + per-endpoint ledger tests).
-Verification: backend 1552 passed / 179 skipped.
+via the shared helper + per-endpoint ledger tests); and the new helper
+needed the module's own never-raises guard so a hostile `usage`
+property cannot replace the original failure inside an exception
+handler. Verification: backend 1553 passed / 179 skipped.
 
 Follow-up filed as #132: benchmark and configure per-tier thinking
 effort (`output_config.effort`) — checks burn thousands of billed,
