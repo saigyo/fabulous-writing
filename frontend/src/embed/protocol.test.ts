@@ -21,6 +21,32 @@ describe('parseHostMessage', () => {
     expect(parseHostMessage({ fw: PROTOCOL_VERSION + 1, type: 'hello', payload: {} })).toBeNull()
   })
 
+  // F4 (final review): pay.host.kind/version must both be strings, not
+  // merely present as an object.
+  it('rejects a hello whose host.kind or host.version is missing or not a string', () => {
+    expect(
+      parseHostMessage({
+        fw: PROTOCOL_VERSION,
+        type: 'hello',
+        payload: { host: { version: '0.0.1' } },
+      }),
+    ).toBeNull()
+    expect(
+      parseHostMessage({
+        fw: PROTOCOL_VERSION,
+        type: 'hello',
+        payload: { host: { kind: 'simulator' } },
+      }),
+    ).toBeNull()
+    expect(
+      parseHostMessage({
+        fw: PROTOCOL_VERSION,
+        type: 'hello',
+        payload: { host: { kind: 1, version: '0.0.1' } },
+      }),
+    ).toBeNull()
+  })
+
   it('rejects textChanged without string text', () => {
     expect(
       parseHostMessage({ fw: PROTOCOL_VERSION, type: 'textChanged', payload: { fieldId: 'f1' } }),

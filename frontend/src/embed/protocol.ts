@@ -127,15 +127,22 @@ function validCapabilities(value: unknown): value is HostCapabilities {
 export function parseHostMessage(data: unknown): HostMessage | null {
   if (typeof data !== 'object' || data === null) return null
   const d = data as Record<string, unknown>
+  // Exact-match only. The spec's version policy is N-1 (accept the current
+  // and immediately prior protocol version), not yet implemented: this line
+  // must become a range check (d.fw < PROTOCOL_VERSION - 1 || d.fw >
+  // PROTOCOL_VERSION) the first time PROTOCOL_VERSION is bumped.
   if (d.fw !== PROTOCOL_VERSION) return null
   if (typeof d.type !== 'string' || !HOST_TYPES.has(d.type)) return null
   const p = d.payload
   if (typeof p !== 'object' || p === null) return null
   const pay = p as Record<string, unknown>
   switch (d.type) {
-    case 'hello':
+    case 'hello': {
       if (typeof pay.host !== 'object' || pay.host === null) return null
+      const host = pay.host as Record<string, unknown>
+      if (typeof host.kind !== 'string' || typeof host.version !== 'string') return null
       break
+    }
     case 'fieldConnected':
       if (typeof pay.fieldId !== 'string' || typeof pay.text !== 'string') return null
       if (!validCapabilities(pay.capabilities)) return null

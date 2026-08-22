@@ -2,6 +2,7 @@ import { getMe, HttpError, postLogin, postLogout, postRefresh, setUnauthorizedHa
 import { cancelInFlightCheck } from '../checking/cancelSlot'
 import { clearLegacyText, invalidateDocumentWork } from '../documents/documents'
 import { clearSnapshot, readSnapshot } from '../documents/buffer'
+import { disconnectEmbed } from '../embed/disconnectSlot'
 import { loadUserPrefs } from '../state/prefsPersistence'
 import {
   clearRefreshToken,
@@ -101,6 +102,7 @@ export function logout(): void {
   // preferences that must survive this logout.
   useStore.getState().setAuth(null, null)
   resetSessionState()
+  disconnectEmbed() // resetSessionState() only clears the store; the embed shim's own fieldId/buffer/items need this too (hostDoc.ts, F3)
   clearSnapshot()
   clearLegacyText()
   clearRefreshToken()
@@ -128,6 +130,7 @@ export function expireSession(): void {
   // Same ordering invariant as logout(): user null before the reset.
   useStore.getState().setAuth(null, null)
   resetSessionState()
+  disconnectEmbed() // see logout()'s identical line
   useStore.setState({ sessionExpired: true })
   clearRefreshToken()
   clearTokenExpiresAt()

@@ -386,8 +386,10 @@ Two implementations are registered, each importing only its own side:
   `serverSpan` here *does* convert through `offsets.ts`'s code-point mapping, so the
   embed path doesn't inherit the main app's astral bug.
 
-No module imports both; `documentPort.test.ts` covers the null object and both real
-implementations are covered where they're defined.
+No module imports both; `documentPort.test.ts` covers the null object, and
+`embed/hostDoc.ts` has its own dedicated test suite. `editor/editorPort.ts` has no
+dedicated unit test: its `setDocument` is a verbatim lift of hydration's former direct
+dispatch (see above), and it is exercised only indirectly, through the main app.
 
 Consumers rewired onto the port: `checking/controller.ts` and `checking/suggest.ts`
 (check/suggestion plumbing), `documents/autosave.ts` (the `hasDocument()` guard above),

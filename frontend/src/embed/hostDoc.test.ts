@@ -278,14 +278,14 @@ describe('replacement round-trip', () => {
     expect(outbound.applyReplacements[0].expectedText).toBe('very')
     expect(outbound.applyReplacements[0].from).toBe(8)
     expect(outbound.applyReplacements[0].to).toBe(12)
-    doc.replaceResult(outbound.applyReplacements[0].requestId, true, 'This is extremely good.')
+    doc.replaceResult(outbound.applyReplacements[0].requestId, true, 'This is extremely good.', 'f1')
     await expect(promise).resolves.toBe('ok')
   })
 
   it('resolves refused on a refused echo', async () => {
     const { doc, outbound } = connected('This is very good.', [finding('f1', 8, 12, 'very')])
     const promise = doc.applySuggestion('f1', 'extremely')
-    doc.replaceResult(outbound.applyReplacements[0].requestId, false, 'This is very good.')
+    doc.replaceResult(outbound.applyReplacements[0].requestId, false, 'This is very good.', 'f1')
     await expect(promise).resolves.toBe('refused')
   })
 
@@ -304,11 +304,41 @@ describe('replacement round-trip', () => {
   it('the echoed text re-syncs the buffer and getText() reflects the newest echo', async () => {
     const { doc, outbound } = connected('This is very good.', [finding('f1', 8, 12, 'very')])
     const promise = doc.applySuggestion('f1', 'extremely')
-    doc.replaceResult(outbound.applyReplacements[0].requestId, true, 'This is extremely good.')
+    doc.replaceResult(outbound.applyReplacements[0].requestId, true, 'This is extremely good.', 'f1')
     await promise
     expect(doc.getText()).toBe('This is extremely good.')
     // The suggestion self-invalidates the finding, exactly as in the editor.
     expect(doc.currentFinding('f1')).toBeNull()
+  })
+
+  // F2 (final review): the bridge forwards payload.fieldId, and the shim
+  // must ignore any echo that doesn't match the currently connected field —
+  // a stale echo from a field the host already disconnected must not
+  // resync the buffer for whatever field is connected now.
+  it('ignores a replaceResult echo for a different field: buffer unchanged, pending still times out', async () => {
+    const { doc, outbound } = connected('This is very good.', [finding('f1', 8, 12, 'very')])
+    const promise = doc.applySuggestion('f1', 'extremely')
+    doc.replaceResult(outbound.applyReplacements[0].requestId, true, 'IGNORED TEXT', 'other-field')
+    expect(doc.getText()).toBe('This is very good.')
+    expect(doc.currentFinding('f1')).not.toBeNull() // untouched, not re-synced
+    vi.advanceTimersByTime(2000)
+    await expect(promise).resolves.toBe('refused')
+  })
+
+  // F2: fieldConnected/fieldDisconnected settle-and-clear the pending map
+  // rather than leaving a stale promise to resolve only via its timeout.
+  it('connect-during-pending settles the outstanding replace as refused immediately', async () => {
+    const { doc } = connected('This is very good.', [finding('f1', 8, 12, 'very')])
+    const promise = doc.applySuggestion('f1', 'extremely')
+    doc.fieldConnected('f1', 'a whole new document', CAPS)
+    await expect(promise).resolves.toBe('refused')
+  })
+
+  it('disconnect-during-pending settles the outstanding replace as refused immediately', async () => {
+    const { doc } = connected('This is very good.', [finding('f1', 8, 12, 'very')])
+    const promise = doc.applySuggestion('f1', 'extremely')
+    doc.fieldDisconnected('f1')
+    await expect(promise).resolves.toBe('refused')
   })
 })
 
@@ -326,7 +356,7 @@ describe('applyRewrite', () => {
     const call = outbound.applyReplacements[0]
     expect(dupDoc.slice(call.from, call.to)).toBe(sentence)
     expect(call.from).toBeGreaterThan(sentence.length) // the second occurrence
-    doc.replaceResult(call.requestId, true, `${sentence} Middle. Rewritten.`)
+    doc.replaceResult(call.requestId, true, `${sentence} Middle. Rewritten.`, 'f1')
     await expect(promise).resolves.toBe('ok')
   })
 
@@ -407,6 +437,19 @@ describe('fieldConnected / fieldDisconnected / connected / capabilities', () => 
     expect(doc.connected()).toBe(true)
   })
 
+  // F1 (final review): mirror image of "fieldConnected clears tracked
+  // findings" above — fieldDisconnected must reset the store the same way,
+  // not just its own private fieldId/buffer/items. Mutation-verify by
+  // dropping resetConnectionState's setTracked call: this test then fails
+  // because useStore.getState().tracked stays non-empty.
+  it('fieldDisconnected clears tracked findings in the store and sends empty findings to the host', () => {
+    const { doc, outbound } = connected('This is very good.', [finding('f1', 8, 12, 'very')])
+    doc.fieldDisconnected('f1')
+    expect(useStore.getState().tracked).toEqual([])
+    const last = outbound.findingsCalls.at(-1)
+    expect(last).toEqual({ fieldId: 'f1', findings: [] })
+  })
+
   it('fieldConnected publishes the connected field id and page URL from meta to the store (B43 C1)', () => {
     const outbound = fakeOutbound()
     const doc: HostDoc = createHostDoc(outbound)
@@ -455,5 +498,31 @@ describe('setDocument', () => {
     const { doc } = connected('This is very good.')
     expect(() => doc.setDocument('replaced', [])).not.toThrow()
     expect(doc.getText()).toBe('This is very good.')
+  })
+})
+
+// F3 (final review): resetSession() is the unconditional teardown wired
+// into auth/session.ts's logout()/expireSession() via embed/disconnectSlot.ts
+// — the store's resetSessionState() clears its own fields, but this shim's
+// private fieldId/buffer/items survive that and must be cleared separately.
+describe('resetSession', () => {
+  it('disconnects unconditionally and a subsequent textChanged for the old fieldId is ignored', () => {
+    const { doc } = connected('This is very good.', [finding('f1', 8, 12, 'very')])
+    doc.resetSession()
+    expect(doc.connected()).toBe(false)
+    expect(doc.getText()).toBe('')
+    doc.textChanged('f1', 'a post-logout host echo')
+    expect(doc.connected()).toBe(false)
+    expect(doc.getText()).toBe('')
+  })
+
+  it('clears connectedField and tracked findings in the store', () => {
+    const outbound = fakeOutbound()
+    const doc: HostDoc = createHostDoc(outbound)
+    doc.fieldConnected('f1', 'hello', CAPS, { url: 'https://host.example/doc', fieldKind: 'textarea' })
+    doc.mergeFindings(['rule'], [finding('f1', 0, 4, 'hell', 'rule')])
+    doc.resetSession()
+    expect(useStore.getState().connectedField).toBeNull()
+    expect(useStore.getState().tracked).toEqual([])
   })
 })
