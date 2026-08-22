@@ -245,7 +245,7 @@ class EmbedSettings(BaseModel):
             r"^(?:'self'|[a-z][a-z0-9+.\-]*://[A-Za-z0-9.\-]+(?::\d+)?)$"
         )
         for entry in entries:
-            if not pattern.match(entry):
+            if not pattern.fullmatch(entry):
                 raise ValueError(
                     f"embed.allowed_ancestors entry {entry!r} is not 'self' or"
                     " a scheme://host[:port] origin"
