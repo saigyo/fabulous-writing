@@ -1,0 +1,30 @@
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import '../index.css'
+import '../App.css'
+import './embed.css'
+import { LoginGate } from '../auth/LoginGate.tsx'
+import { initPrefsPersistence } from '../state/prefsPersistence.ts'
+import { setDocumentPort } from '../checking/documentPort'
+import { createHostDoc } from './hostDoc'
+import { startBridge } from './bridge'
+import { setEmbedOutbound } from './embedRef'
+import { EmbedApp } from './EmbedApp'
+
+const bridge = startBridge()
+const hostDoc = createHostDoc(bridge.outbound)
+bridge.attach(hostDoc)
+setDocumentPort(hostDoc)
+// Deviation from the plan's main.tsx sketch: EmbedApp renders with no props,
+// so it needs a way to reach bridge.outbound (to wire the check scheduler's
+// onInput into it — see embedRef.ts's own comment) without main.tsx passing
+// it down explicitly.
+setEmbedOutbound(bridge.outbound)
+initPrefsPersistence()
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <LoginGate>
+      <EmbedApp />
+    </LoginGate>
+  </StrictMode>,
+)

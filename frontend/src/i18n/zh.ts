@@ -314,4 +314,8 @@ export const zh: Messages = {
   resetUpdateFailedRetry: '保存尚未成功——请重试。',
   dialogCancel: '取消',
   dialogConfirm: '确认',
+
+  embedWaiting: '正在等待宿主应用…',
+  embedDisconnected: '未连接文本框。',
+  embedReplaceFailed: '宿主应用无法应用此更改——文本可能已更改。',
 }

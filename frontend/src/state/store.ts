@@ -97,6 +97,17 @@ interface AppStateData {
   // display and its two threshold notes); transient like docWords — never
   // persisted, reset on every document load.
   docChars: number
+  // The embed's currently connected host field (B43 C1) — null while no
+  // field is connected. A minimal extension beyond hostDoc.ts's own
+  // connected()/capabilities() (not reactive, and not observable outside
+  // the module): EmbedApp needs a reactive signal both to show the
+  // connected page's URL and to detect a fresh fieldConnected() (to trigger
+  // cancelCheck() + an immediate check) — every call to setConnectedField()
+  // on a (re)connect writes a brand-new object, so a React effect keyed on
+  // this field's identity fires on every connect, not just the first one.
+  // Never persisted (transient like docWords/docChars) and unused outside
+  // the embed entry — the main app's editorPort.ts never touches it.
+  connectedField: { fieldId: string; url: string | null } | null
   extraSuggestions: Record<string, string[]>
   suggestPendingId: string | null
   suggestErrors: Record<string, string>
@@ -199,6 +210,7 @@ interface AppStateActions {
   markScorecardStale: () => void
   setDocWords: (docWords: number) => void
   setDocChars: (docChars: number) => void
+  setConnectedField: (field: { fieldId: string; url: string | null } | null) => void
   setSuggestPending: (findingId: string | null) => void
   setExtraSuggestions: (findingId: string, suggestions: string[]) => void
   setSuggestError: (findingId: string, error: string | null) => void
@@ -348,6 +360,7 @@ export const INITIAL_DATA: Omit<
   scorecardStale: false,
   docWords: 0,
   docChars: 0,
+  connectedField: null,
   extraSuggestions: {},
   suggestPendingId: null,
   suggestErrors: {},
@@ -458,6 +471,7 @@ export const useStore = create<AppState>()((set) => ({
     set((state) => (state.scorecard ? { scorecardStale: true } : {})),
   setDocWords: (docWords) => set({ docWords }),
   setDocChars: (docChars) => set({ docChars }),
+  setConnectedField: (connectedField) => set({ connectedField }),
   setSuggestPending: (suggestPendingId) => set({ suggestPendingId }),
   setExtraSuggestions: (findingId, suggestions) =>
     set((state) => ({

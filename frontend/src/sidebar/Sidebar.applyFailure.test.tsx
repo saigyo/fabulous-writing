@@ -1,0 +1,145 @@
+// @vitest-environment happy-dom
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import type { ApplyResult, DocumentPort } from '../checking/documentPort'
+import { setDocumentPort } from '../checking/documentPort'
+import type { TrackedFinding } from '../editor/findings'
+import { en } from '../i18n/en'
+import { useStore } from '../state/store'
+import type { Finding } from '../types'
+import { Sidebar } from './Sidebar'
+
+function finding(id: string, suggestions: string[] = []): Finding {
+  return {
+    id,
+    category: 'grammar',
+    severity: 'warning',
+    source: 'rule',
+    rule_id: null,
+    message: 'A finding message.',
+    span: { start: 0, end: 5, text: 'Hello' },
+    suggestions,
+    advice: [],
+  }
+}
+
+function tracked(f: Finding): TrackedFinding {
+  return { finding: f, from: f.span.start, to: f.span.end }
+}
+
+function fakePort(
+  applySuggestion: () => Promise<ApplyResult>,
+  applyRewrite: () => Promise<ApplyResult>,
+): DocumentPort {
+  return {
+    hasDocument: () => true,
+    getText: () => 'Hello there.',
+    setDocument: () => {},
+    currentFinding: () => null,
+    serverSpan: () => null,
+    mergeFindings: () => {},
+    selectFinding: () => {},
+    applySuggestion,
+    applyRewrite,
+  }
+}
+
+afterEach(() => {
+  cleanup()
+})
+
+beforeEach(() => {
+  useStore.setState({
+    uiLocale: 'en',
+    tracked: [],
+    selectedId: null,
+    checkPhase: 'idle',
+    llmError: null,
+    llmEffective: null,
+    severityFilter: null,
+    sourceFilter: null,
+    user: null,
+    docChars: 0,
+    extraSuggestions: {},
+    suggestPendingId: null,
+    suggestErrors: {},
+    suggestHeldBack: {},
+    suggestAdvice: {},
+    rewrites: {},
+    rewritePendingId: null,
+    rewriteErrors: {},
+    rewriteHeldBack: {},
+    rewriteAdvice: {},
+  })
+})
+
+// Task 3's discriminated ApplyResult ('ok' | 'not-found' | 'refused') is
+// what makes these two cases distinguishable — 'refused' is embed-only (the
+// host declined or timed out), 'not-found' means the finding/sentence is
+// simply gone (main app and embed alike).
+describe('Sidebar surfaces embed replacement failures (B43 C1)', () => {
+  it('a refused suggestion apply renders embedReplaceFailed and keeps the suggestions on screen', async () => {
+    const f = finding('f1', ['better'])
+    setDocumentPort(
+      fakePort(
+        () => Promise.resolve('refused'),
+        () => Promise.resolve('refused'),
+      ),
+    )
+    useStore.setState({ tracked: [tracked(f)], selectedId: f.id })
+    render(<Sidebar />)
+
+    fireEvent.click(screen.getByText('better'))
+
+    await waitFor(() =>
+      expect(screen.getByText(en.embedReplaceFailed)).toBeTruthy(),
+    )
+    // The suggestion button is still there — a host refusal must not force
+    // a re-fetch of what was already fetched.
+    expect(screen.getByText('better')).toBeTruthy()
+  })
+
+  it('a not-found rewrite apply keeps the existing sentence-changed message', async () => {
+    const f = finding('f2')
+    setDocumentPort(
+      fakePort(
+        () => Promise.resolve('not-found'),
+        () => Promise.resolve('not-found'),
+      ),
+    )
+    useStore.setState({
+      tracked: [tracked(f)],
+      selectedId: f.id,
+      rewrites: { [f.id]: { original: 'Hello there.', options: ['Hi there.'] } },
+    })
+    render(<Sidebar />)
+
+    fireEvent.click(screen.getByText('Hi there.'))
+
+    await waitFor(() =>
+      expect(screen.getByText(en.sentenceChangedRewriteAgain)).toBeTruthy(),
+    )
+  })
+
+  it('a refused rewrite apply renders embedReplaceFailed instead', async () => {
+    const f = finding('f3')
+    setDocumentPort(
+      fakePort(
+        () => Promise.resolve('refused'),
+        () => Promise.resolve('refused'),
+      ),
+    )
+    useStore.setState({
+      tracked: [tracked(f)],
+      selectedId: f.id,
+      rewrites: { [f.id]: { original: 'Hello there.', options: ['Hi there.'] } },
+    })
+    render(<Sidebar />)
+
+    fireEvent.click(screen.getByText('Hi there.'))
+
+    await waitFor(() =>
+      expect(screen.getByText(en.embedReplaceFailed)).toBeTruthy(),
+    )
+  })
+})

@@ -65,7 +65,9 @@ function connected(text: string, findings: Finding[] = [], source: Source = 'rul
 }
 
 beforeEach(() => {
-  useStore.setState({ tracked: [], selectedId: null, scorecard: null, scorecardStale: false })
+  useStore.setState({
+    tracked: [], selectedId: null, scorecard: null, scorecardStale: false, connectedField: null,
+  })
 })
 
 describe('splice derivation via textChanged', () => {
@@ -403,6 +405,42 @@ describe('fieldConnected / fieldDisconnected / connected / capabilities', () => 
     const { doc } = connected('This is very good.')
     doc.fieldDisconnected('other-field')
     expect(doc.connected()).toBe(true)
+  })
+
+  it('fieldConnected publishes the connected field id and page URL from meta to the store (B43 C1)', () => {
+    const outbound = fakeOutbound()
+    const doc: HostDoc = createHostDoc(outbound)
+    doc.fieldConnected('f1', 'hello', CAPS, { url: 'https://host.example/doc', fieldKind: 'textarea' })
+    expect(useStore.getState().connectedField).toEqual({
+      fieldId: 'f1',
+      url: 'https://host.example/doc',
+    })
+  })
+
+  it('fieldConnected without meta (older/stub callers) publishes a null url, not a crash', () => {
+    const outbound = fakeOutbound()
+    const doc: HostDoc = createHostDoc(outbound)
+    doc.fieldConnected('f1', 'hello', CAPS)
+    expect(useStore.getState().connectedField).toEqual({ fieldId: 'f1', url: null })
+  })
+
+  it('fieldDisconnected clears connectedField for the matching field', () => {
+    const outbound = fakeOutbound()
+    const doc: HostDoc = createHostDoc(outbound)
+    doc.fieldConnected('f1', 'hello', CAPS, { url: 'https://host.example/doc', fieldKind: 'textarea' })
+    doc.fieldDisconnected('f1')
+    expect(useStore.getState().connectedField).toBeNull()
+  })
+
+  it('fieldDisconnected leaves connectedField untouched for a mismatched fieldId', () => {
+    const outbound = fakeOutbound()
+    const doc: HostDoc = createHostDoc(outbound)
+    doc.fieldConnected('f1', 'hello', CAPS, { url: 'https://host.example/doc', fieldKind: 'textarea' })
+    doc.fieldDisconnected('other-field')
+    expect(useStore.getState().connectedField).toEqual({
+      fieldId: 'f1',
+      url: 'https://host.example/doc',
+    })
   })
 
   it('textChanged ignores a mismatched fieldId', () => {

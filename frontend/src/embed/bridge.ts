@@ -89,7 +89,9 @@ export function startBridge(): Bridge {
         lastStatusKey = statusKey(useStore.getState())
         break
       case 'fieldConnected':
-        hostDoc?.fieldConnected(msg.payload.fieldId, msg.payload.text, msg.payload.capabilities)
+        hostDoc?.fieldConnected(
+          msg.payload.fieldId, msg.payload.text, msg.payload.capabilities, msg.payload.meta,
+        )
         break
       case 'textChanged':
         hostDoc?.textChanged(msg.payload.fieldId, msg.payload.text)

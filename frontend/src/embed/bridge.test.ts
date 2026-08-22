@@ -25,7 +25,12 @@ afterEach(() => {
 })
 
 interface StubHostDoc extends HostDoc {
-  fieldConnectedCalls: { fieldId: string; text: string; capabilities: HostCapabilities }[]
+  fieldConnectedCalls: {
+    fieldId: string
+    text: string
+    capabilities: HostCapabilities
+    meta?: { url: string; fieldKind: string }
+  }[]
   textChangedCalls: { fieldId: string; text: string }[]
   replaceResultCalls: { requestId: string; ok: boolean; text: string }[]
   fieldDisconnectedCalls: string[]
@@ -54,8 +59,8 @@ function stubHostDoc(): StubHostDoc {
     mergeFindings: () => {},
     applySuggestion: () => Promise.resolve('not-found'),
     applyRewrite: () => Promise.resolve('not-found'),
-    fieldConnected(fieldId, text, capabilities) {
-      fieldConnectedCalls.push({ fieldId, text, capabilities })
+    fieldConnected(fieldId, text, capabilities, meta) {
+      fieldConnectedCalls.push({ fieldId, text, capabilities, meta })
     },
     fieldDisconnected(fieldId) {
       fieldDisconnectedCalls.push(fieldId)
@@ -204,7 +209,9 @@ describe('startBridge: origin pinning and routing', () => {
       source,
     )
 
-    expect(hostDoc.fieldConnectedCalls).toEqual([{ fieldId: 'f1', text: 'abc', capabilities: CAPS }])
+    expect(hostDoc.fieldConnectedCalls).toEqual([
+      { fieldId: 'f1', text: 'abc', capabilities: CAPS, meta: { url: 'u', fieldKind: 'textarea' } },
+    ])
     expect(hostDoc.replaceResultCalls).toEqual([{ requestId: 'r1', ok: true, text: 'abcX' }])
     expect(hostDoc.selectFindingCalls).toEqual(['finding-1'])
     expect(hostDoc.fieldDisconnectedCalls).toEqual(['f1'])

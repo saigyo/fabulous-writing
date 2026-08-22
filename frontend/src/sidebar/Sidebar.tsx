@@ -278,12 +278,30 @@ function SuggestionArea({ finding }: { finding: Finding }) {
             className="suggestion-button"
             onClick={(event) => {
               event.stopPropagation()
-              void getDocumentPort().applySuggestion(finding.id, suggestion)
+              void getDocumentPort()
+                .applySuggestion(finding.id, suggestion)
+                .then((result) => {
+                  // 'not-found' stays silent (matches today's behavior — the
+                  // finding is just gone). 'refused' (embed only: the host
+                  // declined or timed out) must not be swallowed, or the
+                  // user is left staring at a suggestion that silently did
+                  // nothing — the cached suggestions stay on screen (unlike
+                  // RewriteArea, which clears its rewrite) since there is
+                  // nothing stale about them to force a re-fetch over.
+                  if (result === 'refused') {
+                    useStore.getState().setSuggestError(finding.id, m.embedReplaceFailed)
+                  }
+                })
             }}
           >
             {suggestion}
           </button>
         ))}
+        {error && (
+          <p className="suggest-error" role="status">
+            {error}
+          </p>
+        )}
         <AdviceNotes notes={advice} />
       </div>
     )
@@ -319,7 +337,15 @@ function SuggestionArea({ finding }: { finding: Finding }) {
       {error && heldBack.length > 0 && (
         <HeldBackList
           candidates={heldBack}
-          onApply={(text) => void getDocumentPort().applySuggestion(finding.id, text)}
+          onApply={(text) =>
+            void getDocumentPort()
+              .applySuggestion(finding.id, text)
+              .then((result) => {
+                if (result === 'refused') {
+                  useStore.getState().setSuggestError(finding.id, m.embedReplaceFailed)
+                }
+              })
+          }
         />
       )}
       <AdviceNotes notes={advice} />
@@ -399,7 +425,13 @@ function RewriteArea({ finding }: { finding: Finding }) {
     if (result !== 'ok') {
       const store = useStore.getState()
       store.setRewrite(finding.id, null)
-      store.setRewriteError(finding.id, m.sentenceChangedRewriteAgain)
+      // 'not-found' (the sentence changed since the rewrite was fetched)
+      // keeps the existing message; 'refused' (embed only: the host
+      // declined or timed out) gets the embed-specific one instead.
+      store.setRewriteError(
+        finding.id,
+        result === 'refused' ? m.embedReplaceFailed : m.sentenceChangedRewriteAgain,
+      )
     }
   }
 
@@ -409,7 +441,10 @@ function RewriteArea({ finding }: { finding: Finding }) {
     if (result !== 'ok') {
       const store = useStore.getState()
       store.setRewriteHeldBack(finding.id, null)
-      store.setRewriteError(finding.id, m.sentenceChangedRewriteAgain)
+      store.setRewriteError(
+        finding.id,
+        result === 'refused' ? m.embedReplaceFailed : m.sentenceChangedRewriteAgain,
+      )
     }
   }
 

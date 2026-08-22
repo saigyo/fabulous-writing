@@ -34,7 +34,17 @@ export interface HostDocOutbound {
 }
 
 export interface HostDoc extends DocumentPort {
-  fieldConnected(fieldId: string, text: string, capabilities: HostCapabilities): void
+  /** meta is optional only for backward-compatible test call sites — the
+   * bridge always sends it (protocol.ts's FieldConnectedMessage.payload.meta
+   * is required). Used solely to publish the connected field's page URL to
+   * the store (see connectedField's own comment in state/store.ts) — the
+   * shim has no other use for fieldKind. */
+  fieldConnected(
+    fieldId: string,
+    text: string,
+    capabilities: HostCapabilities,
+    meta?: { url: string; fieldKind: string },
+  ): void
   fieldDisconnected(fieldId: string): void
   textChanged(fieldId: string, text: string): void
   replaceResult(requestId: string, ok: boolean, text: string): void
@@ -233,7 +243,7 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
       }
       return Promise.resolve('not-found')
     },
-    fieldConnected(fid, text, capabilities) {
+    fieldConnected(fid, text, capabilities, meta) {
       fieldId = fid
       caps = capabilities
       buffer = text
@@ -243,6 +253,7 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
       store.setDocWords(wordCount(text))
       store.setDocChars(codePoints(text))
       store.clearScorecard() // whole-document replacement: no "old text" left to describe
+      store.setConnectedField({ fieldId: fid, url: meta?.url ?? null })
       publishFindings()
     },
     fieldDisconnected(fid) {
@@ -252,6 +263,7 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
       buffer = ''
       items = []
       selectedId = null
+      useStore.getState().setConnectedField(null)
     },
     textChanged(fid, text) {
       if (fieldId !== fid) return
