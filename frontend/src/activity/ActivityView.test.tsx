@@ -448,3 +448,60 @@ describe('ActivityView: scroll reset on subject navigation', () => {
     expect(scrollEl.scrollTop).toBe(0)
   })
 })
+
+describe('ActivityView: stale-data flash guard (request-keyed rendering)', () => {
+  it('shows loading, not the previous subject\'s data, on the very first commit after a subject switch', async () => {
+    vi.mocked(getAllActivity).mockResolvedValue(allFixture())
+    useStore.setState({ user: user({ is_admin: true }), activitySubject: 'all' })
+
+    const { container } = render(<ActivityView />)
+
+    await waitFor(() => expect(getAllActivity).toHaveBeenCalledWith(30))
+    await waitFor(() => expect(container.querySelector('table.activity-table')).not.toBeNull())
+    const table = container.querySelector('table.activity-table') as HTMLTableElement
+    const staleTotalsLine = `${allFixture().totals.runs} ${en.activityTotalRuns} · ${allFixture().totals.input_tokens} ${en.activityInput} / ${allFixture().totals.output_tokens} ${en.activityOutput} · ${allFixture().totals.credits} ${en.activityTableCredits}`
+    // Confirm the 'all' subject's data actually rendered before switching.
+    screen.getByText(staleTotalsLine)
+
+    // Deliberately never resolves within this test — the assertions below
+    // must hold on the very first commit, before any response lands.
+    vi.mocked(getUserActivity).mockImplementation(() => new Promise(() => {}))
+
+    const rows = within(table).getAllByRole('row').slice(1)
+    fireEvent.click(within(rows[0]).getByRole('button'))
+
+    // The OLD subject's totals/table must be gone immediately — not still
+    // showing under the new (already-updated) heading for one frame.
+    expect(screen.queryByText(staleTotalsLine)).toBeNull()
+    expect(container.querySelector('table.activity-table')).toBeNull()
+    screen.getByText(en.activityLoading)
+  })
+})
+
+describe('ActivityView: visible data-table toggle', () => {
+  it('reveals and re-hides the runs panel data table, flipping aria-expanded and the button label', async () => {
+    vi.mocked(getOwnActivity).mockResolvedValue(selfFixture())
+
+    const { container } = render(<ActivityView />)
+
+    await waitFor(() => expect(getOwnActivity).toHaveBeenCalledWith(30))
+    await screen.findByText(en.activityRuns, { selector: '.activity-panel-label' })
+
+    const runsPanel = container.querySelectorAll('.activity-panel')[0] as HTMLElement
+    const toggle = within(runsPanel).getByRole('button', { name: en.activityShowTable })
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    const wrapper = () => runsPanel.querySelector('table')?.parentElement
+    expect(wrapper()?.classList.contains('visually-hidden')).toBe(true)
+
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    expect(toggle.textContent).toBe(en.activityHideTable)
+    expect(wrapper()?.classList.contains('visually-hidden')).toBe(false)
+    expect(runsPanel.querySelector('table')?.classList.contains('activity-table')).toBe(true)
+
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(toggle.textContent).toBe(en.activityShowTable)
+    expect(wrapper()?.classList.contains('visually-hidden')).toBe(true)
+  })
+})

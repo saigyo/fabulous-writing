@@ -269,6 +269,8 @@ export const zh: Messages = {
   activityBack: '返回所有用户',
   activityLoadError: '无法加载活动数据。',
   activityLoading: '加载中…',
+  activityShowTable: '显示数据表',
+  activityHideTable: '隐藏数据表',
   adminAllActivity: '查看所有用户的活动',
 
   passwordCurrent: '当前密码',

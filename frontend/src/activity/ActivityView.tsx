@@ -12,7 +12,7 @@ import {
 } from '../api/client'
 import { sessionGeneration } from '../auth/session'
 import { useLocale, useMessages, type Messages } from '../i18n'
-import { useStore } from '../state/store'
+import { useStore, type ActivitySubject } from '../state/store'
 import { formatDay } from './formatDay'
 import { StackedBarChart, type ChartSeries } from './StackedBarChart'
 
@@ -60,6 +60,30 @@ function sortAriaValue(key: SortKey, activeKey: SortKey, dir: SortDir): 'ascendi
   return dir === 'asc' ? 'ascending' : 'descending'
 }
 
+// Request-keyed rendering (Copilot review): the fetch effect used to hold
+// `data`/`error` as their own state, cleared/set only once the effect ran —
+// which happens AFTER React commits the render for a new subject/range/
+// auth-gen. That left one committed frame where the OLD subject's data
+// could still render under the NEW subject's heading (worst case: an
+// admin's per-user numbers flashing under a heading already collapsed to
+// 'self'). Tagging every stored result with the key of the request that
+// produced it fixes this at the source: `data`/`error` below are DERIVED
+// at render time by comparing the stored key against the CURRENT key, so
+// they're correct on the very first render of a new subject/range/
+// auth-gen — no dependency on the effect having run yet. The `cancelled`
+// flag inside the effect still matters too: it's a write-time guard
+// (stops a superseded request from writing into state at all), whereas
+// the key comparison is a read-time guard (hides stale data at render
+// even if a write did land) — the two cover different moments.
+type FetchState =
+  | { status: 'data'; key: string; data: ActivityResponse }
+  | { status: 'error'; key: string }
+  | null
+
+function fetchKey(subject: ActivitySubject, days: ActivityDays, authGeneration: number): string {
+  return `${subject}|${days}|${authGeneration}`
+}
+
 // Visible color legend for one chart panel — composed from the exact same
 // ChartSeries array the panel's <StackedBarChart> receives, so a series
 // added there (or renamed/recolored) appears here automatically with no
@@ -85,20 +109,25 @@ function ChartLegend({ series }: { series: ChartSeries[] }) {
 
 // The SVG (role="img", per-day <title>) gives pointer users a hover
 // tooltip but no screen-reader-accessible numbers — this table is the SR
-// data path, hidden visually (`.visually-hidden`) but reading the exact
-// same days/series props the chart renders, so the two can never disagree.
+// data path, reading the exact same days/series props the chart renders
+// (so the two can never disagree). `visible` (per-panel toggle state, see
+// ChartPanel) controls whether it ALSO becomes a plain visible/keyboard-
+// reachable table: hidden is the default, reusing `.activity-table`'s
+// existing styling when shown rather than inventing a second table style.
 function ChartDataTable({
   caption,
   dateHeader,
   days,
   series,
   formatDay,
+  visible,
 }: {
   caption: string
   dateHeader: string
   days: string[]
   series: ChartSeries[]
   formatDay: (iso: string) => string
+  visible: boolean
 }) {
   return (
     // .visually-hidden sits on this wrapper div, NOT the <table> (2026-08-22
@@ -108,9 +137,11 @@ function ChartDataTable({
     // absolutely-positioned box that extended the page's scrollable
     // overflow (clip-path only hides the paint, not the box). A div obeys
     // 1x1 + overflow:hidden and fully contains the table; this is the
-    // standard sr-only-table pattern.
-    <div className="visually-hidden">
-      <table>
+    // standard sr-only-table pattern. When `visible`, the wrapper drops
+    // the class entirely (a plain div) and the table itself picks up
+    // `.activity-table` instead.
+    <div className={visible ? undefined : 'visually-hidden'}>
+      <table className={visible ? 'activity-table' : undefined}>
         <caption>{caption}</caption>
         <thead>
           <tr>
@@ -134,6 +165,53 @@ function ChartDataTable({
           ))}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+// One panel: label, legend, a visible toggle for the SR data table (per-
+// panel local state — each of the three panels toggles independently,
+// default hidden), the chart, and the table itself. The toggle is a plain
+// keyboard-reachable button, not part of the accessibility-only path: it
+// gives sighted/keyboard users the same exact numbers a screen reader gets
+// from the table, without requiring a screen reader to see them.
+function ChartPanel({
+  panelLabel,
+  series,
+  days,
+  formatDay,
+  dateHeader,
+  m,
+}: {
+  panelLabel: string
+  series: ChartSeries[]
+  days: string[]
+  formatDay: (iso: string) => string
+  dateHeader: string
+  m: Messages
+}) {
+  const [tableVisible, setTableVisible] = useState(false)
+  return (
+    <div className="activity-panel">
+      <div className="activity-panel-label">{panelLabel}</div>
+      <ChartLegend series={series} />
+      <button
+        type="button"
+        className="activity-table-toggle"
+        aria-expanded={tableVisible}
+        onClick={() => setTableVisible((visible) => !visible)}
+      >
+        {tableVisible ? m.activityHideTable : m.activityShowTable}
+      </button>
+      <StackedBarChart days={days} series={series} ariaLabel={panelLabel} formatDay={formatDay} />
+      <ChartDataTable
+        caption={panelLabel}
+        dateHeader={dateHeader}
+        days={days}
+        series={series}
+        formatDay={formatDay}
+        visible={tableVisible}
+      />
     </div>
   )
 }
@@ -165,10 +243,15 @@ export function ActivityView() {
   const effectiveSubject = user?.is_admin ? activitySubject : 'self'
 
   const [days, setDays] = useState<ActivityDays>(30)
-  const [data, setData] = useState<ActivityResponse | null>(null)
-  const [error, setError] = useState(false)
+  const [fetchState, setFetchState] = useState<FetchState>(null)
   const [sortKey, setSortKey] = useState<SortKey>('credits')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
+
+  // See fetchKey's own comment above for why this is derived rather than
+  // its own piece of state.
+  const currentKey = fetchKey(effectiveSubject, days, authGeneration)
+  const data = fetchState?.status === 'data' && fetchState.key === currentKey ? fetchState.data : null
+  const error = fetchState?.status === 'error' && fetchState.key === currentKey
 
   const scrollRef = useRef<HTMLDivElement>(null)
   // A subject change is navigation (self <-> all <-> a drilled-into user),
@@ -185,15 +268,21 @@ export function ActivityView() {
   }, [effectiveSubject])
 
   useEffect(() => {
-    setData(null)
-    setError(false)
-    // `cancelled` closes the slow-old-request-overwrites-new race: a subject
-    // or range switch (or unmount) must stop THIS invocation's response
-    // from committing once a newer one has started, even though both share
-    // the same sessionGeneration() (a subject/range change is not a session
+    // No setData(null)/setError(false) here: `data`/`error` above are
+    // derived from the key comparison, so a subject/range/auth-gen change
+    // already reads as "loading" on this render, before this effect even
+    // runs (see fetchKey's comment). `cancelled` closes the slow-old-
+    // request-overwrites-new race: a subject or range switch (or unmount)
+    // must stop THIS invocation's response from WRITING at all once a
+    // newer one has started, even though both share the same
+    // sessionGeneration() (a subject/range change is not a session
     // turnover, so that guard alone doesn't cover it).
     let cancelled = false
     const gen = sessionGeneration()
+    // Computed from this effect's own deps, not the outer `currentKey` —
+    // same value, but this way the effect doesn't close over a render-time
+    // variable the deps array doesn't list.
+    const key = fetchKey(effectiveSubject, days, authGeneration)
     const call =
       effectiveSubject === 'self'
         ? getOwnActivity(days)
@@ -202,10 +291,10 @@ export function ActivityView() {
           : getUserActivity(effectiveSubject, days)
     call
       .then((response) => {
-        if (!cancelled && sessionGeneration() === gen) setData(response)
+        if (!cancelled && sessionGeneration() === gen) setFetchState({ status: 'data', key, data: response })
       })
       .catch(() => {
-        if (!cancelled && sessionGeneration() === gen) setError(true)
+        if (!cancelled && sessionGeneration() === gen) setFetchState({ status: 'error', key })
       })
     return () => {
       cancelled = true
@@ -313,42 +402,30 @@ export function ActivityView() {
           <p className="activity-totals">
             {`${data.totals.runs} ${m.activityTotalRuns} · ${data.totals.input_tokens} ${m.activityInput} / ${data.totals.output_tokens} ${m.activityOutput} · ${data.totals.credits} ${m.activityTableCredits}`}
           </p>
-          <div className="activity-panel">
-            <div className="activity-panel-label">{m.activityRuns}</div>
-            <ChartLegend series={runSeries} />
-            <StackedBarChart days={data.days} series={runSeries} ariaLabel={m.activityRuns} formatDay={formatChartDay} />
-            <ChartDataTable
-              caption={m.activityRuns}
-              dateHeader={m.windowName('day')}
-              days={data.days}
-              series={runSeries}
-              formatDay={formatChartDay}
-            />
-          </div>
-          <div className="activity-panel">
-            <div className="activity-panel-label">{m.activityTokens}</div>
-            <ChartLegend series={tokenSeries} />
-            <StackedBarChart days={data.days} series={tokenSeries} ariaLabel={m.activityTokens} formatDay={formatChartDay} />
-            <ChartDataTable
-              caption={m.activityTokens}
-              dateHeader={m.windowName('day')}
-              days={data.days}
-              series={tokenSeries}
-              formatDay={formatChartDay}
-            />
-          </div>
-          <div className="activity-panel">
-            <div className="activity-panel-label">{m.activityCredits}</div>
-            <ChartLegend series={creditSeries} />
-            <StackedBarChart days={data.days} series={creditSeries} ariaLabel={m.activityCredits} formatDay={formatChartDay} />
-            <ChartDataTable
-              caption={m.activityCredits}
-              dateHeader={m.windowName('day')}
-              days={data.days}
-              series={creditSeries}
-              formatDay={formatChartDay}
-            />
-          </div>
+          <ChartPanel
+            panelLabel={m.activityRuns}
+            series={runSeries}
+            days={data.days}
+            formatDay={formatChartDay}
+            dateHeader={m.windowName('day')}
+            m={m}
+          />
+          <ChartPanel
+            panelLabel={m.activityTokens}
+            series={tokenSeries}
+            days={data.days}
+            formatDay={formatChartDay}
+            dateHeader={m.windowName('day')}
+            m={m}
+          />
+          <ChartPanel
+            panelLabel={m.activityCredits}
+            series={creditSeries}
+            days={data.days}
+            formatDay={formatChartDay}
+            dateHeader={m.windowName('day')}
+            m={m}
+          />
           {rows && (
             <table className="activity-table">
               <thead>

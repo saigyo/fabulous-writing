@@ -280,6 +280,8 @@ export const de: Messages = {
   activityBack: 'Zurück zu allen Nutzern',
   activityLoadError: 'Aktivitätsdaten konnten nicht geladen werden.',
   activityLoading: 'Lädt…',
+  activityShowTable: 'Datentabelle anzeigen',
+  activityHideTable: 'Datentabelle ausblenden',
   adminAllActivity: 'Aktivität aller Nutzer anzeigen',
 
   passwordCurrent: 'Aktuelles Passwort',

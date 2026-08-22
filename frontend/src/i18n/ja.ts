@@ -271,6 +271,8 @@ export const ja: Messages = {
   activityBack: '全ユーザーに戻る',
   activityLoadError: 'アクティビティデータを読み込めませんでした。',
   activityLoading: '読み込み中…',
+  activityShowTable: 'データ表を表示',
+  activityHideTable: 'データ表を非表示',
   adminAllActivity: '全ユーザーのアクティビティを表示',
 
   passwordCurrent: '現在のパスワード',

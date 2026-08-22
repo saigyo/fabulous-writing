@@ -1714,21 +1714,30 @@ or forced (e.g. by a revoked admin flag).
 
 **Data.** `days` (`30 | 90 | 365`, default 30) is local `useState`; an effect keyed on
 `[effectiveSubject, days, authGeneration]` picks one of `api/client.ts`'s three activity
-calls (`getOwnActivity`/`getAllActivity`/`getUserActivity`) and writes the result into
-local `{data, error}` state — `data` resets to `null` at the top of every effect run, so a
-subject or range change re-shows the loading text rather than flashing stale numbers. The
-third dependency, `authGeneration` (the store field `login()` bumps on every commit —
-including the silent same-user re-login the password-change flow performs, see
-`AccountMenu.tsx`), re-fires the effect on that re-login the same way it does for
-`App.tsx`'s Header domains fetch and `TerminologyView`'s `refreshDomains`. Two guards
-protect a write from a stale request, addressing two different races: `sessionGeneration()
-=== gen`, captured at effect start, drops a response that arrives after a session turnover
-(logout/login as someone else); a plain `cancelled` flag, set `true` by the effect's own
-cleanup function, drops a response that arrives after a *subject or range switch within the
-same session* — the two guards are independent because a subject/range change bumps neither
-`sessionGeneration()` nor `authGeneration`, so `cancelled` is the only thing that stops an
-old, slow request from overwriting a newer one's already-rendered data (or from writing into
-state at all after unmount). While neither `data` nor `error` is set, the view renders
+calls (`getOwnActivity`/`getAllActivity`/`getUserActivity`) and writes the result into one
+`fetchState` slot — `{status: 'data', key, data}` or `{status: 'error', key}` — tagged with
+`fetchKey(effectiveSubject, days, authGeneration)`, the same string the deps array is built
+from. `data`/`error` are then *derived* at render time by comparing that stored key against
+the CURRENT key (recomputed from the current render's `effectiveSubject`/`days`/
+`authGeneration`), not held as their own state (request-keyed rendering, Copilot review):
+the previous shape wrote `data`/`error` directly from the effect, which only runs AFTER
+React commits the render for a new subject/range/auth-gen — one committed frame could
+therefore show the OLD subject's numbers (worst case: an admin's per-user data flashing
+under a heading that had already collapsed to `'self'`). Deriving instead of storing closes
+that gap structurally: a subject/range/auth-gen change makes the stored key stop matching
+on the very next render, before the effect has had any chance to run. The third dependency,
+`authGeneration` (the store field `login()` bumps on every commit — including the silent
+same-user re-login the password-change flow performs, see `AccountMenu.tsx`), re-fires the
+effect on that re-login the same way it does for `App.tsx`'s Header domains fetch and
+`TerminologyView`'s `refreshDomains`. Two guards still protect a *write* from a stale
+request, addressing two different races: `sessionGeneration() === gen`, captured at effect
+start, drops a response that arrives after a session turnover (logout/login as someone
+else); a plain `cancelled` flag, set `true` by the effect's own cleanup function, drops a
+response that arrives after a *subject or range switch within the same session* — these are
+write-time guards (stop a stale response from landing in `fetchState` at all), distinct from
+the key comparison above, which is a read-time guard (hides stale data at render even if a
+write did land). While neither `data` nor `error` is set (including on the very first
+render of a new key, before its own response has arrived), the view renders
 `m.activityLoading`; a rejected fetch renders `m.activityLoadError` instead of the panels.
 
 **Identity across navigation.** The drilled-into user's label (email/display_name) is
@@ -1780,7 +1789,11 @@ later needs no second list to stay in sync) and a `.visually-hidden` data table 
 app-wide SR-only utility, `App.css`) with a caption reusing the panel title, a header row
 of date + series labels, and one row per day — the screen-reader-accessible counterpart
 to the SVG's pointer-only `<title>` tooltip (accessibility follow-up, 2026-08-22; spec
-R4's amendment).
+R4's amendment). A visible `.activity-table-toggle` button next to the legend (per-panel
+local state in `ChartPanel`, default hidden, `aria-expanded`) additionally lets a sighted
+keyboard user reveal that same table on screen — reusing `.activity-table`'s existing
+styling rather than a second table style — so reaching the numbers keyboard-only doesn't
+require a screen reader.
 
 **Totals line and the all-users table.** The totals line
 (`` `${runs} ${m.activityTotalRuns} · ${input} ${m.activityInput} / ${output}

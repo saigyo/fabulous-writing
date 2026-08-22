@@ -284,6 +284,8 @@ export const es: Messages = {
   activityBack: 'Volver a todos los usuarios',
   activityLoadError: 'No se pudieron cargar los datos de actividad.',
   activityLoading: 'Cargando…',
+  activityShowTable: 'Mostrar la tabla de datos',
+  activityHideTable: 'Ocultar la tabla de datos',
   adminAllActivity: 'Ver la actividad de todos los usuarios',
 
   passwordCurrent: 'Contraseña actual',
