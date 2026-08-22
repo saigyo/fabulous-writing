@@ -136,6 +136,13 @@ export function StackedBarChart(props: {
                   width={segWidth}
                   height={height}
                   fill={`var(${e.cssVar})`}
+                  // Surface-colored stroke, not a transparent gap: a 1px
+                  // (SVG user-unit) stroke straddles each edge, giving a
+                  // ~2px page-background separation between stacked
+                  // segments and adjacent bars without punching a real
+                  // hole (which would show whatever sits behind the SVG).
+                  stroke="var(--bg)"
+                  strokeWidth={1}
                 />
               )
             })}

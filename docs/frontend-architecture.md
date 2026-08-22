@@ -1747,10 +1747,17 @@ visibility condition is just `typeof effectiveSubject === 'number'`, with no sep
 history to track.
 
 **Charts.** Three `StackedBarChart` panels stack full-width in spec order — runs, tokens,
-credits — each under an uppercase `.activity-panel-label`. Runs splits into four
-`ChartSeries` (check/suggestion/name/failed, cssVars `--accent`/`--accent-mid`/
-`--accent-faint`/`--held-back`); tokens into input/output (`--accent`/`--accent-faint`);
-credits is a single series (`--accent-mid`). `StackedBarChart` itself (`activity/
+credits — each under an uppercase `.activity-panel-label`. Colors come from a validated,
+chart-only 4-hue categorical palette (`index.css`, both theme blocks — WCAG ≥3:1 on both
+`--bg` and `--panel`, CVD ΔE ≥17 between adjacent categories; spec R4's amendment,
+2026-08-22, superseding an earlier single-hue accent ramp that couldn't satisfy both
+constraints at once): `--chart-check`, `--chart-suggestion`, `--chart-name`,
+`--chart-failed`. Runs splits into four `ChartSeries` mapped to the four vars in that
+order; tokens into input/output (`--chart-check`/`--chart-suggestion`); credits is a
+single series (`--chart-check`). `--accent`/`--held-back` stay the general-UI tokens,
+untouched by any of this. Each stacked segment also carries `stroke="var(--bg)"` — a
+~2px page-background gap between adjacent segments and bars, not a real transparent hole.
+`StackedBarChart` itself (`activity/
 StackedBarChart.tsx`) is a pure, state-free SVG component: it derives bar heights, a
 y-axis maximum that falls back to 1 when all values are zero (so an all-zero response
 still draws real axes instead of a 0/0 one), and thinned x-axis labels entirely from
