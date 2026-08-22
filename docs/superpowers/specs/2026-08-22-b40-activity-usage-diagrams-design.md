@@ -164,8 +164,21 @@ New message keys × 7 locales, informal register per the standing rule:
 the account-menu entry ("My activity"), screen headings (own /
 specific user / all users), panel titles, category labels (check,
 suggestion, name, failed), range-picker labels, table headers, back
-control, empty/error states. Day labels and numbers stay technical
-literals (unlocalized), like the About dialog's values.
+control, empty/error states. Numbers stay technical literals
+(unlocalized), like the About dialog's values.
+
+> **Amendment (interactive testing, 2026-08-22):** the line above
+> originally read "Day labels and numbers stay technical literals
+> (unlocalized)." Markus, testing the charts interactively, requested
+> locale-aware day labels (dd.mm.yyyy in European locales, etc.) — the
+> unlocalized-digits rule now applies to NUMBERS only. Day labels (chart
+> x-axis labels and the per-day tooltip's date prefix) render through
+> `Intl.DateTimeFormat(locale, { year: 'numeric', month: '2-digit', day:
+> '2-digit' })`, bound to the app's active UI locale
+> (`activity/formatDay.ts`, consumed by `StackedBarChart` via an injected
+> `formatDay` prop so the chart component itself stays locale-agnostic).
+> The underlying `days` ISO strings are untouched — indexing, sorting, and
+> the `?days=` API parameter all stay ISO; only the rendered text changes.
 
 ### R6 — Tests (mutation-verified per the standing rule)
 

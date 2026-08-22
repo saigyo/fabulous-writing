@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ActivityResponse, MeResponse, PerUserActivity } from '../api/client'
+import { de } from '../i18n/de'
 import { en } from '../i18n/en'
 import { useStore } from '../state/store'
 
@@ -323,5 +324,24 @@ describe('ActivityView: out-of-order fetch resolution', () => {
 
     screen.getByText(newerLine)
     expect(screen.queryByText(staleLine)).toBeNull()
+  })
+})
+
+describe('ActivityView: locale-aware date rendering', () => {
+  it('renders chart x-axis dates in the active UI locale (de: dd.mm.yyyy)', async () => {
+    vi.mocked(getOwnActivity).mockResolvedValue(selfFixture())
+    useStore.setState({ uiLocale: 'de' })
+
+    const { container } = render(<ActivityView />)
+
+    await waitFor(() => expect(getOwnActivity).toHaveBeenCalledWith(30))
+    await screen.findByText(de.activityRuns)
+    // selfFixture's last day is 2026-07-26 — de formats it dd.mm.yyyy, not
+    // the raw ISO string.
+    const labels = Array.from(container.querySelectorAll('text.chart-xlabel')).map(
+      (el) => el.textContent,
+    )
+    expect(labels).toContain('26.07.2026')
+    expect(labels).not.toContain('2026-07-26')
   })
 })

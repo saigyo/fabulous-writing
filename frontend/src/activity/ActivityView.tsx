@@ -11,8 +11,9 @@ import {
   type PerUserActivity,
 } from '../api/client'
 import { sessionGeneration } from '../auth/session'
-import { useMessages, type Messages } from '../i18n'
+import { useLocale, useMessages, type Messages } from '../i18n'
 import { useStore } from '../state/store'
+import { formatDay } from './formatDay'
 import { StackedBarChart, type ChartSeries } from './StackedBarChart'
 
 const DAY_OPTIONS: ActivityDays[] = [30, 90, 365]
@@ -73,6 +74,12 @@ export function ActivityView() {
   // fetch and TerminologyView's refreshDomains.
   const authGeneration = useStore((s) => s.authGeneration)
   const m = useMessages()
+  // Binds the current UI locale into a pure iso-day -> display-string
+  // function, so StackedBarChart itself stays locale-agnostic (formatDay.ts
+  // does the actual Intl.DateTimeFormat work; see its own timezone-trap
+  // comment).
+  const locale = useLocale()
+  const formatChartDay = (iso: string) => formatDay(iso, locale)
 
   // Client-side gate: a non-admin's effective subject is always its own,
   // regardless of whatever numeric/'all' value the store carries (e.g. left
@@ -212,15 +219,15 @@ export function ActivityView() {
           </p>
           <div className="activity-panel">
             <div className="activity-panel-label">{m.activityRuns}</div>
-            <StackedBarChart days={data.days} series={runSeries} ariaLabel={m.activityRuns} />
+            <StackedBarChart days={data.days} series={runSeries} ariaLabel={m.activityRuns} formatDay={formatChartDay} />
           </div>
           <div className="activity-panel">
             <div className="activity-panel-label">{m.activityTokens}</div>
-            <StackedBarChart days={data.days} series={tokenSeries} ariaLabel={m.activityTokens} />
+            <StackedBarChart days={data.days} series={tokenSeries} ariaLabel={m.activityTokens} formatDay={formatChartDay} />
           </div>
           <div className="activity-panel">
             <div className="activity-panel-label">{m.activityCredits}</div>
-            <StackedBarChart days={data.days} series={creditSeries} ariaLabel={m.activityCredits} />
+            <StackedBarChart days={data.days} series={creditSeries} ariaLabel={m.activityCredits} formatDay={formatChartDay} />
           </div>
           {rows && (
             <table className="activity-table">

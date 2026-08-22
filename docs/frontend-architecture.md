@@ -1754,7 +1754,20 @@ credits is a single series (`--accent-mid`). `StackedBarChart` itself (`activity
 StackedBarChart.tsx`) is a pure, state-free SVG component: it derives bar heights, a
 y-axis maximum that falls back to 1 when all values are zero (so an all-zero response
 still draws real axes instead of a 0/0 one), and thinned x-axis labels entirely from
-props, with a per-day `<title>` for hover detail.
+props, with a per-day `<title>` for hover detail. Day labels — both the x-axis text and
+the tooltip's date prefix — are locale-formatted (interactive-testing request, 2026-08-22;
+spec R5's amendment): `StackedBarChart` takes a `formatDay: (iso: string) => string` prop
+rather than formatting internally, keeping the component itself locale-agnostic;
+`ActivityView` binds it to `activity/formatDay.ts`'s `formatDay(iso, locale)` using the
+active UI locale from `useLocale()`. `formatDay.ts` deliberately does NOT `new
+Date(isoDay)` — a bare `"YYYY-MM-DD"` string parses as UTC midnight, which rolls the
+displayed date back a day for any viewer west of UTC — it instead splits the string and
+constructs a local date (`new Date(y, m - 1, d)`) before handing it to
+`Intl.DateTimeFormat(locale, { year: 'numeric', month: '2-digit', day: '2-digit' })`. Only
+the rendered text changes: the underlying ISO `days` strings stay the data model's keys
+everywhere else (indexing, sorting, the `?days=` API parameter) — this is presentation
+only, distinct from the totals line's numbers (below), which stay deliberately
+unlocalized.
 
 **Totals line and the all-users table.** The totals line
 (`` `${runs} ${m.activityTotalRuns} · ${input} ${m.activityInput} / ${output}
