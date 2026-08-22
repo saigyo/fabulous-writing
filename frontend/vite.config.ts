@@ -22,7 +22,7 @@ export default defineConfig({
       // Count every source file, not just the ones tests happen to import —
       // otherwise untested components silently inflate the percentage.
       include: ['src/**/*.{ts,tsx}'],
-      exclude: ['src/main.tsx', 'src/embed/main.tsx', 'src/vite-env.d.ts'],
+      exclude: ['src/main.tsx', 'src/embed/main.tsx', 'src/simulator/main.ts', 'src/vite-env.d.ts'],
     },
   },
   server: {

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fabulous Writing — Embed Host Simulator</title>
+    <link rel="stylesheet" href="/src/simulator/simulator.css" />
+  </head>
+  <body>
+    <!-- Dev-server-only harness (spec: B43, C1 embed surface, Task 7) — a
+         minimal HOST implementation exercising the bridge protocol against
+         the real /embed.html page in the right-hand iframe. Never a build
+         input (see vite.config.ts's comment). -->
+    <div class="sim-layout">
+      <div class="sim-host">
+        <div class="sim-toolbar">
+          <button id="connect" type="button">Connect</button>
+          <span id="sim-status" class="sim-status">not connected</span>
+        </div>
+        <div class="sim-field-wrap">
+          <textarea id="field" spellcheck="false"
+            >The quikc brown fox could of jumped over the the lazy dog.</textarea
+          >
+        </div>
+      </div>
+      <div class="sim-embed">
+        <iframe id="embed" src="/embed.html" title="Fabulous Writing embed"></iframe>
+      </div>
+    </div>
+    <script type="module" src="/src/simulator/main.ts"></script>
+  </body>
+</html>
