@@ -59,11 +59,19 @@ export function EmbedApp() {
     // update listener: the host shim's onInput is called from
     // hostDoc.ts:syncBuffer on every textChanged/replaceResult instead.
     //
-    // Keyed on the connected field's identity (not just mounted once): a
-    // timer armed by field A's onInput must never fire runCheck against
-    // field B's document after the host switches fields. Recreating the
-    // scheduler on every field change disposes A's pending timers before B
-    // gets a fresh, empty one.
+    // Keyed on the connectedField OBJECT (not connectedField?.fieldId): a
+    // same-field reconnect (host replaces the whole document, e.g. undo/
+    // redo or a fresh page load into the same field) writes a brand-new
+    // connectedField object with the SAME fieldId (see store.ts's own
+    // comment). Depending on fieldId alone would keep the old scheduler
+    // alive across that reconnect, so a timer armed by the prior document's
+    // onInput could still fire runCheck against the replacement document.
+    // Depending on the object's identity re-runs this effect on every
+    // connect, matching hostDoc.ts's whole-document-replacement semantics:
+    // a timer armed by field A's onInput must never fire runCheck against
+    // field B's document after the host switches (or reconnects) fields.
+    // Recreating the scheduler on every field change disposes the prior
+    // pending timers before the new one gets a fresh, empty scheduler.
     const scheduler = createCheckScheduler({
       fastDelayMs: 1000,
       llmDelayMs: 5000,
@@ -77,7 +85,7 @@ export function EmbedApp() {
       if (outbound) outbound.onInput = () => {}
       scheduler.dispose()
     }
-  }, [connectedField?.fieldId])
+  }, [connectedField])
 
   return (
     <div className="embed-app">
