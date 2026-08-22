@@ -53,6 +53,7 @@ export function useHeaderData(): void {
   }, [store.authGeneration])
 
   const prevLanguage = useRef<Language | null>(null)
+  const prevUserId = useRef<number | null>(null)
   useEffect(() => {
     // Also re-runs on every authGeneration bump (Copilot round 11) — the
     // same key the catalog effect above depends on, and for the identical
@@ -73,6 +74,22 @@ export function useHeaderData(): void {
     // under StrictMode's double-invoked effects.
     const isSwitch = prevLanguage.current !== null && prevLanguage.current !== language
     prevLanguage.current = language
+    // Same tracking as isSwitch above, for user identity instead of
+    // language (Copilot round 12): a same-language, same-user re-login
+    // (the password-change flow's silent re-auth) also re-runs this effect
+    // — authGeneration bumps unconditionally on every login() commit, see
+    // its own comment above — but must NOT be treated as a turnover on
+    // failure below. isSwitch alone cannot tell the two apart: a
+    // same-language A->B login changes neither prevLanguage.current nor
+    // `language`. userId, captured at the start of every run and compared
+    // against the previous run's value, catches that case too. Read via
+    // getState() rather than the reactive `store` above (like `gen`/
+    // `sessionGen` below): the effect must not re-run on every user-object
+    // change, only on the authGeneration/language changes already in its
+    // dependency array.
+    const userId = useStore.getState().user?.id ?? null
+    const isUserChange = prevUserId.current !== null && prevUserId.current !== userId
+    prevUserId.current = userId
     // A real switch re-fires the fetch below for a new language's profile
     // list — the embed's connect-time check (EmbedApp.tsx) gates on
     // profilesReady, so it must go false again the instant a fresh fetch
@@ -138,13 +155,22 @@ export function useHeaderData(): void {
         if (gen !== currentGeneration() || sessionGen !== sessionGeneration()) return
         if (cancelled) return // superseded by a newer language switch: ignore
         consumeProfileApplySuppression()
-        // A failed language-switch fetch must not leave the PREVIOUS
-        // language's profiles sitting in the store (Copilot round 5):
-        // profilesReady flipping true below would immediately let the
-        // embed's connect-time check run activeProfile() against the stale
-        // language's rule config. Mirrors the successful-empty path
-        // (s.setProfiles(profiles) above, where profiles can itself be []).
-        useStore.getState().setProfiles([])
+        // A failed language-switch (or cross-user login) fetch must not
+        // leave the PREVIOUS language's/user's profiles sitting in the
+        // store (Copilot round 5): profilesReady flipping true below would
+        // immediately let the embed's connect-time check run
+        // activeProfile() against stale rule config. Mirrors the
+        // successful-empty path (s.setProfiles(profiles) above, where
+        // profiles can itself be []).
+        //
+        // A transient failure on a SAME-language, SAME-user refetch (e.g.
+        // the password-change flow's silent re-login bumping authGeneration,
+        // Copilot round 12) is different: the existing profiles are still
+        // this user's own and still valid for the active language, so
+        // clearing them here would erase the active profile configuration
+        // over a blip unrelated to which profiles are correct. Only clear
+        // when this run was actually a language switch or a user turnover.
+        if (isSwitch || isUserChange) useStore.getState().setProfiles([])
         // The embed's connect-time check is gated on profilesReady
         // (Copilot round 4) — a failed fetch must still flip it, or a
         // connected field would wait on a profile list that is never

@@ -573,6 +573,19 @@ class TestEmbedSettings:
         with pytest.raises(ValidationError, match="allowed_ancestors"):
             Settings.model_validate({"embed": {"allowed_ancestors": ["https://example.com:0"]}})
 
+    # Copilot round 12: str.isdigit() accepts non-ASCII decimal digits too
+    # (e.g. Arabic-Indic ٨٤٤٣), which int() happily parses as 8443 -- the
+    # normalized entry would then carry a non-Latin-1 port straight into
+    # the CSP header, where h11 fails to serialize it at request time
+    # instead of this startup validator catching it. Mutation-verify by
+    # reverting `port.isascii() and port.isdigit()` back to bare
+    # `port.isdigit()`: this then passes validation instead of raising.
+    def test_non_ascii_digit_port_rejected(self):
+        with pytest.raises(ValidationError, match="allowed_ancestors"):
+            Settings.model_validate(
+                {"embed": {"allowed_ancestors": ["https://example.com:٨٤٤٣"]}}
+            )
+
     def test_self_accepted(self):
         settings = Settings.model_validate({"embed": {"allowed_ancestors": ["'self'"]}})
         assert settings.embed.allowed_ancestors == ["'self'"]
