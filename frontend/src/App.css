@@ -2316,7 +2316,10 @@ dialog.app-dialog h2 {
   padding: 0;
   margin-top: 0.5rem;
 }
-.activity-error { color: #e5484d; }
+/* var(--error-text), not the bare #e5484d used elsewhere pre-B40 (index.css
+   has the WCAG 4.5:1 computation): #e5484d as TEXT is only ~3.9:1 on the
+   light --bg. */
+.activity-error { color: var(--error-text); }
 .activity-loading, .activity-totals { color: var(--text-dim); }
 .activity-totals { margin-top: 0.25rem; }
 .activity-panel { margin-top: 1.25rem; }
