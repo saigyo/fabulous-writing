@@ -50,13 +50,17 @@ export function startBridge(): Bridge {
     return `${statusPhase(state)}:${state.tracked.length}`
   }
 
+  function statusMessage(state: ReturnType<typeof useStore.getState>): EmbedMessage {
+    return { type: 'status', payload: { phase: statusPhase(state), findingCount: state.tracked.length } }
+  }
+
   function emitStatusIfChanged() {
     if (!pinnedSource) return
     const state = useStore.getState()
     const key = statusKey(state)
     if (key === lastStatusKey) return
     lastStatusKey = key
-    postToHost({ type: 'status', payload: { phase: statusPhase(state), findingCount: state.tracked.length } })
+    postToHost(statusMessage(state))
   }
 
   const outbound: HostDocOutbound = {
@@ -81,15 +85,21 @@ export function startBridge(): Bridge {
 
   function route(msg: HostMessage) {
     switch (msg.type) {
-      case 'hello':
+      case 'hello': {
         hostKindValue = msg.payload.host.kind
         setClientTag(msg.payload.host.kind)
         postToHost({ type: 'ready', payload: { protocolVersion: PROTOCOL_VERSION, features: [] } })
-        // Capture the current status as the baseline silently: `ready` is
-        // the greeting, so the first genuine store change afterwards is
-        // what triggers the first `status` message, not the pin itself.
-        lastStatusKey = statusKey(useStore.getState())
+        // F5 (final review): emit the initial status right after ready — a
+        // cold, unauthenticated panel must be able to show signed-out from
+        // the start, not only after the first store change. lastStatusKey
+        // is set from this same emission, so emitStatusIfChanged()'s
+        // change-only dedup continues exactly as before for every message
+        // after this one.
+        const state = useStore.getState()
+        lastStatusKey = statusKey(state)
+        postToHost(statusMessage(state))
         break
+      }
       case 'fieldConnected':
         hostDoc?.fieldConnected(
           msg.payload.fieldId, msg.payload.text, msg.payload.capabilities, msg.payload.meta,
@@ -99,7 +109,7 @@ export function startBridge(): Bridge {
         hostDoc?.textChanged(msg.payload.fieldId, msg.payload.text)
         break
       case 'replaceResult':
-        hostDoc?.replaceResult(msg.requestId, msg.payload.ok, msg.payload.text)
+        hostDoc?.replaceResult(msg.requestId, msg.payload.ok, msg.payload.text, msg.payload.fieldId)
         break
       case 'markingClicked':
         hostDoc?.selectFinding(msg.payload.id)
@@ -115,6 +125,12 @@ export function startBridge(): Bridge {
     if (!msg) return
     if (!pinnedSource || !pinnedOrigin) {
       if (msg.type !== 'hello') return
+      // F6 (final review): a null source (e.g. the sending window/frame has
+      // already gone away by the time this handler runs) can never be
+      // postMessage'd back to — pinning it anyway leaves pinnedOrigin set
+      // with no way to ever complete the handshake (a half-pinned state). A
+      // later hello with a real source still pins normally.
+      if (!event.source) return
       pinnedSource = event.source
       pinnedOrigin = event.origin
     } else if (event.source !== pinnedSource || event.origin !== pinnedOrigin) {

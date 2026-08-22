@@ -24,6 +24,7 @@ vi.mock('../documents/documents', () => ({
 
 import { getMe, postLogin, postLogout, postRefresh } from '../api/client'
 import { setCancelCheckHandler } from '../checking/cancelSlot'
+import { setEmbedDisconnectHandler } from '../embed/disconnectSlot'
 import { clearLegacyText, invalidateDocumentWork } from '../documents/documents'
 import { clearSnapshot, readSnapshot, writeSnapshot } from '../documents/buffer'
 import { initPrefsPersistence, PREFS_DEFAULTS } from '../state/prefsPersistence'
@@ -101,6 +102,7 @@ beforeEach(() => {
   localStorage.clear()
   clearSnapshot()
   setCancelCheckHandler(() => {})
+  setEmbedDisconnectHandler(() => {})
   useStore.setState({
     token: null,
     refreshToken: null,
@@ -314,6 +316,17 @@ describe('logout', () => {
     expect(spy).toHaveBeenCalledTimes(1)
   })
 
+  // F3 (final review): the embed's host-document shim (hostDoc.ts) keeps its
+  // own fieldId/buffer/items outside the store, so resetSessionState() alone
+  // can't clear it — logout() must also call through the registered
+  // embed/disconnectSlot.ts handler.
+  it('calls the registered disconnectEmbed handler', () => {
+    const spy = vi.fn()
+    setEmbedDisconnectHandler(spy)
+    logout()
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+
   it('fires postLogout while the store token is still set, before clearing it, and clears the refresh-token pair', () => {
     useStore.setState({
       token: 'tok',
@@ -380,6 +393,13 @@ describe('expireSession', () => {
   it('calls the registered cancelInFlightCheck handler', () => {
     const spy = vi.fn()
     setCancelCheckHandler(spy)
+    expireSession()
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  it('calls the registered disconnectEmbed handler', () => {
+    const spy = vi.fn()
+    setEmbedDisconnectHandler(spy)
     expireSession()
     expect(spy).toHaveBeenCalledTimes(1)
   })

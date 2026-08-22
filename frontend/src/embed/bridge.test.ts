@@ -33,7 +33,7 @@ interface StubHostDoc extends HostDoc {
     meta?: { url: string; fieldKind: string }
   }[]
   textChangedCalls: { fieldId: string; text: string }[]
-  replaceResultCalls: { requestId: string; ok: boolean; text: string }[]
+  replaceResultCalls: { requestId: string; ok: boolean; text: string; fieldId: string }[]
   fieldDisconnectedCalls: string[]
   selectFindingCalls: (string | null)[]
 }
@@ -69,12 +69,13 @@ function stubHostDoc(): StubHostDoc {
     textChanged(fieldId, text) {
       textChangedCalls.push({ fieldId, text })
     },
-    replaceResult(requestId, ok, text) {
-      replaceResultCalls.push({ requestId, ok, text })
+    replaceResult(requestId, ok, text, fieldId) {
+      replaceResultCalls.push({ requestId, ok, text, fieldId })
     },
     selectFinding(id) {
       selectFindingCalls.push(id)
     },
+    resetSession() {},
   }
 }
 
@@ -132,15 +133,43 @@ describe('startBridge: origin pinning and routing', () => {
 
     dispatchHost(helloMessage(), ORIGIN_A, source)
 
-    expect(source.postMessage).toHaveBeenCalledTimes(1)
-    const [replyPayload, replyOrigin] = (source.postMessage as ReturnType<typeof vi.fn>).mock.calls[0]
+    // F5: ready, then one initial status message — a cold, unauthenticated
+    // panel must be able to show signed-out from the start.
+    expect(source.postMessage).toHaveBeenCalledTimes(2)
+    const calls = (source.postMessage as ReturnType<typeof vi.fn>).mock.calls
+    const [readyPayload, readyOrigin] = calls[0]
+    expect(readyPayload).toEqual({
+      fw: PROTOCOL_VERSION,
+      type: 'ready',
+      payload: { protocolVersion: PROTOCOL_VERSION, features: [] },
+    })
+    expect(readyOrigin).toBe(ORIGIN_A)
+    const [statusPayload, statusOrigin] = calls[1]
+    expect(statusPayload.type).toBe('status')
+    expect(statusOrigin).toBe(ORIGIN_A)
+    expect(bridge.hostKind()).toBe('simulator')
+  })
+
+  // F6 (final review): a hello with a null source must not half-pin —
+  // pinnedOrigin getting set with no matching source is a state that can
+  // never complete the handshake (postToHost requires both).
+  it('a hello with a null source does not pin, and a later real hello still pins and gets ready', () => {
+    const bridge = startBridge()
+    const hostDoc = stubHostDoc()
+    bridge.attach(hostDoc)
+
+    dispatchHost(helloMessage(), ORIGIN_A, null as unknown as Window)
+
+    const realSource = fakeSource()
+    dispatchHost(helloMessage(), ORIGIN_A, realSource)
+
+    expect(realSource.postMessage).toHaveBeenCalled()
+    const [replyPayload] = (realSource.postMessage as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(replyPayload).toEqual({
       fw: PROTOCOL_VERSION,
       type: 'ready',
       payload: { protocolVersion: PROTOCOL_VERSION, features: [] },
     })
-    expect(replyOrigin).toBe(ORIGIN_A)
-    expect(bridge.hostKind()).toBe('simulator')
   })
 
   it('drops post-hello messages whose origin differs from the pinned origin', () => {
@@ -214,7 +243,7 @@ describe('startBridge: origin pinning and routing', () => {
     expect(hostDoc.fieldConnectedCalls).toEqual([
       { fieldId: 'f1', text: 'abc', capabilities: CAPS, meta: { url: 'u', fieldKind: 'textarea' } },
     ])
-    expect(hostDoc.replaceResultCalls).toEqual([{ requestId: 'r1', ok: true, text: 'abcX' }])
+    expect(hostDoc.replaceResultCalls).toEqual([{ requestId: 'r1', ok: true, text: 'abcX', fieldId: 'f1' }])
     expect(hostDoc.selectFindingCalls).toEqual(['finding-1'])
     expect(hostDoc.fieldDisconnectedCalls).toEqual(['f1'])
   })

@@ -10,7 +10,8 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "vitest run",
-    "screenshots": "node scripts/capture-screenshots.mjs"
+    "screenshots": "node scripts/capture-screenshots.mjs",
+    "check:embed": "node scripts/check-embed-bundle.mjs"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.2",

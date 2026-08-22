@@ -47,9 +47,17 @@ export interface HostDoc extends DocumentPort {
   ): void
   fieldDisconnected(fieldId: string): void
   textChanged(fieldId: string, text: string): void
-  replaceResult(requestId: string, ok: boolean, text: string): void
+  replaceResult(requestId: string, ok: boolean, text: string, fieldId: string): void
   connected(): boolean
   capabilities(): HostCapabilities | null
+  /** Unconditional teardown for session turnover (auth/session.ts, via
+   * embed/disconnectSlot.ts on logout/expireSession) — same effect as
+   * fieldDisconnected but without requiring the fieldId to match, since a
+   * session ending must clear the shim regardless of which field (if any)
+   * is currently connected. Without this, the shim's private fieldId/
+   * buffer/items survive a logout and the first textChanged after a
+   * re-login republishes pre-logout findings. */
+  resetSession(): void
 }
 
 interface Splice {
@@ -161,6 +169,46 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
     p.resolve(result)
   }
 
+  /** Resolves every outstanding replacement as 'refused' and clears their
+   * timers — a pending applySuggestion/applyRewrite from a field that is
+   * about to disappear (a new fieldConnected, a fieldDisconnected, or a
+   * full session teardown) will never see its echo. */
+  function settleAllPending() {
+    for (const p of pending.values()) {
+      clearTimeout(p.timer)
+      p.resolve('refused')
+    }
+    pending.clear()
+  }
+
+  /** Shared by fieldConnected, fieldDisconnected, and resetSession: clears
+   * tracked findings from the store and the wire (sent to the still-current
+   * fieldId, before the caller nulls it — symmetric with how fieldConnected
+   * announces a fresh, empty finding set), resets doc metrics, drops a
+   * stale scorecard, and settles any in-flight replacement as 'refused'. */
+  function resetConnectionState() {
+    items = []
+    selectedId = null
+    const store = useStore.getState()
+    store.setTracked([], null)
+    store.setDocWords(0)
+    store.setDocChars(0)
+    store.clearScorecard()
+    if (fieldId) outbound.sendFindings(fieldId, [])
+    settleAllPending()
+  }
+
+  /** Full disconnection: resetConnectionState() plus clearing connectedField
+   * and the shim's own field identity — shared by fieldDisconnected (field-
+   * matched) and resetSession (unconditional, session teardown). */
+  function teardown() {
+    resetConnectionState()
+    useStore.getState().setConnectedField(null)
+    fieldId = null
+    caps = null
+    buffer = ''
+  }
+
   /** Apply a fresh host-truth text snapshot: derive the splice, map
    * findings through it, resync the buffer, and republish — used by both
    * textChanged and a replaceResult echo (the host's echoed text is a
@@ -244,34 +292,28 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
       return Promise.resolve('not-found')
     },
     fieldConnected(fid, text, capabilities, meta) {
-      fieldId = fid
+      fieldId = fid // set first: resetConnectionState's wire send targets this new field
       caps = capabilities
       buffer = text
-      items = []
-      selectedId = null
+      resetConnectionState() // whole-document replacement: no "old text"/findings/pending left to describe
       const store = useStore.getState()
       store.setDocWords(wordCount(text))
       store.setDocChars(codePoints(text))
-      store.clearScorecard() // whole-document replacement: no "old text" left to describe
       store.setConnectedField({ fieldId: fid, url: meta?.url ?? null })
-      publishFindings()
     },
     fieldDisconnected(fid) {
       if (fieldId !== fid) return
-      fieldId = null
-      caps = null
-      buffer = ''
-      items = []
-      selectedId = null
-      useStore.getState().setConnectedField(null)
+      teardown() // sends the cleared findings before fieldId inside it goes null
     },
+    resetSession: teardown,
     textChanged(fid, text) {
       if (fieldId !== fid) return
       syncBuffer(text)
     },
-    replaceResult(requestId, ok, text) {
+    replaceResult(requestId, ok, text, fid) {
+      if (fieldId !== fid) return // foreign-field echo: ignored entirely
       settlePending(requestId, ok ? 'ok' : 'refused')
-      if (fieldId) syncBuffer(text)
+      syncBuffer(text)
     },
   }
 }

@@ -8,6 +8,7 @@ import { initPrefsPersistence } from '../state/prefsPersistence.ts'
 import { setDocumentPort } from '../checking/documentPort'
 import { createHostDoc } from './hostDoc'
 import { startBridge } from './bridge'
+import { setEmbedDisconnectHandler } from './disconnectSlot'
 import { setEmbedOutbound } from './embedRef'
 import { EmbedApp } from './EmbedApp'
 
@@ -15,6 +16,9 @@ const bridge = startBridge()
 const hostDoc = createHostDoc(bridge.outbound)
 bridge.attach(hostDoc)
 setDocumentPort(hostDoc)
+// Wires auth/session.ts's logout()/expireSession() to reset this shim
+// without session.ts importing hostDoc.ts — see disconnectSlot.ts.
+setEmbedDisconnectHandler(() => hostDoc.resetSession())
 // Deviation from the plan's main.tsx sketch: EmbedApp renders with no props,
 // so it needs a way to reach bridge.outbound (to wire the check scheduler's
 // onInput into it — see embedRef.ts's own comment) without main.tsx passing
