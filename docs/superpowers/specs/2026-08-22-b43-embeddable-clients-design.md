@@ -264,6 +264,26 @@ C1 carries the design risk (shim semantics, protocol shape); everything after is
 adapters and packaging. Each slice enters the backlog as a GitHub issue and runs
 the house spec→plan→PR cycle.
 
+## Future: social login (recorded, out of scope)
+
+Supabase-backed OAuth providers (Google, GitHub, …) are anticipated but not part
+of any C-slice. The design already composes with them; three notes keep it that
+way:
+
+- **Flow shape:** OAuth cannot run inside the embed iframe (providers block
+  framing; tab-completed logins don't reach the iframe's storage partition).
+  The path is a **popup at the server origin** opened by the embed's login UI:
+  top-level window completes the backend-proxied flow, then hands the session to
+  its opener via same-origin `postMessage`. Tokens still never touch the host.
+  Provider/redirect registration is server-origin only — host-independent.
+- **Normative now:** hosts MUST embed the iframe unsandboxed, or with at least
+  `allow-popups`, `allow-same-origin`, `allow-scripts`, and `allow-forms` — so
+  the popup path stays open.
+- **IDE hosts later:** JCEF/VS Code webviews can't `window.open`; the flow there
+  is "host opens system browser + handoff back", added as an optional host
+  capability (e.g. `openExternal`) via the protocol's capability flags — no
+  breaking change.
+
 ## Spun-off backlog items (out of scope here)
 
 - Main app's code-point vs UTF-16 astral-character desync between backend spans
