@@ -1737,8 +1737,9 @@ held in the store next to the subject — `activitySubjectLabel`, set by
 local component state, because local state would lose the heading the moment the user
 switches to another view and back while the numeric subject survives in the store.
 `setActivitySubject('self' | 'all')` (no second argument) nulls the label. A numeric
-subject can only ever arise via `openUser()`, which always passes a label
-(`display_name ?? email`) — the subject itself is never persisted/reloaded with a bare
+subject can only ever arise via `openUser()`, which always passes a label from
+`userLabel(row)` (trimmed `display_name`, falling through to `email` when it's
+empty/whitespace-only) — the subject itself is never persisted/reloaded with a bare
 id — so the heading renders `activitySubjectLabel` directly for a numeric subject with no
 fallback needed. That same "only via `openUser()`" fact means a numeric subject's mere
 presence already implies "the previous subject was `'all'`" — the back control's
@@ -1763,8 +1764,8 @@ fields rather than the thousands-separated numbers elsewhere in the header (spec
 For the `'all'` subject, `data.per_user` renders as a client-side-sortable table
 (user/runs/input/output/credits columns, default sort credits desc, header buttons flip
 the active column's direction); clicking a row calls `setActivitySubject(row.user_id,
-row.display_name ?? row.email)` and switches the effective subject to that user's id,
-which re-fires the fetch effect against `getUserActivity`.
+userLabel(row))` and switches the effective subject to that user's id, which re-fires
+the fetch effect against `getUserActivity`.
 
 **Navigation entry points.** `AccountMenu.tsx` adds a menu button — `m.accountActivity`,
 placed before "About" — that calls `setActivitySubject('self')` then
