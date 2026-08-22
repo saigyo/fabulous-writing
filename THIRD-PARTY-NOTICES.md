@@ -10550,7 +10550,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ````
 
-### @codemirror/view 6.43.8
+### @codemirror/view 6.43.9
 
 License: MIT
 
@@ -11074,7 +11074,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ````
 
-### zustand 5.0.14
+### zustand 5.0.15
 
 License: MIT
 
