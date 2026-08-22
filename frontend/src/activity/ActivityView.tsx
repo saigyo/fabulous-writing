@@ -223,22 +223,26 @@ export function ActivityView() {
   // `?? []` guards each category: the runs dict is the extension point
   // (see usage.py's activity_series comment) — a category missing or
   // renamed server-side should render as zeros, not throw mid-render.
+  // Colors: the validated 4-hue categorical palette (index.css, B40 round-9
+  // — WCAG/CVD-checked, chart-only tokens), not the general-UI --accent
+  // ramp that preceded it (couldn't satisfy both background contrast and
+  // within-palette separation at once).
   const runSeries: ChartSeries[] = data
     ? [
-        { key: 'check', label: m.activityCheck, cssVar: '--accent', values: data.series.runs.check ?? [] },
-        { key: 'suggestion', label: m.activitySuggestion, cssVar: '--accent-mid', values: data.series.runs.suggestion ?? [] },
-        { key: 'name', label: m.activityName, cssVar: '--accent-faint', values: data.series.runs.name ?? [] },
-        { key: 'failed', label: m.activityFailed, cssVar: '--held-back', values: data.series.runs.failed ?? [] },
+        { key: 'check', label: m.activityCheck, cssVar: '--chart-check', values: data.series.runs.check ?? [] },
+        { key: 'suggestion', label: m.activitySuggestion, cssVar: '--chart-suggestion', values: data.series.runs.suggestion ?? [] },
+        { key: 'name', label: m.activityName, cssVar: '--chart-name', values: data.series.runs.name ?? [] },
+        { key: 'failed', label: m.activityFailed, cssVar: '--chart-failed', values: data.series.runs.failed ?? [] },
       ]
     : []
   const tokenSeries: ChartSeries[] = data
     ? [
-        { key: 'input', label: m.activityInput, cssVar: '--accent', values: data.series.input_tokens },
-        { key: 'output', label: m.activityOutput, cssVar: '--accent-faint', values: data.series.output_tokens },
+        { key: 'input', label: m.activityInput, cssVar: '--chart-check', values: data.series.input_tokens },
+        { key: 'output', label: m.activityOutput, cssVar: '--chart-suggestion', values: data.series.output_tokens },
       ]
     : []
   const creditSeries: ChartSeries[] = data
-    ? [{ key: 'credits', label: m.activityTableCredits, cssVar: '--accent-mid', values: data.series.credits }]
+    ? [{ key: 'credits', label: m.activityTableCredits, cssVar: '--chart-check', values: data.series.credits }]
     : []
 
   const rows =

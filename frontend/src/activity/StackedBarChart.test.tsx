@@ -14,15 +14,15 @@ const identityFormatDay = (iso: string) => iso
 
 function threeDaySeries(): ChartSeries[] {
   return [
-    { key: 'check', label: 'check', cssVar: '--accent', values: [0, 1, 2] },
-    { key: 'failed', label: 'failed', cssVar: '--accent-mid', values: [0, 0, 1] },
+    { key: 'check', label: 'check', cssVar: '--chart-check', values: [0, 1, 2] },
+    { key: 'failed', label: 'failed', cssVar: '--chart-failed', values: [0, 0, 1] },
   ]
 }
 
 function allZeroSeries(days: string[]): ChartSeries[] {
   return [
-    { key: 'check', label: 'check', cssVar: '--accent', values: days.map(() => 0) },
-    { key: 'failed', label: 'failed', cssVar: '--accent-mid', values: days.map(() => 0) },
+    { key: 'check', label: 'check', cssVar: '--chart-check', values: days.map(() => 0) },
+    { key: 'failed', label: 'failed', cssVar: '--chart-failed', values: days.map(() => 0) },
   ]
 }
 
@@ -140,5 +140,16 @@ describe('StackedBarChart', () => {
       expect(lastTitle).toContain('FMT[2026-08-20]')
       expect(lastTitle).not.toContain('2026-08-20 —') // raw iso must not leak through unformatted
     })
+  })
+
+  it('gives every chart-seg a surface-colored stroke, producing the gap between stacked segments', () => {
+    const { container } = render(
+      <StackedBarChart days={DAYS} series={threeDaySeries()} ariaLabel="Activity" formatDay={identityFormatDay} />,
+    )
+    const segs = container.querySelectorAll('rect.chart-seg')
+    expect(segs.length).toBeGreaterThan(0)
+    for (const seg of segs) {
+      expect(seg.getAttribute('stroke')).toBe('var(--bg)')
+    }
   })
 })

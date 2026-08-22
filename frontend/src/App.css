@@ -2310,8 +2310,8 @@ dialog.app-dialog h2 {
   display: inline-block;
   width: 10px;
   height: 10px;
-  /* Border keeps a light/near-white swatch (e.g. --accent-faint in light
-     mode) visible against the panel background instead of vanishing. */
+  /* Border keeps every swatch visible against the panel background
+     instead of a same-toned one vanishing at the edge. */
   border: 1px solid var(--border);
 }
 .activity-table { margin-top: 1.5rem; border-collapse: collapse; width: 100%; }

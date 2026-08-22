@@ -175,6 +175,25 @@ assert on the DOM with the house idioms (`getByText`,
 > the `<StackedBarChart>` in the same panel receives; there is no second
 > data source to keep in sync.
 
+> **Amendment (interactive testing, 2026-08-22):** the single-hue accent
+> ramp above (`--accent`/`--accent-mid`/`--accent-faint`) could not satisfy
+> both requirements at once — background contrast (WCAG) against `--bg`
+> AND `--panel` in both themes, and enough separation between adjacent
+> ramp steps to read as distinct categories rather than shades of the same
+> bar. Markus chose option A: a machine-validated 4-hue categorical
+> palette (WCAG ≥3:1 on both surfaces, CVD ΔE ≥17 between adjacent
+> categories), plus a 2px page-background segment gap so adjacent stacked
+> segments read as separate shapes even where two hues sit close in
+> lightness. New chart-only tokens (`index.css`, both theme blocks):
+> `--chart-check`, `--chart-suggestion`, `--chart-name`, `--chart-failed`
+> — `--accent-mid`/`--accent-faint` are retired (nothing else referenced
+> them). Mapping: runs → the four `--chart-*` vars in category order;
+> tokens → input `--chart-check`, output `--chart-suggestion`; credits →
+> `--chart-check`. The gap itself is a `stroke="var(--bg)"` on every
+> `rect.chart-seg` (straddles each edge, ~2px visually), not a real
+> transparent hole. `--accent`/`--held-back` are untouched — they remain
+> the general-UI tokens; only the chart's own palette moved.
+
 ### R5 — i18n
 
 New message keys × 7 locales, informal register per the standing rule:
