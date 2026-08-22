@@ -280,6 +280,8 @@ export const it: Messages = {
   activityBack: 'Torna a tutti gli utenti',
   activityLoadError: 'Impossibile caricare i dati di attività.',
   activityLoading: 'Caricamento…',
+  activityShowTable: 'Mostra la tabella dei dati',
+  activityHideTable: 'Nascondi la tabella dei dati',
   adminAllActivity: "Vedi l'attività di tutti gli utenti",
 
   passwordCurrent: 'Password attuale',

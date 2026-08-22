@@ -265,6 +265,8 @@ export const en: Messages = {
   activityBack: 'Back to all users',
   activityLoadError: 'Could not load activity data.',
   activityLoading: 'Loading…',
+  activityShowTable: 'Show data table',
+  activityHideTable: 'Hide data table',
   adminAllActivity: 'View activity of all users',
 
   passwordCurrent: 'Current password',

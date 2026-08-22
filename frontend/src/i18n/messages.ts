@@ -259,6 +259,8 @@ export interface Messages {
   activityBack: string
   activityLoadError: string
   activityLoading: string
+  activityShowTable: string
+  activityHideTable: string
   adminAllActivity: string
 
   passwordCurrent: string
