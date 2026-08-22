@@ -72,9 +72,21 @@ export function useHeaderData(): void {
     // domainIds, provider, model, tier) land in user B's store, where the
     // live subscription below would autosave them onto B's open document.
     const gen = currentGeneration()
+    // Per-effect-instance cancellation flag (Copilot round 5): the
+    // generation guard above only protects against a SESSION turnover, not
+    // a second language switch racing ahead of this one. Without this, a
+    // slow response for an OLD language can resolve after a NEWER switch's
+    // fetch has already started — it would still pass the generation guard
+    // (same session) and go on to write profiles and flip profilesReady,
+    // which the newer response then silently overwrites again once IT
+    // resolves. React runs this cleanup before re-running the effect for
+    // the newer language (and on unmount), so `cancelled` is exactly "has a
+    // newer language switch superseded this request".
+    let cancelled = false
     getProfiles(language)
       .then((profiles) => {
         if (gen !== currentGeneration()) return // session ended: do not write
+        if (cancelled) return // superseded by a newer language switch: do not write
         const s = useStore.getState()
         s.setProfiles(profiles)
         const remembered = profiles.find(
@@ -93,12 +105,23 @@ export function useHeaderData(): void {
         // silently discarding it before that session's own profile fetch
         // gets to see it.
         if (gen !== currentGeneration()) return
+        if (cancelled) return // superseded by a newer language switch: ignore
         consumeProfileApplySuppression()
+        // A failed language-switch fetch must not leave the PREVIOUS
+        // language's profiles sitting in the store (Copilot round 5):
+        // profilesReady flipping true below would immediately let the
+        // embed's connect-time check run activeProfile() against the stale
+        // language's rule config. Mirrors the successful-empty path
+        // (s.setProfiles(profiles) above, where profiles can itself be []).
+        useStore.getState().setProfiles([])
         // The embed's connect-time check is gated on profilesReady
         // (Copilot round 4) — a failed fetch must still flip it, or a
         // connected field would wait on a profile list that is never
         // coming.
         useStore.getState().setProfilesReady(true)
       })
+    return () => {
+      cancelled = true
+    }
   }, [store.language])
 }

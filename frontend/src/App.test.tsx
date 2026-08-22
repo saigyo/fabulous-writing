@@ -180,6 +180,42 @@ describe('Header profile-fetch generation guard', () => {
 
     expect(consumeProfileApplySuppression()).toBe(true)
   })
+
+  it('discards a stale-language getProfiles response that resolves after a newer language switch', async () => {
+    // Pins the fix for useHeaderData.ts's language-switch effect (Copilot
+    // round 5): the generation guard above only protects against a SESSION
+    // turnover, not a second language switch racing ahead of the first —
+    // without per-effect-instance cancellation, a slow response for an OLD
+    // language lands after a NEWER switch's fetch has already started,
+    // still passes the (unchanged) generation guard, and overwrites the
+    // newer switch's profiles/profilesReady with stale data.
+    vi.mocked(getProfiles).mockResolvedValueOnce([])
+    render(<Header />)
+    await waitFor(() => expect(getProfiles).toHaveBeenCalledTimes(1))
+
+    let resolveDe!: (p: Profile[]) => void
+    vi.mocked(getProfiles).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveDe = resolve
+        }),
+    )
+    useStore.setState({ language: 'de' })
+    await waitFor(() => expect(getProfiles).toHaveBeenCalledTimes(2))
+
+    // 'fr's fetch never settles in this test — only that it superseded 'de'.
+    vi.mocked(getProfiles).mockImplementationOnce(() => new Promise(() => {}))
+    useStore.setState({ language: 'fr' })
+    await waitFor(() => expect(getProfiles).toHaveBeenCalledTimes(3))
+
+    // The stale 'de' response finally resolves — it must be ignored.
+    resolveDe([profile({ language: 'de', domain_ids: [42] })])
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(useStore.getState().profiles).toHaveLength(0) // de's list never lands
+    expect(useStore.getState().profileId).toBeNull() // de's selection never lands
+    expect(useStore.getState().profilesReady).toBe(false) // fr's fetch is still pending
+  })
 })
 
 // Copilot round 4: EmbedApp.tsx gates its connect-time check on
@@ -217,6 +253,22 @@ describe('Header profilesReady', () => {
 
     resolveProfiles([profile({ language: 'de' })])
     await waitFor(() => expect(useStore.getState().profilesReady).toBe(true))
+  })
+
+  it('clears the previous language profiles on a language-switch fetch failure (Copilot round 5)', async () => {
+    // Without this, a language-switch FAILURE left the previous language's
+    // profiles sitting in the store while profilesReady (round 4) still
+    // flipped true — letting the embed's connect-time check run
+    // activeProfile() against the OLD language's rule config.
+    vi.mocked(getProfiles).mockResolvedValueOnce([profile()])
+    render(<Header />)
+    await waitFor(() => expect(useStore.getState().profiles).toHaveLength(1))
+
+    vi.mocked(getProfiles).mockRejectedValueOnce(new Error('network down'))
+    useStore.setState({ language: 'de' })
+    await waitFor(() => expect(useStore.getState().profilesReady).toBe(true))
+
+    expect(useStore.getState().profiles).toHaveLength(0)
   })
 })
 

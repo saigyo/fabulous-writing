@@ -228,6 +228,17 @@ function FindingRow({ finding, selected }: { finding: Finding; selected: boolean
   useEffect(() => {
     if (selected) ref.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }, [selected])
+  // Apply-in-flight guard (Copilot round 5): shared by SuggestionArea (and
+  // its held-back list) and RewriteArea (and its held-back list) for this
+  // one finding, since an async applySuggestion/applyRewrite left every
+  // apply control enabled while it was pending — a double-click (or a
+  // suggestion apply racing a rewrite apply on the same finding) could
+  // enqueue a second replacement against the same expectedText; the first
+  // succeeds, the duplicate is refused, and that refusal's embedReplaceFailed
+  // then renders on top of the successful outcome. Local state (not the
+  // store) is the smallest fix: both areas are siblings rendered only for
+  // the selected finding, so one flag here covers all of their controls.
+  const [applyPending, setApplyPending] = useState(false)
   return (
     <div
       ref={ref}
@@ -247,15 +258,31 @@ function FindingRow({ finding, selected }: { finding: Finding; selected: boolean
             {m.sourceName(finding.source)}
             {finding.rule_id ? ` · ${finding.rule_id}` : ''}
           </p>
-          <SuggestionArea finding={finding} />
-          <RewriteArea finding={finding} />
+          <SuggestionArea
+            finding={finding}
+            applyPending={applyPending}
+            setApplyPending={setApplyPending}
+          />
+          <RewriteArea
+            finding={finding}
+            applyPending={applyPending}
+            setApplyPending={setApplyPending}
+          />
         </div>
       )}
     </div>
   )
 }
 
-function SuggestionArea({ finding }: { finding: Finding }) {
+function SuggestionArea({
+  finding,
+  applyPending,
+  setApplyPending,
+}: {
+  finding: Finding
+  applyPending: boolean
+  setApplyPending: (pending: boolean) => void
+}) {
   const m = useMessages()
   const extras = useStore((s) => s.extraSuggestions)
   const pending = useStore((s) => s.suggestPendingId === finding.id)
@@ -269,6 +296,31 @@ function SuggestionArea({ finding }: { finding: Finding }) {
   const fetched = finding.id in extras
   const advice = [...finding.advice, ...fetchedAdvice]
 
+  // Guarded on `applyPending` itself, not just the disabled attribute on the
+  // triggering button: a raw double-click can dispatch its second event
+  // before React has committed the disabled state, so the primary defence
+  // (disabled) is backed by this in-handler check (matches
+  // AccountMenu.tsx's `pending` guard on its submit handler).
+  function apply(text: string) {
+    if (applyPending) return
+    setApplyPending(true)
+    void getDocumentPort()
+      .applySuggestion(finding.id, text)
+      .then((result) => {
+        // 'not-found' stays silent (matches today's behavior — the
+        // finding is just gone). 'refused' (embed only: the host
+        // declined or timed out) must not be swallowed, or the
+        // user is left staring at a suggestion that silently did
+        // nothing — the cached suggestions stay on screen (unlike
+        // RewriteArea, which clears its rewrite) since there is
+        // nothing stale about them to force a re-fetch over.
+        if (result === 'refused') {
+          useStore.getState().setSuggestError(finding.id, m.embedReplaceFailed)
+        }
+      })
+      .finally(() => setApplyPending(false))
+  }
+
   if (suggestions.length > 0) {
     return (
       <div className="suggestions">
@@ -276,22 +328,10 @@ function SuggestionArea({ finding }: { finding: Finding }) {
           <button
             key={suggestion}
             className="suggestion-button"
+            disabled={applyPending}
             onClick={(event) => {
               event.stopPropagation()
-              void getDocumentPort()
-                .applySuggestion(finding.id, suggestion)
-                .then((result) => {
-                  // 'not-found' stays silent (matches today's behavior — the
-                  // finding is just gone). 'refused' (embed only: the host
-                  // declined or timed out) must not be swallowed, or the
-                  // user is left staring at a suggestion that silently did
-                  // nothing — the cached suggestions stay on screen (unlike
-                  // RewriteArea, which clears its rewrite) since there is
-                  // nothing stale about them to force a re-fetch over.
-                  if (result === 'refused') {
-                    useStore.getState().setSuggestError(finding.id, m.embedReplaceFailed)
-                  }
-                })
+              apply(suggestion)
             }}
           >
             {suggestion}
@@ -337,15 +377,8 @@ function SuggestionArea({ finding }: { finding: Finding }) {
       {error && heldBack.length > 0 && (
         <HeldBackList
           candidates={heldBack}
-          onApply={(text) =>
-            void getDocumentPort()
-              .applySuggestion(finding.id, text)
-              .then((result) => {
-                if (result === 'refused') {
-                  useStore.getState().setSuggestError(finding.id, m.embedReplaceFailed)
-                }
-              })
-          }
+          disabled={applyPending}
+          onApply={(text) => apply(text)}
         />
       )}
       <AdviceNotes notes={advice} />
@@ -356,9 +389,11 @@ function SuggestionArea({ finding }: { finding: Finding }) {
 function HeldBackList({
   candidates,
   onApply,
+  disabled,
 }: {
   candidates: HeldBackSuggestion[]
   onApply: (text: string) => void
+  disabled: boolean
 }) {
   const m = useMessages()
   const [revealed, setRevealed] = useState(false)
@@ -381,6 +416,7 @@ function HeldBackList({
         <div key={candidate.text} className="held-back-option">
           <button
             className="suggestion-button held-back"
+            disabled={disabled}
             onClick={(event) => {
               event.stopPropagation()
               onApply(candidate.text)
@@ -408,7 +444,15 @@ function AdviceNotes({ notes }: { notes: string[] }) {
   )
 }
 
-function RewriteArea({ finding }: { finding: Finding }) {
+function RewriteArea({
+  finding,
+  applyPending,
+  setApplyPending,
+}: {
+  finding: Finding
+  applyPending: boolean
+  setApplyPending: (pending: boolean) => void
+}) {
   const m = useMessages()
   const rewrite = useStore((s) => s.rewrites[finding.id])
   const pending = useStore((s) => s.rewritePendingId === finding.id)
@@ -419,32 +463,44 @@ function RewriteArea({ finding }: { finding: Finding }) {
   const heldBack = useStore((s) => s.rewriteHeldBack[finding.id])
   const advice = useStore((s) => s.rewriteAdvice[finding.id]) ?? NO_ADVICE
 
+  // See SuggestionArea's `apply` for why this checks `applyPending` itself
+  // rather than relying solely on the disabled button.
   async function apply(option: string) {
-    if (!rewrite) return
-    const result = await getDocumentPort().applyRewrite(finding.id, rewrite.original, option)
-    if (result !== 'ok') {
-      const store = useStore.getState()
-      store.setRewrite(finding.id, null)
-      // 'not-found' (the sentence changed since the rewrite was fetched)
-      // keeps the existing message; 'refused' (embed only: the host
-      // declined or timed out) gets the embed-specific one instead.
-      store.setRewriteError(
-        finding.id,
-        result === 'refused' ? m.embedReplaceFailed : m.sentenceChangedRewriteAgain,
-      )
+    if (!rewrite || applyPending) return
+    setApplyPending(true)
+    try {
+      const result = await getDocumentPort().applyRewrite(finding.id, rewrite.original, option)
+      if (result !== 'ok') {
+        const store = useStore.getState()
+        store.setRewrite(finding.id, null)
+        // 'not-found' (the sentence changed since the rewrite was fetched)
+        // keeps the existing message; 'refused' (embed only: the host
+        // declined or timed out) gets the embed-specific one instead.
+        store.setRewriteError(
+          finding.id,
+          result === 'refused' ? m.embedReplaceFailed : m.sentenceChangedRewriteAgain,
+        )
+      }
+    } finally {
+      setApplyPending(false)
     }
   }
 
   async function applyHeldBack(option: string) {
-    if (!heldBack) return
-    const result = await getDocumentPort().applyRewrite(finding.id, heldBack.original, option)
-    if (result !== 'ok') {
-      const store = useStore.getState()
-      store.setRewriteHeldBack(finding.id, null)
-      store.setRewriteError(
-        finding.id,
-        result === 'refused' ? m.embedReplaceFailed : m.sentenceChangedRewriteAgain,
-      )
+    if (!heldBack || applyPending) return
+    setApplyPending(true)
+    try {
+      const result = await getDocumentPort().applyRewrite(finding.id, heldBack.original, option)
+      if (result !== 'ok') {
+        const store = useStore.getState()
+        store.setRewriteHeldBack(finding.id, null)
+        store.setRewriteError(
+          finding.id,
+          result === 'refused' ? m.embedReplaceFailed : m.sentenceChangedRewriteAgain,
+        )
+      }
+    } finally {
+      setApplyPending(false)
     }
   }
 
@@ -459,6 +515,7 @@ function RewriteArea({ finding }: { finding: Finding }) {
             key={option}
             className="rewrite-option"
             title={m.applyRewriteTitle}
+            disabled={applyPending}
             onClick={(event) => {
               event.stopPropagation()
               void apply(option)
@@ -497,7 +554,11 @@ function RewriteArea({ finding }: { finding: Finding }) {
         </p>
       )}
       {error && heldBack && heldBack.candidates.length > 0 && (
-        <HeldBackList candidates={heldBack.candidates} onApply={applyHeldBack} />
+        <HeldBackList
+          candidates={heldBack.candidates}
+          disabled={applyPending}
+          onApply={applyHeldBack}
+        />
       )}
       <AdviceNotes notes={advice} />
     </div>

@@ -143,3 +143,70 @@ describe('Sidebar surfaces embed replacement failures (B43 C1)', () => {
     )
   })
 })
+
+// Copilot round 5: an async apply left every apply control for the finding
+// enabled while it was in flight — a double-click enqueued a duplicate
+// replacement with the same expectedText; the first succeeded, the
+// duplicate was refused, and that refusal's embedReplaceFailed rendered
+// over the successful outcome.
+describe('Sidebar apply-in-flight guard (B43 C1, Copilot round 5)', () => {
+  it('a double-clicked suggestion issues one replacement and re-enables after it settles', async () => {
+    const f = finding('f4', ['better'])
+    let resolveApply!: (r: ApplyResult) => void
+    let calls = 0
+    setDocumentPort(
+      fakePort(
+        () =>
+          new Promise((resolve) => {
+            calls += 1
+            resolveApply = resolve
+          }),
+        () => Promise.resolve('ok'),
+      ),
+    )
+    useStore.setState({ tracked: [tracked(f)], selectedId: f.id })
+    render(<Sidebar />)
+
+    const button = screen.getByText('better') as HTMLButtonElement
+    fireEvent.click(button)
+    fireEvent.click(button) // the duplicate must be ignored while the first is pending
+
+    expect(calls).toBe(1)
+    expect(button.disabled).toBe(true)
+
+    resolveApply('ok')
+    await waitFor(() => expect(button.disabled).toBe(false))
+  })
+
+  it('a double-clicked rewrite option issues one replacement and re-enables after it settles', async () => {
+    const f = finding('f5')
+    let resolveApply!: (r: ApplyResult) => void
+    let calls = 0
+    setDocumentPort(
+      fakePort(
+        () => Promise.resolve('ok'),
+        () =>
+          new Promise((resolve) => {
+            calls += 1
+            resolveApply = resolve
+          }),
+      ),
+    )
+    useStore.setState({
+      tracked: [tracked(f)],
+      selectedId: f.id,
+      rewrites: { [f.id]: { original: 'Hello there.', options: ['Hi there.'] } },
+    })
+    render(<Sidebar />)
+
+    const button = screen.getByText('Hi there.') as HTMLButtonElement
+    fireEvent.click(button)
+    fireEvent.click(button) // the duplicate must be ignored while the first is pending
+
+    expect(calls).toBe(1)
+    expect(button.disabled).toBe(true)
+
+    resolveApply('ok')
+    await waitFor(() => expect(button.disabled).toBe(false))
+  })
+})

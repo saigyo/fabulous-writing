@@ -478,6 +478,20 @@ describe('fieldConnected / fieldDisconnected / connected / capabilities', () => 
     expect(last).toEqual({ fieldId: 'f1', findings: [] })
   })
 
+  // Copilot round 5: fieldConnected used to install the NEW fieldId before
+  // calling resetConnectionState(), so switching fields sent the empty-
+  // findings clear to the field about to connect instead of the one about
+  // to disappear — the old field's adapter never got told to drop its
+  // overlays. Distinct fieldIds (f1 -> f2) are essential here: the test
+  // above reuses the same id for both connects and cannot tell them apart.
+  it('switching fields sends the empty-findings clear to the OLD fieldId, not the new one', () => {
+    const { doc, outbound } = connected('This is very good.', [finding('f1', 8, 12, 'very')])
+    doc.fieldConnected('f2', 'a completely different field', CAPS)
+    const last = outbound.findingsCalls.at(-1)
+    expect(last).toEqual({ fieldId: 'f1', findings: [] })
+    expect(useStore.getState().connectedField).toEqual({ fieldId: 'f2', url: null })
+  })
+
   it('fieldConnected sets doc metrics for pre-existing text and clears a stale scorecard — the mutation-verification target for clearScorecard', () => {
     useStore.setState({ scorecard: FAKE_SCORECARD, scorecardStale: false })
     const outbound = fakeOutbound()
