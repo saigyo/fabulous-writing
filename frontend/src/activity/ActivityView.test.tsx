@@ -184,8 +184,10 @@ describe('ActivityView: admin, all-users subject', () => {
     expect(within(rows[0]).getByText('Bea')).toBeTruthy()
     expect(within(rows[1]).getByText('Ada')).toBeTruthy()
 
-    // Header click flips the sort order.
-    fireEvent.click(screen.getByRole('button', { name: en.activityTableCredits }))
+    // Header click flips the sort order. The button's accessible name now
+    // carries a trailing sort-direction indicator (▲/▼), so match on the
+    // label prefix rather than the exact translated string.
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${en.activityTableCredits}`) }))
     rows = within(table).getAllByRole('row').slice(1)
     expect(within(rows[0]).getByText('Ada')).toBeTruthy()
     expect(within(rows[1]).getByText('Bea')).toBeTruthy()
@@ -240,5 +242,46 @@ describe('ActivityView: all-zero response', () => {
     screen.getByText(en.activityTokens)
     screen.getByText(en.activityCredits)
     expect(container.querySelectorAll('svg.activity-chart').length).toBe(3)
+  })
+})
+
+describe('ActivityView: session re-login refetch', () => {
+  it('refetches when authGeneration bumps (silent same-user re-login mid-view)', async () => {
+    vi.mocked(getOwnActivity).mockResolvedValue(selfFixture())
+
+    render(<ActivityView />)
+    await waitFor(() => expect(getOwnActivity).toHaveBeenCalledTimes(1))
+
+    // No real login() call here (that pulls in the whole session/document
+    // hydration chain) — bumping the reactive counter directly is exactly
+    // what login()'s own commit does on a silent same-user re-login (see
+    // auth/session.ts), and the effect depending on it is what should react.
+    useStore.getState().bumpAuthGeneration()
+
+    await waitFor(() => expect(getOwnActivity).toHaveBeenCalledTimes(2))
+  })
+})
+
+describe('ActivityView: sort-state accessibility', () => {
+  it('exposes aria-sort on the active column and flips it on toggle', async () => {
+    vi.mocked(getAllActivity).mockResolvedValue(allFixture())
+    useStore.setState({ user: user({ is_admin: true }), activitySubject: 'all' })
+
+    render(<ActivityView />)
+    await screen.findByRole('table')
+
+    // Default sort: credits, descending — pinned by the fixed-fixture test
+    // above via row order; here the header itself must say so.
+    const creditsHeader = screen.getByRole('columnheader', {
+      name: new RegExp(`^${en.activityTableCredits}`),
+    })
+    expect(creditsHeader.getAttribute('aria-sort')).toBe('descending')
+    const runsHeader = screen.getByRole('columnheader', {
+      name: new RegExp(`^${en.activityTotalRuns}`),
+    })
+    expect(runsHeader.getAttribute('aria-sort')).toBe('none')
+
+    fireEvent.click(within(creditsHeader).getByRole('button'))
+    expect(creditsHeader.getAttribute('aria-sort')).toBe('ascending')
   })
 })

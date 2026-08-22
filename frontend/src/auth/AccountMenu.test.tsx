@@ -126,6 +126,22 @@ describe('AccountMenu', () => {
     screen.getByRole('button', { name: en.accountLogOut })
   })
 
+  it('My activity sets the self subject, switches to the activity view, and closes the popover', async () => {
+    // Pre-set to values the click must overwrite, so the assertions below
+    // pin an actual change rather than passing on the store's own defaults.
+    useStore.setState({ activitySubject: 42, activitySubjectLabel: 'Stale User', activeView: 'editor' })
+    const u = userEvent.setup()
+    render(<AccountMenu />)
+    await openMenu(u)
+    await u.click(screen.getByRole('button', { name: en.accountActivity }))
+
+    const state = useStore.getState()
+    expect(state.activitySubject).toBe('self')
+    expect(state.activitySubjectLabel).toBeNull()
+    expect(state.activeView).toBe('activity')
+    expect(screen.queryByRole('button', { name: en.accountLogOut })).toBeNull()
+  })
+
   it('log-out calls logout(), clearing auth state', async () => {
     const u = userEvent.setup()
     render(<AccountMenu />)

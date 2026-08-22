@@ -10,6 +10,7 @@ import {
   type ActivityResponse,
   type PerUserActivity,
 } from '../api/client'
+import { sessionGeneration } from '../auth/session'
 import { useMessages, type Messages } from '../i18n'
 import { useStore } from '../state/store'
 import { StackedBarChart, type ChartSeries } from './StackedBarChart'
@@ -44,11 +45,26 @@ function rangeLabel(days: ActivityDays, m: Messages): string {
   return m.activityDays365
 }
 
+// aria-sort belongs on the <th>, not the button inside it — the column
+// header element is what screen readers report sort state for.
+function sortAriaValue(key: SortKey, activeKey: SortKey, dir: SortDir): 'ascending' | 'descending' | 'none' {
+  if (key !== activeKey) return 'none'
+  return dir === 'asc' ? 'ascending' : 'descending'
+}
+
 export function ActivityView() {
   const user = useStore((s) => s.user)
   const activitySubject = useStore((s) => s.activitySubject)
   const activitySubjectLabel = useStore((s) => s.activitySubjectLabel)
   const setActivitySubject = useStore((s) => s.setActivitySubject)
+  // Bumped only by login()'s commit (see its own comment in state/store.ts)
+  // — including the silent same-user re-login the password-change flow
+  // performs (auth/AccountMenu.tsx). Depending on it below re-fires the
+  // fetch effect on that re-login, so a request still in flight at that
+  // moment gets a replacement instead of the view being stuck showing the
+  // outgoing session's numbers — same mechanism as App.tsx's Header domains
+  // fetch and TerminologyView's refreshDomains.
+  const authGeneration = useStore((s) => s.authGeneration)
   const m = useMessages()
 
   // Client-side gate: a non-admin's effective subject is always its own,
@@ -65,7 +81,7 @@ export function ActivityView() {
   useEffect(() => {
     setData(null)
     setError(false)
-    let cancelled = false
+    const gen = sessionGeneration()
     const call =
       effectiveSubject === 'self'
         ? getOwnActivity(days)
@@ -74,15 +90,12 @@ export function ActivityView() {
           : getUserActivity(effectiveSubject, days)
     call
       .then((response) => {
-        if (!cancelled) setData(response)
+        if (sessionGeneration() === gen) setData(response)
       })
       .catch(() => {
-        if (!cancelled) setError(true)
+        if (sessionGeneration() === gen) setError(true)
       })
-    return () => {
-      cancelled = true
-    }
-  }, [effectiveSubject, days])
+  }, [effectiveSubject, days, authGeneration])
 
   function toggleSort(key: SortKey) {
     if (key === sortKey) setSortDir((dir) => (dir === 'asc' ? 'desc' : 'asc'))
@@ -90,6 +103,13 @@ export function ActivityView() {
       setSortKey(key)
       setSortDir('desc')
     }
+  }
+
+  // Visible complement to the aria-sort attribute below — a sighted user
+  // gets the same signal a screen reader gets from the <th>.
+  function sortIndicator(key: SortKey): string {
+    if (key !== sortKey) return ''
+    return sortDir === 'asc' ? ' ▲' : ' ▼'
   }
 
   function openUser(row: PerUserActivity) {
@@ -190,29 +210,29 @@ export function ActivityView() {
             <table className="activity-table">
               <thead>
                 <tr>
-                  <th>
+                  <th aria-sort={sortAriaValue('user', sortKey, sortDir)}>
                     <button type="button" onClick={() => toggleSort('user')}>
-                      {m.activityTableUser}
+                      {m.activityTableUser}{sortIndicator('user')}
                     </button>
                   </th>
-                  <th>
+                  <th aria-sort={sortAriaValue('runs', sortKey, sortDir)}>
                     <button type="button" onClick={() => toggleSort('runs')}>
-                      {m.activityTotalRuns}
+                      {m.activityTotalRuns}{sortIndicator('runs')}
                     </button>
                   </th>
-                  <th>
+                  <th aria-sort={sortAriaValue('input_tokens', sortKey, sortDir)}>
                     <button type="button" onClick={() => toggleSort('input_tokens')}>
-                      {m.activityInput}
+                      {m.activityInput}{sortIndicator('input_tokens')}
                     </button>
                   </th>
-                  <th>
+                  <th aria-sort={sortAriaValue('output_tokens', sortKey, sortDir)}>
                     <button type="button" onClick={() => toggleSort('output_tokens')}>
-                      {m.activityOutput}
+                      {m.activityOutput}{sortIndicator('output_tokens')}
                     </button>
                   </th>
-                  <th>
+                  <th aria-sort={sortAriaValue('credits', sortKey, sortDir)}>
                     <button type="button" onClick={() => toggleSort('credits')}>
-                      {m.activityTableCredits}
+                      {m.activityTableCredits}{sortIndicator('credits')}
                     </button>
                   </th>
                 </tr>
