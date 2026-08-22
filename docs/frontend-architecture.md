@@ -1713,12 +1713,23 @@ never issue `getAllActivity`/`getUserActivity`, even if `activitySubject` itself
 or forced (e.g. by a revoked admin flag).
 
 **Data.** `days` (`30 | 90 | 365`, default 30) is local `useState`; an effect keyed on
-`[effectiveSubject, days]` picks one of `api/client.ts`'s three activity calls
-(`getOwnActivity`/`getAllActivity`/`getUserActivity`) and writes the result into local
-`{data, error}` state — `data` resets to `null` at the top of every effect run, so a
-subject or range change re-shows the loading text rather than flashing stale numbers.
-While neither `data` nor `error` is set, the view renders `m.activityLoading`; a rejected
-fetch renders `m.activityLoadError` instead of the panels.
+`[effectiveSubject, days, authGeneration]` picks one of `api/client.ts`'s three activity
+calls (`getOwnActivity`/`getAllActivity`/`getUserActivity`) and writes the result into
+local `{data, error}` state — `data` resets to `null` at the top of every effect run, so a
+subject or range change re-shows the loading text rather than flashing stale numbers. The
+third dependency, `authGeneration` (the store field `login()` bumps on every commit —
+including the silent same-user re-login the password-change flow performs, see
+`AccountMenu.tsx`), re-fires the effect on that re-login the same way it does for
+`App.tsx`'s Header domains fetch and `TerminologyView`'s `refreshDomains`. Two guards
+protect a write from a stale request, addressing two different races: `sessionGeneration()
+=== gen`, captured at effect start, drops a response that arrives after a session turnover
+(logout/login as someone else); a plain `cancelled` flag, set `true` by the effect's own
+cleanup function, drops a response that arrives after a *subject or range switch within the
+same session* — the two guards are independent because a subject/range change bumps neither
+`sessionGeneration()` nor `authGeneration`, so `cancelled` is the only thing that stops an
+old, slow request from overwriting a newer one's already-rendered data (or from writing into
+state at all after unmount). While neither `data` nor `error` is set, the view renders
+`m.activityLoading`; a rejected fetch renders `m.activityLoadError` instead of the panels.
 
 **Identity across navigation.** The drilled-into user's label (email/display_name) is
 held in the store next to the subject — `activitySubjectLabel`, set by

@@ -143,6 +143,81 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def _select_activity_series(
+    conn, user_id: int | None, *, days: int, end: date | None = None
+) -> ActivitySeries:
+    """Query body shared by UsageStore.activity_series (own connection) and
+    activity_all (one connection shared with _select_activity_user_totals,
+    for snapshot consistency — see activity_all's own comment)."""
+    end_day = end or _utc_now().date()
+    start_day = end_day - timedelta(days=days - 1)
+    where = "status != 'started' AND day >= ? AND day <= ?"
+    params: list[object] = [start_day.isoformat(), end_day.isoformat()]
+    if user_id is not None:
+        where += " AND user_id = ?"
+        params.append(user_id)
+    rows = conn.execute(
+        # The three OK categories mirror config._CREDIT_SOURCES; a NEW
+        # source added there must be added to this CASE list AND the runs
+        # dict below, or its completed runs appear in the tokens/credits
+        # series but in no runs category, and /all's totals.runs will
+        # disagree with the per-user table's COUNT(*)
+        # (_select_activity_user_totals).
+        "SELECT day,"
+        " SUM(CASE WHEN status = 'completed' AND source = 'check' THEN 1 ELSE 0 END),"
+        " SUM(CASE WHEN status = 'completed' AND source = 'suggestion' THEN 1 ELSE 0 END),"
+        " SUM(CASE WHEN status = 'completed' AND source = 'name' THEN 1 ELSE 0 END),"
+        f" SUM(CASE WHEN status IN {_SETTLED_FAILED} THEN 1 ELSE 0 END),"
+        " COALESCE(SUM(input_tokens), 0),"
+        " COALESCE(SUM(output_tokens), 0),"
+        " COALESCE(SUM(credits), 0)"
+        f" FROM llm_usage WHERE {where} GROUP BY day",
+        tuple(params),
+    ).fetchall()
+    by_day = {r[0]: r for r in rows}
+    day_list = [(start_day + timedelta(days=i)).isoformat() for i in range(days)]
+
+    def col(idx):
+        return [int(by_day[d][idx]) if d in by_day else 0 for d in day_list]
+
+    return ActivitySeries(
+        days=day_list,
+        runs={"check": col(1), "suggestion": col(2), "name": col(3), "failed": col(4)},
+        input_tokens=col(5), output_tokens=col(6), credits=col(7),
+    )
+
+
+def _select_activity_user_totals(
+    conn, *, days: int, end: date | None = None
+) -> list[UserActivityTotals]:
+    """Query body shared by UsageStore.activity_user_totals (own connection)
+    and activity_all (shared connection — see its own comment). Same WHERE
+    as _select_activity_series (no user filter), collapsed per user rather
+    than per day. Ordered by credits DESC as a stable server-side default;
+    the client re-sorts freely."""
+    end_day = end or _utc_now().date()
+    start_day = end_day - timedelta(days=days - 1)
+    rows = conn.execute(
+        "SELECT user_id,"
+        " COUNT(*),"
+        " COALESCE(SUM(input_tokens), 0),"
+        " COALESCE(SUM(output_tokens), 0),"
+        " COALESCE(SUM(credits), 0)"
+        " FROM llm_usage"
+        " WHERE status != 'started' AND day >= ? AND day <= ?"
+        " GROUP BY user_id"
+        " ORDER BY COALESCE(SUM(credits), 0) DESC",
+        (start_day.isoformat(), end_day.isoformat()),
+    ).fetchall()
+    return [
+        UserActivityTotals(
+            user_id=r[0], runs=int(r[1]), input_tokens=int(r[2]),
+            output_tokens=int(r[3]), credits=int(r[4]),
+        )
+        for r in rows
+    ]
+
+
 def _window_start(moment: datetime, window: str) -> datetime:
     """Calendar-aligned UTC window starts (B6 spec §3). `day` never comes
     through here -- it predicates on the ledger's day column."""
@@ -434,43 +509,8 @@ class UsageStore:
         None), zero-filled over the full range. `started` rows are excluded
         everywhere: they are not activity yet, and the startup sweep may
         still re-label them."""
-        end_day = end or _utc_now().date()
-        start_day = end_day - timedelta(days=days - 1)
-        where = "status != 'started' AND day >= ? AND day <= ?"
-        params: list[object] = [start_day.isoformat(), end_day.isoformat()]
-        if user_id is not None:
-            where += " AND user_id = ?"
-            params.append(user_id)
         with self.db.connect() as conn:
-            rows = conn.execute(
-                # The three OK categories mirror config._CREDIT_SOURCES; a
-                # NEW source added there must be added to this CASE list
-                # AND the runs dict below, or its completed runs appear in
-                # the tokens/credits series but in no runs category, and
-                # /all's totals.runs will disagree with the per-user
-                # table's COUNT(*) (activity_user_totals).
-                "SELECT day,"
-                " SUM(CASE WHEN status = 'completed' AND source = 'check' THEN 1 ELSE 0 END),"
-                " SUM(CASE WHEN status = 'completed' AND source = 'suggestion' THEN 1 ELSE 0 END),"
-                " SUM(CASE WHEN status = 'completed' AND source = 'name' THEN 1 ELSE 0 END),"
-                f" SUM(CASE WHEN status IN {_SETTLED_FAILED} THEN 1 ELSE 0 END),"
-                " COALESCE(SUM(input_tokens), 0),"
-                " COALESCE(SUM(output_tokens), 0),"
-                " COALESCE(SUM(credits), 0)"
-                f" FROM llm_usage WHERE {where} GROUP BY day",
-                tuple(params),
-            ).fetchall()
-        by_day = {r[0]: r for r in rows}
-        day_list = [(start_day + timedelta(days=i)).isoformat() for i in range(days)]
-
-        def col(idx):
-            return [int(by_day[d][idx]) if d in by_day else 0 for d in day_list]
-
-        return ActivitySeries(
-            days=day_list,
-            runs={"check": col(1), "suggestion": col(2), "name": col(3), "failed": col(4)},
-            input_tokens=col(5), output_tokens=col(6), credits=col(7),
-        )
+            return _select_activity_series(conn, user_id, days=days, end=end)
 
     def activity_user_totals(
         self, *, days: int, end: date | None = None
@@ -478,28 +518,30 @@ class UsageStore:
         """Same WHERE as activity_series (no user filter), collapsed per
         user rather than per day. Ordered by credits DESC as a stable
         server-side default; the client re-sorts freely."""
-        end_day = end or _utc_now().date()
-        start_day = end_day - timedelta(days=days - 1)
         with self.db.connect() as conn:
-            rows = conn.execute(
-                "SELECT user_id,"
-                " COUNT(*),"
-                " COALESCE(SUM(input_tokens), 0),"
-                " COALESCE(SUM(output_tokens), 0),"
-                " COALESCE(SUM(credits), 0)"
-                " FROM llm_usage"
-                " WHERE status != 'started' AND day >= ? AND day <= ?"
-                " GROUP BY user_id"
-                " ORDER BY COALESCE(SUM(credits), 0) DESC",
-                (start_day.isoformat(), end_day.isoformat()),
-            ).fetchall()
-        return [
-            UserActivityTotals(
-                user_id=r[0], runs=int(r[1]), input_tokens=int(r[2]),
-                output_tokens=int(r[3]), credits=int(r[4]),
-            )
-            for r in rows
-        ]
+            return _select_activity_user_totals(conn, days=days, end=end)
+
+    def activity_all(
+        self, *, days: int, end: date | None = None
+    ) -> tuple[ActivitySeries, list[UserActivityTotals]]:
+        """Server-wide series + per-user totals for /all, on ONE connection
+        and ONE pinned snapshot (B40 round-2 review): activity_series and
+        activity_user_totals each open their own connection, so calling
+        them back to back for /all lets a ledger row settle (a run
+        completing) between the two queries — the series/totals would then
+        disagree with the per-user table for the same request. Pins the
+        snapshot with the exact idiom credits_used uses above (BEGIN on
+        sqlite, REPEATABLE READ on postgres — see that method's comment for
+        why each is needed) before running both query bodies on the same
+        connection."""
+        with self.db.connect() as conn:
+            if self.db.dialect == "sqlite":
+                conn.execute("BEGIN")
+            else:
+                conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            series = _select_activity_series(conn, None, days=days, end=end)
+            totals = _select_activity_user_totals(conn, days=days, end=end)
+        return series, totals
 
     def sweep_all_started(self) -> int:
         """Startup sweep (spec §6.6): in a single-process deployment no
