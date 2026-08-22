@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MeResponse } from '../api/client'
 import { useStore } from '../state/store'
 
@@ -7,12 +7,6 @@ vi.mock('../api/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api/client')>()),
   postCheck: vi.fn(),
   subscribeCheck: vi.fn(),
-}))
-vi.mock('../editor/editorRef', () => ({
-  getEditorView: () => ({
-    state: { doc: { toString: () => docText, length: docText.length } },
-    dispatch: (tx: unknown) => dispatched.push(tx),
-  }),
 }))
 vi.mock('./routing', () => ({
   resolveModel: vi.fn(() => ({ ok: true, provider: 'fake', model: 'fake-model' })),
@@ -29,6 +23,7 @@ import { bumpGeneration, resetAutosaveForTests } from '../documents/autosave'
 import { en as messages } from '../i18n/en'
 import { cancelInFlightCheck } from './cancelSlot'
 import { cancelCheck, runCheck } from './controller'
+import { setDocumentPort, type DocumentPort } from './documentPort'
 import { resolveModel } from './routing'
 
 function user(policy: MeResponse['policy']): MeResponse {
@@ -63,6 +58,20 @@ const RESTRICTED: MeResponse['policy'] = {
 let docText = 'Some text with issues.'
 let dispatched: unknown[] = []
 
+const fakePort: DocumentPort = {
+  hasDocument: () => true,
+  getText: () => docText,
+  setDocument: () => {},
+  currentFinding: () => null,
+  serverSpan: () => null,
+  mergeFindings: (replaceSources, findings) => {
+    dispatched.push({ replaceSources, findings })
+  },
+  selectFinding: () => {},
+  applySuggestion: () => Promise.resolve('not-found'),
+  applyRewrite: () => Promise.resolve('not-found'),
+}
+
 type SseCallbacks = Parameters<typeof subscribeCheck>[1]
 
 function lastCallbacks(): SseCallbacks {
@@ -85,6 +94,7 @@ beforeEach(() => {
   resetAutosaveForTests()
   docText = 'Some text with issues.'
   dispatched = []
+  setDocumentPort(fakePort)
   useStore.setState({
     scorecard: null,
     scorecardStale: false,
@@ -104,6 +114,10 @@ beforeEach(() => {
     findings: [],
   } as never)
   vi.mocked(subscribeCheck).mockReturnValue(() => {})
+})
+
+afterEach(() => {
+  setDocumentPort(null)
 })
 
 describe('check controller', () => {

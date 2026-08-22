@@ -42,10 +42,6 @@ vi.mock('../api/client', async (importOriginal) => ({
   moveDocument: vi.fn(),
   putFolderDefaults: vi.fn(),
 }))
-vi.mock('../editor/editorRef', () => ({
-  getEditorView: () => fakeView,
-}))
-
 import {
   createDocument,
   createFolder,
@@ -58,12 +54,20 @@ import {
   putFolderDefaults,
   updateDocument,
 } from '../api/client'
+import { setDocumentPort, type DocumentPort } from '../checking/documentPort'
 
 const dispatched: unknown[] = []
 let viewText = 'view text'
-const fakeView = {
-  state: { doc: { toString: () => viewText, length: 9 } },
-  dispatch: (tr: unknown) => dispatched.push(tr),
+const fakePort: DocumentPort = {
+  hasDocument: () => true,
+  getText: () => viewText,
+  setDocument: (text, findings) => dispatched.push({ text, findings }),
+  currentFinding: () => null,
+  serverSpan: () => null,
+  mergeFindings: () => {},
+  selectFinding: () => {},
+  applySuggestion: () => Promise.resolve('not-found'),
+  applyRewrite: () => Promise.resolve('not-found'),
 }
 
 function doc(id: number, over: Partial<DocumentFull> = {}): DocumentFull {
@@ -131,9 +135,13 @@ beforeEach(() => {
   useStore.getState().setDocMeta(null)
   useStore.getState().setDocuments([])
   useStore.setState({ user: USER })
+  setDocumentPort(fakePort)
 })
 
-afterEach(() => vi.clearAllMocks())
+afterEach(() => {
+  vi.clearAllMocks()
+  setDocumentPort(null)
+})
 
 describe('openDocument', () => {
   it('hydrates settings, meta, scorecard and suppresses profile apply on language switch', async () => {

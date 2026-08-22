@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MeResponse } from '../api/client'
 import { useStore } from '../state/store'
 
@@ -7,23 +7,6 @@ vi.mock('../api/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api/client')>()),
   postSuggestions: vi.fn(),
 }))
-vi.mock('../editor/editorRef', () => ({
-  getEditorView: () => ({
-    state: {
-      doc: { toString: () => 'Some text with issues.' },
-      field: () => ({
-        items: [
-          {
-            finding: { id: 'f1', message: 'msg', rule_id: null },
-            from: 0,
-            to: 4,
-          },
-        ],
-      }),
-    },
-  }),
-}))
-vi.mock('../editor/findings', () => ({ findingsField: {} }))
 vi.mock('./routing', () => ({
   resolveModel: vi.fn(() => ({ ok: true, provider: 'fake', model: 'fake-model' })),
 }))
@@ -33,8 +16,24 @@ import { HttpError, postSuggestions } from '../api/client'
 import { refreshUserNow } from '../auth/refreshSlot'
 import { bumpGeneration, resetAutosaveForTests } from '../documents/autosave'
 import { en as messages } from '../i18n/en'
+import { setDocumentPort, type DocumentPort } from './documentPort'
 import { fetchRewrite, fetchSuggestions, llmActionPending } from './suggest'
 import { resolveModel } from './routing'
+
+const fakePort: DocumentPort = {
+  hasDocument: () => true,
+  getText: () => 'Some text with issues.',
+  setDocument: () => {},
+  currentFinding: (id) =>
+    id === 'f1'
+      ? { finding: { id: 'f1', message: 'msg', rule_id: null } as never, from: 0, to: 4 }
+      : null,
+  serverSpan: (id) => (id === 'f1' ? { start: 0, end: 4 } : null),
+  mergeFindings: () => {},
+  selectFinding: () => {},
+  applySuggestion: () => Promise.resolve('not-found'),
+  applyRewrite: () => Promise.resolve('not-found'),
+}
 
 function user(policy: MeResponse['policy']): MeResponse {
   return {
@@ -63,6 +62,7 @@ const RESTRICTED: MeResponse['policy'] = {
 beforeEach(() => {
   vi.clearAllMocks()
   resetAutosaveForTests()
+  setDocumentPort(fakePort)
   useStore.getState().setSuggestPending(null)
   useStore.getState().setRewritePending(null)
   useStore.getState().setSuggestError('f1', null)
@@ -76,6 +76,10 @@ beforeEach(() => {
     provider: 'fake',
     model: 'fake-model',
   })
+})
+
+afterEach(() => {
+  setDocumentPort(null)
 })
 
 describe('fetchSuggestions', () => {

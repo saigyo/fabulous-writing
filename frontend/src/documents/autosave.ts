@@ -4,7 +4,7 @@ import {
   updateDocument,
 } from '../api/client'
 import { refreshUserNow } from '../auth/refreshSlot'
-import { getEditorView } from '../editor/editorRef'
+import { getDocumentPort } from '../checking/documentPort'
 import { wordCount } from '../scoring/score'
 import { useStore } from '../state/store'
 import { readSnapshot, writeSnapshot, type DocSnapshot } from './buffer'
@@ -116,14 +116,19 @@ export function resetAutosaveForTests(): void {
 /** Assemble the current document's full state from editor + store. */
 export function collectSnapshot(): DocSnapshot | null {
   const state = useStore.getState()
-  const view = getEditorView()
-  if (!view || !state.docMeta || !state.user) return null
+  const port = getDocumentPort()
+  // hasDocument() REPLACES the old `!view` check one-for-one: dropping it
+  // would let the null-object port produce a snapshot with text: '' that
+  // flush() (beforeunload, document switch, post-check) PUTs over a real
+  // document — a data-loss shape, which is exactly why the port has
+  // hasDocument().
+  if (!port.hasDocument() || !state.docMeta || !state.user) return null
   return {
     docId: state.docMeta.id,
     revision: state.docMeta.revision,
     dirty: true,
     name: state.docMeta.name,
-    text: view.state.doc.toString(),
+    text: port.getText(),
     findings: state.tracked.map((t) => ({
       finding: {
         ...t.finding,
