@@ -4557,7 +4557,7 @@ budget went to invisible reasoning, the JSON envelope was truncated, and
 the parse error masqueraded as garbage output. ~27% of Sonnet 5 check
 runs failed this way; even completed runs peaked at 4064/4096.
 
-Fix (TDD, 10 new tests each watched red first): Claude cap raised to
+Fix (TDD, 11 new tests each watched red first): Claude cap raised to
 16384 (`_MAX_TOKENS`) and both Claude paths now raise a new
 `TruncatedResponseError` (metadata-only message, usage attached) on
 `stop_reason == "max_tokens"`; Bedrock detects the same `stopReason` on

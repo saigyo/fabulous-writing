@@ -93,6 +93,19 @@ class TestStageMapping:
         assert stage == "request"
         assert "(401)" in detail
 
+    def test_hostile_usage_property_never_breaks_usage_extraction(self) -> None:
+        # usage_from_exception runs inside every LLM endpoint's exception
+        # handler; a raising `usage` property must yield None, not replace
+        # the original provider failure (same guard as _status_of).
+        from app.api.llm_gate import usage_from_exception
+
+        class Hostile(Exception):
+            @property
+            def usage(self):  # noqa: ANN201 - hostile on purpose
+                raise RuntimeError("gotcha")
+
+        assert usage_from_exception(Hostile("boom")) is None
+
     def test_hostile_status_property_never_breaks_classification(self) -> None:
         # "Never raises" must hold even against an exception whose
         # status_code property itself raises (getattr only swallows
