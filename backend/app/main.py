@@ -22,6 +22,7 @@ from app.api.routing import router as routing_router
 from app.api.rules import router as rules_router
 from app.api.suggestions import router as suggestions_router
 from app.api.terminology import router as terminology_router
+from app.api.usage_activity import router as usage_activity_router
 from app.api.providers import OPENAI_EXCLUDED_MODEL_FRAGMENTS
 from app.checkers.llm.bedrock import BedrockProvider
 from app.checkers.llm.claude import ClaudeProvider
@@ -262,6 +263,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             terminology_router, checks_router, languages_router, rules_router,
             providers_router, suggestions_router, documents_router,
             folders_router, profiles_router, routing_router,
+            usage_activity_router,
         ]
         for router in protected:
             app.include_router(router, dependencies=[Depends(get_current_user)])

@@ -2158,6 +2158,30 @@ databases gain both columns via `migrate_columns` at startup with no
 that reason — a typo'd stage on a migrated table would otherwise pass
 silently.
 
+### Activity aggregation (B40)
+
+`UsageStore.activity_series(user_id, *, days, end=None)` buckets settled rows
+(`status != 'started'`) by `day` into zero-filled daily series over a
+`[end - days + 1, end]` range (`end` defaults to today, UTC): run counts split
+into `check`/`suggestion`/`name` (completed-only) and a combined `failed`
+bucket (`failed`/`cancelled`/`abandoned`), plus `input_tokens`/
+`output_tokens`/`credits` sums per day. `user_id=None` aggregates across all
+users. `UsageStore.activity_user_totals(*, days, end=None)` collapses the same
+WHERE clause per user instead of per day, ordered by `credits` DESC. Both read
+`llm_usage` directly with no new table.
+
+`app/api/usage_activity.py` exposes this as three GETs under
+`/api/usage/activity`: the bare path returns the caller's own series (any
+authenticated user); `/all` (admin-only) returns the server-wide series plus
+a `per_user` breakdown joined against `UserStore.list_users()` for
+email/display_name; `/{user_id}` (admin-only) returns one other user's series,
+404 if unknown. `days` is a query param restricted to `{30, 90, 365}` via an
+`IntEnum` (not a `Literal` — FastAPI's string-to-int query coercion doesn't
+apply to `Literal` members, so every explicit `?days=` value would 422).
+`/all` and `/{user_id}` read one UTC clock instant and pass it as `end` to
+both store calls, so the series and per-user totals describe the same range
+even if the query straddles midnight.
+
 ### Credit windows (B6)
 
 **Per-tier budgets** (`app/core/config.py`, `TierLimitsSettings`): budgets
@@ -2431,6 +2455,7 @@ Every endpoint below requires a valid `Authorization: Bearer <token>` caller **e
 | `GET /api/providers` | provider availability + model discovery; per-provider `allowed` (direct-selection policy, see [Tiers and LLM policy](#tiers-and-llm-policy)) |
 | `GET /api/routing` | tier routing table with per-tier availability + reason + `allowed` (quality-tier policy) |
 | `GET /api/languages` | languages + NLP model status |
+| `GET /api/usage/activity[?days=]`, `/all` (admin), `/{user_id}` (admin) | daily activity/usage series (own / server-wide + per-user / one other user), see [Activity aggregation](#activity-aggregation-b40) |
 | `GET /api/health` | liveness |
 
 FastAPI serves the OpenAPI schema at `/docs` — that is the contract for any future
