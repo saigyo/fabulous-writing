@@ -536,6 +536,29 @@ class UsageStore:
         connection."""
         with self.db.connect() as conn:
             if self.db.dialect == "sqlite":
+                # Belt-and-braces, not load-bearing the way REPEATABLE READ
+                # is on postgres (round-6 investigation, empirically
+                # verified, not just reasoned about): this seam sets no
+                # journal_mode pragma (db/sqlite.py), so sqlite runs its
+                # default rollback-journal locking, not WAL. Under that
+                # model a SECOND connection's write cannot silently commit
+                # and go unseen the way postgres's MVCC snapshot allows —
+                # once BEGIN + the series SELECT below have acquired this
+                # connection's SHARED lock, any other connection's write
+                # BLOCKS (and, without a busy_timeout override, eventually
+                # raises "database is locked") until this transaction ends,
+                # so the two-connection race TestPostgresActivityAllIsolation
+                # (test_usage_activity.py) demonstrates for postgres is
+                # structurally impossible to reproduce here — there is
+                # nothing to inject that could go unseen, only a write that
+                # cannot land at all while this method is mid-flight. BEGIN
+                # still matters for a narrower reason: without it, each bare
+                # SELECT is its OWN implicit read transaction that releases
+                # its lock the moment it completes (same reasoning as
+                # credits_used above), leaving a real window between the
+                # series and totals queries where an ordinarily concurrent
+                # writer (a run settling in another request, not a test
+                # harness) could commit and be picked up by totals alone.
                 conn.execute("BEGIN")
             else:
                 conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
