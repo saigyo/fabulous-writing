@@ -57,6 +57,11 @@ function syncOverlayGeometry(el: HTMLTextAreaElement, overlay: HTMLDivElement) {
 export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
   const overlay = document.createElement('div')
   overlay.className = 'fw-mirror-overlay'
+  // The overlay duplicates the textarea's own text purely to paint
+  // highlight backgrounds underneath it (see the module comment) — it
+  // carries no information a screen reader doesn't already get from the
+  // textarea itself, so it must be hidden from assistive tech.
+  overlay.setAttribute('aria-hidden', 'true')
   el.insertAdjacentElement('beforebegin', overlay)
   syncOverlayGeometry(el, overlay)
 

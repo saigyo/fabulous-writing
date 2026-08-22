@@ -587,29 +587,57 @@ describe('setDocument', () => {
   })
 })
 
-// F3 (final review): resetSession() is the unconditional teardown wired
-// into auth/session.ts's logout()/expireSession() via embed/disconnectSlot.ts
-// — the store's resetSessionState() clears its own fields, but this shim's
-// private fieldId/buffer/items survive that and must be cleared separately.
+// Copilot round 8: resetSession() used to be an unconditional teardown
+// (same as fieldDisconnected) — it nulled fieldId, which made the
+// login-time republish() (fieldId === null) a no-op. The embed then waited
+// forever while the host still believed it was connected. resetSession()
+// now clears only session-scoped state (tracked findings, pending
+// replacements, selection, doc metrics, the scorecard) and RETAINS the
+// shim's own field identity/capabilities/meta/buffer, so republish()
+// (wired to login()) can restore the connection.
 describe('resetSession', () => {
-  it('disconnects unconditionally and a subsequent textChanged for the old fieldId is ignored', () => {
-    const { doc } = connected('This is very good.', [finding('f1', 8, 12, 'very')])
-    doc.resetSession()
-    expect(doc.connected()).toBe(false)
-    expect(doc.getText()).toBe('')
-    doc.textChanged('f1', 'a post-logout host echo')
-    expect(doc.connected()).toBe(false)
-    expect(doc.getText()).toBe('')
-  })
-
-  it('clears connectedField and tracked findings in the store', () => {
+  it('clears tracked findings/selection/metrics/scorecard in the store but keeps connected() true', () => {
+    useStore.setState({ scorecard: FAKE_SCORECARD, scorecardStale: false })
     const outbound = fakeOutbound()
     const doc: HostDoc = createHostDoc(outbound)
     doc.fieldConnected('f1', 'hello', CAPS, { url: 'https://host.example/doc', fieldKind: 'textarea' })
     doc.mergeFindings(['rule'], [finding('f1', 0, 4, 'hell', 'rule')])
+    doc.selectFinding('f1')
+
     doc.resetSession()
-    expect(useStore.getState().connectedField).toBeNull()
+
+    expect(doc.connected()).toBe(true) // the shim still knows the field; only the store goes login-gated
+    expect(doc.getText()).toBe('hello') // the buffer belongs to the host page, not the session
+    expect(doc.currentFinding('f1')).toBeNull()
     expect(useStore.getState().tracked).toEqual([])
+    expect(useStore.getState().selectedId).toBeNull()
+    expect(useStore.getState().docWords).toBe(0)
+    expect(useStore.getState().docChars).toBe(0)
+    expect(useStore.getState().scorecard).toBeNull()
+    const last = outbound.findingsCalls.at(-1)
+    expect(last).toEqual({ fieldId: 'f1', findings: [] }) // sent to the still-current fieldId
+  })
+
+  it('settles a pending replacement as refused', async () => {
+    const { doc, outbound } = connected('This is very good.', [finding('f1', 8, 12, 'very')])
+    const promise = doc.applySuggestion('f1', 'extremely')
+    doc.resetSession()
+    await expect(promise).resolves.toBe('refused')
+    expect(outbound.applyReplacements).toHaveLength(1) // the request was sent; only its resolution changed
+  })
+
+  it('does not itself clear connectedField — that is auth/session.ts resetSessionState()\'s job, which always runs first', () => {
+    const outbound = fakeOutbound()
+    const doc: HostDoc = createHostDoc(outbound)
+    doc.fieldConnected('f1', 'hello', CAPS, { url: 'https://host.example/doc', fieldKind: 'textarea' })
+    doc.resetSession()
+    // Unlike the old teardown()-based resetSession, this alone does not
+    // null connectedField; in production resetSessionState() already did
+    // (see session.ts's logout()/expireSession()) before this ever runs.
+    expect(useStore.getState().connectedField).toEqual({
+      fieldId: 'f1',
+      url: 'https://host.example/doc',
+    })
   })
 })
 
@@ -661,5 +689,50 @@ describe('republish', () => {
       fieldId: 'f1',
       url: 'https://host.example/doc',
     })
+  })
+
+  // Copilot round 8: the fix that makes resetSession() retain fieldId/
+  // buffer means logout -> login -> republish() is now a real reconnect,
+  // not a no-op — this is the scenario the whole round-8 fix exists for.
+  it('logout -> login -> republish restores connectedField from a retained buffer with empty tracked state', () => {
+    const { doc } = connected('This is very good.', [finding('f1', 8, 12, 'very')])
+    doc.resetSession() // "logout": store cleared, but the shim keeps its field
+    useStore.setState({ connectedField: null }) // resetSessionState()'s half of logout, simulated directly
+
+    doc.republish() // "login": auth/session.ts's activateEmbed()
+
+    // A fresh, non-null connectedField object is exactly what EmbedApp.tsx's
+    // connect effect is keyed on (object identity, not fieldId alone) — in
+    // the real app this is what re-fires cancelCheck()+runCheck().
+    expect(useStore.getState().connectedField).toEqual({ fieldId: 'f1', url: null })
+    expect(useStore.getState().docWords).toBe(4)
+    expect(useStore.getState().docChars).toBe('This is very good.'.length)
+    expect(useStore.getState().tracked).toEqual([]) // resetSession() dropped the pre-logout finding; it does not come back
+  })
+
+  // The other half of the round-8 fix: a host textChanged that arrives
+  // DURING the logged-out window (after resetSession(), before the next
+  // republish()) must not publish tracked findings or doc metrics into a
+  // store the login-gated UI shouldn't be showing.
+  it('a textChanged during the logged-out window does not publish to the store, but is not lost either', () => {
+    const { doc, outbound } = connected('This is very good.', [finding('f1', 8, 12, 'very')])
+    doc.resetSession()
+    const findingsCallsBefore = outbound.findingsCalls.length
+    const inputCallsBefore = outbound.inputCalls
+
+    doc.textChanged('f1', 'This is very good. Indeed.') // the host page keeps running while logged out
+
+    expect(useStore.getState().docWords).toBe(0) // unchanged: still the resetSession()-cleared value
+    expect(useStore.getState().docChars).toBe(0)
+    expect(useStore.getState().tracked).toEqual([])
+    expect(outbound.findingsCalls.length).toBe(findingsCallsBefore) // no new wire message either
+    expect(outbound.inputCalls).toBe(inputCallsBefore) // the check scheduler must not arm
+
+    // But the buffer itself kept tracking the host's true text, so
+    // republish() (login) picks up the edit that happened while logged out.
+    expect(doc.getText()).toBe('This is very good. Indeed.')
+    doc.republish()
+    expect(useStore.getState().docWords).toBe(5)
+    expect(useStore.getState().docChars).toBe('This is very good. Indeed.'.length)
   })
 })

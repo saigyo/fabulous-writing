@@ -23,6 +23,18 @@ describe('createTextareaAdapter: capabilities', () => {
   })
 })
 
+// Copilot round 8: the overlay duplicates the textarea's own text purely
+// to paint highlight backgrounds underneath it — without aria-hidden a
+// screen reader would announce the document's text twice.
+describe('createTextareaAdapter: accessibility', () => {
+  it('marks the mirror overlay aria-hidden', () => {
+    const adapter = createTextareaAdapter(el)
+    const overlay = document.querySelector('.fw-mirror-overlay')
+    expect(overlay?.getAttribute('aria-hidden')).toBe('true')
+    adapter.dispose()
+  })
+})
+
 describe('createTextareaAdapter: extract/onChange', () => {
   it('extract returns the live textarea value', () => {
     const adapter = createTextareaAdapter(el)
