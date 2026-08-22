@@ -179,6 +179,15 @@ construction. A deployment serving the frontend from anywhere other than
 `load_settings()` only reads YAML (`config_file` param aside, used by tests and
 one-off scripts, never by `main.py`'s own `app` attribute).
 
+**`embed.allowed_ancestors`** (`EmbedSettings`, spec B43) lists the origins allowed to
+iframe the `/embed` surface, sent as the `frame-ancestors` CSP directive on that route
+only (see [Single-origin serving](#container-deployment-b17)). Default empty renders
+`frame-ancestors 'none'` — embedding is off until a deployment opts in. Each entry must
+`fullmatch` `'self'` or a `scheme://host[:port]` origin (no wildcards, no paths),
+validated at startup like the other embed/proxy knobs; a malformed entry fails boot
+rather than silently disabling the whole CSP directive in some browsers. YAML-only, same
+as `cors.origins` and `environment` — no environment-variable override.
+
 **`environment` gates the API docs routes** (`dev` | `staging` | `production`,
 default `production` — YAML-only, same as `cors.origins`, no environment-variable
 override). `create_app()` passes `docs_url=None, redoc_url=None, openapi_url=None`
@@ -247,6 +256,17 @@ Details worth knowing:
 - **NLP degradation**: if the language's spaCy model is not installed, `analyze()`
   returns `None`, NLP-backed rules are skipped, and their ids are reported as
   `skipped_rules` so the UI can say so instead of silently checking less.
+- **`client` tag (spec B43, C1).** `CheckRequest.client` (`app/api/checks.py`) is an
+  enum-validated `Literal["web", "embed", "browser-extension", "vscode", "jetbrains",
+  "simulator"]`, defaulting to `"web"`, that names which surface issued the check — the
+  frontend's `checking/clientTag.ts` module-level singleton (`"web"` by default) sets it;
+  the embed's bridge (`embed/bridge.ts`) calls `setClientTag(host.kind)` with whatever
+  kind string the connected host's `hello` message names — `"simulator"` for the dev
+  host simulator, `"browser-extension"` for the eventual C2 extension — falling back to
+  `"web"` for any value outside the allowlist. It is accepted for forward compatibility
+  but **not yet persisted**: `llm_usage` has no `client` column. Ledger recording is
+  deferred to the next schema-touching story, landing together with B41's day-first
+  index (#126).
 - **Profile inputs are resolved by the client.** The check API is deliberately
   profile-agnostic: the frontend translates the selected profile plus any header
   overrides into `domain_ids`, `rule_config`, and `llm_instructions`, and likewise
@@ -2691,6 +2711,19 @@ path is joined onto the filesystem, so there is no path for a traversal segment 
 escape through. This route is registered last, after every `/api` router, so FastAPI's
 registration-order route matching always gives real API routes priority over the
 catch-all.
+
+**The embed surface** (`/embed`, `/embed.html`, `/embed/*`, spec B43) is served by the
+same catch-all as its own branch, checked before the generic map lookup: when
+`dist/embed.html` exists (built by the frontend's multi-page Vite config — see
+[frontend-architecture.md](frontend-architecture.md)), a request for one of those three
+path shapes returns that file with `Content-Security-Policy: frame-ancestors …` built
+from `settings.embed.allowed_ancestors` (`'none'` when the list is empty). Every other
+HTML response from the catch-all — the main SPA's `index.html` fallback, for any path —
+carries `Content-Security-Policy: frame-ancestors 'none'` unconditionally, so the main
+app is never frameable regardless of the embed config; a non-HTML file resolved from the
+`spa_files` map (a real asset with a non-`.html` suffix) gets no CSP header at all, since
+only page loads need `frame-ancestors`. `settings.embed.allowed_ancestors` is read once
+at mount time (with `embed_available = embed_page.is_file()`), not per-request.
 
 **The wizard.** `app/setup_wizard.py` owns the `/config` directory end to end: each
 run regenerates both `fabulous.env` (secrets, written with `0o600` permissions) and

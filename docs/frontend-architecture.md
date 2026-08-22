@@ -45,10 +45,13 @@ frontend/src/
 ├── editor/
 │   ├── Editor.tsx             # CodeMirror setup, update listener, click-to-select
 │   ├── findings.ts            # findingsField StateField: tracked findings + decorations
-│   └── editorRef.ts           # module-level handle to the EditorView
+│   ├── editorRef.ts           # module-level handle to the EditorView
+│   └── editorPort.ts          # DocumentPort implementation over the CodeMirror view (B43 C1)
 ├── checking/
 │   ├── scheduler.ts           # typing-pause debounce (fast vs. full check)
 │   ├── controller.ts          # runCheck(): POST, apply fast findings, subscribe SSE
+│   ├── documentPort.ts        # DocumentPort interface + null object + get/setDocumentPort (B43 C1)
+│   ├── clientTag.ts           # which surface issued the check (web/embed/…), sent on CheckRequest (B43 C1)
 │   ├── model.ts               # effectiveModel(): chosen model vs. provider default
 │   ├── routing.ts             # resolveModel(): tier → provider/model, explicit failure
 │   ├── suggest.ts             # on-demand LLM suggestions / sentence rewrites
@@ -78,9 +81,13 @@ frontend/src/
 │   ├── grouping.ts            # groupDocuments: flat list → byFolder map + ungrouped
 │   └── DocumentSidebar.tsx    # sidebar UI: list, new, rename, delete, folders
 ├── header/
+│   ├── useHeaderData.ts       # header's data-fetching effects, extracted from App.tsx so
+│   │                          # a non-App entry (the embed) can reuse them (B43 C1)
 │   ├── ProfileSelector.tsx    # profile dropdown + dirty marker + save/reset
 │   ├── LlmSelector.tsx        # tier dropdown + resolved caption + advanced pin panel
 │   └── DomainMultiSelect.tsx  # checkbox-dropdown for terminology domains
+├── embed/                     # /embed entry — see Embed surface (B43 C1)
+├── simulator/                 # dev-only host simulator, not a build input — see Embed surface (B43 C1)
 ├── sidebar/
 │   ├── Sidebar.tsx             # counters, filters, finding list, detail card
 │   ├── findingList.ts          # withCurrentSpans, truncate (pure helpers)
@@ -99,7 +106,7 @@ frontend/src/
 │                              # rename inline via ✎ or double-click
 ├── admin/                     # AdminView.tsx: user list/create/row-edit, is_admin-gated (M6)
 ├── activity/                  # ActivityView.tsx + StackedBarChart.tsx (B40, #124)
-└── i18n/                      # 7 UI locales, hooks, interpolation
+└── i18n/                      # 7 UI locales, hooks, interpolation, LocaleSwitcher.tsx
 ```
 
 ## State management
@@ -340,6 +347,185 @@ The sidebar (`sidebar/Sidebar.tsx` + `findings/` helpers) renders severity and s
 counter chips (both are independent, combinable filters), groups findings by category,
 and shows the detail card with built-in suggestions, fetched suggestions, and rewrite
 options.
+
+## Embed surface (B43 C1)
+
+Design source: `docs/superpowers/specs/2026-08-22-b43-embeddable-clients-design.md`
+(plan: `docs/superpowers/plans/2026-08-22-c1-embed-surface.md`). A second Vite entry,
+`embed.html` → `src/embed/main.tsx`, serves a narrow single-column page — login gate,
+header selectors, `Sidebar` — inside a host's iframe, with no editor, document manager,
+or admin view. The point of the exercise is that this entry never imports CodeMirror;
+everything CodeMirror-specific behind `checking/controller.ts`, `checking/suggest.ts`,
+`documents/autosave.ts`, `documents/hydration.ts`, and `sidebar/Sidebar.tsx` had to move
+behind one seam first.
+
+### The document port
+
+`checking/documentPort.ts` defines `DocumentPort` — `hasDocument`, `getText`,
+`setDocument`, `currentFinding`, `serverSpan`, `mergeFindings`, `selectFinding`,
+`applySuggestion`, `applyRewrite` — the interface the checking layer and the sidebar now
+call instead of reaching for `editorRef.ts`/`EditorView` directly. `applySuggestion`/
+`applyRewrite` return a `Promise<ApplyResult>`, `ApplyResult = 'ok' | 'not-found' |
+'refused'`: `'not-found'` is the existing "the finding/sentence is gone" case (span
+collapsed, text moved on); `'refused'` is new and embed-only — the host declined the
+replacement (`expectedText` mismatch) or never echoed a `replaceResult` within the
+timeout. Like `checking/cancelSlot.ts`, the module default is a null object
+(`nullPort`), not `null` — call sites never null-check, and "no port" behaves as an
+empty document; `hasDocument()` is the one guard call sites must use instead of
+`getText() === ''`, since an empty string is also a legitimate empty document (an
+autosave guard that used `getText()` instead would PUT `''` over a real document as data
+loss — this is why `documents/autosave.ts` gained an explicit `hasDocument()` check).
+
+Two implementations are registered, each importing only its own side:
+
+- `editor/editorPort.ts` — the CodeMirror implementation, registered as a side effect
+  from `main.tsx` (the main app's entry, unchanged). `serverSpan` stays unconverted
+  (the app's existing, latently astral-character-buggy behavior — the fix is the spec's
+  spun-off backlog item, out of scope here).
+- `embed/hostDoc.ts` (`createHostDoc`, below) — registered from `embed/main.tsx`.
+  `serverSpan` here *does* convert through `offsets.ts`'s code-point mapping, so the
+  embed path doesn't inherit the main app's astral bug.
+
+No module imports both; `documentPort.test.ts` covers the null object and both real
+implementations are covered where they're defined.
+
+Consumers rewired onto the port: `checking/controller.ts` and `checking/suggest.ts`
+(check/suggestion plumbing), `documents/autosave.ts` (the `hasDocument()` guard above),
+`documents/hydration.ts` (hydration now calls `port.setDocument(text, findings)` instead
+of dispatching a CodeMirror transaction directly — a no-op in the embed shim, since the
+document manager never runs there), and `sidebar/Sidebar.tsx`, whose suggestion/rewrite
+apply handlers are now `async` and branch on the `'refused'` result to show
+`m.embedReplaceFailed` via the existing per-finding `suggestError` slot (the same UI
+path a normal suggestion error uses).
+
+### The host document shim
+
+`embed/hostDoc.ts` implements `DocumentPort` against postMessage-driven host state
+instead of an `EditorView` — the host owns the text; the shim never edits it directly.
+Every incoming full-text snapshot (a `textChanged` message, or a `replaceResult` echo) is
+reduced to a single splice — `deriveSplice(oldText, newText)`: longest common prefix,
+then longest common suffix, bounded *inclusively* by `min(oldLen, newLen) - prefixLen`.
+That inclusive bound is deliberate, not sloppy: the strict (exclusive) form is off by one
+for a pure insertion/deletion, which widens the derived splice by one character and
+wrongly drops an adjacent finding that CodeMirror's own `tr.changes.mapPos` insertion
+mapping keeps — `hostDoc.test.ts`'s `"the cat" -> "theX cat"` case pins the divergence
+this avoids. `mapThroughSplice` then ports `editor/findings.ts`'s `docChanged` semantics
+onto that one splice: findings entirely before it are untouched, findings entirely after
+shift by the length delta, and anything overlapping or boundary-adjacent to a *real*
+change is dropped — but a no-op `textChanged` (a redundant host echo) derives an empty
+splice and must not touch anything.
+
+Replacement requests (`sendReplace`) post `applyReplacement` with the buffer's own
+`expectedText` slice and race a `2000ms` timeout (`REPLACE_TIMEOUT_MS`) against the
+host's `replaceResult` echo; whichever settles first resolves the pending
+`Promise<ApplyResult>` — a host that never echoes resolves `'refused'` on timeout rather
+than hanging the sidebar's apply button forever.
+
+`fieldConnected` treats every connect (including a reconnect to the *same* field) as a
+whole-document replacement: it resets the buffer and tracked findings, refreshes
+`docWords`/`docChars` from the new text, and calls `store.clearScorecard()` — there is no
+meaningful "old text" left for a staleness note to describe against a document the shim
+has never seen before. `EmbedApp.tsx` keys a `cancelCheck()` + fresh `runCheck(false)` off
+the same event via the store's `connectedField` field (`state/store.ts`) — a
+reconnect-shaped, non-persisted field whose identity is deliberately fresh on every
+`setConnectedField()` call so a React effect fires every time, not just on the first
+connect.
+
+### Offsets: code points ↔ UTF-16
+
+`embed/offsets.ts` is the two-way conversion the shim needs because the backend emits
+Python code-point offsets while the bridge protocol and the shim work in UTF-16 code
+units (spec B43, normative for every host). `convertFindingOffsets(text, findings)` maps
+incoming findings code-point → UTF-16 against the checked-text snapshot, dropping any
+finding whose converted slice no longer equals `span.text` exactly (the "spans are
+exact" invariant must survive conversion too); `toCodePointSpan(text, from, to)` maps an
+outgoing suggestion-request span UTF-16 → code points. Both short-circuit to identity
+when the text has no astral characters (no surrogate pairs), so the common case pays no
+cost.
+
+### Bridge protocol
+
+`embed/protocol.ts` is the versioned `postMessage` contract, imported by both sides of
+the bridge so a breaking change fails compilation rather than surfacing at runtime.
+`PROTOCOL_VERSION = 1`; every message is wrapped in an `Envelope` carrying `fw:
+<version>` (`envelope()`), and `parseHostMessage` validates an incoming payload's shape
+per message type, silently dropping (returning `null` for) anything that isn't a
+current-version, well-formed host message — a foreign frame posts all kinds of
+unrelated data, and the bridge must not throw on it. One deliberate deviation from the
+spec's own protocol table, recorded here per the spec's amendment note: capabilities
+(`HostCapabilities { mark, replace }`) travel on `fieldConnected`, per field, not on
+`hello` — matching the spec's own prose ("per-field capabilities"), which `hello` (a
+one-time, whole-host greeting with no field yet in scope) cannot carry. The module also
+defines the host-side `FieldAdapter` contract (`capabilities`, `extract`, `onChange`,
+`applyReplacement`, `setMarkings`, `clearMarkings`, `flashFinding`, `dispose`) — it lives
+here, not in a future extension package, so the simulator's reference adapter and every
+later host implement the exact shape the protocol was designed for.
+
+`embed/bridge.ts` (`startBridge`) owns the single `window` `message` listener. It waits
+for the first valid `hello`, **pins** `event.source`/`event.origin` from that message,
+and routes everything after that to a `HostDoc` — messages from any other source or
+origin are silently ignored (defense in depth on top of the CSP `frame-ancestors`
+directive). `hello`'s `host.kind` also sets the check-request client tag
+(`checking/clientTag.ts`'s `setClientTag`, see [backend-architecture.md](backend-architecture.md)
+for how the backend receives it). Outbound, everything is a no-op until a host is
+pinned — the embed may run standalone with no host ever connecting, without erroring —
+and the bridge streams a `status` message (`phase`: idle/checking/llm-running/error/
+signed-out, plus a finding count) whenever the derived status key changes, subscribed to
+the store directly so it doesn't need a React tree.
+
+### The embed entry
+
+`embed/main.tsx` wires it together: build a `Bridge`, build a `HostDoc` from
+`bridge.outbound`, `bridge.attach(hostDoc)`, `setDocumentPort(hostDoc)`, then render
+`<LoginGate><EmbedApp /></LoginGate>`. `embed/embedRef.ts` is a module-level singleton
+for the bridge's outbound sender (mirroring `editor/editorRef.ts`'s `EditorView` ref):
+`EmbedApp` renders with no props, so it has no other way to reach `bridge.outbound` in
+order to wire the check scheduler's `onInput` into it. `embed/EmbedApp.tsx` reuses
+`useHeaderData` (`header/useHeaderData.ts`, extracted from `App.tsx` precisely so a
+non-`App` entry can call it without pulling in the whole app graph), `LocaleSwitcher`
+(`i18n/LocaleSwitcher.tsx`, likewise extracted), the profile/language/domain/LLM
+selectors, and `Sidebar` — over the host shim instead of an editor. A connection strip
+shows the connected field's page URL (or the field id), or one of two new i18n strings
+depending on whether a field has ever connected: `embedWaiting` (none yet) vs.
+`embedDisconnected` (was connected, went away) — `embedReplaceFailed` is the third new
+key, used by the `'refused'` apply-result path above. All three ship in every one of the
+7 UI locales. `AccountMenu` gained an optional `hideActivity` prop (default `false`) so
+the embed's copy can hide the activity-view switch affordance it has nothing to switch
+into, while keeping password-change and sign-out — the embed's session is
+storage-partition-scoped to its iframe, so its `AccountMenu` is the only sign-out
+affordance reachable from inside it. `embed/embed.css` styles the narrow layout.
+
+### Host simulator (dev-only)
+
+`src/simulator/` (`main.ts`, `simulator.css`, `textareaAdapter.ts`) is a standalone dev
+page — a `<textarea>` host that plays the HOST role of the protocol by hand (sending
+`hello`/`fieldConnected`/`textChanged` and handling the embed's replies) around an
+iframe pointed at `/embed`. `simulator/textareaAdapter.ts`'s `createTextareaAdapter` is
+the reference `FieldAdapter` implementation and doubles as the blueprint a later browser
+extension's real adapter is meant to be lifted from: a mirror `<div>` sits behind the
+`<textarea>` in paint order, geometry-synced to it (box model and font metrics, not
+paint properties), holding the same text with `fw-mark-*` spans painting finding
+highlights through the textarea's transparent background — the overlay never receives
+pointer events, so the textarea stays the sole interactive surface. `main.ts` also hosts
+a one-shot `?desync=1` query-param hook for an e2e negative probe: it swallows the next
+`textChanged` after a keystroke (staling the embed's buffer) and then prepends a
+character to the field before the next `applyReplacement` is applied, deterministically
+forcing an `expectedText` mismatch and a `replaceResult { ok: false }` — the only way to
+reach that branch from the UI, since the simulator's echo loop is otherwise synchronous.
+`vite.config.ts` deliberately does **not** list `simulator.html` as a build input — it
+exists for `npm run dev` only, never ships in `dist/`.
+
+### Bundle guard
+
+`vite.config.ts`'s `rollupOptions.input` now has two real entries, `main` (`index.html`)
+and `embed` (`embed.html`). `scripts/check-embed-bundle.mjs` is a small node script that
+runs its own in-memory Vite build (`write: false`), walks the output chunk graph
+reachable from the `embed` entry (`OutputChunk.imports`/`dynamicImports`), and fails if
+any reachable chunk's `moduleIds` includes a `@codemirror/` or `codemirror` package path
+— the assertion behind the spec's tree-shaking claim, checked against the real bundled
+module graph rather than a source-level guess. As of this branch it is **not yet wired**
+into `frontend/package.json`'s scripts or into `frontend.yml`'s CI job — it was run
+manually for this slice; wiring it into CI is C2's job, per the plan.
 
 ## Profiles in the frontend
 
@@ -1869,6 +2055,9 @@ and the backend's `cors.origins` setup keeps handling that cross-origin case as 
   rendering components.
 - **Lint/build**: `npm run lint` (oxlint), `npm run build` (tsc + Vite) — both CI
   gates.
+- **Embed bundle guard**: `node scripts/check-embed-bundle.mjs` asserts the `embed`
+  Vite entry's chunk graph is free of CodeMirror (see [Embed surface —
+  Bundle guard](#embed-surface-b43-c1)); not yet wired into `npm test`/CI as of C1.
 - **Coverage**: CI runs vitest with `--coverage` (v8 provider); `vite.config.ts` counts
   every file under `src/` (not just what tests import), so untested components lower the
   number honestly. `scripts/ci-summary.mjs` renders test counts, failures, and the
