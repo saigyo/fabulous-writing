@@ -11,11 +11,14 @@ main ingredients:
 - a thin typed **API client** over `fetch`, including its own hand-rolled SSE reader
   for the check stream (`VITE_API_URL`, default `http://localhost:8000`).
 
-There is no router; five views (editor, rules, terminology, profiles, admin) are
-switched by a store field, and all five sit behind a **login gate** (see
+There is no router; six views (editor, rules, terminology, profiles, admin, activity) are
+switched by a store field, and all six sit behind a **login gate** (see
 [Authentication](#authentication)) — the app requires a signed-in caller as of M2. The
 fifth, [admin](#admin-view-m6), carries a second gate on top (`is_admin`) and is a
-late M6 addition. The editor workspace is special-cased: it is hidden (`hidden` attribute)
+late M6 addition. The sixth, [activity](#activity-view-b40-124), carries no such gate — every
+signed-in user can see their own activity; only the *subject* it can show (all users, or
+one drilled-into user) is admin-only, enforced client-side inside the view itself rather
+than by `App.tsx` withholding the component. The editor workspace is special-cased: it is hidden (`hidden` attribute)
 rather than unmounted while another view is shown, because the findings — including
 paid-for LLM results — live in the CodeMirror instance and would be discarded by a
 remount; hiding also lets an in-flight LLM check deliver while the user reads another
@@ -95,6 +98,7 @@ frontend/src/
 │                              # row; drafts/parsing in termTable.ts), domains
 │                              # rename inline via ✎ or double-click
 ├── admin/                     # AdminView.tsx: user list/create/row-edit, is_admin-gated (M6)
+├── activity/                  # ActivityView.tsx + StackedBarChart.tsx (B40, #124)
 └── i18n/                      # 7 UI locales, hooks, interpolation
 ```
 
@@ -1694,6 +1698,66 @@ show, never assuming `invited` alone means "an email just went out":
 ("Linked an existing pending invitation — no new email was sent. Use 'Resend
 invitation' for a fresh link.") — which is also the copy that points the admin at the
 resend button described above when they do want a fresh link sent.
+
+## Activity view (B40, #124)
+
+`activity/ActivityView.tsx` is the sixth `activeView`, mounted unconditionally in
+`App.tsx` (`activeView === 'activity' && <ActivityView />`, no `isAdmin` guard) — unlike
+`AdminView`, every signed-in user is allowed to see *some* activity (their own), so
+withholding the component itself would be wrong. What's admin-only is the **subject** the
+view renders, and that gate lives inside the component: `effectiveSubject = user?.is_admin
+? activitySubject : 'self'` collapses whatever the store's `activitySubject` field holds
+(`'self' | 'all' | number`, `state/store.ts`) down to `'self'` for anyone who isn't an
+admin, before it ever reaches the fetch effect or the render — a non-admin session can
+never issue `getAllActivity`/`getUserActivity`, even if `activitySubject` itself is stale
+or forced (e.g. by a revoked admin flag).
+
+**Data.** `days` (`30 | 90 | 365`, default 30) is local `useState`; an effect keyed on
+`[effectiveSubject, days]` picks one of `api/client.ts`'s three activity calls
+(`getOwnActivity`/`getAllActivity`/`getUserActivity`) and writes the result into local
+`{data, error}` state — `data` resets to `null` at the top of every effect run, so a
+subject or range change re-shows the loading text rather than flashing stale numbers.
+While neither `data` nor `error` is set, the view renders `m.activityLoading`; a rejected
+fetch renders `m.activityLoadError` instead of the panels.
+
+**Identity across navigation.** The drilled-into user's label (email/display_name) is
+held in the store next to the subject — `activitySubjectLabel`, set by
+`setActivitySubject(userId, label)` from the clicked `per_user` row — rather than in
+local component state, because local state would lose the heading the moment the user
+switches to another view and back while the numeric subject survives in the store.
+`setActivitySubject('self' | 'all')` (no second argument) nulls the label; the heading
+falls back to the bare numeric id if it's ever null on a user subject (e.g. a reload
+path). A numeric subject can only ever arise by clicking a row in the all-users table
+below, so its mere presence already implies "the previous subject was `'all'`" — the back
+control's visibility condition is just `typeof effectiveSubject === 'number'`, with no
+separate history to track.
+
+**Charts.** Three `StackedBarChart` panels stack full-width in spec order — runs, tokens,
+credits — each under an uppercase `.activity-panel-label`. Runs splits into four
+`ChartSeries` (check/suggestion/name/failed, cssVars `--accent`/`--accent-mid`/
+`--accent-faint`/`--held-back`); tokens into input/output (`--accent`/`--accent-faint`);
+credits is a single series (`--accent-mid`). `StackedBarChart` itself (`activity/
+StackedBarChart.tsx`) is a pure, state-free SVG component: it derives bar heights, a
+1-day-max fallback (so an all-zero response still draws real axes instead of a 0/0 one),
+and thinned x-axis labels entirely from props, with a per-day `<title>` for hover detail.
+
+**Totals line and the all-users table.** The totals line
+(`` `${runs} ${m.activityTotalRuns} · ${input} ${m.activityInput} / ${output}
+${m.activityOutput} · ${credits} ${m.activityTableCredits}` ``) deliberately skips
+`Intl.NumberFormat` — plain literal digits, matching the About dialog's own numeric
+fields rather than the thousands-separated numbers elsewhere in the header (spec R5).
+For the `'all'` subject, `data.per_user` renders as a client-side-sortable table
+(user/runs/input/output/credits columns, default sort credits desc, header buttons flip
+the active column's direction); clicking a row calls `setActivitySubject(row.user_id,
+row.display_name ?? row.email)` and switches the effective subject to that user's id,
+which re-fires the fetch effect against `getUserActivity`.
+
+**Navigation entry points.** `AccountMenu.tsx` adds a menu button — `m.accountActivity`,
+placed before "About" — that calls `setActivitySubject('self')` then
+`setActiveView('activity')`, available to every signed-in user. `AdminView.tsx` adds
+`m.adminAllActivity` (class `admin-activity-link`) above the users table, calling
+`setActivitySubject('all')` then `setActiveView('activity')` — admin-only by virtue of
+`AdminView` itself already being `is_admin`-gated.
 
 ## Internationalization
 

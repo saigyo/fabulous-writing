@@ -237,6 +237,30 @@ export interface Messages {
   aboutVersion: string
   aboutDatabase: string
   aboutSource: string
+
+  // Activity view (B40, #124)
+  accountActivity: string
+  activityTitleAll: string
+  activityRuns: string
+  activityTokens: string
+  activityCredits: string
+  activityCheck: string
+  activitySuggestion: string
+  activityName: string
+  activityFailed: string
+  activityInput: string
+  activityOutput: string
+  activityDays30: string
+  activityDays90: string
+  activityDays365: string
+  activityTotalRuns: string
+  activityTableUser: string
+  activityTableCredits: string
+  activityBack: string
+  activityLoadError: string
+  activityLoading: string
+  adminAllActivity: string
+
   passwordCurrent: string
   passwordNew: string
   passwordConfirm: string

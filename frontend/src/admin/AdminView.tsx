@@ -41,6 +41,8 @@ const CREATE_FORM_ID = 'admin-create-form'
 export function AdminView() {
   const me = useStore((s) => s.user)
   const authFeatures = useStore((s) => s.authFeatures)
+  const setActivitySubject = useStore((s) => s.setActivitySubject)
+  const setActiveView = useStore((s) => s.setActiveView)
   const m = useMessages()
   // null = not loaded (or failed), for both. Tier names are config-defined
   // and never guessed client-side: a hardcoded fallback would offer options
@@ -194,6 +196,16 @@ export function AdminView() {
       <h2>{m.adminUsersTitle}</h2>
       {error && <p className="admin-error" role="alert">{error}</p>}
       {notice && <p className="admin-notice" role="status">{notice}</p>}
+      <button
+        type="button"
+        className="admin-activity-link"
+        onClick={() => {
+          setActivitySubject('all')
+          setActiveView('activity')
+        }}
+      >
+        {m.adminAllActivity}
+      </button>
       <form
         id={CREATE_FORM_ID}
         onSubmit={(e) => {

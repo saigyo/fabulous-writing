@@ -2238,3 +2238,62 @@ dialog.app-dialog h2 {
 .activity-chart { width: 100%; }
 .chart-grid, .chart-baseline { stroke-width: 1; shape-rendering: crispEdges; }
 .chart-xlabel { fill: var(--text-dim); font-size: 10px; }
+
+/* ---- activity view (B40, #124) ---- */
+.activity-view { padding: 1rem 1.5rem; overflow-y: auto; }
+.activity-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.activity-range-picker { display: flex; gap: 0.25rem; }
+.activity-range-picker button {
+  padding: 0.3rem 0.6rem;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  background: transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--text-dim);
+}
+.activity-range-picker button.active {
+  background: var(--accent-soft);
+  color: var(--text);
+  border-color: var(--accent);
+}
+.activity-back {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+  margin-top: 0.5rem;
+}
+.activity-error { color: #e5484d; }
+.activity-loading, .activity-totals { color: var(--text-dim); }
+.activity-totals { margin-top: 0.25rem; }
+.activity-panel { margin-top: 1.25rem; }
+.activity-panel-label {
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  margin-bottom: 0.3rem;
+}
+.activity-table { margin-top: 1.5rem; border-collapse: collapse; width: 100%; }
+.activity-table th, .activity-table td {
+  padding: 0.3rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.activity-table th button, .activity-table td button {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+}
+.activity-table td button { color: var(--accent); }

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import './App.css'
 import { getDomains, getLanguages, getProfiles, getProviders, getRouting } from './api/client'
+import { ActivityView } from './activity/ActivityView'
 import { AdminView } from './admin/AdminView'
 import { AccountMenu } from './auth/AccountMenu'
 import { llmDisabled } from './auth/policy'
@@ -81,6 +82,7 @@ export default function App() {
       {activeView === 'terminology' && <TerminologyView />}
       {activeView === 'profiles' && <ProfilesView />}
       {activeView === 'admin' && isAdmin && <AdminView />}
+      {activeView === 'activity' && <ActivityView />}
     </div>
   )
 }

@@ -48,6 +48,8 @@ export function AccountMenu() {
   const m = useMessages()
   const user = useStore((s) => s.user)
   const appVersion = useStore((s) => s.appVersion)
+  const setActivitySubject = useStore((s) => s.setActivitySubject)
+  const setActiveView = useStore((s) => s.setActiveView)
   const [open, setOpen] = useState(false)
   const [passwordOpen, setPasswordOpen] = useState(false)
   const [aboutOpen, setAboutOpen] = useState(false)
@@ -115,6 +117,16 @@ export function AccountMenu() {
             }}
           >
             {m.accountChangePassword}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActivitySubject('self')
+              setActiveView('activity')
+              setOpen(false)
+            }}
+          >
+            {m.accountActivity}
           </button>
           <button
             type="button"
