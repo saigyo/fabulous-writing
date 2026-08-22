@@ -30,6 +30,16 @@
      --panel). */
   --held-back: #b45309;
 
+  /* Error TEXT (as opposed to .confirm-dialog-danger's filled button,
+     white-on-red): the app's danger red #e5484d is only ~3.9:1 as text on
+     --bg here — under WCAG's 4.5:1 for normal-size text (B40 round,
+     .activity-error). Light uses the same darker red
+     .confirm-dialog-danger already established as a button fill
+     (#c22126) — computed ~5.93:1 on #ffffff. Dark keeps #e5484d, which
+     clears 4.5:1 there (computed ~4.57:1 on #17171b) — no theme-specific
+     value needed on that side. */
+  --error-text: #c22126;
+
   font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
   color: var(--text);
   background: var(--bg);
@@ -51,6 +61,7 @@
     --chart-failed: #c98500;
     --bg-raised: #26262e;
     --held-back: #f59e0b;
+    --error-text: #e5484d;
   }
 }
 
