@@ -407,7 +407,13 @@ describe('ActivityView: chart legend and screen-reader data table', () => {
     ])
 
     // First data row: 2026-07-24 — check=1, suggestion=0, name=0, failed=0.
-    const firstDataCells = Array.from(rows[1].querySelectorAll('td')).map((el) => el.textContent)
+    // The date cell is a row header (<th scope="row">), not a <td> — so AT
+    // announces the day together with each value as it reads across the
+    // row — hence `.children` (every direct cell, th or td) rather than a
+    // tag-specific query.
+    const firstDataRow = rows[1]
+    expect(firstDataRow.querySelector('th')?.getAttribute('scope')).toBe('row')
+    const firstDataCells = Array.from(firstDataRow.children).map((el) => el.textContent)
     expect(firstDataCells).toEqual([formatDay('2026-07-24', 'en'), '1', '0', '0', '0'])
   })
 })

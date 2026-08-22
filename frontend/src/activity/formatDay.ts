@@ -11,12 +11,28 @@
 // string and constructing a LOCAL date instead sidesteps that: `new
 // Date(y, m - 1, d)` is local midnight for the day the ISO string actually
 // names, in whatever timezone the browser runs in.
+// One Intl.DateTimeFormat per locale, reused across every call — a 365-day
+// range formats this three times per render (x-axis labels, tooltips, the
+// panel's hidden SR table), and each StackedBarChart re-renders on every
+// range/subject switch; constructing a fresh formatter per call would mean
+// thousands of Intl.DateTimeFormat instantiations for one such render.
+const formatterCache = new Map<string, Intl.DateTimeFormat>()
+
+function formatterFor(locale: string): Intl.DateTimeFormat {
+  let formatter = formatterCache.get(locale)
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(locale, {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    })
+    formatterCache.set(locale, formatter)
+  }
+  return formatter
+}
+
 export function formatDay(isoDay: string, locale: string): string {
   const [y, m, d] = isoDay.split('-').map(Number)
   const date = new Date(y, m - 1, d)
-  return new Intl.DateTimeFormat(locale, {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(date)
+  return formatterFor(locale).format(date)
 }

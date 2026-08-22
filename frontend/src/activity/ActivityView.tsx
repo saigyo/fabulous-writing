@@ -114,7 +114,9 @@ function ChartDataTable({
       <tbody>
         {days.map((day, i) => (
           <tr key={day}>
-            <td>{formatDay(day)}</td>
+            {/* Row header, not a plain cell: AT announces this day together
+                with each series column's value as it reads across the row. */}
+            <th scope="row">{formatDay(day)}</th>
             {series.map((s) => (
               <td key={s.key}>{s.values[i] ?? 0}</td>
             ))}
