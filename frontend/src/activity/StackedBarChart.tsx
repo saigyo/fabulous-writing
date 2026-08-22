@@ -92,7 +92,7 @@ export function StackedBarChart(props: {
         y={plotBottom}
         textAnchor="end"
         fill="var(--text-dim)"
-        fontSize={10}
+        fontSize={9}
       >
         0
       </text>
@@ -102,7 +102,7 @@ export function StackedBarChart(props: {
         y={plotTop + 8}
         textAnchor="end"
         fill="var(--text-dim)"
-        fontSize={10}
+        fontSize={9}
       >
         {yMax}
       </text>
@@ -147,16 +147,36 @@ export function StackedBarChart(props: {
         )
       })}
       {xLabelIndices.map((i) => (
-        <text
-          key={i}
-          className="chart-xlabel"
-          x={plotLeft + i * barSlot + barSlot / 2}
-          y={VIEWBOX_H - 4}
-          textAnchor="middle"
-        >
-          {days[i]}
-        </text>
+        <line
+          key={`tick-${i}`}
+          className="chart-tick"
+          x1={plotLeft + i * barSlot + barSlot / 2}
+          x2={plotLeft + i * barSlot + barSlot / 2}
+          y1={plotBottom}
+          y2={plotBottom + 3}
+          stroke="var(--text-dim)"
+          strokeWidth={1}
+        />
       ))}
+      {xLabelIndices.map((i, pos) => {
+        // Middles stay centered on their slot; the first/last labeled
+        // index anchors to its slot's left/plot's right edge instead, so
+        // the outermost labels grow inward rather than clipping past the
+        // viewBox at the edges.
+        const isFirst = pos === 0
+        const isLast = pos === xLabelIndices.length - 1
+        const textAnchor = isFirst ? 'start' : isLast ? 'end' : 'middle'
+        const x = isFirst
+          ? plotLeft + i * barSlot
+          : isLast
+            ? plotRight
+            : plotLeft + i * barSlot + barSlot / 2
+        return (
+          <text key={i} className="chart-xlabel" x={x} y={VIEWBOX_H - 4} textAnchor={textAnchor}>
+            {days[i]}
+          </text>
+        )
+      })}
     </svg>
   )
 }
