@@ -1525,3 +1525,40 @@ class TestCheckMetering:
             "admin" in r.message and str(me["id"]) in r.message
             for r in caplog.records
         )
+
+
+class TestCheckClientTag:
+    def test_check_accepts_valid_client_tag(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/checks",
+            json={
+                "text": "This is very nice.",
+                "language": "en",
+                "checkers": ["rules"],
+                "client": "browser-extension",
+            },
+        )
+        assert response.status_code == 202
+
+    def test_check_rejects_invalid_client_tag_with_422(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/checks",
+            json={
+                "text": "This is very nice.",
+                "language": "en",
+                "checkers": ["rules"],
+                "client": "junk",
+            },
+        )
+        assert response.status_code == 422
+
+    def test_check_defaults_client_to_web_when_omitted(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/checks",
+            json={
+                "text": "This is very nice.",
+                "language": "en",
+                "checkers": ["rules"],
+            },
+        )
+        assert response.status_code == 202

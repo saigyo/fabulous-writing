@@ -46,6 +46,12 @@ class CheckRequest(BaseModel):
     llm_provider: str | None = None
     llm_model: str | None = None
     llm_instructions: str = ""
+    # Which surface issued this check (spec B43). Validated and accepted
+    # since C1 so early clients are forward-compatible; NOT yet persisted —
+    # llm_usage has no client column, and that schema change ships with the
+    # next schema-touching story together with the B41 day-first index
+    # (#126). Until then the field is deliberately unused.
+    client: Literal["web", "embed", "browser-extension", "vscode", "jetbrains", "simulator"] = "web"
 
 
 class CheckStatus(BaseModel):

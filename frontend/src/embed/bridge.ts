@@ -6,6 +6,7 @@
 // messages. Everything outbound is a no-op until a host is pinned — the
 // embed may run standalone (no host ever connects) without erroring.
 import { useStore } from '../state/store'
+import { setClientTag } from '../checking/clientTag'
 import { envelope, parseHostMessage, PROTOCOL_VERSION } from './protocol'
 import type { EmbedMessage, HostMessage } from './protocol'
 import type { HostDoc, HostDocOutbound } from './hostDoc'
@@ -82,6 +83,7 @@ export function startBridge(): Bridge {
     switch (msg.type) {
       case 'hello':
         hostKindValue = msg.payload.host.kind
+        setClientTag(msg.payload.host.kind)
         postToHost({ type: 'ready', payload: { protocolVersion: PROTOCOL_VERSION, features: [] } })
         // Capture the current status as the baseline silently: `ready` is
         // the greeting, so the first genuine store change afterwards is

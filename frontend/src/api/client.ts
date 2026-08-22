@@ -413,6 +413,7 @@ export interface CheckRequest {
   llm_model?: string | null
   llm_tier?: Tier | null
   llm_instructions?: string
+  client?: string
 }
 
 export function postCheck(body: CheckRequest): Promise<CheckStatus> {
