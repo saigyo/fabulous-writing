@@ -4539,3 +4539,38 @@ and the deferred all-users index became B41 (#126). Verification:
 backend 1546 passed / 175 skipped zero warnings, live-PG 1719 passed,
 frontend 684 tests + oxlint + `tsc -b` clean; 20+ guard mutations
 verified across the branch.
+
+## 2026-08-22 — LLM max_tokens truncation fix (PR #131)
+
+Users reported frequent `llm check failed (provider claude): no JSON
+object or array in LLM response (N chars)` failures. Investigation ran
+evidence-first: the error site (`parse_response`) was confirmed by
+simulation to raise exactly this message for JSON cut off mid-envelope;
+fly logs showed live failures at 612–3772 chars after 37–45 s of
+generation; and the production ledger (queried via `supabase db query
+--linked`) delivered the smoking gun — **every failed check run settled
+at exactly `output_tokens = 4096`**, the hardcoded cap in `claude.py`,
+including one run with 0 chars of visible text. Root cause: Sonnet 5 /
+Opus 5 run adaptive thinking by default, thinking tokens count against
+`max_tokens`, and the provider never checked `stop_reason` — so the
+budget went to invisible reasoning, the JSON envelope was truncated, and
+the parse error masqueraded as garbage output. ~27% of Sonnet 5 check
+runs failed this way; even completed runs peaked at 4064/4096.
+
+Fix (TDD, 7 new tests each watched red first): Claude cap raised to
+16384 (`_MAX_TOKENS`) and both Claude paths now raise a new
+`TruncatedResponseError` (metadata-only message, usage attached) on
+`stop_reason == "max_tokens"`; Bedrock detects the same `stopReason` on
+both paths (no explicit cap there — Converse family limits differ);
+`classify_failure` files it as `response`-stage; `_run_llm` settles the
+exception-carried real token counts like the unparseable case. The
+checks-path usage-carry guard was mutation-verified (guard removed →
+test fails → restored) after a first attempt silently no-op'd (`python`
+not on PATH) and its `git checkout` cleanup briefly reverted the legit
+edits — restore surgically, not via git, when the tree is dirty.
+Verification: backend 1549 passed / 179 skipped.
+
+Follow-up filed as #132: benchmark and configure per-tier thinking
+effort (`output_config.effort`) — checks burn thousands of billed,
+invisible thinking tokens at the default `high`, which also explains
+the 30–45 s latency users noticed on short texts.
