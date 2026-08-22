@@ -89,6 +89,13 @@ export function useHeaderData(): void {
         if (cancelled) return // superseded by a newer language switch: do not write
         const s = useStore.getState()
         s.setProfiles(profiles)
+        // setProfiles is data-only (Copilot round 6) — it is also called
+        // from profile-edit paths (ProfileSelector.tsx, RulesView.tsx,
+        // ProfilesView.tsx), so flipping readiness there as a side effect
+        // let an in-flight profile save re-settle it prematurely. Only this
+        // guarded success branch (and the guarded failure branch below) may
+        // flip it true.
+        s.setProfilesReady(true)
         const remembered = profiles.find(
           (p) => p.id === s.lastProfileByLanguage[language],
         )

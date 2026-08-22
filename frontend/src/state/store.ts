@@ -457,7 +457,15 @@ export const useStore = create<AppState>()((set) => ({
   setProviders: (providers) => set({ providers }),
   setDomains: (domains) => set({ domains }),
   setLanguages: (languages) => set({ languages }),
-  setProfiles: (profiles) => set({ profiles, profilesReady: true }),
+  // Data-only (Copilot round 6): this used to also flip profilesReady true
+  // as a side effect, but setProfiles is called from profile-edit paths too
+  // (ProfileSelector.tsx's saveOverrides, RulesView.tsx, ProfilesView.tsx) —
+  // a profile save resolving while a newer language's profiles fetch was
+  // still pending would prematurely re-settle readiness, letting the
+  // embed's connect-time check run against the previous language's profile.
+  // Readiness is driven exclusively by setProfilesReady below, called only
+  // from header/useHeaderData.ts's guarded success/failure branches.
+  setProfiles: (profiles) => set({ profiles }),
   setProfilesReady: (profilesReady) => set({ profilesReady }),
   // apply=true copies the profile's values into the header selectors.
   selectProfile: (profile, apply) =>

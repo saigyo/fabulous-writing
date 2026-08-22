@@ -276,8 +276,19 @@ describe('resetSessionState', () => {
 })
 
 describe('setProfiles / setProfilesReady', () => {
-  it('setProfiles flips profilesReady true as a side effect', () => {
+  // Copilot round 6: setProfiles used to also flip profilesReady true as a
+  // side effect — but it is called from profile-edit paths too
+  // (ProfileSelector.tsx, RulesView.tsx, ProfilesView.tsx), so a profile
+  // save resolving mid-language-switch would prematurely re-settle
+  // readiness. Readiness is now driven exclusively by setProfilesReady,
+  // called only from header/useHeaderData.ts's guarded branches — see
+  // App.test.tsx's "does not flip readiness" test for the full scenario.
+  it('setProfiles is data-only and leaves profilesReady untouched', () => {
     useStore.setState({ profilesReady: false })
+    useStore.getState().setProfiles([])
+    expect(useStore.getState().profilesReady).toBe(false)
+
+    useStore.setState({ profilesReady: true })
     useStore.getState().setProfiles([])
     expect(useStore.getState().profilesReady).toBe(true)
   })
