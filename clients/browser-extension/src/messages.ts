@@ -27,8 +27,18 @@ export type CtlMessage =
 export const HOST_KIND = 'browser-extension'
 
 // Mirrors protocol.ts's own STATUS_PHASES (not exported there) — kept in
-// sync with StatusMessage['payload']['phase'].
-const STATUS_PHASES = new Set(['idle', 'checking', 'llm-running', 'error', 'signed-out'])
+// sync with StatusMessage['payload']['phase'] WITHOUT importing that
+// private set: every phase is a key of this Record, so tsc fails to compile
+// if protocol.ts ever adds or renames a phase and this map isn't updated to
+// match (a plain array/Set literal would silently drift instead).
+const STATUS_PHASE_MAP: Record<StatusMessage['payload']['phase'], true> = {
+  idle: true,
+  checking: true,
+  'llm-running': true,
+  error: true,
+  'signed-out': true,
+}
+const STATUS_PHASES = new Set(Object.keys(STATUS_PHASE_MAP))
 
 const CTL_KINDS = new Set(['openPanel', 'panelHello', 'embedReady', 'detach', 'status'])
 

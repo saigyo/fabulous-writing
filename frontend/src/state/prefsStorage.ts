@@ -27,8 +27,14 @@ export const PREF_KEYS = [
 ] as const satisfies readonly (keyof Prefs)[]
 
 // The seven codes are a fixed contract, so this is declared locally as part
-// of the storage schema rather than imported from the UI catalog.
-const LANGUAGE_CODES = ['en', 'de', 'fr', 'es', 'it', 'ja', 'zh'] as const
+// of the storage schema rather than imported from the UI catalog — but
+// every code is a key of this Record, so tsc fails to compile if `Language`
+// ever adds or renames a code and this map isn't updated to match (a plain
+// array literal would silently drift instead).
+const LANGUAGE_CODE_MAP: Record<Language, true> = {
+  en: true, de: true, fr: true, es: true, it: true, ja: true, zh: true,
+}
+const LANGUAGE_CODES = Object.keys(LANGUAGE_CODE_MAP)
 
 // Continues the legacy blob's numbering (it retired at v2) so the version
 // number never moves backwards. There are no older versions to migrate:

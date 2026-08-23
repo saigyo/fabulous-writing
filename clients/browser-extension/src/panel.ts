@@ -28,7 +28,18 @@ async function main(): Promise<void> {
   const relay = createRelay(
     {
       toEmbed: (msg) => iframeEl.contentWindow?.postMessage(msg, serverOrigin),
-      toPort: (msg: PortMessage) => port.postMessage(msg),
+      toPort: (msg: PortMessage) => {
+        // A throw here (e.g. the port already disconnected — SW crash,
+        // extension update) must not propagate out of the window 'message'
+        // listener that calls into this: the onDisconnect handler below
+        // reloads the panel on its own; this call just must not blow up
+        // first.
+        try {
+          port.postMessage(msg)
+        } catch {
+          // ignored — onDisconnect below handles recovery
+        }
+      },
       onReadyChange: (ready) => {
         if (ready) {
           clearTimeout(capFallbackTimer)
@@ -55,6 +66,14 @@ async function main(): Promise<void> {
   )
 
   port.onMessage.addListener((data) => relay.fromPort(data))
+
+  // The SW can die out from under a live panel port (crash, or the rare
+  // case outside sw.ts's own Chrome>=116 keepalive guarantee — see that
+  // module's header comment). A dead port never fires onMessage again, so
+  // the reconnected field is never relayed; simplest correct recovery,
+  // matching onServerUrlChanged below, is to reload and let the panel
+  // reconnect and re-derive fresh state via a new panelHello.
+  port.onDisconnect.addListener(() => location.reload())
 
   window.addEventListener('message', (event) => {
     if (event.origin !== serverOrigin || event.source !== iframeEl.contentWindow) return

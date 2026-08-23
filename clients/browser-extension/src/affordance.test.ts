@@ -10,6 +10,16 @@ function stubRect(target: HTMLElement, top: number, left: number, right: number,
   })
 }
 
+// vitest/happy-dom synthetic events are untrusted (isTrusted: false) by
+// default, unlike a real click/keyboard activation — the click handler's
+// own isTrusted guard (affordance.ts) would otherwise swallow every
+// dispatchEvent-driven test click below.
+function trustedClick(): MouseEvent {
+  const ev = new MouseEvent('click', { bubbles: true })
+  Object.defineProperty(ev, 'isTrusted', { value: true })
+  return ev
+}
+
 beforeEach(() => {
   el = document.createElement('textarea')
   document.body.appendChild(el)
@@ -57,9 +67,21 @@ describe('createAffordance: click', () => {
     affordance.showFor(el)
 
     const button = affordance.host.shadowRoot!.querySelector('button')!
-    button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    button.dispatchEvent(trustedClick())
 
     expect(onClick).toHaveBeenCalledExactlyOnceWith(el)
+    affordance.dispose()
+  })
+
+  it('an untrusted click does not invoke the callback', () => {
+    const onClick = vi.fn()
+    const affordance = createAffordance(onClick)
+    affordance.showFor(el)
+
+    const button = affordance.host.shadowRoot!.querySelector('button')!
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+    expect(onClick).not.toHaveBeenCalled()
     affordance.dispose()
   })
 })

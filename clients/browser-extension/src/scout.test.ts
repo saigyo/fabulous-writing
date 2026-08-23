@@ -45,7 +45,12 @@ function chipButton(): HTMLButtonElement {
 }
 
 function clickChip(): void {
-  chipButton().dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  // affordance.ts's click handler now requires event.isTrusted (I4) — a
+  // synthetic vitest/happy-dom event is untrusted by default, so it must be
+  // stamped here, same as affordance.test.ts's own trustedClick() helper.
+  const ev = new MouseEvent('click', { bubbles: true })
+  Object.defineProperty(ev, 'isTrusted', { value: true })
+  chipButton().dispatchEvent(ev)
 }
 
 function lastConnectedPort(): MockPort {
