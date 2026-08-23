@@ -23,6 +23,13 @@ import { isEligibleField } from './detect'
 export interface Fingerprint {
   kind: 'id' | 'name' | 'aria' | 'formIndex'
   value: string
+  // Copilot round 10, F3: the closest form's identity at CAPTURE time (same
+  // "capture early, not at loss time" rationale as the module comment
+  // above). Used to scope the name/aria/formIndex searches below back to
+  // the field's own original container instead of the whole document — see
+  // findFingerprintMatch's own comment for why document-wide search is
+  // unsafe for those three.
+  formId: string
 }
 
 function formIdentity(form: HTMLFormElement | null): string {
@@ -33,20 +40,49 @@ function formIdentity(form: HTMLFormElement | null): string {
   return String(Array.from(document.forms).indexOf(form))
 }
 
+// Inverse of formIdentity: resolves a captured formId back to a live form
+// element, or null (meaning "search the whole document") when the
+// fingerprint was captured with no form ancestor, or the form itself can no
+// longer be found (e.g. an id/name that no longer resolves and isn't a
+// valid forms[] index either — same fallback shape formIdentity's own index
+// branch already relied on).
+function resolveForm(formId: string): HTMLFormElement | null {
+  if (formId === 'document') return null
+  const forms = Array.from(document.forms)
+  return forms.find((f) => f.id === formId || f.getAttribute('name') === formId) ?? forms[Number(formId)] ?? null
+}
+
 function textareaScope(form: HTMLFormElement | null): HTMLTextAreaElement[] {
   const root: ParentNode = form ?? document
   return Array.from(root.querySelectorAll('textarea'))
 }
 
 export function computeFingerprint(el: HTMLTextAreaElement): Fingerprint {
-  if (el.id) return { kind: 'id', value: el.id }
-  const name = el.getAttribute('name')
-  if (name) return { kind: 'name', value: name }
-  const aria = el.getAttribute('aria-label') ?? el.getAttribute('aria-labelledby')
-  if (aria) return { kind: 'aria', value: aria }
   const form = el.closest('form')
+  const formId = formIdentity(form)
+  if (el.id) return { kind: 'id', value: el.id, formId }
+  const name = el.getAttribute('name')
+  if (name) return { kind: 'name', value: name, formId }
+  const aria = el.getAttribute('aria-label') ?? el.getAttribute('aria-labelledby')
+  if (aria) return { kind: 'aria', value: aria, formId }
   const scope = textareaScope(form)
-  return { kind: 'formIndex', value: `${formIdentity(form)}:${scope.indexOf(el)}` }
+  return { kind: 'formIndex', value: `${formId}:${scope.indexOf(el)}`, formId }
+}
+
+// Copilot round 10, F3: name/aria/formIndex matches used to search the
+// WHOLE document and take the first hit — on a page with multiple
+// same-named comment forms (GitHub's own name="body" textareas, one per
+// composer) that could silently rebind a session to the WRONG textarea and
+// go on to edit its text. Scoped to the field's own original form (resolved
+// from the fingerprint's captured formId) and required to be UNIQUE within
+// that scope: zero or multiple eligible matches there is treated as
+// ambiguous and refuses the match (null — scout.ts's caller falls through
+// to giving up the reacquire, same as "nothing found"). The id branch stays
+// document-wide — ids are unique by contract — but still runs through the
+// same eligibility check below.
+function uniqueEligibleMatch(matches: NodeListOf<Element> | Element[]): HTMLTextAreaElement | null {
+  const eligible = Array.from(matches).filter((el): el is HTMLTextAreaElement => isEligibleField(el))
+  return eligible.length === 1 ? eligible[0] : null
 }
 
 // Resolves a fingerprint against the CURRENT document — null when nothing
@@ -59,22 +95,28 @@ export function findFingerprintMatch(fingerprint: Fingerprint): HTMLTextAreaElem
     case 'id':
       candidate = document.getElementById(fingerprint.value)
       break
-    case 'name':
-      candidate = document.querySelector(`textarea[name="${CSS.escape(fingerprint.value)}"]`)
-      break
-    case 'aria':
-      candidate = document.querySelector(
-        `textarea[aria-label="${CSS.escape(fingerprint.value)}"], `
-        + `textarea[aria-labelledby="${CSS.escape(fingerprint.value)}"]`,
+    case 'name': {
+      const scope: ParentNode = resolveForm(fingerprint.formId) ?? document
+      candidate = uniqueEligibleMatch(
+        scope.querySelectorAll(`textarea[name="${CSS.escape(fingerprint.value)}"]`),
       )
       break
+    }
+    case 'aria': {
+      const scope: ParentNode = resolveForm(fingerprint.formId) ?? document
+      candidate = uniqueEligibleMatch(
+        scope.querySelectorAll(
+          `textarea[aria-label="${CSS.escape(fingerprint.value)}"], `
+          + `textarea[aria-labelledby="${CSS.escape(fingerprint.value)}"]`,
+        ),
+      )
+      break
+    }
     case 'formIndex': {
       const sep = fingerprint.value.indexOf(':')
       const formId = fingerprint.value.slice(0, sep)
       const index = Number(fingerprint.value.slice(sep + 1))
-      const forms = Array.from(document.forms)
-      const form = formId === 'document' ? null
-        : forms.find((f) => f.id === formId || f.getAttribute('name') === formId) ?? forms[Number(formId)] ?? null
+      const form = resolveForm(formId)
       candidate = textareaScope(form)[index] ?? null
       break
     }
