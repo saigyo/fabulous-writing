@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc --noEmit && vite build && vite build --config vite.content.config.ts",
     "lint": "oxlint",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
     "e2e": "node e2e/run.mjs",
     "ext-id": "node scripts/extension-id.mjs"
   },
