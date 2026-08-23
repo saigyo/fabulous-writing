@@ -3,11 +3,14 @@
 // and other Turbo-style sites replace body subtrees on navigation, which
 // would silently orphan a body-attached host). `mode: 'open'` is
 // deliberate: a closed shadow root would make affordance.test.ts's
-// assertions on the chip's own text/dataset impossible, and open mode still
-// keeps the host page from restyling anything inside, since every style
-// this module needs lives inside the root. Hover/focus lifecycle (when to
-// show/hide, the leave-delay) is DRIVEN BY scout.ts — this module only
-// renders what it's told.
+// assertions on the chip's own text/dataset impossible. Open mode does NOT
+// keep a hostile page from reaching in and restyling (or scripting) what's
+// inside — page JS can walk `host.shadowRoot` just like any other open
+// root; the styles-inside-root point above is only about accidental CSS
+// bleed FROM the page, not isolation from a hostile one (see the click
+// handler's isTrusted guard below for the actual defense). Hover/focus
+// lifecycle (when to show/hide, the leave-delay) is DRIVEN BY scout.ts —
+// this module only renders what it's told.
 export type AffordanceState = 'idle' | 'connected' | 'signed-out' | 'busy' | 'error'
 
 export interface Affordance {
@@ -95,7 +98,12 @@ export function createAffordance(onClick: (el: HTMLTextAreaElement) => void): Af
   render()
   root.appendChild(button)
 
-  button.addEventListener('click', () => {
+  button.addEventListener('click', (event) => {
+    // A hostile page can focus a field and call .click() on this button
+    // through the open shadow root (see the module comment above) to force
+    // a connect and burn the user's credits without their input. A real
+    // click/keyboard activation is always trusted; only that may proceed.
+    if (!event.isTrusted) return
     if (currentEl) onClick(currentEl)
   })
 

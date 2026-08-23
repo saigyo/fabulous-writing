@@ -76,4 +76,3 @@ export async function initOptions(): Promise<void> {
 if (document.getElementById('root')) {
   initOptions().catch(console.error)
 }
-console.debug('fw: options loaded')

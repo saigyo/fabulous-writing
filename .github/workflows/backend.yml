@@ -9,6 +9,9 @@ on:
       - ".github/workflows/backend.yml"
       - "docker/entrypoint.sh"
       - "fabulous.sh"
+      # A key rotation here must trigger this suite: test_fly_config.py's
+      # cross-pin test checks it against deploy/fly's allowlist.
+      - "clients/browser-extension/public/manifest.json"
   pull_request:
     paths:
       - "backend/**"
@@ -16,6 +19,9 @@ on:
       - ".github/workflows/backend.yml"
       - "docker/entrypoint.sh"
       - "fabulous.sh"
+      # A key rotation here must trigger this suite: test_fly_config.py's
+      # cross-pin test checks it against deploy/fly's allowlist.
+      - "clients/browser-extension/public/manifest.json"
 
 concurrency:
   group: backend-${{ github.workflow }}-${{ github.ref }}

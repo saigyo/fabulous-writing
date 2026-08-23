@@ -54,6 +54,7 @@ describe('Registry — rule 1: fieldConnected', () => {
     const effects = registry.fieldConnected(W, TAB_B, fieldConnected('f2'))
     expect(effects).toEqual([
       { kind: 'send', to: 'oldField', windowId: W, tabId: TAB_A, message: { ctl: { kind: 'detach', fieldId: 'f1' } } },
+      { kind: 'badge', tabId: TAB_A, text: '' },
     ])
   })
 
@@ -82,6 +83,7 @@ describe('Registry — rule 1: fieldConnected', () => {
     const replaceEffects = registry.fieldConnected(W, TAB_B, newMsg)
     expect(replaceEffects).toEqual([
       { kind: 'send', to: 'oldField', windowId: W, tabId: TAB_A, message: { ctl: { kind: 'detach', fieldId: 'f1' } } },
+      { kind: 'badge', tabId: TAB_A, text: '' },
     ])
     const readyEffects = registry.panelReady(W, true)
     expect(readyEffects).toEqual([

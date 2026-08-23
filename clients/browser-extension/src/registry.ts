@@ -55,6 +55,10 @@ export class Registry {
         kind: 'send', to: 'oldField', windowId, tabId: w.field.tabId,
         message: { ctl: { kind: 'detach', fieldId: w.field.fieldId } },
       })
+      // Every other teardown path (fieldDisconnected, fieldPortGone) clears
+      // the losing tab's badge; a cross-tab replace must too, or the old
+      // tab's action badge is left showing a stale finding count forever.
+      effects.push({ kind: 'badge', tabId: w.field.tabId, text: '' })
     }
     w.field = {
       tabId,
