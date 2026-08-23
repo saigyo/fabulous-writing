@@ -4,7 +4,7 @@
 // and the window 'message' listener to it. Mirrors simulator/main.ts's own
 // host-side wiring (read-only reference for this task).
 import browser from 'webextension-polyfill'
-import { createRelay } from './relay'
+import { createRelay, HELLO_RETRY_MS, MAX_HELLO_ATTEMPTS } from './relay'
 import type { PortMessage } from './messages'
 import { getServerUrl, onServerUrlChanged } from './settings'
 
@@ -20,12 +20,34 @@ async function main(): Promise<void> {
   const serverOrigin = await getServerUrl()
   const port = browser.runtime.connect({ name: 'panel' })
 
+  // Only used on the true->false edge below (a load-triggered re-arm) — the
+  // initial boot path never touches this, matching panel.html's own static
+  // "embed not responding" default for the first-ever hello loop.
+  let capFallbackTimer: ReturnType<typeof setTimeout> | undefined
+
   const relay = createRelay(
     {
       toEmbed: (msg) => iframeEl.contentWindow?.postMessage(msg, serverOrigin),
       toPort: (msg: PortMessage) => port.postMessage(msg),
       onReadyChange: (ready) => {
-        statusEl.textContent = ready ? 'connected' : 'embed not responding'
+        if (ready) {
+          clearTimeout(capFallbackTimer)
+          statusEl.textContent = 'connected'
+        } else {
+          // relay.start()'s true->false edge (the iframe 'load' re-arm): the
+          // stale "connected" text must not linger through a fresh hello
+          // loop, but landing straight on "embed not responding" would
+          // misreport an ordinary reload as a permanent failure before the
+          // new loop even gets a chance. Show a connecting state instead,
+          // and fall back to "embed not responding" only if THIS attempt
+          // caps out too — relay.ts doesn't expose the cap trip itself, so
+          // this mirrors its own HELLO_RETRY_MS/MAX_HELLO_ATTEMPTS locally
+          // rather than widening RelayCallbacks for one status string.
+          statusEl.textContent = 'connecting…'
+          capFallbackTimer = setTimeout(() => {
+            statusEl.textContent = 'embed not responding'
+          }, HELLO_RETRY_MS * MAX_HELLO_ATTEMPTS)
+        }
         port.postMessage({ ctl: { kind: 'embedReady', ready } } satisfies PortMessage)
       },
     },

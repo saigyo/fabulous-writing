@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { envelope, PROTOCOL_VERSION, type ReadyMessage, type StatusMessage } from '../../../frontend/src/embed/protocol'
+import {
+  envelope, PROTOCOL_VERSION,
+  type ApplyReplacementMessage, type FindingsMessage, type ReadyMessage,
+  type SelectFindingMessage, type StatusMessage,
+} from '../../../frontend/src/embed/protocol'
 import { createRelay, HELLO_RETRY_MS, MAX_HELLO_ATTEMPTS } from './relay'
 import type { PortMessage } from './messages'
 
@@ -11,6 +15,25 @@ const readyEnvelope = envelope<ReadyMessage>({
 const statusEnvelope = envelope<StatusMessage>({
   type: 'status',
   payload: { phase: 'idle', findingCount: 0 },
+})
+
+const findingsEnvelope = envelope<FindingsMessage>({
+  type: 'findings',
+  payload: {
+    fieldId: 'f1',
+    findings: [{ id: 'm1', from: 0, to: 3, severity: 'error', category: 'spelling' }],
+  },
+})
+
+const applyReplacementEnvelope = envelope<ApplyReplacementMessage>({
+  type: 'applyReplacement',
+  requestId: 'r1',
+  payload: { fieldId: 'f1', from: 0, to: 3, insert: 'cat', expectedText: 'cta' },
+})
+
+const selectFindingEnvelope = envelope<SelectFindingMessage>({
+  type: 'selectFinding',
+  payload: { fieldId: 'f1', id: 'm1' },
 })
 
 const hostTextChangedEnvelope = {
@@ -97,26 +120,44 @@ describe('createRelay: fromEmbed', () => {
     expect(cb.onReadyChange).toHaveBeenCalledTimes(1)
   })
 
-  it('after start() re-arms (iframe-load), the next ready fires onReadyChange(true) once more', () => {
+  it('reload sequence: ready -> true; start() re-arm -> false before the next hello; next ready -> true again', () => {
     const cb = makeCallbacks()
     const relay = createRelay(cb, '0.1.0')
     relay.start()
     relay.fromEmbed(readyEnvelope)
     expect(cb.onReadyChange).toHaveBeenCalledTimes(1)
-    relay.start()
-    relay.fromEmbed(readyEnvelope)
+    expect(cb.onReadyChange).toHaveBeenLastCalledWith(true)
+
+    const helloCallsSoFar = cb.toEmbed.mock.calls.length
+    relay.start() // the iframe 'load' re-arm
     expect(cb.onReadyChange).toHaveBeenCalledTimes(2)
+    expect(cb.onReadyChange).toHaveBeenLastCalledWith(false)
+    // The false transition (-> ctl embedReady:false, which unwinds the SW
+    // registry's panelReady flag) must land before any hello traffic from
+    // this same re-arm — otherwise a fast embed could answer the new hello
+    // with `ready` while the registry still believes the old session live.
+    const falseOrder = cb.onReadyChange.mock.invocationCallOrder.at(-1)
+    const nextHelloOrder = cb.toEmbed.mock.invocationCallOrder[helloCallsSoFar]
+    expect(falseOrder).toBeLessThan(nextHelloOrder)
+
+    relay.fromEmbed(readyEnvelope)
+    expect(cb.onReadyChange).toHaveBeenCalledTimes(3)
     expect(cb.onReadyChange).toHaveBeenLastCalledWith(true)
   })
 
-  it.each(['findings', 'status', 'applyReplacement', 'selectFinding'])(
+  it.each([
+    ['findings', findingsEnvelope],
+    ['status', statusEnvelope],
+    ['applyReplacement', applyReplacementEnvelope],
+    ['selectFinding', selectFindingEnvelope],
+  ] as [string, object][])(
     'forwards a parsed %s message to the port as {relay}',
-    () => {
+    (_name, msgEnvelope) => {
       const cb = makeCallbacks()
       const relay = createRelay(cb, '0.1.0')
       relay.start()
-      relay.fromEmbed(statusEnvelope)
-      expect(cb.toPort).toHaveBeenCalledWith({ relay: statusEnvelope })
+      relay.fromEmbed(msgEnvelope)
+      expect(cb.toPort).toHaveBeenCalledWith({ relay: msgEnvelope })
     },
   )
 
@@ -145,6 +186,16 @@ describe('createRelay: fromPort', () => {
     const cb = makeCallbacks()
     const relay = createRelay(cb, '0.1.0')
     relay.fromPort({ ctl: { kind: 'openPanel' } })
+    expect(cb.toEmbed).not.toHaveBeenCalled()
+  })
+
+  it('drops a relay-wrapped embed-direction envelope arriving on the port (direction guard)', () => {
+    const cb = makeCallbacks()
+    const relay = createRelay(cb, '0.1.0')
+    // readyEnvelope parses fine as an EmbedMessage (parsePortMessage accepts
+    // either direction generically), but a panel port never legitimately
+    // carries one — fromPort's explicit parseHostMessage check must drop it.
+    relay.fromPort({ relay: readyEnvelope })
     expect(cb.toEmbed).not.toHaveBeenCalled()
   })
 

@@ -59,7 +59,19 @@ export function createRelay(cb: RelayCallbacks, hostVersion: string) {
 
   function start(): void {
     stopHelloTimer()
-    ready = false
+    // A load-triggered re-arm (a reloaded embed forgets everything) is a
+    // real true->false transition, not just internal bookkeeping: the
+    // caller (panel.ts) forwards it as ctl embedReady:false so the SW's
+    // registry (panelReady(false)) stops believing a field is still
+    // connected to a now-amnesiac embed — otherwise the reloaded embed's
+    // next `ready` would hit the registry's rule-4 duplicate no-op and
+    // never get its field back. Guarded the same way as the false->true
+    // edge below: only fires on an actual transition, and strictly before
+    // this function arms any new hello attempt.
+    if (ready) {
+      ready = false
+      cb.onReadyChange(false)
+    }
     helloAttempts = 0
     attemptHello()
     helloTimer = setInterval(attemptHello, HELLO_RETRY_MS)
