@@ -93,6 +93,11 @@ const MIRRORED_PROPS: (keyof CSSStyleDeclaration)[] = [
   // scrollbarGutter covers the modern `scrollbar-gutter: stable` case, where
   // the host reserves the gutter even before a scrollbar has appeared.
   'overflowX', 'overflowY', 'scrollbarGutter',
+  // Paint-clipping matters now that the overlay owns the field's background
+  // (see the module comment) — without the field's own corner radius, the
+  // overlay's background paints square corners outside a rounded field's
+  // clipped shape (GitHub's composers, for one).
+  'borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomRightRadius', 'borderBottomLeftRadius',
 ]
 
 function syncOverlayGeometry(el: HTMLTextAreaElement, overlay: HTMLDivElement) {

@@ -120,6 +120,31 @@ describe('createTextareaAdapter: overlay reserves the textarea scrollbar gutter'
   })
 })
 
+// Copilot round 8: since the overlay carries the field's own background
+// (module comment), a rounded field's overlay must also be rounded — a
+// textarea with border-radius + overflow:hidden clips its own background to
+// rounded corners, but a square overlay painting that same background on
+// top would show square corners poking out past the field's rounded shape
+// (GitHub's composers, for instance).
+describe('createTextareaAdapter: overlay mirrors border-radius', () => {
+  it('copies all four border-radius longhands from the textarea onto the overlay', () => {
+    el.style.borderTopLeftRadius = '6px'
+    el.style.borderTopRightRadius = '7px'
+    el.style.borderBottomRightRadius = '8px'
+    el.style.borderBottomLeftRadius = '9px'
+
+    const adapter = createTextareaAdapter(el)
+
+    const overlay = document.querySelector('.fw-mirror-overlay') as HTMLDivElement
+    expect(overlay.style.borderTopLeftRadius).toBe('6px')
+    expect(overlay.style.borderTopRightRadius).toBe('7px')
+    expect(overlay.style.borderBottomRightRadius).toBe('8px')
+    expect(overlay.style.borderBottomLeftRadius).toBe('9px')
+
+    adapter.dispose()
+  })
+})
+
 // Copilot round 3: direction/text-align decide which edge text starts from
 // and how it's justified — an RTL or centered textarea whose overlay stayed
 // LTR/left-aligned would place its mirrored text at the wrong x-coordinate,

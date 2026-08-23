@@ -94,7 +94,7 @@ ESM chunking is fine).
 ## Install (unpacked)
 
 ```sh
-cd clients/browser-extension && npm run build  # extension -> clients/browser-extension/dist
+cd clients/browser-extension && npm ci && npm run build  # extension -> clients/browser-extension/dist
 ```
 
 This only builds the extension itself; it never bundles the frontend/embed
@@ -106,6 +106,23 @@ your own single-origin backend (`frontend.dist_dir` configured, see
 in that case build it with `cd frontend && VITE_API_URL="" npm run build`
 (the E2E section below explains why `VITE_API_URL=""` matters whenever the
 embed is served from anything other than `localhost:8000`).
+
+> **Local backend checklist.** The everyday dev split — Vite dev server on
+> 5173, backend API on 8000 — does NOT serve `/embed`: that route only comes
+> from a BUILT frontend via `frontend.dist_dir`, and the 5173 dev server has
+> no `frame-ancestors` CSP to stand in for it. To point the extension at your
+> own local backend instead of the hosted default:
+> 1. `cd frontend && VITE_API_URL="" npm run build`
+> 2. Set `frontend.dist_dir` (an absolute path to `frontend/dist`) in
+>    `backend/config.yaml`, next to `embed.allowed_ancestors`.
+> 3. **Restart** the backend after building — both the SPA route and the
+>    `embed.html` availability check are captured once, at backend startup,
+>    so a build that happens after the backend is already running is
+>    invisible to it until the next restart.
+> 4. Symptoms: `/embed` returns 404 → no `dist_dir` configured. `/embed`
+>    returns 200 but the panel shows the main app instead of the embed →
+>    `frontend/dist` is stale (pre-C1) or was built after the backend
+>    started — rebuild, then restart the backend.
 
 Then in Chrome/Chromium:
 
