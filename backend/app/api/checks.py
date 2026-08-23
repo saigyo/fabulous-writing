@@ -51,6 +51,13 @@ class CheckRequest(BaseModel):
     # llm_usage has no client column, and that schema change ships with the
     # next schema-touching story together with the B41 day-first index
     # (#126). Until then the field is deliberately unused.
+    #
+    # Keep this literal's members in sync with frontend/src/checking/
+    # clientTag.ts's ALLOWLIST — the frontend's own client-enum site. Neither
+    # side generates the other; a new client surface must be added to both by
+    # hand or the frontend's tag silently 422s here (or, before finding 11's
+    # fix, forced itself back to "web" client-side before the request ever
+    # left the browser).
     client: Literal["web", "embed", "browser-extension", "vscode", "jetbrains", "simulator"] = "web"
 
 

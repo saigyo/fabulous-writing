@@ -299,6 +299,60 @@ class TestReRun:
         data = yaml_module.safe_load(config_path.read_text(encoding="utf-8"))
         assert data["embed"]["allowed_ancestors"] == ["https://host.example"]
 
+    # Finding 32: a bare, malformed `embed: nope` (a typo, or a hand-edit
+    # gone wrong) must not crash the wizard with an AttributeError — it
+    # falls through to the clean, preserved-default (template) path exactly
+    # as if the key were absent.
+    def test_rerun_with_non_mapping_embed_value_does_not_crash(self, tmp_path, template):
+        import yaml as yaml_module
+
+        config_dir = self.first_run(tmp_path, template)
+        config_path = config_dir / "config.yaml"
+        data = yaml_module.safe_load(config_path.read_text(encoding="utf-8"))
+        data["embed"] = "nope"
+        config_path.write_text(yaml_module.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+        rc = run_wizard(
+            config_dir,
+            template,
+            input_fn=scripted(["", "", "", "", "n"]),
+            getpass_fn=scripted([""]),
+            fetch_models=fetch_fail,
+        )
+
+        assert rc == 0
+        data = yaml_module.safe_load(config_path.read_text(encoding="utf-8"))
+        # The test fixture template (unlike the real docker/
+        # config.container.yaml) carries no embed key at all — the clean
+        # path here is "no override, nothing crashed", not a specific
+        # written value.
+        assert data.get("embed", {}).get("allowed_ancestors", []) == []
+
+    # Finding 33: preserve on `is not None`, not truthiness — an explicit
+    # `allowed_ancestors: []` (an operator deliberately re-emptying the
+    # allowlist) must round-trip through the rerun the same as any other
+    # explicitly-set value.
+    def test_rerun_preserves_explicit_empty_allowed_ancestors(self, tmp_path, template):
+        import yaml as yaml_module
+
+        config_dir = self.first_run(tmp_path, template)
+        config_path = config_dir / "config.yaml"
+        data = yaml_module.safe_load(config_path.read_text(encoding="utf-8"))
+        data["embed"] = {"allowed_ancestors": []}
+        config_path.write_text(yaml_module.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+        rc = run_wizard(
+            config_dir,
+            template,
+            input_fn=scripted(["", "", "", "", "n"]),
+            getpass_fn=scripted([""]),
+            fetch_models=fetch_fail,
+        )
+
+        assert rc == 0
+        data = yaml_module.safe_load(config_path.read_text(encoding="utf-8"))
+        assert data["embed"]["allowed_ancestors"] == []
+
     def test_config_only_rerun_prefills_provider(self, tmp_path, template, capsys):
         # fabulous.env deleted, config.yaml survives (B21 #78 item 4):
         # still a re-run — provider/model prefills come from the config.

@@ -191,6 +191,19 @@ class TestEmbedServing:
         assert "FW embed" not in r.text
         assert r.headers["content-security-policy"] == "frame-ancestors 'none'"
 
+    # Finding 31: pin the prefix boundary — main.py's embed match is
+    # `full_path in ("embed", "embed.html") or full_path.startswith("embed/")`,
+    # so a path that merely starts with the literal characters "embed" but
+    # isn't actually the embed route (no separator) must fall through to the
+    # ordinary SPA branch, not be mistaken for one of the three embed shapes.
+    def test_path_merely_prefixed_with_embed_serves_main_spa_with_none_csp(self, tmp_path):
+        client = make_app(tmp_path, make_dist(tmp_path), ancestors=["https://example.com"])
+        r = client.get("/embedFOO")
+        assert r.status_code == 200
+        assert "FW embed" not in r.text
+        assert "<!doctype html>" in r.text
+        assert r.headers["content-security-policy"] == "frame-ancestors 'none'"
+
     def test_dist_without_embed_html_falls_back_to_index(self, tmp_path):
         # Forward-compat: an old dist (pre-embed frontend) paired with a new
         # backend must not 500 — /embed just falls back to the main SPA.

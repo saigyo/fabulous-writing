@@ -5,32 +5,28 @@
 // listens for embed -> host messages from the iframe. It is the harness a
 // human drives during the Step 6 hand-check and the seam an e2e negative
 // probe hooks into via ?desync=1 (see below).
-import { PROTOCOL_VERSION } from '../embed/protocol'
-import type { EmbedMessage, HostCapabilities, HostMessage, MarkingSpan } from '../embed/protocol'
+import { parseEmbedMessage, PROTOCOL_VERSION } from '../embed/protocol'
+import type { HostCapabilities, HostMessage, MarkingSpan } from '../embed/protocol'
 import { findingIdAt } from './clickHitTest'
 import { createTextareaAdapter } from './textareaAdapter'
 
 const FIELD_ID = 'sim-field'
 const HELLO_RETRY_MS = 250
+// Finding 28: without a cap, an embed that never readies (a build that
+// broke bridge.ts's hello handling, a genuinely wrong iframe src) retries
+// forever with no visible signal beyond "not connected" — indistinguishable
+// from a slow-but-working boot. 30 attempts at HELLO_RETRY_MS is ~7.5s,
+// long enough to cover a slow dev-server cold start without leaving a human
+// running the Step 6 hand-check staring at a silently-stuck page.
+const MAX_HELLO_ATTEMPTS = 30
 
 const fieldEl = document.getElementById('field') as HTMLTextAreaElement
 const iframeEl = document.getElementById('embed') as HTMLIFrameElement
 const connectBtn = document.getElementById('connect') as HTMLButtonElement
+const disconnectBtn = document.getElementById('disconnect') as HTMLButtonElement
 const statusEl = document.getElementById('sim-status') as HTMLElement
 
 const adapter = createTextareaAdapter(fieldEl)
-
-// Only current-version, known-type embed->host messages are handled; the
-// payload shape is trusted from there — this is a dev-only reference host,
-// not the hardened validator protocol.ts ships for the opposite direction.
-const EMBED_TYPES = new Set(['ready', 'status', 'findings', 'applyReplacement', 'selectFinding'])
-function parseEmbedMessage(data: unknown): EmbedMessage | null {
-  if (typeof data !== 'object' || data === null) return null
-  const d = data as Record<string, unknown>
-  if (d.fw !== PROTOCOL_VERSION) return null
-  if (typeof d.type !== 'string' || !EMBED_TYPES.has(d.type)) return null
-  return data as EmbedMessage
-}
 
 function send(message: HostMessage) {
   iframeEl.contentWindow?.postMessage({ fw: PROTOCOL_VERSION, ...message }, location.origin)
@@ -56,9 +52,31 @@ let connected = false
 let currentFindings: MarkingSpan[] = []
 let selectedFindingId: string | null = null
 let helloTimer: ReturnType<typeof setInterval> | null = null
+let helloAttempts = 0
 
 function sendHello() {
   send({ type: 'hello', payload: { host: { kind: 'simulator', version: '0.0.1' } } })
+}
+
+// Finding 28: each tick counts against the cap; past it, stop retrying and
+// say so instead of silently retrying forever.
+function attemptHello() {
+  helloAttempts += 1
+  if (helloAttempts > MAX_HELLO_ATTEMPTS) {
+    if (helloTimer !== null) {
+      clearInterval(helloTimer)
+      helloTimer = null
+    }
+    statusEl.textContent = 'embed not responding'
+    return
+  }
+  sendHello()
+}
+
+function armHelloRetry() {
+  helloAttempts = 0
+  attemptHello()
+  helloTimer = setInterval(attemptHello, HELLO_RETRY_MS)
 }
 
 // Fires on the FIRST load (the initial /embed.html navigation) and on every
@@ -79,9 +97,15 @@ iframeEl.addEventListener('load', () => {
   selectedFindingId = null
   adapter.clearMarkings()
   connectBtn.disabled = true
+  disconnectBtn.disabled = true
+  // Finding 25: a reload drops in a fresh embed shim with no memory of the
+  // prior session, so a desync run needs a fresh one-shot suppress/mutate
+  // pair too — carrying over a flag already consumed (or a stale mutate
+  // still armed) before the reload would desync the WRONG edit, or none.
+  desyncPendingSuppress = desyncMode
+  desyncPendingMutate = false
   statusEl.textContent = 'embed reloaded — reconnect needed'
-  sendHello()
-  helloTimer = setInterval(sendHello, HELLO_RETRY_MS)
+  armHelloRetry()
 })
 
 // Eagerly arm the retry loop too (Copilot round 4), not just on 'load':
@@ -94,8 +118,7 @@ iframeEl.addEventListener('load', () => {
 // 'ready' arrives — so starting it here as well is harmless: a genuine
 // later 'load' (e.g. a manual reload) still clears this timer and arms its
 // own via the listener above.
-sendHello()
-helloTimer = setInterval(sendHello, HELLO_RETRY_MS)
+armHelloRetry()
 
 connectBtn.disabled = true
 connectBtn.addEventListener('click', () => {
@@ -111,16 +134,46 @@ connectBtn.addEventListener('click', () => {
       meta: { url: location.href, fieldKind: 'textarea' },
     },
   })
+  disconnectBtn.disabled = false
   statusEl.textContent = 'connected'
 })
 
+// Finding 19: the human-driven counterpart to fieldDisconnected — lets a
+// Step 6 hand-check (or the negative-path e2e probe) exercise a clean
+// disconnect without reloading the whole iframe.
+disconnectBtn.disabled = true
+disconnectBtn.addEventListener('click', () => {
+  if (!connected) return
+  connected = false
+  currentFindings = []
+  selectedFindingId = null
+  adapter.clearMarkings()
+  send({ type: 'fieldDisconnected', payload: { fieldId: FIELD_ID } })
+  disconnectBtn.disabled = true
+  connectBtn.disabled = !ready
+  statusEl.textContent = ready ? 'embed ready — click Connect' : 'not connected'
+})
+
+// Finding 6/29 portability note aside, this is a dev-only harness: dispose
+// the adapter's own listeners/overlay on page unload rather than leaving
+// them for the browser to tear down implicitly — matches
+// createTextareaAdapter's own dispose() contract (Task 7).
+window.addEventListener('beforeunload', () => {
+  adapter.dispose()
+})
+
 adapter.onChange(() => {
+  // Finding 25: only consume the one-shot suppress flag once actually
+  // connected — an edit typed before Connect is clicked would never be
+  // sent anyway (the !connected return below), so consuming the flag then
+  // would waste the deliberate desync on an edit that was never in play,
+  // leaving the real first post-connect edit un-desynced.
+  if (!connected) return
   if (desyncPendingSuppress) {
     desyncPendingSuppress = false
     desyncPendingMutate = true
     return
   }
-  if (!connected) return
   send({ type: 'textChanged', payload: { fieldId: FIELD_ID, text: adapter.extract() } })
 })
 
@@ -151,10 +204,13 @@ window.addEventListener('message', (event) => {
       connectBtn.disabled = false
       if (!connected) statusEl.textContent = 'embed ready — click Connect'
       break
+    // Finding 21: render status even before Connect is clicked — a field
+    // can connect while the login form is still showing in the real embed
+    // (auth/session.ts's login()), so the pre-connect signed-out line is a
+    // real, observable state worth showing here too, not just once
+    // "connected" is true.
     case 'status':
-      if (connected) {
-        statusEl.textContent = `${msg.payload.phase} (${msg.payload.findingCount} findings)`
-      }
+      statusEl.textContent = `${msg.payload.phase} (${msg.payload.findingCount} findings)`
       break
     case 'findings':
       if (msg.payload.fieldId !== FIELD_ID) break
@@ -177,12 +233,12 @@ window.addEventListener('message', (event) => {
       // (findings, selectFinding), this one used to call the adapter
       // unconditionally. A delayed or mismatched request — e.g. one queued
       // before a disconnect/reload and only delivered after — could still
-      // mutate the live textarea with no connected field to own it, or with
-      // a stale requester's fieldId. Refuse it the same way the adapter
-      // itself refuses an expectedText mismatch: ok:false with the CURRENT
-      // (unmodified) text, so the shim's own retry/desync handling on the
-      // other end sees an ordinary refusal rather than a crash.
-      if (!connected || msg.payload.fieldId !== FIELD_ID) {
+      // mutate the live textarea with no connected field to own it. Refuse
+      // it the same way the adapter itself refuses an expectedText
+      // mismatch: ok:false with the CURRENT (unmodified) text, so the
+      // shim's own retry/desync handling on the other end sees an ordinary
+      // refusal rather than a crash.
+      if (!connected) {
         send({
           type: 'replaceResult',
           requestId,
@@ -190,11 +246,42 @@ window.addEventListener('message', (event) => {
         })
         break
       }
+      // Finding 20: a request naming a DIFFERENT fieldId (a stale requester
+      // from before a disconnect/reload, since this simulator only ever has
+      // the one field) echoes back that same foreign fieldId, not FIELD_ID
+      // — a reply addressed as FIELD_ID could be mistaken for an answer
+      // about the actually-connected field by a host tracking more than
+      // one. The embed's own shim discards a replaceResult whose fieldId
+      // doesn't match its connected field regardless (hostDoc.ts's
+      // replaceResult), so this field's real text is never legitimately
+      // meant for that foreign reply — send an empty string rather than
+      // leaking it into an echo addressed to a field that isn't this one.
+      if (msg.payload.fieldId !== FIELD_ID) {
+        send({
+          type: 'replaceResult',
+          requestId,
+          payload: { fieldId: msg.payload.fieldId, ok: false, text: '' },
+        })
+        break
+      }
       if (desyncPendingMutate) {
         desyncPendingMutate = false
         fieldEl.value = `_${fieldEl.value}`
       }
-      const result = adapter.applyReplacement(from, to, insert, expectedText)
+      // Finding 6: the adapter's own range guard (textareaAdapter.ts's
+      // applyReplacement) refuses a malformed vector cleanly, but this call
+      // still crosses into real DOM APIs (setSelectionRange,
+      // execCommand/setRangeText) whose own edge cases aren't this
+      // reference host's to fully characterize. A throw here must not take
+      // down the simulator's message listener (an uncaught exception inside
+      // it would drop every later postMessage silently) — answer the same
+      // ok:false-with-current-text refusal the guard itself would give.
+      let result: { ok: boolean; text: string }
+      try {
+        result = adapter.applyReplacement(from, to, insert, expectedText)
+      } catch {
+        result = { ok: false, text: adapter.extract() }
+      }
       send({
         type: 'replaceResult',
         requestId,

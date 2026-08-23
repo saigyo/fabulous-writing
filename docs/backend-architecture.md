@@ -183,10 +183,16 @@ one-off scripts, never by `main.py`'s own `app` attribute).
 iframe the `/embed` surface, sent as the `frame-ancestors` CSP directive on that route
 only (see [Single-origin serving](#container-deployment-b17)). Default empty renders
 `frame-ancestors 'none'` — embedding is off until a deployment opts in. Each entry must
-`fullmatch` `'self'` or a `scheme://host[:port]` origin (no wildcards, no paths),
-validated at startup like the other embed/proxy knobs; a malformed entry fails boot
-rather than silently disabling the whole CSP directive in some browsers. YAML-only, same
-as `cors.origins` and `environment` — no environment-variable override.
+be the bare word `self` (YAML's own quotes around `'self'` are stripped either way,
+normalized internally to the literal CSP token `'self'`) or a `scheme://host[:port]`
+origin — validated by parsing the scheme, each hostname label, and the port
+separately, not a single regex `fullmatch` against the whole string (a permissive
+`scheme://host(:port)?` pattern would full-match strings that aren't valid origins,
+e.g. an out-of-range port or a label starting with a hyphen). No wildcards, no paths,
+lowercase scheme only, no IPv6 literals, no trailing-dot FQDNs, no underscores in a
+label. Validated at startup like the other embed/proxy knobs; a malformed entry fails
+boot rather than silently disabling the whole CSP directive in some browsers.
+YAML-only, same as `cors.origins` and `environment` — no environment-variable override.
 
 **`environment` gates the API docs routes** (`dev` | `staging` | `production`,
 default `production` — YAML-only, same as `cors.origins`, no environment-variable
@@ -2729,7 +2735,13 @@ at mount time (with `embed_available = embed_page.is_file()`), not per-request.
 run regenerates both `fabulous.env` (secrets, written with `0o600` permissions) and
 `config.yaml` (non-secret config, layered onto the baked-in template) completely,
 rather than patching them in place, so a re-run that switches providers can never
-leave a stale key behind. `run_wizard()` takes its config/template directories as
+leave a stale key behind. `embed.allowed_ancestors` (spec B43) is the one documented
+exception: the wizard never prompts for it, so an existing (dict-shaped) value is read
+back from the config being replaced and merged onto the fresh template output — the
+only key that survives a re-run this way; see `test_setup_wizard.py::TestReRun`'s embed
+tests for the guards this leans on (a non-mapping `embed:` value falls back to the
+template default rather than crashing; an explicit empty list is preserved, not
+treated as absent). `run_wizard()` takes its config/template directories as
 arguments and accepts injectable `input_fn`/`getpass_fn`/`fetch_models` callables
 (defaulting to `input`, `getpass.getpass`, and `fetch_ollama_models`, a `/api/tags`
 fetch — `check_ollama` no longer exists), which is what lets the test suite drive
@@ -2742,7 +2754,7 @@ hand-edits preserved on re-runs, so the local tier reports available once host O
 is reachable from the container (B25, #84); for Ollama itself, the strong and fast
 models picked from the live `/api/tags` list cover quality/balanced and cheap/local
 respectively. Like the rest of the config, this table is regenerated whole on
-every run, never patched.
+every run, never patched — `embed.allowed_ancestors` is the exception (see above).
 
 **Version reporting.** `GET /api/health` reports `version` from the `FW_APP_VERSION`
 environment variable (falling back to `"dev"` when unset). The Dockerfile sets it from

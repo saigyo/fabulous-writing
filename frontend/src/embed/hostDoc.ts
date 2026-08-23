@@ -104,21 +104,26 @@ export interface HostDoc extends DocumentPort {
    * auth/session.ts's login() via embed/activateSlot.ts, in place of
    * calling republish() directly. A direct user-A -> user-B login() (no
    * logout in between — e.g. a fresh login from the form while a session
-   * with a connected field is still live, or the password-change silent
-   * re-login in AccountMenu) resets only the Zustand store: resetSessionState()
-   * clears store.tracked/selectedId, but this shim's own private items/
-   * selectedId survive, since resetSession() only runs on logout/expiry
-   * (embed/disconnectSlot.ts). Calling republish() alone at that point
-   * would restore user A's tracked findings and selection into user B's
-   * session until the next check overwrites them — a cross-user leak
-   * (Copilot round 10).
+   * with a connected field is still live) resets only the Zustand store:
+   * resetSessionState() clears store.tracked/selectedId, but this shim's
+   * own private items/selectedId survive, since resetSession() only runs
+   * on logout/expiry (embed/disconnectSlot.ts). Calling republish() alone
+   * at that point would restore user A's tracked findings and selection
+   * into user B's session until the next check overwrites them — a
+   * cross-user leak (Copilot round 10).
    *
    * Runs resetSession()'s session-scoped clear FIRST (tracked findings,
    * including the host-side empty findings message, selection, and pending
    * replacements settled 'refused'), then republish() restores the
    * retained field identity/buffer/metrics with that now-empty tracked
-   * state. Same-user re-login gets identical treatment — harmless, since
-   * the connect effect's next check repopulates immediately. */
+   * state. auth/session.ts's login() calls activateEmbed() (hence this)
+   * only from its cross-user branch — NOT for a same-user re-login (the
+   * password-change flow's silent re-auth in AccountMenu), because the
+   * clear above is not harmless there: it settles any pending replacement
+   * as 'refused', which would tear down a live LLM check the SAME user is
+   * still waiting on. The connect effect's next check only repopulates the
+   * FAST findings promptly; an in-flight LLM result lost to this clear does
+   * not come back on its own. */
   activateSession(): void
 }
 
@@ -229,13 +234,17 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
 
   function publishFindings() {
     useStore.getState().setTracked(items, selectedId)
-    if (fieldId) outbound.sendFindings(fieldId, toMarkingSpans())
+    // fieldId !== null, not truthiness (finding 9): protocol.ts now rejects
+    // an empty-string fieldId at the parser, so this shim's own fieldId is
+    // never legitimately '' — but the explicit null check is the correct
+    // predicate regardless, matching connected()'s own (fieldId !== null).
+    if (fieldId !== null) outbound.sendFindings(fieldId, toMarkingSpans())
   }
 
   function doSelectFinding(id: string | null) {
     selectedId = id
     useStore.getState().setTracked(items, selectedId)
-    if (fieldId) outbound.sendSelectFinding(fieldId, id)
+    if (fieldId !== null) outbound.sendSelectFinding(fieldId, id)
   }
 
   function currentFinding(id: string): TrackedFinding | null {
@@ -275,7 +284,7 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
     store.setDocWords(0)
     store.setDocChars(0)
     store.clearScorecard()
-    if (fieldId) outbound.sendFindings(fieldId, [])
+    if (fieldId !== null) outbound.sendFindings(fieldId, [])
     settleAllPending()
   }
 
@@ -327,6 +336,14 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
   }
 
   function sendReplace(from: number, to: number, insert: string): Promise<ApplyResult> {
+    // No connected field to address the wire message to (finding 9): every
+    // caller (applySuggestion/applyRewrite) already requires
+    // currentFinding(id) to succeed first, which requires a non-empty
+    // `items` — populated only while connected — so this is unreachable in
+    // practice, but a null fieldId must refuse rather than fall back to the
+    // '' conflation this replaced (a stale/foreign-field wire message with
+    // an empty fieldId the host could never legitimately answer).
+    if (fieldId === null) return Promise.resolve('refused')
     // A field whose capabilities declare replace: 'none' (e.g. mark-only,
     // no programmatic edit support) can never honor an applyReplacement —
     // resolve refused immediately rather than post a wire message the host
@@ -335,7 +352,6 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
     requestSeq += 1
     const requestId = `r${requestSeq}`
     const expectedText = buffer.slice(from, to)
-    const currentFieldId = fieldId ?? ''
     const promise = new Promise<ApplyResult>((resolve) => {
       const timer = setTimeout(() => {
         pending.delete(requestId)
@@ -344,7 +360,7 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
       pending.set(requestId, { resolve, timer })
     })
     outbound.sendApplyReplacement({
-      requestId, fieldId: currentFieldId, from, to, insert, expectedText,
+      requestId, fieldId, from, to, insert, expectedText,
     })
     return promise
   }
@@ -435,8 +451,17 @@ export function createHostDoc(outbound: HostDocOutbound): HostDoc {
       sessionActive = false
     },
     republish() {
-      if (fieldId === null) return
+      // Finding 10: set BEFORE the unconnected early-return, not after —
+      // a login while no field has ever connected (or one that disconnected
+      // in the meantime) must still leave the session marked active, so a
+      // fieldConnected that arrives moments later (a field connecting while
+      // the login form was showing) is not treated as still-logged-out by
+      // syncBuffer()'s sessionActive gate. fieldConnected() itself already
+      // sets sessionActive = true unconditionally on a fresh connect, so
+      // this mainly matters for a resetSession() -> republish() sequence
+      // with no fieldId at all — otherwise a no-op either way.
       sessionActive = true
+      if (fieldId === null) return
       const store = useStore.getState()
       store.setConnectedField({ fieldId, url: connectedUrl })
       store.setDocWords(wordCount(buffer))

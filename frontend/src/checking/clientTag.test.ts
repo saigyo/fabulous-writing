@@ -16,7 +16,16 @@ describe('clientTag', () => {
     expect(clientTag()).toBe('browser-extension')
   })
 
-  it('falls back to web for unknown values', () => {
+  // Finding 11: an unknown value leaves the tag UNCHANGED, not forced back
+  // to 'web' — a deliberate earlier tag (e.g. the embed's boot-time
+  // setClientTag('embed')) must survive an unrecognized hello.
+  it('leaves the tag unchanged for an unknown value', () => {
+    setClientTag('browser-extension')
+    setClientTag('unknown-client')
+    expect(clientTag()).toBe('browser-extension')
+  })
+
+  it('still defaults to web when the very first call is an unknown value', () => {
     setClientTag('unknown-client')
     expect(clientTag()).toBe('web')
   })

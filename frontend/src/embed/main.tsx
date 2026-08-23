@@ -6,6 +6,7 @@ import './embed.css'
 import { LoginGate } from '../auth/LoginGate.tsx'
 import { initPrefsPersistence } from '../state/prefsPersistence.ts'
 import { setDocumentPort } from '../checking/documentPort'
+import { setClientTag } from '../checking/clientTag'
 import { createHostDoc } from './hostDoc'
 import { startBridge } from './bridge'
 import { setEmbedDisconnectHandler } from './disconnectSlot'
@@ -13,6 +14,12 @@ import { setEmbedActivateHandler } from './activateSlot'
 import { setEmbedOutbound } from './embedRef'
 import { EmbedApp } from './EmbedApp'
 
+// Finding 11: default to 'embed' before any hello ever arrives (a host that
+// never connects, or one slow to send it) — bridge.ts's route() overrides
+// this with the host's own kind once a hello lands, since setClientTag now
+// leaves an unrecognized value's tag unchanged rather than always falling
+// back to 'web'.
+setClientTag('embed')
 const bridge = startBridge()
 const hostDoc = createHostDoc(bridge.outbound)
 bridge.attach(hostDoc)

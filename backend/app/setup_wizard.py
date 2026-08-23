@@ -445,8 +445,26 @@ def run_wizard(
     # and routing above) — the template's embed.allowed_ancestors starts
     # empty by design, so without this an operator's hand-edited allowlist
     # would be silently wiped the next time they ran the wizard.
-    existing_ancestors = (existing_config.get("embed") or {}).get("allowed_ancestors")
-    if existing_ancestors:
+    #
+    # Finding 32: guard isinstance(..., dict) — a bare `embed: nope` (a typo
+    # or a hand-edit gone wrong) makes existing_config["embed"] a plain
+    # string, not a mapping; `.get("allowed_ancestors")` on that would raise
+    # AttributeError and crash the wizard instead of falling through to the
+    # clean, preserved-default path a malformed value should get.
+    existing_embed = existing_config.get("embed")
+    existing_ancestors = (
+        existing_embed.get("allowed_ancestors")
+        if isinstance(existing_embed, dict)
+        else None
+    )
+    # Finding 33: preserve on `is not None`, not truthiness — an operator
+    # who deliberately emptied the allowlist (explicit `allowed_ancestors:
+    # []`, disabling embedding again after trying it) has a real, meaningful
+    # value here; treating `[]` as falsy and skipping the preserve would
+    # still happen to leave the template's own empty default in place today,
+    # but only by coincidence of both being `[]` — the correct predicate for
+    # "was this explicitly set" doesn't depend on that coincidence.
+    if existing_ancestors is not None:
         config_data.setdefault("embed", {})["allowed_ancestors"] = existing_ancestors
 
     _backup(env_path)

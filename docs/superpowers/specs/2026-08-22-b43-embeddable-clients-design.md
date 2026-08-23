@@ -264,7 +264,12 @@ installs.
   surviving restarts, refreshed by the existing refresh loop. On hard expiry
   `expireSession` fires inside the embed; the panel shows the login form; the
   `status` message reflects signed-out for the affordance badge.
-- "Forgot password" in the embed links out to the main app (new tab).
+- "Forgot password" in the embed renders `ForgotPasswordForm` inline, inside
+  the same `LoginGate` the embed shares with the main app — not a link out to
+  a new tab (amended during C1). The emailed reset link itself still targets
+  the main app's origin (Supabase's reset-password redirect is configured
+  once, server-side, and is not iframe-aware); only the request form stays
+  in-panel.
 
 ## Security & privacy rules
 

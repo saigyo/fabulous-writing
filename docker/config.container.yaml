@@ -16,5 +16,10 @@ providers:
 # e.g.:
 #   allowed_ancestors:
 #     - "https://your-host.example"
+# WARNING: if you comment out `allowed_ancestors: []` below, comment out
+# `embed:` too (or leave both alone) -- a bare `embed:` with nothing
+# nested under it parses as YAML null, not an empty mapping, and Settings
+# rejects that at startup (embed: Input should be a valid dictionary...),
+# refusing to boot at all.
 embed:
   allowed_ancestors: []
