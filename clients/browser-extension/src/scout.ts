@@ -64,7 +64,15 @@ function ensurePort(): Port | null {
   try {
     const p = browser.runtime.connect({ name: 'field' })
     p.onMessage.addListener(handlePortMessage)
-    p.onDisconnect.addListener(handlePortDisconnect)
+    // Copilot round 4 (closing sweep), F3: `p` is captured in this closure so
+    // the disconnect callback can be identity-checked against the CURRENT
+    // module-level `port` when it fires, rather than blindly tearing down
+    // whatever session/port happens to be live at that moment. Without this,
+    // a bfcache restore that opens a replacement port before the OLD port's
+    // already-queued onDisconnect callback runs would have that stale
+    // callback call handlePortDisconnect() unconditionally and tear down the
+    // NEW session/port out from under the restored page.
+    p.onDisconnect.addListener(() => handlePortDisconnect(p))
     port = p
     return p
   } catch {
@@ -178,7 +186,14 @@ function handlePortMessage(data: unknown): void {
   session?.handleEmbedMessage(parsed.relay as Envelope<EmbedMessage>)
 }
 
-function handlePortDisconnect(): void {
+function handlePortDisconnect(disconnected: Port): void {
+  // F3: a disconnect callback belongs to the port instance it was
+  // registered on (ensurePort's closure above), not to "whatever port is
+  // current" — a queued callback for a port that's already been replaced
+  // (pagehide nulled `port`, then a restore opened a fresh one before the
+  // OLD port's onDisconnect fired) must be a no-op rather than tearing down
+  // the NEW session/port.
+  if (disconnected !== port) return
   // The port itself is gone (SW restart, extension update) — there is
   // nowhere for a fieldDisconnected send to land, so this is a silent local
   // teardown (session.stop()'s semantics don't apply, same as the ctl

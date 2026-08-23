@@ -728,6 +728,92 @@ describe('createTextareaAdapter: position-drift re-sync (window resize + safety 
     expect(overlay.style.top).toBe('8px')
     vi.useRealTimers()
   })
+
+  // Copilot round 4 (closing sweep), F2: once syncBackground() has written
+  // its own inline 'transparent' override, that inline value beats any
+  // stylesheet rule in the cascade — so a naive re-read would see its own
+  // prior write forever, never a host theme switch that only changes the
+  // UNDERLYING (stylesheet-derived) color. The fix temporarily clears the
+  // override before reading computed style, so the read is unmasked.
+  it('the 1s background re-sync reads the underlying computed value (not its own prior override), ' +
+    'so a host theme switch reaches the overlay', () => {
+    vi.useFakeTimers()
+    const realGetComputedStyle = window.getComputedStyle
+    let underlyingColor = 'rgb(10, 20, 30)'
+    // A getComputedStyle stand-in that, for `el` only, always answers with
+    // the current "stylesheet-derived" color regardless of el's own inline
+    // value — modeling a real browser's cascade for a THEME class the test
+    // doesn't need to actually construct, while every other property still
+    // passes through to the real computed style so position/z-index/
+    // background-image reads elsewhere in the module are unaffected.
+    const spy = vi.spyOn(window, 'getComputedStyle').mockImplementation((target, pseudo) => {
+      const real = realGetComputedStyle(target, pseudo ?? undefined)
+      if (target !== el) return real
+      // Mimics real cascade precedence: an inline value (present) always
+      // wins the computed read, exactly like a real browser — only when the
+      // field's OWN inline value is cleared does the "stylesheet-derived"
+      // underlyingColor show through. This is what makes the stub able to
+      // catch the masking bug: an unfixed syncBackground() never clears the
+      // inline override before reading, so it would keep reading its own
+      // prior 'transparent' write back forever instead of underlyingColor.
+      return {
+        position: real.position,
+        zIndex: real.zIndex,
+        backgroundColor: el.style.backgroundColor || underlyingColor,
+        backgroundImage: real.backgroundImage,
+        backgroundSize: real.backgroundSize,
+        backgroundPosition: real.backgroundPosition,
+        backgroundRepeat: real.backgroundRepeat,
+        backgroundOrigin: real.backgroundOrigin,
+        backgroundClip: real.backgroundClip,
+        backgroundAttachment: real.backgroundAttachment,
+      } as CSSStyleDeclaration
+    })
+
+    try {
+      const adapter = createTextareaAdapter(el)
+      const overlay = el.previousElementSibling as HTMLDivElement
+      expect(overlay.style.backgroundColor).toBe('rgb(10, 20, 30)')
+      expect(el.style.backgroundColor).toBe('transparent')
+
+      // Host theme switch: the underlying (stylesheet-derived) color
+      // changes while the field's inline value stays the adapter's own
+      // 'transparent' override the whole time.
+      underlyingColor = 'rgb(40, 50, 60)'
+      vi.advanceTimersByTime(1000)
+
+      expect(overlay.style.backgroundColor).toBe('rgb(40, 50, 60)')
+      // The flip is transient: the field's own override is back in place
+      // synchronously, same tick, so nothing about the field's paint order
+      // changes.
+      expect(el.style.backgroundColor).toBe('transparent')
+
+      adapter.dispose()
+    } finally {
+      spy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  // F2: the flip above must still respect the existing guard — a host that
+  // sets backgroundColor directly (its own re-render, not going through
+  // this module) must keep winning permanently, exactly as before this fix.
+  it('a host inline backgroundColor change mid-session still wins over the next re-sync tick', () => {
+    vi.useFakeTimers()
+    const adapter = createTextareaAdapter(el)
+    const overlay = el.previousElementSibling as HTMLDivElement
+
+    el.style.backgroundColor = 'rgb(99, 98, 97)'
+    vi.advanceTimersByTime(1000)
+
+    // The host's own value is left untouched, and the overlay keeps
+    // whatever it last had rather than being clobbered by the interval.
+    expect(el.style.backgroundColor).toBe('rgb(99, 98, 97)')
+    expect(overlay.style.backgroundColor).not.toBe('rgb(99, 98, 97)')
+
+    adapter.dispose()
+    vi.useRealTimers()
+  })
 })
 
 // Part A / Task 6 (B43 C2): paint order + visibility on an arbitrary host

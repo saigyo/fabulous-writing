@@ -296,8 +296,27 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
     // skip) — but only while the field's current inline value still
     // matches what this function itself last wrote; once the host sets its
     // own value directly, that write wins and this stops touching it.
-    if (writtenBackgroundColor === null || el.style.backgroundColor === writtenBackgroundColor) {
+    //
+    // Copilot round 4 (closing sweep), F2: once this function has WRITTEN
+    // its own inline override, that inline value beats any stylesheet rule
+    // in the cascade — so a later getComputedStyle() read here would just
+    // read this function's own prior write back, forever, never the host's
+    // real underlying value. A host theme switch (a class toggle, a
+    // prefers-color-scheme flip) only changes the UNDERLYING rule; with the
+    // override still in place, computed style can never see it. Fix:
+    // whenever the field's current inline value is still this function's
+    // own override, clear it, take the computed read (now unmasked), then
+    // immediately re-apply the override — both writes and the read happen
+    // synchronously in the same tick, so no paint can occur in between and
+    // nothing ever flickers. A host-changed inline value (the outer `if`
+    // below is false in that case) still wins permanently, exactly as
+    // before: the flip is skipped entirely for that property.
+    const backgroundColorOverrideActive =
+      writtenBackgroundColor !== null && el.style.backgroundColor === writtenBackgroundColor
+    if (writtenBackgroundColor === null || backgroundColorOverrideActive) {
+      if (backgroundColorOverrideActive) el.style.backgroundColor = ''
       const computedBackgroundColor = getComputedStyle(el).backgroundColor
+      if (backgroundColorOverrideActive) el.style.backgroundColor = writtenBackgroundColor as string
       const computedBackgroundIsTransparent =
         computedBackgroundColor === '' ||
         computedBackgroundColor === 'transparent' ||
@@ -328,8 +347,15 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
     // never touched keeps reflecting the host's real, live computed value
     // on every re-sync, so a background-image gained mid-session (M6) is
     // still picked up here the same way a background-color change is.
-    if (writtenBackgroundImage === null || el.style.backgroundImage === writtenBackgroundImage) {
+    // F2: same flip as background-color above — an inline 'none' this
+    // function wrote itself would otherwise mask the host's real underlying
+    // background-image (or lack of one) in every later computed read.
+    const backgroundImageOverrideActive =
+      writtenBackgroundImage !== null && el.style.backgroundImage === writtenBackgroundImage
+    if (writtenBackgroundImage === null || backgroundImageOverrideActive) {
+      if (backgroundImageOverrideActive) el.style.backgroundImage = ''
       const computedBackgroundImage = getComputedStyle(el).backgroundImage
+      if (backgroundImageOverrideActive) el.style.backgroundImage = writtenBackgroundImage as string
       // happy-dom quirk parity with position/z-index above: an unset
       // background-image computes to '' there instead of the real initial
       // value 'none'.
