@@ -103,6 +103,16 @@ function syncOverlayGeometry(el: HTMLTextAreaElement, overlay: HTMLDivElement) {
     ;(overlay.style as unknown as Record<string, string>)[prop as string] =
       computed[prop] as string
   }
+  // M7 (closing sweep): the loop above just copied the field's own
+  // overflowX/overflowY (MIRRORED_PROPS) onto the overlay, which for a
+  // field whose computed overflow is `visible` (the CSS default) overwrites
+  // the module's own load-bearing `overlay.style.overflow = 'hidden'` set
+  // once at creation — the overlay's mark backgrounds are then free to
+  // paint outside the field's own box, over the host page. Clipping must
+  // hold regardless of the FIELD's own overflow setting, so re-clip
+  // whichever axis the copy just widened.
+  if (overlay.style.overflowX === 'visible') overlay.style.overflowX = 'hidden'
+  if (overlay.style.overflowY === 'visible') overlay.style.overflowY = 'hidden'
   // Host-page overlay position (module comment): the overlay's
   // `top: 0; left: 0` resolves against its CONTAINING BLOCK, which need not
   // coincide with the field's own position on an arbitrary host page.
@@ -129,16 +139,28 @@ function syncOverlayGeometry(el: HTMLTextAreaElement, overlay: HTMLDivElement) {
   // safety interval re-sync above: each pass "corrects" by the wrong amount,
   // which oscillates for a scale in (1, 2) and diverges outright above 2.
   // Recover the effective scale by comparing the overlay's just-measured,
-  // on-screen rect to its own style width/height (the containing-block-space
-  // size the MIRRORED_PROPS copy loop above just set from the field's
-  // computed style) and divide the delta by it before applying — exact for a
-  // pure, uniform scale. Rotation/skew are out of scope: there is no single
-  // scalar to divide by, and the module comment above documents this as an
-  // accepted limitation, not a bug. NaN/zero (no real layout, e.g. under
-  // test, or a not-yet-laid-out overlay) falls back to a scale of 1, which
-  // is exactly the old, unscaled behavior.
-  const rawScaleX = overlayRect.width / parseFloat(overlay.style.width)
-  const rawScaleY = overlayRect.height / parseFloat(overlay.style.height)
+  // on-screen rect to its own UNTRANSFORMED layout border box —
+  // offsetWidth/offsetHeight, exactly what getBoundingClientRect scales —
+  // and divide the delta by it before applying — exact for a pure, uniform
+  // scale. Rotation/skew are out of scope: there is no single scalar to
+  // divide by, and the module comment above documents this as an accepted
+  // limitation, not a bug.
+  //
+  // I1 (B43 C2 closing sweep): this must NOT be overlay.style.width/height.
+  // That holds the used value of the CSS `width`/`height` property (copied
+  // from the field's computed style by the MIRRORED_PROPS loop above), which
+  // is the border-box size only under `box-sizing: border-box` — under the
+  // default `content-box`, a field with padding/border reports a phantom
+  // scale (e.g. 126/100 = 1.26 for 12px padding + 1px border) with NO
+  // ancestor transform anywhere on the page, under-applying every measured
+  // delta by that same fraction. offsetWidth/offsetHeight are always the
+  // border-box size regardless of box-sizing, matching what
+  // getBoundingClientRect actually scales. NaN/zero (no real layout, e.g.
+  // under test, or a not-yet-laid-out overlay — happy-dom returns 0 for
+  // offsetWidth) falls back to a scale of 1, which is exactly the old,
+  // unscaled behavior.
+  const rawScaleX = overlayRect.width / overlay.offsetWidth
+  const rawScaleY = overlayRect.height / overlay.offsetHeight
   const scaleX = Number.isFinite(rawScaleX) && rawScaleX !== 0 ? rawScaleX : 1
   const scaleY = Number.isFinite(rawScaleY) && rawScaleY !== 0 ? rawScaleY : 1
   overlay.style.top = `${(parseFloat(overlay.style.top) || 0) + (fieldRect.top - overlayRect.top) / scaleY}px`
@@ -192,6 +214,28 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
   const savedPosition = el.style.position
   const savedZIndex = el.style.zIndex
   const savedBackgroundColor = el.style.backgroundColor
+  const savedBackgroundImage = el.style.backgroundImage
+  // M5 (closing sweep): background-image alone isn't fully positioned —
+  // background-size/-position/-repeat/-origin/-clip/-attachment decide
+  // WHERE and how that image paints. Left uncopied, a composer background
+  // like `background: url(icon.svg) no-repeat right 8px center / 16px`
+  // moves the icon onto the overlay (below) but renders it tiled at
+  // intrinsic size across the whole mirror instead of positioned as the
+  // host intended. Saved unconditionally, same shape as savedPosition/
+  // savedZIndex above, regardless of whether syncBackground() below ever
+  // ends up writing to them.
+  const BACKGROUND_IMAGE_LONGHANDS = [
+    'backgroundSize', 'backgroundPosition', 'backgroundRepeat',
+    'backgroundOrigin', 'backgroundClip', 'backgroundAttachment',
+  ] as const
+  const savedBackgroundLonghands: Record<(typeof BACKGROUND_IMAGE_LONGHANDS)[number], string> = {
+    backgroundSize: el.style.backgroundSize,
+    backgroundPosition: el.style.backgroundPosition,
+    backgroundRepeat: el.style.backgroundRepeat,
+    backgroundOrigin: el.style.backgroundOrigin,
+    backgroundClip: el.style.backgroundClip,
+    backgroundAttachment: el.style.backgroundAttachment,
+  }
   // Copilot round 2 (B43 C2), S4: dispose() must restore a property only if
   // its CURRENT inline value still equals what the adapter itself wrote —
   // otherwise the host legitimately changed it DURING the session (its own
@@ -223,53 +267,92 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
   // correct regardless of whether the field's z-index above just came from
   // us or was already there: either way the overlay must paint below it.
   overlay.style.zIndex = '0'
-  const computedBackgroundColor = getComputedStyle(el).backgroundColor
-  // Skip the copy for happy-dom's '' default AND for a real, fully
-  // transparent background ('transparent', or the 'rgba(0, 0, 0, 0)' a real
-  // browser resolves either keyword to) — there's nothing meaningful to
-  // paint onto the overlay in any of those cases, and assigning '' would
-  // clear the overlay's own `background: transparent` shorthand entirely
-  // instead of leaving it at its already-transparent default.
-  const computedBackgroundIsTransparent =
-    computedBackgroundColor === '' ||
-    computedBackgroundColor === 'transparent' ||
-    computedBackgroundColor === 'rgba(0, 0, 0, 0)'
-  if (!computedBackgroundIsTransparent) {
-    overlay.style.backgroundColor = computedBackgroundColor
-  }
-  // Always written (unlike position/z-index above, this has no "field
-  // already has its own value" branch to skip) — dispose's guard below
-  // compares against this same literal.
-  const writtenBackgroundColor = 'transparent'
-  el.style.backgroundColor = writtenBackgroundColor
 
-  // Copilot round 3, S4: background-COLOR alone isn't the whole paint-order
-  // story — a field styled with a background-image or gradient (`linear-
-  // gradient(...)`, a data-URI pattern, GitHub's own themed composer
-  // backgrounds) still painted that image ABOVE the overlay, hiding marks
-  // under it exactly the way an opaque background-color used to. Same fix,
-  // same shape as background-color just above: copy the field's COMPUTED
-  // background-image onto the overlay (so it still paints, just now behind
-  // the real text instead of on top of the marks) and clear the field's own
-  // to 'none' so only the overlay's copy shows through. Unlike
-  // background-color, this is guarded like position/z-index above (a null
-  // `writtenBackgroundImage` means "never touched") rather than "always
-  // written": there is nothing to move and nothing to clear when the
-  // computed value is already 'none', so skip both the overlay copy and the
-  // field mutation entirely in that case, same as the position/z-index
-  // "field already has its own value" skip.
+  // Copilot round 2 (B43 C2), S4 + round 3, S4, folded into one guarded
+  // function (M6, closing sweep) so it can run again from the 1s drift
+  // interval below, not just once at creation: a field's background can
+  // legitimately change DURING a session (a `:focus`/`:hover` composer
+  // highlight, a dark/light theme toggle) — a one-shot copy leaves the
+  // overlay (and the field, hidden underneath it) visibly pinned to
+  // whatever the background was at connect time. Re-running this is safe:
+  // each write is itself guarded so a host-changed inline value (the host's
+  // OWN script setting el.style.backgroundColor/Image directly, same
+  // "legitimately changed it" case dispose() already accounts for) always
+  // wins over a re-copy rather than being clobbered, and `written…`
+  // is kept up to date every time this DOES write, so dispose()'s own
+  // restore guard — which runs after any number of these re-syncs — keeps
+  // comparing against the latest value this function actually wrote.
+  let writtenBackgroundColor: string | null = null
   let writtenBackgroundImage: string | null = null
-  const savedBackgroundImage = el.style.backgroundImage
-  const computedBackgroundImage = getComputedStyle(el).backgroundImage
-  // happy-dom quirk parity with position/z-index above: an unset
-  // background-image computes to '' there instead of the real initial value
-  // 'none'.
-  const computedBackgroundImageIsNone = computedBackgroundImage === '' || computedBackgroundImage === 'none'
-  if (!computedBackgroundImageIsNone) {
-    overlay.style.backgroundImage = computedBackgroundImage
-    writtenBackgroundImage = 'none'
-    el.style.backgroundImage = writtenBackgroundImage
+  function syncBackground(): void {
+    // Skip the copy for happy-dom's '' default AND for a real, fully
+    // transparent background ('transparent', or the 'rgba(0, 0, 0, 0)' a
+    // real browser resolves either keyword to) — there's nothing
+    // meaningful to paint onto the overlay in any of those cases, and
+    // assigning '' would clear the overlay's own `background: transparent`
+    // shorthand entirely instead of leaving it at its already-transparent
+    // default. "Always written" on the FIELD side (unlike position/z-index
+    // above, this has no "field already has its own value" branch to
+    // skip) — but only while the field's current inline value still
+    // matches what this function itself last wrote; once the host sets its
+    // own value directly, that write wins and this stops touching it.
+    if (writtenBackgroundColor === null || el.style.backgroundColor === writtenBackgroundColor) {
+      const computedBackgroundColor = getComputedStyle(el).backgroundColor
+      const computedBackgroundIsTransparent =
+        computedBackgroundColor === '' ||
+        computedBackgroundColor === 'transparent' ||
+        computedBackgroundColor === 'rgba(0, 0, 0, 0)'
+      if (!computedBackgroundIsTransparent) {
+        overlay.style.backgroundColor = computedBackgroundColor
+      }
+      writtenBackgroundColor = 'transparent'
+      el.style.backgroundColor = writtenBackgroundColor
+    }
+
+    // Copilot round 3, S4: background-COLOR alone isn't the whole
+    // paint-order story — a field styled with a background-image or
+    // gradient (`linear-gradient(...)`, a data-URI pattern, GitHub's own
+    // themed composer backgrounds) still painted that image ABOVE the
+    // overlay, hiding marks under it exactly the way an opaque
+    // background-color used to. Same fix, same shape as background-color
+    // just above: copy the field's COMPUTED background-image onto the
+    // overlay (so it still paints, just now behind the real text instead
+    // of on top of the marks) and clear the field's own to 'none' so only
+    // the overlay's copy shows through. Unlike background-color, this is
+    // guarded like position/z-index above (a null `writtenBackgroundImage`
+    // means "never touched") rather than "always written": there is
+    // nothing to move and nothing to clear when the computed value is
+    // already 'none', so skip both the overlay copy and the field mutation
+    // entirely in that case — which also means an initially-image-less
+    // field whose OWN inline backgroundImage this function has therefore
+    // never touched keeps reflecting the host's real, live computed value
+    // on every re-sync, so a background-image gained mid-session (M6) is
+    // still picked up here the same way a background-color change is.
+    if (writtenBackgroundImage === null || el.style.backgroundImage === writtenBackgroundImage) {
+      const computedBackgroundImage = getComputedStyle(el).backgroundImage
+      // happy-dom quirk parity with position/z-index above: an unset
+      // background-image computes to '' there instead of the real initial
+      // value 'none'.
+      const computedBackgroundImageIsNone = computedBackgroundImage === '' || computedBackgroundImage === 'none'
+      if (!computedBackgroundImageIsNone) {
+        overlay.style.backgroundImage = computedBackgroundImage
+        writtenBackgroundImage = 'none'
+        el.style.backgroundImage = writtenBackgroundImage
+        // M5: the longhands that position/size/tile the image, copied
+        // alongside it (same guard/moment — nothing to position when
+        // there's no image, so this only ever runs together with the
+        // image write above) and cleared on the field to the CSS-wide
+        // `initial` keyword (valid for every longhand, unlike hardcoding
+        // each property's own distinct initial value) since they have no
+        // visible effect on the field now that its own image is gone.
+        for (const prop of BACKGROUND_IMAGE_LONGHANDS) {
+          overlay.style[prop] = getComputedStyle(el)[prop]
+          el.style[prop] = 'initial'
+        }
+      }
+    }
   }
+  syncBackground()
 
   syncOverlayGeometry(el, overlay)
 
@@ -467,15 +550,20 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
   // re-run syncOverlayGeometry, whose measured-rect-delta approach (module
   // comment) makes every re-sync self-correcting and idempotent when nothing
   // moved — cheap even at this frequency, since it's only two
-  // getBoundingClientRect() reads. The interval only runs while marks are
-  // actually on screen (currentSpans non-empty) — there's nothing worth
-  // re-syncing for an overlay that's just an invisible copy of plain text.
+  // getBoundingClientRect() reads. The GEOMETRY re-sync only runs while
+  // marks are actually on screen (currentSpans non-empty) — there's nothing
+  // worth re-syncing for an overlay that's just an invisible copy of plain
+  // text. The BACKGROUND re-sync (M6, closing sweep) runs on every tick
+  // regardless — it's about the field staying visible/legible at all, not
+  // about marks specifically, and is itself a cheap, no-op-when-unchanged
+  // pair of getComputedStyle reads (syncBackground's own guards).
   const POSITION_DRIFT_CHECK_MS = 1000
   function handleWindowResize() {
     syncOverlayGeometry(el, overlay)
   }
   window.addEventListener('resize', handleWindowResize)
   const positionDriftInterval = setInterval(() => {
+    syncBackground()
     if (currentSpans.length > 0) syncOverlayGeometry(el, overlay)
   }, POSITION_DRIFT_CHECK_MS)
 
@@ -503,7 +591,14 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
       if (el.value.slice(from, to) !== expectedText) {
         return { ok: false, text: el.value }
       }
-      const prev = document.activeElement
+      // M11 (closing sweep): document.activeElement retargets a focused
+      // shadow-tree node (e.g. the C2 extension's affordance chip button,
+      // rendered inside an open shadow root) to its HOST element — an
+      // element that is itself typically not focusable. Reading straight
+      // through the host's own shadowRoot.activeElement first recovers the
+      // actual focused node, so the restore below lands back on the chip
+      // instead of silently no-op'ing and leaving focus on <body>.
+      const prev = document.activeElement?.shadowRoot?.activeElement ?? document.activeElement
       const { scrollTop, scrollLeft } = el
       // preventScroll suppresses the default behavior of scrolling the focused
       // element into view, which would jerk the scroll position on every apply
@@ -603,6 +698,12 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
       }
       if (writtenBackgroundImage !== null && el.style.backgroundImage === writtenBackgroundImage) {
         el.style.backgroundImage = savedBackgroundImage
+        // M5: restore the positioning longhands moved alongside the image,
+        // same per-property guard shape — only where the CURRENT inline
+        // value still equals the `initial` this adapter itself wrote.
+        for (const prop of BACKGROUND_IMAGE_LONGHANDS) {
+          if (el.style[prop] === 'initial') el.style[prop] = savedBackgroundLonghands[prop]
+        }
       }
     },
   }

@@ -110,11 +110,31 @@ export class Registry {
           tabId: w.lastFieldTabId,
           text: statusMsg.payload.findingCount > 0 ? String(statusMsg.payload.findingCount) : '',
         })
+        // M4 (closing sweep): a window that no longer has a live field (the
+        // field moved to another window's registry entirely, or simply
+        // disconnected) must not keep writing THIS badge on every future
+        // trailing status — that tabId's badge now belongs to whichever
+        // window (or nobody) currently owns it. One-shot clear: the first
+        // post-disconnect badge write above still satisfies rule 5 (the
+        // clear-after-disconnect a live embed's final status delivers), but
+        // any FURTHER stray status for this now-fieldless window stops
+        // touching that tabId's badge at all.
+        if (!w.field) w.lastFieldTabId = null
       }
       if (w && w.field) {
         effects.push({
           kind: 'send', to: 'field', windowId, tabId: w.field.tabId,
-          message: { ctl: { kind: 'status', phase: statusMsg.payload.phase, findingCount: statusMsg.payload.findingCount } },
+          message: {
+            ctl: {
+              kind: 'status',
+              phase: statusMsg.payload.phase,
+              findingCount: statusMsg.payload.findingCount,
+              // M3: scopes the ctl to the CURRENT field, so a same-tab
+              // reconnect racing a trailing status from the field it
+              // replaced can't paint the wrong field's chip.
+              fieldId: w.field.fieldId,
+            },
+          },
         })
       }
       return effects

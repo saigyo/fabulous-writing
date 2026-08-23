@@ -25,24 +25,34 @@ async function main(): Promise<void> {
   // "embed not responding" default for the first-ever hello loop.
   let capFallbackTimer: ReturnType<typeof setTimeout> | undefined
 
+  // I5 (closing sweep): a throw here (e.g. the port already disconnected —
+  // SW crash, extension update, or simply MV3 suspending an idle worker —
+  // see sw.ts's own header comment) must not propagate out of whichever
+  // caller reaches it: the onDisconnect handler below reloads the panel on
+  // its own; a call into this just must not blow up first. Every raw
+  // port.postMessage in this module goes through this one guarded wrapper —
+  // not just relay.ts's own toPort — so nothing here can carry the same bug
+  // this closing sweep found in onReadyChange's direct call.
+  function postToPort(msg: PortMessage): void {
+    try {
+      port.postMessage(msg)
+    } catch {
+      // ignored — onDisconnect below handles recovery
+    }
+  }
+
   const relay = createRelay(
     {
       toEmbed: (msg) => iframeEl.contentWindow?.postMessage(msg, serverOrigin),
-      toPort: (msg: PortMessage) => {
-        // A throw here (e.g. the port already disconnected — SW crash,
-        // extension update) must not propagate out of the window 'message'
-        // listener that calls into this: the onDisconnect handler below
-        // reloads the panel on its own; this call just must not blow up
-        // first.
-        try {
-          port.postMessage(msg)
-        } catch {
-          // ignored — onDisconnect below handles recovery
-        }
-      },
+      toPort: postToPort,
       onReadyChange: (ready) => {
+        // M8 (closing sweep): cleared on BOTH edges, not just true. Without
+        // this, a second true->false re-arm before the first cap timer
+        // elapses leaves the FIRST one still pending — it then fires
+        // mid-way through the second attempt and flips a live
+        // "connecting…" back to "embed not responding".
+        clearTimeout(capFallbackTimer)
         if (ready) {
-          clearTimeout(capFallbackTimer)
           statusEl.textContent = 'connected'
         } else {
           // relay.start()'s true->false edge (the iframe 'load' re-arm): the
@@ -59,7 +69,7 @@ async function main(): Promise<void> {
             statusEl.textContent = 'embed not responding'
           }, HELLO_RETRY_MS * MAX_HELLO_ATTEMPTS)
         }
-        port.postMessage({ ctl: { kind: 'embedReady', ready } } satisfies PortMessage)
+        postToPort({ ctl: { kind: 'embedReady', ready } } satisfies PortMessage)
       },
     },
     browser.runtime.getManifest().version,
@@ -89,9 +99,17 @@ async function main(): Promise<void> {
   // browser.windows.getCurrent() works in both the side panel and a plain
   // tab (the e2e path) with no extra permission needed.
   const { id: windowId } = await browser.windows.getCurrent()
-  if (windowId !== undefined) {
-    port.postMessage({ ctl: { kind: 'panelHello', windowId } } satisfies PortMessage)
+  if (windowId === undefined) {
+    // M9 (closing sweep): no windowId means sw.ts's registry
+    // (state.windowId === null) drops every message for this panel
+    // forever — panelHello is never sent, yet without this check the embed
+    // would still load and the hello loop would still land on "connected",
+    // showing the user a connected-looking panel that can never receive a
+    // field. Surface it and stop instead of loading anything.
+    statusEl.textContent = 'unable to identify this window'
+    return
   }
+  postToPort({ ctl: { kind: 'panelHello', windowId } } satisfies PortMessage)
 
   // Setting src after the listeners above are registered: the resulting
   // navigation's own 'load' event must not be missed.

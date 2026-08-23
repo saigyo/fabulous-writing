@@ -22,7 +22,16 @@ export type CtlMessage =
   // session (a same-tab reconnect mints a new fieldId — a detach for the old
   // one arriving late must not kill the new session).
   | { kind: 'detach'; fieldId: string }
-  | { kind: 'status'; phase: StatusMessage['payload']['phase']; findingCount: number } // sw -> scout (affordance chip)
+  // sw -> scout (affordance chip). M3 (closing sweep): fieldId is OPTIONAL
+  // and, when present, scoping — same reasoning as detach's own fieldId
+  // above: a same-tab reconnect to a different field must not let a
+  // trailing status ctl for the OLD field paint the NEW field's chip.
+  // Optional rather than mandatory because the registry-driven status
+  // (registry.ts's embedRelay) always knows the current field's fieldId,
+  // but sw.ts's own openPanel-failure error status is sent before any
+  // session/fieldId exists to name — that one is left unscoped, exactly as
+  // it was before this ctl carried a fieldId at all.
+  | { kind: 'status'; phase: StatusMessage['payload']['phase']; findingCount: number; fieldId?: string }
 
 export const HOST_KIND = 'browser-extension'
 
@@ -61,6 +70,7 @@ function parseCtlMessage(data: unknown): CtlMessage | null {
     case 'status':
       if (typeof d.phase !== 'string' || !STATUS_PHASES.has(d.phase)) return null
       if (typeof d.findingCount !== 'number') return null
+      if (d.fieldId !== undefined && typeof d.fieldId !== 'string') return null
       break
   }
   return data as CtlMessage

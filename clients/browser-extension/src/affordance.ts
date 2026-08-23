@@ -126,8 +126,27 @@ export function createAffordance(onClick: (el: HTMLTextAreaElement) => void): Af
   let visible = false
   let pendingReposition: number | null = null
 
+  // I4 (closing sweep): factored out so both the public hide() and the
+  // detached-anchor path below (reposition()) share the exact same
+  // display:none + stop-tracking shape.
+  function hideInternal(): void {
+    host.style.display = 'none'
+    visible = false
+    stopTrackingPosition()
+  }
+
   function reposition(): void {
     if (!currentEl) return
+    // I4: nothing (no mouseout/focusout) fires for an element a Turbo/React
+    // re-render REMOVES from the DOM — currentEl is only ever replaced by
+    // the next showFor, so without this check the chip stays visible at the
+    // dead field's last coordinates, a scroll jumps it to (0,0) (a detached
+    // node's getBoundingClientRect is all zeros), and a click on it would
+    // start a full session on a detached textarea.
+    if (!currentEl.isConnected) {
+      hideInternal()
+      return
+    }
     const rect = currentEl.getBoundingClientRect()
     host.style.top = `${rect.top + window.scrollY}px`
     host.style.left = `${rect.right + window.scrollX}px`
@@ -164,7 +183,10 @@ export function createAffordance(onClick: (el: HTMLTextAreaElement) => void): Af
     // a connect and burn the user's credits without their input. A real
     // click/keyboard activation is always trusted; only that may proceed.
     if (!event.isTrusted) return
-    if (currentEl) onClick(currentEl)
+    // I4: a real, trusted click can still land on a chip whose anchor field
+    // has since been removed from the DOM (see reposition()'s own check
+    // above) — refuse to start a session on a detached textarea.
+    if (currentEl?.isConnected) onClick(currentEl)
   })
 
   return {
@@ -186,9 +208,7 @@ export function createAffordance(onClick: (el: HTMLTextAreaElement) => void): Af
       }
     },
     hide() {
-      host.style.display = 'none'
-      visible = false
-      stopTrackingPosition()
+      hideInternal()
     },
     setState(next) {
       state = next
@@ -201,6 +221,10 @@ export function createAffordance(onClick: (el: HTMLTextAreaElement) => void): Af
     dispose() {
       visible = false
       stopTrackingPosition()
+      // M10: currentEl otherwise survives dispose, keeping a strong
+      // reference to a textarea from a page that may never come back
+      // (pairs with I4).
+      currentEl = null
       host.remove()
     },
   }
