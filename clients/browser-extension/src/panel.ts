@@ -40,6 +40,22 @@ async function main(): Promise<void> {
     hintEl.hidden = !embedReady || everConnected
   }
 
+  // Copilot round 11, F5: while the registry is not-ready (a reload
+  // window — see registry.ts's own panelReady, which sets w.panelReady =
+  // false immediately but only SUPPRESSES the next fieldDisconnected relay,
+  // it doesn't fabricate one), a disconnect that happens in that window
+  // never reaches onFieldDisconnected below. Left alone, the Disconnect
+  // button would still read "connected" once the new embed readies, even
+  // though the field it named is long gone. setFieldConnected is the single
+  // place that drives the button — treating the field as not-connected —
+  // so the ready FALSE edge (below) can hide it up front; a surviving
+  // field's synthesized fieldConnected on the TRUE edge (registry.ts's
+  // panelReady(true)) reaches onFieldConnected and re-shows it, same as any
+  // other fieldConnected.
+  function setFieldConnected(connected: boolean): void {
+    disconnectBtn.hidden = !connected
+  }
+
   // I5 (closing sweep): a throw here (e.g. the port already disconnected —
   // SW crash, extension update, or simply MV3 suspending an idle worker —
   // see sw.ts's own header comment) must not propagate out of whichever
@@ -90,16 +106,20 @@ async function main(): Promise<void> {
           capFallbackTimer = setTimeout(() => {
             statusEl.textContent = 'embed not responding'
           }, HELLO_RETRY_MS * MAX_HELLO_ATTEMPTS)
+          // F5: the false edge (a load-triggered re-arm) — see
+          // setFieldConnected's own comment above for why the button must
+          // be hidden here too, not just in onFieldDisconnected.
+          setFieldConnected(false)
         }
         postToPort({ ctl: { kind: 'embedReady', ready } } satisfies PortMessage)
       },
       onFieldConnected: () => {
         everConnected = true
         updateHint()
-        disconnectBtn.hidden = false
+        setFieldConnected(true)
       },
       onFieldDisconnected: () => {
-        disconnectBtn.hidden = true
+        setFieldConnected(false)
       },
     },
     browser.runtime.getManifest().version,

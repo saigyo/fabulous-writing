@@ -199,6 +199,51 @@ describe('panel: connect hint + Disconnect button (live-test UX decision, B43 C2
 
     expect(port.postMessage).toHaveBeenCalledWith({ ctl: { kind: 'disconnect' } })
   })
+
+  // Copilot round 11, F5: while the registry is not-ready (the window
+  // between the iframe 'load' re-arm and the new embed's next 'ready'), a
+  // fieldDisconnected relay is suppressed by design (registry.ts's own
+  // panelReady(false)) — a real disconnect in that window used to leave the
+  // button showing "Disconnect" long after the field it named was gone.
+  it('a mid-reload-window disconnect leaves the button hidden once the new embed re-readies (round 11, F5)', async () => {
+    const { iframeEl, port } = await bootPanel()
+    emitReady(iframeEl)
+    const disconnectBtn = document.getElementById('disconnect') as HTMLButtonElement
+
+    port.onMessage.emit({ relay: fieldConnectedEnvelope })
+    expect(disconnectBtn.hidden).toBe(false)
+
+    // iframe 'load' re-arm: relay.start()'s true->false edge — the panel
+    // itself never receives a fieldDisconnected for the field that vanished
+    // during this window (registry.ts suppresses it while not-ready).
+    iframeEl.dispatchEvent(new Event('load'))
+    // The false edge alone must already hide the button — nothing else
+    // ever tells this panel the field is gone in this scenario.
+    expect(disconnectBtn.hidden).toBe(true)
+
+    // The new embed readies with NO synthesized fieldConnected (the field
+    // did not survive) — the button must stay hidden.
+    emitReady(iframeEl)
+    expect(disconnectBtn.hidden).toBe(true)
+  })
+
+  it('a reload with a surviving field re-shows the button via the synthesized fieldConnected on re-ready (round 11, F5)', async () => {
+    const { iframeEl, port } = await bootPanel()
+    emitReady(iframeEl)
+
+    port.onMessage.emit({ relay: fieldConnectedEnvelope })
+    const disconnectBtn = document.getElementById('disconnect') as HTMLButtonElement
+    expect(disconnectBtn.hidden).toBe(false)
+
+    iframeEl.dispatchEvent(new Event('load'))
+    expect(disconnectBtn.hidden).toBe(true)
+
+    // registry.ts's panelReady(true) re-synthesizes fieldConnected for a
+    // field that survived the reload — same relay shape as a fresh connect.
+    emitReady(iframeEl)
+    port.onMessage.emit({ relay: fieldConnectedEnvelope })
+    expect(disconnectBtn.hidden).toBe(false)
+  })
 })
 
 // B43 C2 (owner UX round 2): the status line stops showing a resting
