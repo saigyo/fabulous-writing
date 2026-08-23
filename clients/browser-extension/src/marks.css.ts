@@ -17,25 +17,40 @@
 // plausibly collide) would get restyled by this global stylesheet. Scoping
 // under the overlay's own attribute confines every rule to elements actually
 // inside a mirror overlay this extension created.
+//
+// Copilot round 3, S3: the severity fills below are translucent (rgba, alpha
+// ~0.35) rather than opaque pastel hex — same hues as before, just letting
+// the host page's own background show through. GitHub's dark mode (this
+// extension's acceptance benchmark) is the concrete failure an opaque fill
+// caused: the field's light foreground text sat directly on top of a bright,
+// opaque pastel highlight with no contrast to the dark page around it. A
+// translucent fill instead tints whatever's underneath — dark on a dark
+// host, light on a light one — so the host's own text/background contrast is
+// preserved either way. The flash outline is adjusted the same way for
+// consistency, though it's decorative-only (it doesn't cover any text, so it
+// carries no contrast risk of its own). Deliberately NOT applied to
+// frontend/src/simulator/simulator.css — the simulator keeps its own opaque
+// palette; it only ever renders on its own known-light page, so it has no
+// dark-host case to guard against.
 export const MARKS_CSS = `
 [data-fw-overlay] .fw-mark {
   border-radius: 2px;
 }
 
 [data-fw-overlay] .fw-mark-error {
-  background: #f8b4b4;
+  background: rgba(248, 180, 180, 0.35);
 }
 
 [data-fw-overlay] .fw-mark-warning {
-  background: #fde68a;
+  background: rgba(253, 230, 138, 0.35);
 }
 
 [data-fw-overlay] .fw-mark-suggestion {
-  background: #bfdbfe;
+  background: rgba(191, 219, 254, 0.35);
 }
 
 [data-fw-overlay] .fw-mark-flash {
-  outline: 2px solid #6e56cf;
+  outline: 2px solid rgba(110, 86, 207, 0.9);
   outline-offset: 1px;
 }
 `

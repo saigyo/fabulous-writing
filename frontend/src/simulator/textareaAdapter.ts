@@ -49,14 +49,19 @@
 //   and the overlay itself always gets an inline `z-index: 0` (idempotent
 //   with simulator.css's own `.fw-mirror-overlay` rule). The field is also
 //   made background-transparent, after the overlay is given a copy of the
-//   field's own (previously opaque, non-transparent) background color to
+//   field's own (previously opaque, non-transparent) background COLOR to
 //   paint instead — matching what simulator.css's `.sim-field-wrap
 //   textarea` rule already does for the simulator's own demo field via a
-//   stylesheet. Without this, a real host field with an opaque background
-//   (GitHub's composer, say) would hide every mark; a static-positioned,
-//   auto-z-index field would instead have the overlay paint OVER its real
-//   text. dispose() restores the three inline values it may have touched
-//   on the field (position/z-index/background-color) verbatim.
+//   stylesheet. Copilot round 3, S4: the same move applies to the field's
+//   background IMAGE (a gradient, a data-URI pattern, a themed composer
+//   background) — copied onto the overlay and cleared on the field to
+//   'none', for the same reason: an opaque color OR image sitting above the
+//   overlay would hide every mark just the same. Without either move, a
+//   real host field with an opaque background (GitHub's composer, say)
+//   would hide every mark; a static-positioned, auto-z-index field would
+//   instead have the overlay paint OVER its real text. dispose() restores
+//   the four inline values it may have touched on the field (position/
+//   z-index/background-color/background-image) verbatim.
 import type { FieldAdapter, MarkingSpan } from '../embed/protocol'
 import { SEVERITIES } from '../findings/severity'
 
@@ -237,6 +242,34 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
   // compares against this same literal.
   const writtenBackgroundColor = 'transparent'
   el.style.backgroundColor = writtenBackgroundColor
+
+  // Copilot round 3, S4: background-COLOR alone isn't the whole paint-order
+  // story — a field styled with a background-image or gradient (`linear-
+  // gradient(...)`, a data-URI pattern, GitHub's own themed composer
+  // backgrounds) still painted that image ABOVE the overlay, hiding marks
+  // under it exactly the way an opaque background-color used to. Same fix,
+  // same shape as background-color just above: copy the field's COMPUTED
+  // background-image onto the overlay (so it still paints, just now behind
+  // the real text instead of on top of the marks) and clear the field's own
+  // to 'none' so only the overlay's copy shows through. Unlike
+  // background-color, this is guarded like position/z-index above (a null
+  // `writtenBackgroundImage` means "never touched") rather than "always
+  // written": there is nothing to move and nothing to clear when the
+  // computed value is already 'none', so skip both the overlay copy and the
+  // field mutation entirely in that case, same as the position/z-index
+  // "field already has its own value" skip.
+  let writtenBackgroundImage: string | null = null
+  const savedBackgroundImage = el.style.backgroundImage
+  const computedBackgroundImage = getComputedStyle(el).backgroundImage
+  // happy-dom quirk parity with position/z-index above: an unset
+  // background-image computes to '' there instead of the real initial value
+  // 'none'.
+  const computedBackgroundImageIsNone = computedBackgroundImage === '' || computedBackgroundImage === 'none'
+  if (!computedBackgroundImageIsNone) {
+    overlay.style.backgroundImage = computedBackgroundImage
+    writtenBackgroundImage = 'none'
+    el.style.backgroundImage = writtenBackgroundImage
+  }
 
   syncOverlayGeometry(el, overlay)
 
@@ -567,6 +600,9 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
       }
       if (el.style.backgroundColor === writtenBackgroundColor) {
         el.style.backgroundColor = savedBackgroundColor
+      }
+      if (writtenBackgroundImage !== null && el.style.backgroundImage === writtenBackgroundImage) {
+        el.style.backgroundImage = savedBackgroundImage
       }
     },
   }

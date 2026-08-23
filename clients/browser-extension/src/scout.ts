@@ -194,13 +194,27 @@ function handleEnter(target: EventTarget | null): void {
 // schedule the same delayed hide, unless it's headed right back at the
 // field currently shown (relatedTarget/new focus target === shownEl),
 // which keeps the chip visible instead.
+//
+// Copilot round 3, S1: both branches below key off `target === shownEl`
+// (plus the chip-host case) rather than re-running isEligibleField(target).
+// Eligibility is a SHOW-path concern only — by the time something is
+// leaving, the only question is "is this the field whose chip is currently
+// shown", i.e. an identity check against shownEl. Re-checking eligibility on
+// the leave path had two bugs: a blur handler that disables/resizes the
+// field out of eligibility (some rich-text-adjacent widgets do this) made
+// isEligibleField(target) false, so the leave was dropped entirely and the
+// chip stuck visible forever; and leave events fired by some OTHER,
+// unrelated textarea (never eligible, or eligible but not the shown one)
+// could still reach isEligibleField and, worse, would be indistinguishable
+// from the shown field's own leave once eligibility no longer gated it —
+// identity against shownEl fixes both.
 function handleLeave(target: EventTarget | null, relatedTarget: EventTarget | null): void {
   if (isChipHost(target)) {
     if (relatedTarget === shownEl) return
     scheduleHide()
     return
   }
-  if (!isEligibleField(target)) return
+  if (target !== shownEl) return
   if (isChipHost(relatedTarget)) return
   scheduleHide()
 }
@@ -214,8 +228,27 @@ document.addEventListener('focusout', (e) => handleLeave(e.target, (e as FocusEv
 document.addEventListener('mouseover', (e) => handleEnter(e.target))
 document.addEventListener('mouseout', (e) => handleLeave(e.target, (e as MouseEvent).relatedTarget))
 
+// Copilot round 3, S6: pagehide can be followed by pageshow restoring the
+// page from the back/forward cache (bfcache) instead of a real reload — the
+// module's top-level state (session/sessionEl/shownEl/hideTimer) survives
+// that round-trip untouched, since nothing here re-runs. Without resetting
+// them, a subsequent focusin on an eligible field would set shownEl to it
+// and renderChip() would find the STALE session (already .stop()'d, but
+// still assigned) still pointing at sessionEl === shownEl whenever the same
+// field is refocused — rendering the chip as connected/busy for a session
+// that no longer exists. Nulling session/sessionEl/shownEl here (same shape
+// as every other local teardown path above) and cancelling any pending hide
+// timer makes the post-restore state identical to a fresh page load; the
+// affordance itself needs no special handling — dispose() only removes its
+// host from the DOM, and showFor() (via the next showAffordance call)
+// already re-appends it when not connected, so it recreates cleanly on the
+// next interaction.
 window.addEventListener('pagehide', () => {
   session?.stop()
+  session = null
+  sessionEl = null
+  shownEl = null
+  cancelHide()
   affordance.dispose()
 })
 

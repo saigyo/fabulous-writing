@@ -67,12 +67,13 @@ async function main(): Promise<void> {
 
   port.onMessage.addListener((data) => relay.fromPort(data))
 
-  // The SW can die out from under a live panel port (crash, or the rare
-  // case outside sw.ts's own Chrome>=116 keepalive guarantee — see that
-  // module's header comment). A dead port never fires onMessage again, so
-  // the reconnected field is never relayed; simplest correct recovery,
-  // matching onServerUrlChanged below, is to reload and let the panel
-  // reconnect and re-derive fresh state via a new panelHello.
+  // The SW can die out from under a live panel port — not just a crash: only
+  // port TRAFFIC resets MV3's ~30s idle timer, so a quiet worker suspending
+  // is a normal, expected occurrence, not an edge case (see sw.ts's own
+  // header comment). A dead port never fires onMessage again, so the
+  // reconnected field is never relayed; simplest correct recovery, matching
+  // onServerUrlChanged below, is to reload and let the panel reconnect and
+  // re-derive fresh state via a new panelHello.
   port.onDisconnect.addListener(() => location.reload())
 
   window.addEventListener('message', (event) => {

@@ -33,11 +33,16 @@ Three contexts, wired by a fourth Chromium-only piece:
   routing rules (same-tab replace, cross-tab replace sends the losing tab a
   `detach`, panel-not-ready buffers nothing and re-synthesizes `fieldConnected`
   on the next `embedReady`) unit-testable without mocking a single port. The
-  registry is in-memory; MV3's service worker stays alive as long as any port
-  is connected, so state survives idle-suspend/wake and is lost only on an
-  extension update or SW crash — the scout's reconnect-on-next-interaction is
-  the recovery path (`chrome.storage.session`-backed registry survival is
-  deferred, noted in a code comment in `registry.ts`/`sw.ts`).
+  registry is in-memory; an open runtime port does NOT keep an MV3 service
+  worker alive indefinitely — only port *traffic* resets its ~30s idle timer,
+  so a quiet worker can still suspend and lose the registry's in-memory state
+  even with a port still connected. Both sides recover when that happens: the
+  scout lazily reconnects on the next user interaction (its port's
+  `onDisconnect` tears the session down to an idle chip; the next click/focus
+  reopens a port and re-registers), and the panel reloads itself the moment
+  its own port disconnects, re-deriving fresh state via a new `panelHello`
+  (`chrome.storage.session`-backed registry survival is deferred, noted in a
+  code comment in `registry.ts`/`sw.ts`).
 - **Panel host page** — `panel.html` + `src/panel.ts`/`src/relay.ts`, opened
   via `chrome.sidePanel`. Contains the embed iframe; its only logic is the
   relay — `chrome.runtime` port traffic ↔ `window.postMessage` to the iframe,
