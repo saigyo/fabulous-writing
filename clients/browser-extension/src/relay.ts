@@ -88,6 +88,17 @@ export function createRelay(cb: RelayCallbacks, hostVersion: string) {
       }
       return
     }
+    // Copilot round 7, F1: the iframe's WindowProxy survives navigation, so a
+    // message the OLD embed document queued before unload can still arrive
+    // AFTER start() has re-armed (ready went back to false) but BEFORE the
+    // new embed's own 'ready'. It already passed the panel's origin/source
+    // pins (both still name the same iframe), so without this gate a stale
+    // findings message — or worse, a stale applyReplacement — would reach
+    // the CURRENT field mid-reload. While not ready, only 'ready' itself is
+    // ever legitimate; a fresh embed always re-readies before sending
+    // anything else, so anything else arriving now is stale by definition
+    // and must be dropped rather than forwarded.
+    if (!ready) return
     // `data` (not `msg`) so the forwarded envelope is the exact object that
     // arrived — parseEmbedMessage's return type drops `fw` but the runtime
     // object (same reference) still carries it.

@@ -52,9 +52,18 @@ export class Registry {
         kind: 'send', to: 'oldField', windowId, tabId: w.field.tabId,
         message: { ctl: { kind: 'detach', fieldId: w.field.fieldId } },
       })
-      // Every other teardown path (fieldDisconnected, fieldPortGone) clears
-      // the losing tab's badge; a cross-tab replace must too, or the old
-      // tab's action badge is left showing a stale finding count forever.
+    }
+    if (w.field) {
+      // Copilot round 7, F2: every OTHER teardown path (fieldDisconnected,
+      // fieldPortGone) clears the losing field's badge unconditionally; this
+      // one must too, same-tab replacement included. It used to fire only in
+      // the cross-tab branch above — but a same-tab reconnect while the
+      // panel is reloading/not-ready gets no later status message to
+      // overwrite the count either, so the OLD field's stale badge (e.g. "3")
+      // would sit on the tab's action icon forever even though that field is
+      // gone. The detach ctl above stays cross-tab-only: a same-tab replace
+      // needs no detach (the scout already knows locally, per registry rule
+      // 1's own doc), it just also needs its badge cleared.
       effects.push({ kind: 'badge', tabId: w.field.tabId, text: '' })
     }
     w.field = {

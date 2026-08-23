@@ -14,7 +14,6 @@ import browser from 'webextension-polyfill'
 import type { EmbedMessage, Envelope, HostMessage } from '../../../frontend/src/embed/protocol'
 import { createAffordance, type Affordance, type AffordanceState } from './affordance'
 import { isEligibleField } from './detect'
-import { MARKS_CSS } from './marks.css'
 import { parsePortMessage, type PortMessage } from './messages'
 import { startSession, type Session } from './session'
 
@@ -34,22 +33,6 @@ let sessionState: Exclude<AffordanceState, 'idle'> = 'busy'
 let sessionCount = 0
 let shownEl: HTMLTextAreaElement | null = null
 let hideTimer: ReturnType<typeof setTimeout> | undefined
-let marksStyleEl: HTMLStyleElement | null = null
-
-// M1 (closing sweep): a boolean flag alone isn't a DOM check — if anything
-// removes the injected <style> from document.head (a framework that
-// rewrites head wholesale, document.write, a head-managing SPA), the flag
-// stays true forever and every mark renders with no background from then
-// on. Re-check the element itself is still connected, not just whether one
-// was ever created.
-function ensureMarksStyle(): void {
-  if (marksStyleEl?.isConnected) return
-  const style = document.createElement('style')
-  style.setAttribute('data-fw-marks', '')
-  style.textContent = MARKS_CSS
-  document.head.appendChild(style)
-  marksStyleEl = style
-}
 
 // I3 (closing sweep): sw.ts has postSafely and panel.ts has the toPort
 // try/catch precisely because a dead port throws — browser.runtime.connect
@@ -128,7 +111,6 @@ function handleAffordanceClick(el: HTMLTextAreaElement): void {
   } catch {
     // dead port — nothing to recover here
   }
-  ensureMarksStyle()
   sessionState = 'busy'
   sessionCount = 0
   // M2 (closing sweep): a session that auto-detaches ITSELF (the field left

@@ -8,7 +8,7 @@
   "permissions": ["sidePanel", "storage"],
   "background": { "service_worker": "sw.js", "type": "module" },
   "content_scripts": [
-    { "matches": ["<all_urls>"], "js": ["scout.js"], "run_at": "document_idle" }
+    { "matches": ["<all_urls>"], "js": ["scout.js"], "css": ["marks.css"], "run_at": "document_idle" }
   ],
   "side_panel": { "default_path": "panel.html" },
   "options_page": "options.html",

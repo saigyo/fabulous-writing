@@ -151,15 +151,56 @@ describe('createRelay: fromEmbed', () => {
     ['applyReplacement', applyReplacementEnvelope],
     ['selectFinding', selectFindingEnvelope],
   ] as [string, object][])(
-    'forwards a parsed %s message to the port as {relay}',
+    'forwards a parsed %s message to the port as {relay} once ready',
+    (_name, msgEnvelope) => {
+      const cb = makeCallbacks()
+      const relay = createRelay(cb, '0.1.0')
+      relay.start()
+      relay.fromEmbed(readyEnvelope)
+      relay.fromEmbed(msgEnvelope)
+      expect(cb.toPort).toHaveBeenCalledWith({ relay: msgEnvelope })
+    },
+  )
+
+  // Copilot round 7, F1: the iframe's WindowProxy survives navigation, so a
+  // message queued by the OLD embed document (before it unloaded) can still
+  // land after start()'s re-arm but before the new embed's own 'ready' — it
+  // already passes the panel's origin/source pins, so it must be dropped on
+  // the not-ready gate alone, or a stale applyReplacement could reach the
+  // current field mid-reload.
+  it.each([
+    ['findings', findingsEnvelope],
+    ['applyReplacement', applyReplacementEnvelope],
+  ] as [string, object][])(
+    'drops a %s message arriving before the first ready (toPort never called)',
     (_name, msgEnvelope) => {
       const cb = makeCallbacks()
       const relay = createRelay(cb, '0.1.0')
       relay.start()
       relay.fromEmbed(msgEnvelope)
-      expect(cb.toPort).toHaveBeenCalledWith({ relay: msgEnvelope })
+      expect(cb.toPort).not.toHaveBeenCalled()
     },
   )
+
+  it('drops messages after a start() re-arm until the next ready arrives', () => {
+    const cb = makeCallbacks()
+    const relay = createRelay(cb, '0.1.0')
+    relay.start()
+    relay.fromEmbed(readyEnvelope)
+    relay.fromEmbed(findingsEnvelope)
+    expect(cb.toPort).toHaveBeenCalledTimes(1)
+
+    relay.start() // the iframe 'load' re-arm — ready goes back to false
+    // Stale traffic queued by the old embed document, arriving on the
+    // survived WindowProxy before the new embed's own 'ready'.
+    relay.fromEmbed(applyReplacementEnvelope)
+    expect(cb.toPort).toHaveBeenCalledTimes(1)
+
+    relay.fromEmbed(readyEnvelope)
+    relay.fromEmbed(applyReplacementEnvelope)
+    expect(cb.toPort).toHaveBeenCalledTimes(2)
+    expect(cb.toPort).toHaveBeenLastCalledWith({ relay: applyReplacementEnvelope })
+  })
 
   it('drops garbage silently', () => {
     const cb = makeCallbacks()
