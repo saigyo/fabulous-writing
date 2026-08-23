@@ -127,6 +127,33 @@ ESM chunking is fine).
 
 ## Install (unpacked)
 
+### From a release (recommended for testers)
+
+1. Download `fabulous-writing-chrome-extension-<version>.zip` from the newest
+   **Chrome extension v…** entry on the
+   [releases page](https://github.com/saigyo/fabulous-writing/releases)
+   (extension releases carry `chrome-ext-v*` tags; plain `v*` tags are server
+   releases).
+2. Unpack it — it yields a single
+   `fabulous-writing-chrome-extension-<version>/` folder.
+3. `chrome://extensions` → enable **Developer mode** (top-right toggle) →
+   **Load unpacked** → select that folder.
+
+Chrome may warn about developer-mode extensions after a restart — expected
+for unpacked installs (Web Store packaging is tracked separately in the B43
+spec). The pinned manifest key (see below) gives every install the same
+extension ID, so the hosted server's `embed.allowed_ancestors` entry works
+for all testers with zero server-side setup.
+
+Cutting an extension release: bump `version` in both
+`clients/browser-extension/package.json` and `public/manifest.json` (a unit
+test pins the pair together), merge, then tag `chrome-ext-vX.Y.Z` on main —
+`.github/workflows/chrome-extension-release.yml` refuses a tag that doesn't
+match the manifest version, runs the lint/test/build gates, and attaches the
+zip to the GH release.
+
+### From source
+
 ```sh
 cd clients/browser-extension && npm ci && npm run build  # extension -> clients/browser-extension/dist
 ```
