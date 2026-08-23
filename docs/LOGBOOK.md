@@ -4708,3 +4708,32 @@ suppressed comments triaged every round. Deferred, tracked: #140 UX polish
 notes in the closing reviews (session-scoped `chrome.storage.session`
 registry, `STATUS_PHASES` export upstreaming). C3 (contentEditable) is next
 on #134.
+
+## 2026-08-23 — Extension: server-switch hard disconnect (#142, PR #144)
+Commits: `29966b0`…`e8e1e78`
+
+First post-release bugfix, found by the owner exercising the v0.7.0 extension
+against production: changing the server URL in Options reloaded the panel but
+left the old server's markings in the textarea — and, worse, the service
+worker's kept field state meant that logging in to the NEW server re-sent the
+field's text there without any explicit connect. Classified bounded (the flows
+all existed), designed in chat, shipped in two commits. The fix is a
+two-layer teardown: the SW subscribes to the server-URL setting and a pure
+`registry.serverChanged()` detaches every connected field (fieldId-scoped ctl,
+badge clears, state wiped — synchronously in the storage listener, so it
+cannot lose the race against the panel's reload round-trip); and, after
+Copilot's one real round-1 finding, the scout subscribes too — a URL change
+aborts any pending re-acquire grace window (a rebind mid-window would have
+transmitted to the new server with no click and no registry entry left to
+detach) and locally detaches a live session as a port-independent fallback.
+Reconnecting after a server switch is always a deliberate chip click.
+
+Verification: 230 extension tests (SW subscription and reacquire-abort both
+mutation-verified); e2e grew a live mid-scenario URL flip
+(localhost→127.0.0.1 — distinct origins, both loopback-allowed under the
+https-for-remotes rule) asserting cleared markings, idle chip, reloaded
+panel; both scenarios green in consecutive runs. The grace-window race itself
+is pinned by unit tests — a reliable live staging was judged too contrived
+and said so rather than faked. Copilot round 2: approval recommended, zero
+code findings. Independent pre-PR review traced the privacy ordering against
+the real sources.
