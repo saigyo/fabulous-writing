@@ -170,6 +170,51 @@ describe('openDocument', () => {
     expect(consumeProfileApplySuppression()).toBe(false)
   })
 
+  it('doc language differing from persisted language keeps the doc profile', async () => {
+    // Simulates loadUserPrefs having restored a persisted language ('de')
+    // that differs from the document being opened.
+    useStore.setState({ language: 'de' })
+    vi.mocked(getDocument).mockResolvedValue(doc(3, { language: 'en', profile_id: 5 }))
+    await openDocument(3)
+    const s = useStore.getState()
+    expect(s.language).toBe('en') // the doc's own language wins
+    expect(s.profileId).toBe(5) // the doc's own profile, not clobbered
+    expect(s.lastProfileByLanguage.en).toBe(5)
+    // Suppression was armed by the language mismatch and is still there for
+    // the header's own profile-apply effect to consume.
+    expect(consumeProfileApplySuppression()).toBe(true)
+  })
+
+  it('doc language differing from persisted language, doc without profile', async () => {
+    useStore.setState({ language: 'de', lastProfileByLanguage: {} })
+    vi.mocked(getDocument).mockResolvedValue(doc(3, { language: 'en', profile_id: null }))
+    await openDocument(3)
+    expect(useStore.getState().language).toBe('en')
+    expect(useStore.getState().profileId).toBeNull()
+
+    const chosen: Profile = {
+      id: 7,
+      language: 'en',
+      name: 'Formal',
+      is_standard: true,
+      categories_off: [],
+      rule_exceptions: [],
+      packs_on: [],
+      domain_ids: [],
+      llm_provider: null,
+      llm_model: null,
+      llm_tier: null,
+      llm_instructions: '',
+      example_text: '',
+      is_global: true,
+    }
+    applyHeaderProfileSelection(useStore.getState().selectProfile, chosen, true)
+    // applyHeaderProfileSelection's early-return branch: suppressed and no
+    // profile on the document -> the fallback is never adopted.
+    expect(useStore.getState().profileId).toBeNull()
+    expect(useStore.getState().lastProfileByLanguage).toEqual({})
+  })
+
   it('replays another document\'s dirty buffered snapshot before hydrating the target', async () => {
     writeSnapshot({
       docId: 1, revision: 4, dirty: true, name: 'Doc 1',

@@ -6,7 +6,7 @@ import {
   loadUserPrefs,
   PREFS_DEFAULTS,
 } from './prefsPersistence'
-import { prefsKey, writePrefs } from './prefsStorage'
+import { prefsKey, readPrefs, writePrefs } from './prefsStorage'
 import { useStore } from './store'
 
 function user(id: number): MeResponse {
@@ -81,24 +81,39 @@ describe('loadUserPrefs', () => {
     expect(useStore.getState().uiLocale).toBe('fr')
     expect(useStore.getState().docSidebarCollapsed).toBe(false)
   })
+
+  it('applies a persisted language at login and defaults without one', () => {
+    writePrefs(7, { ...PREFS_DEFAULTS, language: 'fr' })
+    loadUserPrefs(7)
+    expect(useStore.getState().language).toBe('fr')
+    loadUserPrefs(8) // no blob -> default
+    expect(useStore.getState().language).toBe('en')
+  })
 })
 
 describe('write subscriber', () => {
-  it("writes pref changes to the signed-in user's namespace, envelope format, six fields only", () => {
+  it("writes pref changes to the signed-in user's namespace, envelope format, seven fields only", () => {
     useStore.getState().setAuth('tok', user(1))
     useStore.getState().setUiLocale('fr')
     const blob = JSON.parse(localStorage.getItem(prefsKey(1))!)
     expect(blob.version).toBe(2)
     expect(blob.state.uiLocale).toBe('fr')
-    // Exactly the six pref fields — never token, never user.
+    // Exactly the seven pref fields — never token, never user.
     expect(Object.keys(blob.state).sort()).toEqual([
       'currentDocId',
       'docFoldersCollapsed',
       'docSidebarCollapsed',
+      'language',
       'lastProfileByLanguage',
       'rulesCollapsed',
       'uiLocale',
     ])
+  })
+
+  it('writes language changes while logged in', () => {
+    useStore.getState().setAuth('tok', user(1))
+    useStore.getState().setLanguage('it')
+    expect(readPrefs(1)).toMatchObject({ language: 'it' })
   })
 
   it('does not write while logged out', () => {
@@ -115,7 +130,7 @@ describe('write subscriber', () => {
     localStorage.removeItem(prefsKey(1))
     useStore.getState().setDocWords(50)
     useStore.getState().setCheckPhase('fast')
-    useStore.getState().setLanguage('de')
+    useStore.getState().setDocChars(50)
     expect(localStorage.getItem(prefsKey(1))).toBeNull()
   })
 })
