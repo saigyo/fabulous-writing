@@ -10,7 +10,7 @@
 import { spawn } from 'node:child_process'
 import { randomBytes, createHash } from 'node:crypto'
 import { createServer } from 'node:http'
-import { createReadStream, existsSync, readFileSync } from 'node:fs'
+import { createReadStream, existsSync, readdirSync, readFileSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { createServer as createNetProbe } from 'node:net'
 import path from 'node:path'
@@ -92,19 +92,28 @@ async function preflight() {
   // built bundle for the baked-in fallback turns a several-minute "why does
   // login just time out" investigation into an immediate, actionable error.
   const assetsDir = path.join(FRONTEND_DIST, 'assets')
-  if (existsSync(assetsDir)) {
-    const { readdirSync, readFileSync: readFile } = await import('node:fs')
-    const offender = readdirSync(assetsDir)
-      .filter((f) => f.endsWith('.js'))
-      .find((f) => readFile(path.join(assetsDir, f), 'utf8').includes('://localhost:8000'))
-    if (offender) {
-      throw new Error(
-        `${assetsDir}/${offender} was built with the default VITE_API_URL ` +
-        `fallback (http://localhost:8000) baked in — the embed would call a ` +
-        `backend this e2e never starts. Rebuild with: ` +
-        `cd frontend && VITE_API_URL="" npm run build`,
-      )
-    }
+  if (!existsSync(assetsDir)) {
+    // embedPath already confirmed frontend/dist/embed.html exists, so a
+    // missing assets/ here means a broken or partial build, not a normal
+    // "not built yet" state — that already failed loudly above. Silently
+    // skipping the VITE_API_URL check in this case would let a broken
+    // build sail past preflight and fail confusingly later instead.
+    throw new Error(
+      `missing ${assetsDir} — frontend/dist looks incomplete (embed.html ` +
+      `is present but assets/ is not). Rebuild with: ` +
+      `cd frontend && VITE_API_URL="" npm run build`,
+    )
+  }
+  const offender = readdirSync(assetsDir)
+    .filter((f) => f.endsWith('.js'))
+    .find((f) => readFileSync(path.join(assetsDir, f), 'utf8').includes('://localhost:8000'))
+  if (offender) {
+    throw new Error(
+      `${assetsDir}/${offender} was built with the default VITE_API_URL ` +
+      `fallback (http://localhost:8000) baked in — the embed would call a ` +
+      `backend this e2e never starts. Rebuild with: ` +
+      `cd frontend && VITE_API_URL="" npm run build`,
+    )
   }
   await checkPortFree(BACKEND_PORT)
   await checkPortFree(FIXTURE_PORT)
