@@ -94,10 +94,12 @@ describe('createAffordance: keyboard reachability (F5, round 5)', () => {
     affordance.showFor(el)
 
     // Naive target was (56, 294) (field rect inset by CHIP_INSET_PX); the
-    // host actually landed at (40, 90) for those values, so the correction
-    // shifts by the field rect's own (top, right) minus that: (+10, +210).
-    expect(affordance.host.style.top).toBe('66px')
-    expect(affordance.host.style.left).toBe('504px')
+    // host actually landed at (40, 90) for those values. Copilot round 10,
+    // F1: the correction must converge to the INSET point (56, 294), not
+    // the field's raw corner (50, 300) — landing at (72, 498), not the
+    // pre-fix (66, 504) that cancelled the inset back out.
+    expect(affordance.host.style.top).toBe('72px')
+    expect(affordance.host.style.left).toBe('498px')
 
     affordance.dispose()
   })
@@ -205,6 +207,7 @@ describe('createAffordance: disconnect (×) segment', () => {
     const onDisconnect = vi.fn()
     const affordance = createAffordance(onClick, onDisconnect)
     affordance.showFor(el)
+    affordance.setState('connected')
 
     disconnectButton(affordance).dispatchEvent(trustedClick())
 
@@ -217,6 +220,7 @@ describe('createAffordance: disconnect (×) segment', () => {
     const onDisconnect = vi.fn()
     const affordance = createAffordance(() => {}, onDisconnect)
     affordance.showFor(el)
+    affordance.setState('connected')
 
     disconnectButton(affordance).dispatchEvent(new MouseEvent('click', { bubbles: true }))
 
@@ -228,6 +232,7 @@ describe('createAffordance: disconnect (×) segment', () => {
     const onDisconnect = vi.fn()
     const affordance = createAffordance(() => {}, onDisconnect)
     affordance.showFor(el)
+    affordance.setState('connected')
 
     el.remove()
     disconnectButton(affordance).dispatchEvent(trustedClick())
@@ -239,10 +244,11 @@ describe('createAffordance: disconnect (×) segment', () => {
   it('has its own aria-label, independent of state', () => {
     const affordance = createAffordance(() => {}, () => {})
     affordance.showFor(el)
+    affordance.setState('connected')
 
     expect(disconnectButton(affordance).getAttribute('aria-label')).toBe('Disconnect this field')
 
-    affordance.setState('connected')
+    affordance.setState('signed-out')
     expect(disconnectButton(affordance).getAttribute('aria-label')).toBe('Disconnect this field')
 
     affordance.dispose()
@@ -256,6 +262,65 @@ describe('createAffordance: disconnect (×) segment', () => {
     expect(pill.getAttribute('data-state')).toBe('idle')
     affordance.setState('connected')
     expect(pill.getAttribute('data-state')).toBe('connected')
+
+    affordance.dispose()
+  })
+
+  // Copilot round 10, F2: the × used to always be in the DOM (hidden only
+  // via width:0), so Tab landed on an invisible control while the pill was
+  // idle. It's structurally absent instead — see F4 below for the same fix
+  // eliminating the idle chip's visual sliver too.
+  it('is absent from the DOM (untabbable) while idle, and present once the pill leaves idle (F2, round 10)', () => {
+    const affordance = createAffordance(() => {}, () => {})
+    affordance.showFor(el)
+
+    expect(affordance.host.shadowRoot!.querySelector('.disconnect')).toBeNull()
+
+    affordance.setState('connected')
+    expect(affordance.host.shadowRoot!.querySelector('.disconnect')).not.toBeNull()
+
+    affordance.setState('idle')
+    expect(affordance.host.shadowRoot!.querySelector('.disconnect')).toBeNull()
+
+    affordance.dispose()
+  })
+
+  it('moves focus to the main button when a disconnect returns the pill to idle while focus was inside the × (F2, round 10)', () => {
+    const affordance = createAffordance(() => {}, () => {})
+    affordance.showFor(el)
+    affordance.setState('connected')
+
+    const disconnect = disconnectButton(affordance)
+    disconnect.focus()
+    expect(affordance.host.shadowRoot!.activeElement).toBe(disconnect)
+
+    // scout.ts's disconnect handler calls setState('idle') once the
+    // session actually tears down.
+    affordance.setState('idle')
+
+    expect(affordance.host.shadowRoot!.querySelector('.disconnect')).toBeNull()
+    expect(affordance.host.shadowRoot!.activeElement).toBe(
+      affordance.host.shadowRoot!.querySelector('button.main'),
+    )
+
+    affordance.dispose()
+  })
+})
+
+// Copilot round 10, F4: the idle ✳ chip showed a half-cut × sliver on its
+// right edge — the split segment leaked visible width even while idle. The
+// structural fix above (the × isn't in the DOM at all outside non-idle
+// states) gives the idle pill zero footprint for it categorically, rather
+// than relying on a CSS width:0/overflow trick to hide it perfectly.
+describe('createAffordance: idle chip has no visual footprint from the × segment (F4, round 10)', () => {
+  it('the × element is absent while idle, so it contributes zero width to the idle pill', () => {
+    const affordance = createAffordance(() => {}, () => {})
+    affordance.showFor(el)
+    const pill = affordance.host.shadowRoot!.querySelector('.pill')!
+
+    expect(pill.querySelector('.disconnect')).toBeNull()
+    expect(pill.children.length).toBe(1)
+    expect(pill.children[0]!.className).toBe('main')
 
     affordance.dispose()
   })
@@ -370,11 +435,12 @@ describe('createAffordance: transform-scale-aware reposition (F1, round 6)', () 
     affordance.showFor(el)
 
     // Naive target (56, 294) (field rect inset by CHIP_INSET_PX); measured
-    // host rect (20, -120); raw delta against the field rect's own (top,
-    // right) (30, 420); recovered scale (200/100=2, 120/60=2); corrected
-    // delta (15, 210) — landing at (71, 504).
-    expect(affordance.host.style.top).toBe('71px')
-    expect(affordance.host.style.left).toBe('504px')
+    // host rect (20, -120). Copilot round 10, F1: the correction target is
+    // the INSET point (56, 294), not the field's raw corner (50, 300) — raw
+    // delta (36, 414); recovered scale (200/100=2, 120/60=2); corrected
+    // delta (18, 207) — landing at (74, 501).
+    expect(affordance.host.style.top).toBe('74px')
+    expect(affordance.host.style.left).toBe('501px')
 
     affordance.dispose()
   })
@@ -389,8 +455,8 @@ describe('createAffordance: transform-scale-aware reposition (F1, round 6)', () 
     )
     affordance.showFor(el)
 
-    expect(affordance.host.style.top).toBe('66px')
-    expect(affordance.host.style.left).toBe('504px')
+    expect(affordance.host.style.top).toBe('72px')
+    expect(affordance.host.style.left).toBe('498px')
 
     affordance.dispose()
   })

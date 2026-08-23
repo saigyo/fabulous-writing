@@ -289,8 +289,20 @@ export function createAffordance(
       const rawScaleY = hostRect.height / host.offsetHeight
       const scaleX = Number.isFinite(rawScaleX) && rawScaleX !== 0 ? rawScaleX : 1
       const scaleY = Number.isFinite(rawScaleY) && rawScaleY !== 0 ? rawScaleY : 1
-      host.style.top = `${(parseFloat(host.style.top) || 0) + (rect.top - hostRect.top) / scaleY}px`
-      host.style.left = `${(parseFloat(host.style.left) || 0) + (rect.right - hostRect.left) / scaleX}px`
+      // Copilot round 10, F1: the correction target here used to be
+      // rect.top/rect.right — the field's own RAW corner. Since hostRect is
+      // measured in the same viewport space as rect, converging the delta
+      // against the raw corner pulls the chip's top-left measurement point
+      // back to the exact edge, undoing CHIP_INSET_PX every time real
+      // layout is measurable (i.e. everywhere outside a zero-rect test
+      // stub). The target must be the INSET point instead — the same one
+      // top/left were set from above (rect.top + CHIP_INSET_PX, rect.right
+      // - CHIP_INSET_PX) — so the correction converges to where the chip
+      // was actually meant to land.
+      host.style.top =
+        `${(parseFloat(host.style.top) || 0) + (rect.top + CHIP_INSET_PX - hostRect.top) / scaleY}px`
+      host.style.left =
+        `${(parseFloat(host.style.left) || 0) + (rect.right - CHIP_INSET_PX - hostRect.left) / scaleX}px`
     }
   }
 
@@ -339,11 +351,32 @@ export function createAffordance(
     button.dataset.state = state
     button.textContent = glyphFor(state, count)
     button.setAttribute('aria-label', ariaLabelFor(state, count))
+    // Copilot round 10, F2 + F4: the × segment used to always be in the
+    // DOM, hidden only via `width: 0` — that (a) left it in the keyboard
+    // tab order even while idle (a Tab landed on an invisible control with
+    // nothing to disconnect), and (b) leaked a half-cut × sliver on the
+    // idle pill's right edge (a zero-width flex item's content isn't
+    // guaranteed zero visual footprint). Structural fix for both: the ×
+    // simply isn't in the DOM at all outside the states that gate its
+    // hover/focus reveal (the same `:not([data-state='idle'])` the CSS
+    // above already keys off) — an absent element is untabbable and paints
+    // nothing, no CSS trick required. Appended AFTER button so DOM order
+    // still matches the "grows leftward" comment above.
+    if (state === 'idle') {
+      // F2: a disconnect that lands the pill back on idle can still have
+      // focus sitting inside the × (the user just clicked/activated it) —
+      // removing a focused node from the DOM silently drops focus to
+      // <body> instead of landing back on the chip's own main button.
+      // Move it first.
+      if (root.activeElement === disconnectButton) button.focus()
+      disconnectButton.remove()
+    } else if (!disconnectButton.isConnected) {
+      pill.appendChild(disconnectButton)
+    }
   }
-  render()
   pill.appendChild(button)
-  pill.appendChild(disconnectButton)
   root.appendChild(pill)
+  render()
 
   button.addEventListener('click', (event) => {
     // A hostile page can focus a field and call .click() on this button
