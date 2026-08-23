@@ -18,9 +18,18 @@
 //    fresh state via a new panelHello. A `chrome.storage.session`-backed
 //    registry is a later hardening, not a correctness requirement for v1.
 // 2. The registry keys field/panel state on the windowId captured at
-//    port-connect time. Dragging a connected tab into another browser window
-//    keeps it routed to the OLD window's panel until that field reconnects
-//    (e.g. on next keystroke) and re-registers under the new window.
+//    port-connect time, so routing (which panel a field's traffic reaches)
+//    still follows a dragged tab's OLD window until the field's port
+//    reconnects (e.g. on next keystroke) and re-registers under the new
+//    window's id. Copilot round 3, L1: this used to also leave a GHOST field
+//    behind in the old window's registry state — the idle-port replacement
+//    branch below cleared the registry using the NEW port's windowId, so a
+//    tab dragged into another window before its field reconnected had its
+//    stale entry stored under the OLD window, which the replacement branch's
+//    lookup never reached. fieldPorts now carries each port's own
+//    connect-time windowId alongside it, and the replacement branch clears
+//    the OLD window's entry by that stored windowId — so the ghost no longer
+//    survives; only the routing-follows-the-old-window caveat remains.
 import browser from 'webextension-polyfill'
 import type { EmbedMessage, Envelope, HostMessage } from '../../../frontend/src/embed/protocol'
 import { parsePortMessage, type PortMessage } from './messages'
@@ -31,7 +40,11 @@ type Port = Parameters<Parameters<typeof browser.runtime.onConnect.addListener>[
 
 const registry = new Registry()
 
-const fieldPorts = new Map<number, Port>() // tabId -> port
+// tabId -> {port, windowId}. windowId is the port's OWN connect-time window,
+// tracked alongside it so a replacement port (Copilot round 3, L1) can evict
+// the stale field from the OLD port's window even after the tab has since
+// moved to a different one — see the module comment's accepted-limits item 2.
+const fieldPorts = new Map<number, { port: Port; windowId: number }>()
 const panelPorts = new Map<number, Port>() // windowId -> port
 
 // A disconnected/gone port throwing must not kill the handler — the effect
@@ -51,7 +64,7 @@ function execute(effects: Effect[]): void {
       continue
     }
     const port = effect.to === 'panel' ? panelPorts.get(effect.windowId)
-      : effect.tabId !== undefined ? fieldPorts.get(effect.tabId)
+      : effect.tabId !== undefined ? fieldPorts.get(effect.tabId)?.port
       : undefined
     if (port) postSafely(port, effect.message)
   }
@@ -64,7 +77,7 @@ function handleFieldMessage(tabId: number, windowId: number, port: Port, data: u
   // guard below) must not affect state under the new port's tabId. Without
   // this, a late fieldDisconnected from the old port would clear the field
   // the new port already re-registered.
-  if (fieldPorts.get(tabId) !== port) return
+  if (fieldPorts.get(tabId)?.port !== port) return
   const parsed = parsePortMessage(data)
   if (parsed === null) return
   if ('ctl' in parsed) {
@@ -81,7 +94,7 @@ function handleFieldMessage(tabId: number, windowId: number, port: Port, data: u
         // REPLACEMENT session failed for an error that belongs to this
         // (now-stale) one, so compare identity against the captured `port`
         // closure variable rather than re-reading the map by tabId alone.
-        if (fieldPorts.get(tabId) === port) {
+        if (fieldPorts.get(tabId)?.port === port) {
           postSafely(port, { ctl: { kind: 'status', phase: 'error', findingCount: 0 } })
         }
       })
@@ -149,7 +162,7 @@ browser.runtime.onConnect.addListener((port) => {
     const tabId = tab.id
     const windowId = tab.windowId
     const existing = fieldPorts.get(tabId)
-    if (existing && existing !== port) {
+    if (existing && existing.port !== port) {
       // An idle scout can open a new port for this tab (hover, before it has
       // sent any fieldConnected of its own — e.g. same-tab navigation) BEFORE
       // the old port's onDisconnect fires — no ordering guarantee between a
@@ -160,9 +173,16 @@ browser.runtime.onConnect.addListener((port) => {
       // must run HERE, before the new port is stored, or the registry keeps
       // the OLD field connected forever — the panel would show it as still
       // connected until the user manually reconnects.
-      execute(registry.fieldPortGone(windowId, tabId))
+      //
+      // Copilot round 3, L1: this must clear the registry under the OLD
+      // port's OWN windowId (existing.windowId), not the new port's — a tab
+      // dragged into another window between the old port opening and this
+      // replacement connecting has its stale field stored under the OLD
+      // window's WindowState, which the NEW port's windowId would never
+      // reach, leaving a ghost entry there forever.
+      execute(registry.fieldPortGone(existing.windowId, tabId))
     }
-    fieldPorts.set(tabId, port)
+    fieldPorts.set(tabId, { port, windowId })
     port.onMessage.addListener((data) => handleFieldMessage(tabId, windowId, port, data))
     port.onDisconnect.addListener(() => {
       // Guard against a stale disconnect: same-tab navigation can connect a
@@ -171,7 +191,7 @@ browser.runtime.onConnect.addListener((port) => {
       // the map no longer points at THIS port, it was already superseded —
       // the disconnect of a superseded port must be a complete no-op, never
       // evicting the live port or wiping a still-connected field.
-      if (fieldPorts.get(tabId) !== port) return
+      if (fieldPorts.get(tabId)?.port !== port) return
       fieldPorts.delete(tabId)
       execute(registry.fieldPortGone(windowId, tabId))
     })

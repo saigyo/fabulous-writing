@@ -783,6 +783,47 @@ describe('createTextareaAdapter: host-page paint order + visibility', () => {
     expect(el.style.backgroundColor).toBe('')
   })
 
+  // Copilot round 3, S4: background-COLOR alone wasn't enough — a field with
+  // a background-image/gradient still painted it ABOVE the overlay, hiding
+  // marks the same way an opaque color used to.
+  it('a field with an inline background-image (gradient) paints it on the OVERLAY, while the field itself gets background-image: none', () => {
+    el.style.backgroundImage = 'linear-gradient(red, blue)'
+
+    const adapter = createTextareaAdapter(el)
+
+    const overlay = el.previousElementSibling as HTMLDivElement
+    expect(overlay.style.backgroundImage).toBe('linear-gradient(red, blue)')
+    expect(el.style.backgroundImage).toBe('none')
+
+    adapter.dispose()
+  })
+
+  it('a field with no background-image (computed "none") is left untouched: the overlay gets no background-image of its own', () => {
+    const adapter = createTextareaAdapter(el)
+
+    expect(el.style.backgroundImage).toBe('')
+    // happy-dom's own CSSOM quirk: overlay.style.background = 'transparent'
+    // at creation resets the backgroundImage longhand to the literal string
+    // 'initial' rather than resolving it, same family as the position/
+    // z-index '' vs 'static'/'auto' quirks documented elsewhere in this
+    // module — the load-bearing assertion is that nothing was MOVED onto it.
+    const overlay = el.previousElementSibling as HTMLDivElement
+    expect(overlay.style.backgroundImage).not.toContain('gradient')
+
+    adapter.dispose()
+
+    expect(el.style.backgroundImage).toBe('')
+  })
+
+  it('dispose() restores a previously-set inline background-image verbatim', () => {
+    el.style.backgroundImage = 'linear-gradient(red, blue)'
+
+    const adapter = createTextareaAdapter(el)
+    adapter.dispose()
+
+    expect(el.style.backgroundImage).toBe('linear-gradient(red, blue)')
+  })
+
   // Controller ruling (narrowing the plan's original "z-index: 1
   // unconditionally" mandate): a field that already has its own explicit
   // z-index has already chosen where it sits relative to the rest of the
@@ -1066,6 +1107,23 @@ describe('createTextareaAdapter: dispose only restores properties the host has n
     // (here: unset) snapshot, exactly as before this fix.
     expect(el.style.position).toBe('')
     expect(el.style.zIndex).toBe('')
+  })
+
+  // Copilot round 3, S4: the same guarded-restore shape now also covers
+  // background-image.
+  it('a host mutation to backgroundImage mid-session wins over restore', () => {
+    el.style.backgroundImage = 'linear-gradient(red, blue)'
+    const adapter = createTextareaAdapter(el)
+    expect(el.style.backgroundImage).toBe('none')
+
+    // The host legitimately re-styles the field mid-session.
+    el.style.backgroundImage = 'linear-gradient(green, yellow)'
+
+    adapter.dispose()
+
+    // The host's own change is left exactly as the host left it, not
+    // clobbered back to the pre-session snapshot.
+    expect(el.style.backgroundImage).toBe('linear-gradient(green, yellow)')
   })
 })
 

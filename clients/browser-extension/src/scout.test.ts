@@ -6,9 +6,11 @@
 // for the next test (vi.resetModules() would instead leave STALE document
 // listeners from a torn-down module instance attached alongside the fresh
 // ones — worse, not better, isolation). Only the three behaviors the brief
-// pins are covered here; the hover/focus delegation delay and the pagehide
-// teardown are exercised structurally by the build + the manual gesture
-// check (Task 7 step 5), not unit-tested.
+// pins are covered here; the hover/focus delegation delay is exercised
+// structurally by the build + the manual gesture check (Task 7 step 5), not
+// unit-tested. The pagehide/bfcache teardown (Copilot round 3, S6) IS
+// unit-tested below, since a real 'pagehide' event dispatches and runs
+// scout's listener the same as any other delegated one under happy-dom.
 import { describe, expect, it, vi } from 'vitest'
 import { browserMock, type MockPort } from './testing/browserMock'
 import './scout'
@@ -187,6 +189,84 @@ describe('scout: hide-on-leave round trip (chip side)', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('scout: leave handling is identity-based (Copilot round 3, S1)', () => {
+  it('a leave from a field that became disabled/ineligible mid-blur still hides the chip', () => {
+    vi.useFakeTimers()
+    try {
+      const el = eligibleField()
+      show(el)
+      const host = affordanceHost()
+      expect(host.style.display).not.toBe('none')
+
+      // Simulate a blur handler that disables the field before the
+      // mouseout/focusout listener runs — isEligibleField(el) is now false,
+      // but the leave must still be based on el === shownEl, not eligibility.
+      el.disabled = true
+      el.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }))
+      vi.advanceTimersByTime(PAST_HIDE_DELAY_MS)
+      expect(host.style.display).toBe('none')
+
+      const port = lastConnectedPort()
+      port.onDisconnect.emit(port)
+      el.remove()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a leave event from a different, never-shown textarea does not hide the current chip', () => {
+    vi.useFakeTimers()
+    try {
+      const shown = eligibleField()
+      const other = eligibleField()
+      show(shown)
+      const host = affordanceHost()
+      expect(host.style.display).not.toBe('none')
+
+      other.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }))
+      vi.advanceTimersByTime(PAST_HIDE_DELAY_MS)
+      expect(host.style.display).not.toBe('none')
+
+      const port = lastConnectedPort()
+      port.onDisconnect.emit(port)
+      shown.remove()
+      other.remove()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('scout: pagehide/bfcache teardown (Copilot round 3, S6)', () => {
+  it('resets session/shown state on pagehide so a post-restore focusin shows a clean idle chip', () => {
+    const el = eligibleField()
+    show(el)
+    const port = lastConnectedPort()
+    clickChip()
+    port.onMessage.emit({ ctl: { kind: 'status', phase: 'checking', findingCount: 3 } })
+    expect(chipButton().dataset.state).toBe('connected')
+
+    // pagehide (e.g. navigating away, possibly into the bfcache).
+    window.dispatchEvent(new Event('pagehide'))
+    expect(affordanceHost()).toBeNull()
+
+    // pageshow from the bfcache restores the page without re-running any
+    // module top-level code — the next interaction is a plain focusin on the
+    // SAME field.
+    el.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+
+    const freshHost = affordanceHost()
+    expect(freshHost).not.toBeNull()
+    // The bug: without resetting session/sessionEl, this would read
+    // 'connected' (the stale, already-stopped session's own last state)
+    // instead of a clean idle chip for the field's post-restore reconnect.
+    expect(freshHost!.shadowRoot!.querySelector('button')!.dataset.state).toBe('idle')
+
+    port.onDisconnect.emit(port)
+    el.remove()
   })
 })
 

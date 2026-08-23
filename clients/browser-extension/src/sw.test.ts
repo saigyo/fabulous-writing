@@ -228,6 +228,46 @@ describe('sw.ts — port bookkeeping', () => {
     expect(panelPort.postMessage).toHaveBeenNthCalledWith(3, { relay: fieldConnected('f2') })
   })
 
+  // Copilot round 3, L1: a tab dragged into another browser window between
+  // its field port opening and a replacement port connecting used to leave a
+  // GHOST field behind — the idle-port replacement branch cleared the
+  // registry using the NEW port's windowId, but the stale field was stored
+  // under the OLD window. fieldPorts now tracks each port's own connect-time
+  // windowId, so the replacement clears the OLD window's entry correctly.
+  it('a window-moved tab\'s idle replacement port evicts the stale field from the OLD window, ' +
+    'not the new one', () => {
+    const W1 = 1313
+    const W2 = 1414
+    const T = 1515
+    const panel1 = connectPanel(W1)
+    const panel2 = connectPanel(W2)
+
+    const portA = connectField(T, W1)
+    portA.onMessage.emit({ relay: fieldConnected('f1') })
+    expect(panel1.postMessage).toHaveBeenCalledTimes(1)
+    expect(panel2.postMessage).toHaveBeenCalledTimes(0)
+
+    // The tab is dragged into window 2 before portA reconnects; a fresh idle
+    // port then connects under the SAME tabId, reporting the NEW windowId.
+    const portB = connectField(T, W2)
+
+    // Window 1's panel gets the fieldDisconnected + badge clear for the
+    // ghost; window 2's panel gets nothing (no field registered there yet).
+    expect(panel1.postMessage).toHaveBeenCalledTimes(2)
+    expect(panel1.postMessage).toHaveBeenNthCalledWith(2, { relay: fieldDisconnected('f1') })
+    expect(chromeMock.action.setBadgeText).toHaveBeenCalledWith({ tabId: T, text: '' })
+    expect(panel2.postMessage).toHaveBeenCalledTimes(0)
+
+    // Window 1's registry state has no field left under it at all.
+    portB.onMessage.emit({ relay: textChanged('f1', 'still stale?') })
+    expect(panel1.postMessage).toHaveBeenCalledTimes(2)
+
+    // portB can register its own field normally, routed to window 2's panel.
+    portB.onMessage.emit({ relay: fieldConnected('f2') })
+    expect(panel2.postMessage).toHaveBeenCalledTimes(1)
+    expect(panel2.postMessage).toHaveBeenNthCalledWith(1, { relay: fieldConnected('f2') })
+  })
+
   // Copilot round 2, S3: openPanel's sidePanel.open() rejection is async — by
   // the time it settles, a same-tab navigation may have superseded the
   // originating port with a new one for the same tabId. The failure ctl must

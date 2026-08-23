@@ -28,4 +28,16 @@ describe('MARKS_CSS', () => {
     expect(MARKS_CSS).toContain('[data-fw-overlay] .fw-mark-suggestion {')
     expect(MARKS_CSS).toContain('[data-fw-overlay] .fw-mark-flash {')
   })
+
+  // Copilot round 3, S3: severity fills must be translucent (rgba, not an
+  // opaque hex) so a dark host page's background (GitHub dark mode, the
+  // acceptance benchmark) keeps providing contrast against the field's own
+  // light foreground text underneath — an opaque pastel fill hides it.
+  it('uses translucent rgba fills for every severity, not opaque hex', () => {
+    expect(MARKS_CSS).not.toMatch(/#[0-9a-fA-F]{3,8}/)
+    expect(MARKS_CSS).toContain('background: rgba(248, 180, 180, 0.35);')
+    expect(MARKS_CSS).toContain('background: rgba(253, 230, 138, 0.35);')
+    expect(MARKS_CSS).toContain('background: rgba(191, 219, 254, 0.35);')
+    expect(MARKS_CSS).toContain('outline: 2px solid rgba(110, 86, 207, 0.9);')
+  })
 })
