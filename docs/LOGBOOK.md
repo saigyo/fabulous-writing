@@ -4644,3 +4644,67 @@ tracked: #135 client-tag ledger column, #136 main-app astral fix, #137
 shim/store divergence family (two unreachable-in-C1 races), IPv6 ancestors +
 embed language persistence on #134's C2 checklist. Branch rebased onto main
 mid-flight to absorb PR #131; both gates re-run post-rebase before push.
+
+## 2026-08-23 — B43 C2: Chromium extension MVP, live GitHub acceptance (PR #139)
+Commits: `892ea2f`…`a7bf19c` (38 on the branch, plus this entry)
+
+The C2 slice end to end: `clients/browser-extension/` as its own npm package —
+MV3 manifest with a pinned public key (stable ID `llflkhlppiamgpmmaheccjjhccjlhbpf`,
+cross-pinned to `deploy/fly/config.yaml` by a backend CI test that re-derives
+the ID from the committed key), scout content script built as a single IIFE
+(dynamic `import()` in content scripts answers to the page CSP — GitHub, the
+acceptance benchmark, would have broken the lazy-chunk design in the spec),
+field sessions lifting the C1 reference adapter by direct import, a pure
+effect-returning per-window registry in the service worker, a side-panel host
+relaying the untranslated bridge protocol into the embed iframe, and a
+self-contained Playwright e2e that boots its own backend (port 8100, local
+auth, tmp-dir DB with a containment assertion so the live DB is unreachable)
+and proves two full loops: panel-first and connect-first (the registry's
+synthesis path). Plan-level extras landed here too: IPv6 bracket literals in
+`embed.allowed_ancestors` (zone IDs rejected), the check language as the
+seventh persisted pref, and the one shared-source change — host-page
+integration inside `textareaAdapter.ts` (measured rect-delta overlay
+positioning with transform-scale correction, scroll/resize/interval re-sync,
+full background-layer transfer with host-ownership-guarded restore).
+
+Process: 12-task SDD execution (6 tasks needed exactly one fix round; two
+controller rulings against the plan text — captured-scroll re-sync where the
+plan claimed none was needed, narrowed z-index promotion), an Opus
+whole-branch review (5 findings incl. `host_permissions` dropped entirely
+after e2e proof it was unneeded), then a 12-round Copilot campaign
+interleaved with the owner's live testing. When rounds 1–3 wouldn't decay
+(8/7/7 real findings), one focused Opus sweep over the hot files drained 19
+more in a single pass — after which the rounds fell to 3/6/5/3/3/1/5/3/1 and
+the owner called round 12 final. Every finding all campaign was real; the
+recurring lesson got applied twice: when a mechanism breeds findings across
+rounds (the background re-sync, then reacquire's scoping), stop patching and
+rebuild it around an explicit rule set with an exhaustive scenario table.
+
+Live acceptance drove the biggest changes: the owner ran the real extension
+against a local backend and real GitHub issue composers — the full loop
+(connect, overlay marks aligned in the composer, 25 findings, apply) worked on
+the benchmark site, and the testing surfaced what no harness had: the panel
+iframe at UA-default 300×150 (panel.html had no CSS), `GET /embed` 404 in the
+everyday 5173/8000 dev split (docs now carry the single-origin checklist),
+GitHub's React re-renders replacing the textarea on blur (now survived by a
+fingerprint-scoped 2s re-acquire that refuses ambiguous matches), MV3's idle
+timer killing quiet sessions mid-LLM-check (now held open by 20s heartbeats on
+both ports while connected), a chip clipped under GitHub's toolbar (now inset
+inside the corner), and a click-toggle disconnect nobody expected (replaced by
+the owner-picked split-pill × plus a panel Disconnect button, plain clicks
+never destructive). The embed header became side-panel-worthy along the way:
+2×2 selector grid, collapsible selector block with persisted state, locale
+switch on the action row, no duplicate title, status line only when it says
+something. One deliberate protocol addition: optional
+`FieldAdapter.setSelected` so the selected finding keeps a persistent overlay
+marker (spec amended); `protocol.ts` is otherwise untouched.
+
+Verification at HEAD: backend 1617 passed zero warnings; frontend 967 tests +
+lint + build + embed-bundle guard; extension 224 tests + oxlint + dual-pass
+build; e2e both scenarios green in consecutive runs with clean teardown
+(SIGINT-safe). All 12 Copilot rounds' threads replied to and resolved;
+suppressed comments triaged every round. Deferred, tracked: #140 UX polish
+(owner's remaining cosmetics), #135/#136/#137 unchanged, plus small parked
+notes in the closing reviews (session-scoped `chrome.storage.session`
+registry, `STATUS_PHASES` export upstreaming). C3 (contentEditable) is next
+on #134.
