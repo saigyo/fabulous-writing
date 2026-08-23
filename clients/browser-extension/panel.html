@@ -28,6 +28,14 @@
         color: #666;
         flex: none;
       }
+      #hint {
+        margin: 0 12px 8px;
+        color: #666;
+        flex: none;
+      }
+      #disconnect {
+        color: #dc2626;
+      }
       #embed {
         flex: 1;
         width: 100%;
@@ -39,9 +47,14 @@
   <body>
     <header>
       <span>Fabulous Writing</span>
+      <button id="disconnect" type="button" hidden>Disconnect</button>
       <button id="options" type="button">Options</button>
     </header>
     <p id="status" role="status">embed not responding</p>
+    <!-- Live-test UX decision (B43 C2, PR #139): a one-line nudge shown
+         whenever the embed is ready but no field has connected through it
+         yet — hidden for good the first time one does (panel.ts). -->
+    <p id="hint" hidden>Click the ✳ chip on a text box to connect it.</p>
     <!-- No `sandbox` attribute: the spec's social-login note requires an
          unsandboxed iframe so a popup-based OAuth flow can complete. src is
          set by panel.ts once the configured server origin is known. -->

@@ -32,6 +32,12 @@ export type CtlMessage =
   // session/fieldId exists to name — that one is left unscoped, exactly as
   // it was before this ctl carried a fieldId at all.
   | { kind: 'status'; phase: StatusMessage['payload']['phase']; findingCount: number; fieldId?: string }
+  // panel -> sw -> scout (the panel's Disconnect button, live-test UX
+  // decision B43 C2 PR #139). Unscoped (no fieldId): the registry only ever
+  // routes this to the tab holding ITS OWN currently-connected field
+  // (registry.disconnectRequested), so there is no OTHER field it could
+  // wrongly land on the way detach/status's fieldId scoping guards against.
+  | { kind: 'disconnect' }
 
 export const HOST_KIND = 'browser-extension'
 
@@ -49,7 +55,7 @@ const STATUS_PHASE_MAP: Record<StatusMessage['payload']['phase'], true> = {
 }
 const STATUS_PHASES = new Set(Object.keys(STATUS_PHASE_MAP))
 
-const CTL_KINDS = new Set(['openPanel', 'panelHello', 'embedReady', 'detach', 'status'])
+const CTL_KINDS = new Set(['openPanel', 'panelHello', 'embedReady', 'detach', 'status', 'disconnect'])
 
 function parseCtlMessage(data: unknown): CtlMessage | null {
   if (typeof data !== 'object' || data === null) return null
@@ -57,6 +63,7 @@ function parseCtlMessage(data: unknown): CtlMessage | null {
   if (typeof d.kind !== 'string' || !CTL_KINDS.has(d.kind)) return null
   switch (d.kind) {
     case 'openPanel':
+    case 'disconnect':
       break
     case 'panelHello':
       if (typeof d.windowId !== 'number') return null

@@ -14,6 +14,16 @@ export interface RelayCallbacks {
   toEmbed(msg: object): void          // iframe.contentWindow.postMessage(msg, serverOrigin)
   toPort(msg: PortMessage): void      // port.postMessage
   onReadyChange(ready: boolean): void // -> ctl embedReady
+  // Live-test UX decision (B43 C2, PR #139): pure side-channel observation
+  // of fromPort's own pass-through traffic — panel.ts's connect hint and
+  // Disconnect button both need to know when a field connects/disconnects,
+  // but fromPort's job is strictly to forward host->embed envelopes
+  // untranslated (the relay's pass-through contract), so these fire
+  // ALONGSIDE that forwarding rather than replacing or gating it. Optional:
+  // only panel.ts's own real usage needs them (relay.test.ts's
+  // makeCallbacks() omits them for every other test).
+  onFieldConnected?(): void
+  onFieldDisconnected?(): void
 }
 
 export const HELLO_RETRY_MS = 250
@@ -113,7 +123,12 @@ export function createRelay(cb: RelayCallbacks, hostVersion: string) {
     // port never legitimately carries an embed-direction envelope, but
     // parsePortMessage accepts either shape generically (it's shared by both
     // port kinds), so this checks discriminately rather than trusting that.
-    if (parseHostMessage(parsed.relay) === null) return
+    const hostMsg = parseHostMessage(parsed.relay)
+    if (hostMsg === null) return
+    // Observation only (see RelayCallbacks' own comment) — fires alongside
+    // the unconditional forward below, never instead of it.
+    if (hostMsg.type === 'fieldConnected') cb.onFieldConnected?.()
+    else if (hostMsg.type === 'fieldDisconnected') cb.onFieldDisconnected?.()
     cb.toEmbed(parsed.relay)
   }
 

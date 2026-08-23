@@ -33,21 +33,21 @@ describe('createAffordance: showFor', () => {
   // the "keyboard reachability" describe block below for the adjacency
   // contract itself).
   it('attaches exactly one shadow host as the field\'s own next sibling, positioned at the top-right corner', () => {
-    const affordance = createAffordance(() => {})
+    const affordance = createAffordance(() => {}, () => {})
     affordance.showFor(el)
 
     expect(affordance.host.parentElement).toBe(el.parentElement)
     expect(affordance.host.previousElementSibling).toBe(el)
     expect(document.body.contains(affordance.host)).toBe(true)
     expect(affordance.host.shadowRoot).not.toBeNull()
-    expect(affordance.host.style.top).toBe('50px')
-    expect(affordance.host.style.left).toBe('300px')
+    expect(affordance.host.style.top).toBe('56px')
+    expect(affordance.host.style.left).toBe('294px')
 
     affordance.dispose()
   })
 
   it('showing for a second field repositions the SAME host rather than creating a new one', () => {
-    const affordance = createAffordance(() => {})
+    const affordance = createAffordance(() => {}, () => {})
     affordance.showFor(el)
     const firstHost = affordance.host
 
@@ -61,8 +61,8 @@ describe('createAffordance: showFor', () => {
     // Moved to be the SECOND field's next sibling now, not left behind
     // next to the first.
     expect(affordance.host.previousElementSibling).toBe(el2)
-    expect(affordance.host.style.top).toBe('10px')
-    expect(affordance.host.style.left).toBe('220px')
+    expect(affordance.host.style.top).toBe('16px')
+    expect(affordance.host.style.left).toBe('214px')
 
     affordance.dispose()
     el2.remove()
@@ -74,7 +74,7 @@ describe('createAffordance: showFor', () => {
 // chip before a keyboard user could ever reach it.
 describe('createAffordance: keyboard reachability (F5, round 5)', () => {
   it('the host is el.nextElementSibling after showFor, putting the chip next in Tab order', () => {
-    const affordance = createAffordance(() => {})
+    const affordance = createAffordance(() => {}, () => {})
     affordance.showFor(el)
 
     expect(el.nextElementSibling).toBe(affordance.host)
@@ -83,7 +83,7 @@ describe('createAffordance: keyboard reachability (F5, round 5)', () => {
   })
 
   it('corrects for a containing block that is not the field\'s own page origin (measured-delta, same technique as textareaAdapter.ts)', () => {
-    const affordance = createAffordance(() => {})
+    const affordance = createAffordance(() => {}, () => {})
     // Simulate a containing block that isn't the page origin: the same
     // top/left the naive calculation sets lands the host somewhere OTHER
     // than (50, 300) — as if some positioned ancestor between the host and
@@ -93,10 +93,11 @@ describe('createAffordance: keyboard reachability (F5, round 5)', () => {
     )
     affordance.showFor(el)
 
-    // Naive target was (50, 300); the host actually landed at (40, 90) for
-    // those values, so the correction shifts by (+10, +210).
-    expect(affordance.host.style.top).toBe('60px')
-    expect(affordance.host.style.left).toBe('510px')
+    // Naive target was (56, 294) (field rect inset by CHIP_INSET_PX); the
+    // host actually landed at (40, 90) for those values, so the correction
+    // shifts by the field rect's own (top, right) minus that: (+10, +210).
+    expect(affordance.host.style.top).toBe('66px')
+    expect(affordance.host.style.left).toBe('504px')
 
     affordance.dispose()
   })
@@ -106,7 +107,7 @@ describe('createAffordance: keyboard reachability (F5, round 5)', () => {
     document.body.appendChild(wrapper)
     wrapper.appendChild(el)
 
-    const affordance = createAffordance(() => {})
+    const affordance = createAffordance(() => {}, () => {})
     affordance.showFor(el)
     expect(affordance.host.isConnected).toBe(true)
 
@@ -137,13 +138,13 @@ describe('createAffordance: keyboard reachability (F5, round 5)', () => {
 describe('createAffordance: 1s position-drift safety interval (F6, round 5)', () => {
   it('repositions on a moved rect via the interval, with no scroll/resize event', () => {
     vi.useFakeTimers()
-    const affordance = createAffordance(() => {})
+    const affordance = createAffordance(() => {}, () => {})
     affordance.showFor(el)
-    expect(affordance.host.style.top).toBe('50px')
+    expect(affordance.host.style.top).toBe('56px')
 
     stubRect(el, 200, 5, 205, 230)
     vi.advanceTimersByTime(1000)
-    expect(affordance.host.style.top).toBe('200px')
+    expect(affordance.host.style.top).toBe('206px')
 
     affordance.dispose()
     vi.useRealTimers()
@@ -151,7 +152,7 @@ describe('createAffordance: 1s position-drift safety interval (F6, round 5)', ()
 
   it('is cleared when hidden: a later interval tick after hide() does not reposition', () => {
     vi.useFakeTimers()
-    const affordance = createAffordance(() => {})
+    const affordance = createAffordance(() => {}, () => {})
     affordance.showFor(el)
 
     affordance.hide()
@@ -168,7 +169,7 @@ describe('createAffordance: 1s position-drift safety interval (F6, round 5)', ()
 describe('createAffordance: click', () => {
   it('invokes the callback with the element passed to the most recent showFor', () => {
     const onClick = vi.fn()
-    const affordance = createAffordance(onClick)
+    const affordance = createAffordance(onClick, () => {})
     affordance.showFor(el)
 
     const button = affordance.host.shadowRoot!.querySelector('button')!
@@ -180,7 +181,7 @@ describe('createAffordance: click', () => {
 
   it('an untrusted click does not invoke the callback', () => {
     const onClick = vi.fn()
-    const affordance = createAffordance(onClick)
+    const affordance = createAffordance(onClick, () => {})
     affordance.showFor(el)
 
     const button = affordance.host.shadowRoot!.querySelector('button')!
@@ -191,9 +192,78 @@ describe('createAffordance: click', () => {
   })
 })
 
+// Live-test UX decision (B43 C2, PR #139): split pill — the × segment is a
+// SEPARATE button from the main one, with its own callback and the same
+// trusted/attached guards.
+describe('createAffordance: disconnect (×) segment', () => {
+  function disconnectButton(affordance: ReturnType<typeof createAffordance>): HTMLButtonElement {
+    return affordance.host.shadowRoot!.querySelector('.disconnect')!
+  }
+
+  it('invokes onDisconnect (not onClick) with the current element on a trusted click', () => {
+    const onClick = vi.fn()
+    const onDisconnect = vi.fn()
+    const affordance = createAffordance(onClick, onDisconnect)
+    affordance.showFor(el)
+
+    disconnectButton(affordance).dispatchEvent(trustedClick())
+
+    expect(onDisconnect).toHaveBeenCalledExactlyOnceWith(el)
+    expect(onClick).not.toHaveBeenCalled()
+    affordance.dispose()
+  })
+
+  it('an untrusted click does not invoke onDisconnect', () => {
+    const onDisconnect = vi.fn()
+    const affordance = createAffordance(() => {}, onDisconnect)
+    affordance.showFor(el)
+
+    disconnectButton(affordance).dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+    expect(onDisconnect).not.toHaveBeenCalled()
+    affordance.dispose()
+  })
+
+  it('a trusted click with a detached currentEl does not invoke onDisconnect (I4-shaped guard)', () => {
+    const onDisconnect = vi.fn()
+    const affordance = createAffordance(() => {}, onDisconnect)
+    affordance.showFor(el)
+
+    el.remove()
+    disconnectButton(affordance).dispatchEvent(trustedClick())
+
+    expect(onDisconnect).not.toHaveBeenCalled()
+    affordance.dispose()
+  })
+
+  it('has its own aria-label, independent of state', () => {
+    const affordance = createAffordance(() => {}, () => {})
+    affordance.showFor(el)
+
+    expect(disconnectButton(affordance).getAttribute('aria-label')).toBe('Disconnect this field')
+
+    affordance.setState('connected')
+    expect(disconnectButton(affordance).getAttribute('aria-label')).toBe('Disconnect this field')
+
+    affordance.dispose()
+  })
+
+  it('the reveal is gated on state via the pill\'s own data-state (idle vs not)', () => {
+    const affordance = createAffordance(() => {}, () => {})
+    affordance.showFor(el)
+    const pill = affordance.host.shadowRoot!.querySelector('.pill')!
+
+    expect(pill.getAttribute('data-state')).toBe('idle')
+    affordance.setState('connected')
+    expect(pill.getAttribute('data-state')).toBe('connected')
+
+    affordance.dispose()
+  })
+})
+
 describe('createAffordance: setState/setCount', () => {
   it('reflects state in data-state and the glyph/count text', () => {
-    const affordance = createAffordance(() => {})
+    const affordance = createAffordance(() => {}, () => {})
     affordance.showFor(el)
     const button = affordance.host.shadowRoot!.querySelector('button')!
 
@@ -228,7 +298,7 @@ describe('createAffordance: setState/setCount', () => {
 // accessible name must track state/count alongside it.
 describe('createAffordance: aria-label tracks state/count', () => {
   it('updates as setState/setCount change', () => {
-    const affordance = createAffordance(() => {})
+    const affordance = createAffordance(() => {}, () => {})
     affordance.showFor(el)
     const button = affordance.host.shadowRoot!.querySelector('button')!
 
@@ -238,13 +308,13 @@ describe('createAffordance: aria-label tracks state/count', () => {
     expect(button.getAttribute('aria-label')).toBe('Connecting Fabulous Writing…')
 
     affordance.setState('connected')
-    expect(button.getAttribute('aria-label')).toBe('Fabulous Writing connected — click to disconnect')
+    expect(button.getAttribute('aria-label')).toBe('connected — open Fabulous Writing')
 
     affordance.setCount(3)
-    expect(button.getAttribute('aria-label')).toBe('3 findings — click to disconnect')
+    expect(button.getAttribute('aria-label')).toBe('3 findings — open Fabulous Writing')
 
     affordance.setCount(0)
-    expect(button.getAttribute('aria-label')).toBe('Fabulous Writing connected — click to disconnect')
+    expect(button.getAttribute('aria-label')).toBe('connected — open Fabulous Writing')
 
     affordance.setState('signed-out')
     expect(button.getAttribute('aria-label')).toBe('Fabulous Writing: signed out')
@@ -261,7 +331,7 @@ describe('createAffordance: aria-label tracks state/count', () => {
 // stylesheet.
 describe('createAffordance: focus-visible style', () => {
   it('the shadow stylesheet defines a visible :focus-visible outline for the button', () => {
-    const affordance = createAffordance(() => {})
+    const affordance = createAffordance(() => {}, () => {})
     affordance.showFor(el)
 
     const style = affordance.host.shadowRoot!.querySelector('style')!
@@ -284,7 +354,7 @@ describe('createAffordance: focus-visible style', () => {
 // above compounds into oscillation/divergence.
 describe('createAffordance: transform-scale-aware reposition (F1, round 6)', () => {
   it('divides the measured delta by the effective scale under a scaled host ancestor, landing exactly in one adjust', () => {
-    const affordance = createAffordance(() => {})
+    const affordance = createAffordance(() => {}, () => {})
     // Naive target is (50, 300) (see stubRect(el, 50, 100, 300, 130) in
     // beforeEach). Simulate the host's containing block being off by
     // (10, 210) in TRUE (unscaled) pixels, reported doubled (viewport
@@ -299,17 +369,18 @@ describe('createAffordance: transform-scale-aware reposition (F1, round 6)', () 
     )
     affordance.showFor(el)
 
-    // Naive target (50, 300); measured host rect (20, -120); raw delta
-    // (30, 420); recovered scale (200/100=2, 120/60=2); corrected delta
-    // (15, 210) — landing at (65, 510).
-    expect(affordance.host.style.top).toBe('65px')
-    expect(affordance.host.style.left).toBe('510px')
+    // Naive target (56, 294) (field rect inset by CHIP_INSET_PX); measured
+    // host rect (20, -120); raw delta against the field rect's own (top,
+    // right) (30, 420); recovered scale (200/100=2, 120/60=2); corrected
+    // delta (15, 210) — landing at (71, 504).
+    expect(affordance.host.style.top).toBe('71px')
+    expect(affordance.host.style.left).toBe('504px')
 
     affordance.dispose()
   })
 
   it('unscaled behavior is unchanged: a zero offsetWidth/offsetHeight (no real layout, e.g. under test) falls back to a scale of 1', () => {
-    const affordance = createAffordance(() => {})
+    const affordance = createAffordance(() => {}, () => {})
     // Same as the existing containing-block-correction test above (no scale
     // stub — happy-dom's default offsetWidth/offsetHeight is 0, so
     // rawScale is NaN and falls back to 1).
@@ -318,8 +389,8 @@ describe('createAffordance: transform-scale-aware reposition (F1, round 6)', () 
     )
     affordance.showFor(el)
 
-    expect(affordance.host.style.top).toBe('60px')
-    expect(affordance.host.style.left).toBe('510px')
+    expect(affordance.host.style.top).toBe('66px')
+    expect(affordance.host.style.left).toBe('504px')
 
     affordance.dispose()
   })
@@ -333,10 +404,10 @@ describe('createAffordance: repositions while shown on scroll/resize', () => {
       return rafCallbacks.length
     })
 
-    const affordance = createAffordance(() => {})
+    const affordance = createAffordance(() => {}, () => {})
     affordance.showFor(el)
-    expect(affordance.host.style.top).toBe('50px')
-    expect(affordance.host.style.left).toBe('300px')
+    expect(affordance.host.style.top).toBe('56px')
+    expect(affordance.host.style.left).toBe('294px')
 
     stubRect(el, 10, 5, 205, 40)
     document.dispatchEvent(new Event('scroll'))
@@ -348,8 +419,8 @@ describe('createAffordance: repositions while shown on scroll/resize', () => {
     expect(rafCallbacks).toHaveLength(1)
 
     rafCallbacks[0](0)
-    expect(affordance.host.style.top).toBe('10px')
-    expect(affordance.host.style.left).toBe('205px')
+    expect(affordance.host.style.top).toBe('16px')
+    expect(affordance.host.style.left).toBe('199px')
 
     affordance.dispose()
     rafSpy.mockRestore()
@@ -362,7 +433,7 @@ describe('createAffordance: repositions while shown on scroll/resize', () => {
       return rafCallbacks.length
     })
 
-    const affordance = createAffordance(() => {})
+    const affordance = createAffordance(() => {}, () => {})
     affordance.showFor(el)
 
     stubRect(el, 77, 3, 199, 120)
@@ -370,8 +441,8 @@ describe('createAffordance: repositions while shown on scroll/resize', () => {
     expect(rafCallbacks).toHaveLength(1)
     rafCallbacks[0](0)
 
-    expect(affordance.host.style.top).toBe('77px')
-    expect(affordance.host.style.left).toBe('199px')
+    expect(affordance.host.style.top).toBe('83px')
+    expect(affordance.host.style.left).toBe('193px')
 
     affordance.dispose()
     rafSpy.mockRestore()
@@ -383,7 +454,7 @@ describe('createAffordance: repositions while shown on scroll/resize', () => {
     const winAddSpy = vi.spyOn(window, 'addEventListener')
     const winRemoveSpy = vi.spyOn(window, 'removeEventListener')
 
-    const affordance = createAffordance(() => {})
+    const affordance = createAffordance(() => {}, () => {})
     affordance.showFor(el)
 
     const scrollAdd = docAddSpy.mock.calls.find(([type]) => type === 'scroll')
@@ -427,7 +498,7 @@ describe('createAffordance: detached anchor (I4, closing sweep)', () => {
       return rafCallbacks.length
     })
 
-    const affordance = createAffordance(() => {})
+    const affordance = createAffordance(() => {}, () => {})
     affordance.showFor(el)
     expect(affordance.host.style.display).not.toBe('none')
 
@@ -449,7 +520,7 @@ describe('createAffordance: detached anchor (I4, closing sweep)', () => {
 
   it('a trusted click with a detached currentEl does not invoke the callback', () => {
     const onClick = vi.fn()
-    const affordance = createAffordance(onClick)
+    const affordance = createAffordance(onClick, () => {})
     affordance.showFor(el)
 
     el.remove()
@@ -464,7 +535,7 @@ describe('createAffordance: detached anchor (I4, closing sweep)', () => {
 
 describe('createAffordance: hide/dispose', () => {
   it('hide() removes it from view without destroying the host', () => {
-    const affordance = createAffordance(() => {})
+    const affordance = createAffordance(() => {}, () => {})
     affordance.showFor(el)
 
     affordance.hide()
@@ -476,7 +547,7 @@ describe('createAffordance: hide/dispose', () => {
   })
 
   it('dispose() removes the host from the DOM', () => {
-    const affordance = createAffordance(() => {})
+    const affordance = createAffordance(() => {}, () => {})
     affordance.showFor(el)
 
     affordance.dispose()

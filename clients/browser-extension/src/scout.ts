@@ -15,15 +15,26 @@ import type { EmbedMessage, Envelope, HostMessage } from '../../../frontend/src/
 import { createAffordance, type Affordance, type AffordanceState } from './affordance'
 import { isEligibleField } from './detect'
 import { parsePortMessage, type PortMessage } from './messages'
+import { computeFingerprint, findFingerprintMatch, type Fingerprint } from './reacquire'
 import { startSession, type Session } from './session'
 
 type Port = ReturnType<typeof browser.runtime.connect>
 
 const HIDE_DELAY_MS = 250
+// Live-test finding (B43 C2, PR #139): a host that replaces the field's DOM
+// node out from under a live session (a React-style re-render on blur —
+// GitHub's own composer included) used to hard-disconnect. This is the
+// grace window scout.ts probes for a same-fingerprint replacement before
+// giving up — see reacquire.ts's own module comment for the fingerprint
+// design, and beginReacquire below for the handoff.
+const REACQUIRE_GRACE_MS = 2000
+const REACQUIRE_POLL_MS = 200
 
 let port: Port | null = null
 let session: Session | null = null
 let sessionEl: HTMLTextAreaElement | null = null
+let reacquireTimer: ReturnType<typeof setTimeout> | undefined
+let reacquirePoll: ReturnType<typeof setInterval> | undefined
 // The live session's own display state/count, tracked separately from
 // what's actually rendered: renderChip() below only projects this onto the
 // chip when the field currently shown IS the session's own field — hovering
@@ -73,7 +84,15 @@ function send(message: Envelope<HostMessage>): void {
 
 function renderChip(): void {
   if (!shownEl) return
-  if (session && sessionEl === shownEl) {
+  // A pending reacquire (reacquireTimer set, session itself null — see
+  // beginReacquire below) keeps rendering as the session's own last known
+  // state for THIS field's identity (sessionEl still names it, even though
+  // it's the now-detached element) — no idle flicker while scout is still
+  // quietly trying to reconnect it. affordance.ts's own reposition() self-
+  // hides the chip once the detached anchor is noticed on the next
+  // scroll/resize/drift tick regardless, so this only matters for the brief
+  // window before that happens.
+  if ((session || reacquireTimer !== undefined) && sessionEl === shownEl) {
     affordance.setState(sessionState)
     affordance.setCount(sessionCount)
   } else {
@@ -82,37 +101,122 @@ function renderChip(): void {
   }
 }
 
-function handleAffordanceClick(el: HTMLTextAreaElement): void {
-  if (session && sessionEl === el) {
-    // Connected-field chip click: user-initiated disconnect. The embed's
-    // own status stream is not tied to connectivity, so nothing else needs
-    // resetting here.
-    session.stop()
-    session = null
-    sessionEl = null
-    renderChip()
-    return
-  }
-  // Idle chip click. A previous session for a DIFFERENT field in this tab
-  // must be torn down locally first — same-tab replace, the SW sends no
-  // detach for this case (registry rule 1: only the LOSING tab of a
-  // cross-tab replace gets a detach message).
-  if (session) {
-    session.detach()
-    session = null
-    sessionEl = null
-  }
-  // I3: same non-throwing shape as send() above — a dead port here must not
-  // block the rest of this handler (startSession below still needs to run
-  // so the chip and adapter reflect the click, even if the sw can't be
-  // reached to open the panel).
+// I3: same non-throwing shape as send() below — a dead port here must not
+// block the caller (startSession still needs to run so the chip and adapter
+// reflect the click, even if the sw can't be reached to open the panel).
+function postOpenPanel(): void {
   try {
     ensurePort()?.postMessage({ ctl: { kind: 'openPanel' } } satisfies PortMessage)
   } catch {
     // dead port — nothing to recover here
   }
+}
+
+function stopReacquire(): void {
+  if (reacquireTimer !== undefined) {
+    clearTimeout(reacquireTimer)
+    reacquireTimer = undefined
+  }
+  if (reacquirePoll !== undefined) {
+    clearInterval(reacquirePoll)
+    reacquirePoll = undefined
+  }
+}
+
+// Starts a fresh session bound to a fingerprint match found during the
+// grace window below — a genuinely NEW session (new fieldId), not a resume
+// of the old one: session.ts's self-detach already sent fieldDisconnected
+// for the old fieldId (untouched, by design — see this file's own
+// REACQUIRE_GRACE_MS comment), so a fresh fieldConnected is the only
+// protocol-clean way back; the embed re-extracts text and re-checks.
+//
+// oldEl is the element that just vanished — if the chip was actually SHOWN
+// for it (the common case: the user's pointer/focus is still roughly where
+// the field used to be, now occupied by its replacement), the shown chip
+// re-anchors onto the new element too via affordance.showFor, so the
+// hand-off is seamless rather than requiring a fresh hover to notice the
+// reconnect. If something else is shown instead (the user moved on), this
+// leaves it alone — reconnecting the field must never yank the chip to a
+// field the user isn't looking at.
+function reconnect(el: HTMLTextAreaElement, oldEl: HTMLTextAreaElement): void {
+  const fingerprint = computeFingerprint(el)
+  const wasShown = shownEl === oldEl
+  session = startSession(el, send, () => {
+    if (sessionEl !== el) return
+    session = null
+    beginReacquire(fingerprint, el)
+  })
+  sessionEl = el
+  if (wasShown) {
+    shownEl = el
+    affordance.showFor(el)
+  }
+  renderChip()
+}
+
+// Entered only from the self-detach path (startSession's onDetached below —
+// never from a user-initiated disconnect, which calls stopCurrentSession
+// instead and never reaches here). Probes for a same-fingerprint
+// replacement for REACQUIRE_GRACE_MS; sessionEl is deliberately LEFT
+// pointing at the now-detached element throughout (renderChip's identity
+// anchor — see its own comment), only session itself goes null.
+function beginReacquire(fingerprint: Fingerprint, oldEl: HTMLTextAreaElement): void {
+  stopReacquire()
+  reacquirePoll = setInterval(() => {
+    const match = findFingerprintMatch(fingerprint)
+    if (!match) return
+    stopReacquire()
+    reconnect(match, oldEl)
+  }, REACQUIRE_POLL_MS)
+  reacquireTimer = setTimeout(() => {
+    stopReacquire()
+    session = null
+    sessionEl = null
+    renderChip()
+  }, REACQUIRE_GRACE_MS)
+  renderChip()
+}
+
+// Shared teardown for every disconnect trigger (the chip's own × segment,
+// the panel's Disconnect button) — also the one place that cancels an
+// in-flight reacquire on USER intent (the grace window above is only ever
+// entered from the self-detach path, never from here).
+function stopCurrentSession(): void {
+  if (session) {
+    session.stop()
+    session = null
+  }
+  stopReacquire()
+  sessionEl = null
+  renderChip()
+}
+
+// Live-test UX decision (B43 C2, PR #139): a plain click used to disconnect
+// an already-connected field — one accidental click away, no confirmation.
+// The chip is now a split pill (affordance.ts): this handler is the MAIN
+// segment only, and is NEVER destructive in any state.
+function handleChipClick(el: HTMLTextAreaElement): void {
+  if (session && sessionEl === el) {
+    // Already connected: re-send ctl openPanel to open/focus the panel
+    // again (e.g. the user closed it) rather than disconnecting — that's
+    // the ×'s job now (handleDisconnectClick below).
+    postOpenPanel()
+    return
+  }
+  // Idle chip click. A previous session for a DIFFERENT field in this tab
+  // (live OR mid-reacquire) must be torn down locally first — same-tab
+  // replace, the SW sends no detach for this case (registry rule 1: only
+  // the LOSING tab of a cross-tab replace gets a detach message).
+  if (session) {
+    session.detach()
+    session = null
+  }
+  stopReacquire()
+  sessionEl = null
+  postOpenPanel()
   sessionState = 'busy'
   sessionCount = 0
+  const fingerprint = computeFingerprint(el)
   // M2 (closing sweep): a session that auto-detaches ITSELF (the field left
   // the document — session.ts's own MutationObserver) has no other way to
   // tell scout, which would otherwise keep session/sessionEl pointing at a
@@ -120,18 +224,30 @@ function handleAffordanceClick(el: HTMLTextAreaElement): void {
   // "connected/N" for a session that no longer exists, and a click would
   // silently no-op (session.stop() early-returns on already-detached). The
   // identity check guards against a race where THIS field's own session has
-  // already been replaced by the time the callback fires.
+  // already been replaced by the time the callback fires. Live-test finding
+  // (B43 C2, PR #139): self-detach no longer hard-disconnects — it opens a
+  // grace window (beginReacquire) that probes for a same-fingerprint
+  // replacement before giving up.
   session = startSession(el, send, () => {
     if (sessionEl !== el) return
     session = null
-    sessionEl = null
-    renderChip()
+    beginReacquire(fingerprint, el)
   })
   sessionEl = el
   renderChip()
 }
 
-const affordance: Affordance = createAffordance(handleAffordanceClick)
+// The chip's × segment (affordance.ts's split pill) — the only chip-side
+// path that disconnects. Guarded on identity against sessionEl (not
+// session — a mid-reacquire click must be able to cancel the pending
+// attempt too, per stopCurrentSession's own comment). A stale callback (the
+// shown field's session already replaced underneath it) is still a no-op.
+function handleDisconnectClick(el: HTMLTextAreaElement): void {
+  if (sessionEl !== el) return
+  stopCurrentSession()
+}
+
+const affordance: Affordance = createAffordance(handleChipClick, handleDisconnectClick)
 
 function handlePortMessage(data: unknown): void {
   const parsed = parsePortMessage(data)
@@ -162,6 +278,15 @@ function handlePortMessage(data: unknown): void {
         : 'connected'
       sessionCount = parsed.ctl.findingCount
       renderChip()
+      return
+    }
+    if (parsed.ctl.kind === 'disconnect') {
+      // The panel's Disconnect button (live-test UX decision, B43 C2 PR
+      // #139) — sent UNSCOPED (no fieldId): the registry only ever routes
+      // this to the tab holding ITS OWN currently-connected field
+      // (registry.disconnectRequested), so by construction any session
+      // live here already IS that field's.
+      stopCurrentSession()
     }
     return
   }
@@ -181,9 +306,14 @@ function handlePortDisconnect(disconnected: Port): void {
   // teardown (session.stop()'s semantics don't apply, same as the ctl
   // detach path above). The affordance host is deliberately NOT disposed:
   // losing it until page reload would strand the tab with no way back in.
-  // The next interaction (showAffordance below) reconnects.
+  // The next interaction (showAffordance below) reconnects. A pending
+  // reacquire is abandoned too, for the same "identical to a fresh
+  // teardown" reasoning — send()'s own lazy ensurePort() would in fact
+  // still reconnect a match, but keeping partial reacquire state alive
+  // through an otherwise-total local reset is more surprising than useful.
   session?.detach()
   session = null
+  stopReacquire()
   sessionEl = null
   port = null
   renderChip()
@@ -312,6 +442,7 @@ window.addEventListener('pagehide', () => {
     // page is going away
   }
   session = null
+  stopReacquire()
   sessionEl = null
   shownEl = null
   cancelHide()

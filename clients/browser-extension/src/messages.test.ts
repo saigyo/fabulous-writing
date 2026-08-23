@@ -46,6 +46,10 @@ describe('parsePortMessage', () => {
     expect(parsePortMessage({ ctl: msg })).toEqual({ ctl: msg })
   })
 
+  it('accepts a disconnect ctl message (panel Disconnect button, B43 C2 PR #139)', () => {
+    expect(parsePortMessage({ ctl: { kind: 'disconnect' } })).toEqual({ ctl: { kind: 'disconnect' } })
+  })
+
   it.each([null, undefined, 'hello', 42, true])('returns null for non-object %s', (value) => {
     expect(parsePortMessage(value)).toBeNull()
   })

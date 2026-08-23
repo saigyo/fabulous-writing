@@ -46,13 +46,25 @@ function chipButton(): HTMLButtonElement {
   return affordanceHost().shadowRoot!.querySelector('button')!
 }
 
-function clickChip(): void {
-  // affordance.ts's click handler now requires event.isTrusted (I4) — a
+function trustedClick(): MouseEvent {
+  // affordance.ts's click handlers now require event.isTrusted (I4) — a
   // synthetic vitest/happy-dom event is untrusted by default, so it must be
   // stamped here, same as affordance.test.ts's own trustedClick() helper.
   const ev = new MouseEvent('click', { bubbles: true })
   Object.defineProperty(ev, 'isTrusted', { value: true })
-  chipButton().dispatchEvent(ev)
+  return ev
+}
+
+function clickChip(): void {
+  chipButton().dispatchEvent(trustedClick())
+}
+
+function disconnectButton(): HTMLButtonElement {
+  return affordanceHost().shadowRoot!.querySelector('.disconnect')!
+}
+
+function clickDisconnect(): void {
+  disconnectButton().dispatchEvent(trustedClick())
 }
 
 function lastConnectedPort(): MockPort {
@@ -65,6 +77,12 @@ function fieldIdFromConnect(port: MockPort): string {
     ([msg]) => (msg as { relay?: { type?: string } }).relay?.type === 'fieldConnected',
   )
   return (call![0] as { relay: { payload: { fieldId: string } } }).relay.payload.fieldId
+}
+
+function allFieldConnectedIds(port: MockPort): string[] {
+  return port.postMessage.mock.calls
+    .filter(([msg]) => (msg as { relay?: { type?: string } }).relay?.type === 'fieldConnected')
+    .map(([msg]) => (msg as { relay: { payload: { fieldId: string } } }).relay.payload.fieldId)
 }
 
 describe('scout: ctl detach fieldId filter', () => {
@@ -371,5 +389,173 @@ describe('scout: I3 closing sweep — a throwing runtime.connect must not escape
     expect(chipButton().dataset.state).toBe('idle')
 
     el.remove()
+  })
+})
+
+// Live-test UX decision (B43 C2, PR #139): the chip is a split pill — a
+// plain click on the main segment is never destructive; only the × (or the
+// panel's Disconnect button, via ctl) disconnects.
+describe('scout: split-pill click routing (live-test UX decision, B43 C2 PR #139)', () => {
+  it('clicking the main segment while connected re-opens the panel instead of disconnecting', () => {
+    const el = eligibleField()
+    show(el)
+    const port = lastConnectedPort()
+    clickChip()
+    port.onMessage.emit({ ctl: { kind: 'status', phase: 'checking', findingCount: 0 } })
+    expect(chipButton().dataset.state).toBe('connected')
+
+    const openPanelCalls = () => port.postMessage.mock.calls.filter(
+      ([msg]) => (msg as { ctl?: { kind?: string } }).ctl?.kind === 'openPanel',
+    ).length
+    const before = openPanelCalls()
+
+    clickChip()
+
+    expect(openPanelCalls()).toBe(before + 1)
+    // Still connected — the click did NOT disconnect.
+    expect(chipButton().dataset.state).toBe('connected')
+
+    port.onDisconnect.emit(port)
+    el.remove()
+  })
+
+  it('clicking the × segment while connected disconnects (fieldDisconnected sent, chip idle)', () => {
+    const el = eligibleField()
+    show(el)
+    const port = lastConnectedPort()
+    clickChip()
+    port.onMessage.emit({ ctl: { kind: 'status', phase: 'checking', findingCount: 0 } })
+    expect(chipButton().dataset.state).toBe('connected')
+
+    clickDisconnect()
+
+    expect(chipButton().dataset.state).toBe('idle')
+    const fieldDisconnectedSent = port.postMessage.mock.calls.some(
+      ([msg]) => (msg as { relay?: { type?: string } }).relay?.type === 'fieldDisconnected',
+    )
+    expect(fieldDisconnectedSent).toBe(true)
+
+    port.onDisconnect.emit(port)
+    el.remove()
+  })
+
+  it('a ctl disconnect from the sw (panel Disconnect button) has the same effect as the ×', () => {
+    const el = eligibleField()
+    show(el)
+    const port = lastConnectedPort()
+    clickChip()
+    port.onMessage.emit({ ctl: { kind: 'status', phase: 'checking', findingCount: 0 } })
+    expect(chipButton().dataset.state).toBe('connected')
+
+    port.onMessage.emit({ ctl: { kind: 'disconnect' } })
+
+    expect(chipButton().dataset.state).toBe('idle')
+
+    port.onDisconnect.emit(port)
+    el.remove()
+  })
+})
+
+// Live-test finding (B43 C2, PR #139): a React-style host (GitHub's own
+// composer included) commonly replaces the field's DOM node on blur —
+// session.ts's MutationObserver correctly self-detaches, but a hard stop
+// there used to cost the whole session. scout.ts now opens a short grace
+// window that probes for a same-fingerprint replacement first.
+describe('scout: field re-acquisition after DOM replacement (live-test finding, B43 C2 PR #139)', () => {
+  it('a same-id replacement appearing within the grace window silently reconnects: a NEW fieldConnected is sent, the chip never goes idle', async () => {
+    vi.useFakeTimers()
+    try {
+      const el = eligibleField()
+      el.id = 'box'
+      show(el)
+      const port = lastConnectedPort()
+      clickChip()
+      port.onMessage.emit({ ctl: { kind: 'status', phase: 'checking', findingCount: 0 } })
+      expect(chipButton().dataset.state).toBe('connected')
+      expect(allFieldConnectedIds(port)).toHaveLength(1)
+
+      // A React-style rebuild: a fresh same-id node appears, the old one
+      // leaves — both in the same synchronous tick, as a real re-render
+      // would do it.
+      const replacement = eligibleField()
+      replacement.id = 'box'
+      el.remove()
+      // session.ts's MutationObserver self-detach fires as a microtask.
+      await Promise.resolve()
+
+      // No idle flicker while scout is still quietly probing.
+      expect(chipButton().dataset.state).not.toBe('idle')
+
+      vi.advanceTimersByTime(300) // > the reacquire poll interval
+
+      expect(allFieldConnectedIds(port)).toHaveLength(2)
+      // A genuinely NEW session (new fieldId) — not the old one resent.
+      expect(allFieldConnectedIds(port)[1]).not.toBe(allFieldConnectedIds(port)[0])
+      expect(chipButton().dataset.state).not.toBe('idle')
+
+      port.onDisconnect.emit(port)
+      replacement.remove()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('no replacement within the grace window: the chip goes idle and no reconnect happens', async () => {
+    vi.useFakeTimers()
+    try {
+      const el = eligibleField()
+      el.id = 'box'
+      show(el)
+      const port = lastConnectedPort()
+      clickChip()
+      port.onMessage.emit({ ctl: { kind: 'status', phase: 'checking', findingCount: 0 } })
+      expect(allFieldConnectedIds(port)).toHaveLength(1)
+
+      el.remove()
+      await Promise.resolve()
+
+      vi.advanceTimersByTime(2500) // > the reacquire grace window, nothing ever appears
+
+      expect(chipButton().dataset.state).toBe('idle')
+      expect(allFieldConnectedIds(port)).toHaveLength(1) // no reconnect happened
+
+      port.onDisconnect.emit(port)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a user-initiated disconnect (×) does not start a reacquire probe', async () => {
+    vi.useFakeTimers()
+    try {
+      const el = eligibleField()
+      el.id = 'box'
+      show(el)
+      const port = lastConnectedPort()
+      clickChip()
+      port.onMessage.emit({ ctl: { kind: 'status', phase: 'checking', findingCount: 0 } })
+      expect(allFieldConnectedIds(port)).toHaveLength(1)
+
+      clickDisconnect()
+      expect(chipButton().dataset.state).toBe('idle')
+
+      // Same shape as the successful-reacquire test above (a same-id
+      // replacement appears after the field leaves) — but this time there
+      // is no live/reacquiring session for it to matter to.
+      const replacement = eligibleField()
+      replacement.id = 'box'
+      el.remove()
+      await Promise.resolve()
+
+      vi.advanceTimersByTime(2500)
+
+      expect(allFieldConnectedIds(port)).toHaveLength(1) // no second connect
+      expect(chipButton().dataset.state).toBe('idle')
+
+      port.onDisconnect.emit(port)
+      replacement.remove()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

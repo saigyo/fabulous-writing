@@ -11,6 +11,8 @@ import { getServerUrl, onServerUrlChanged } from './settings'
 const statusEl = document.getElementById('status') as HTMLElement
 const iframeEl = document.getElementById('embed') as HTMLIFrameElement
 const optionsBtn = document.getElementById('options') as HTMLButtonElement
+const hintEl = document.getElementById('hint') as HTMLElement
+const disconnectBtn = document.getElementById('disconnect') as HTMLButtonElement
 
 optionsBtn.addEventListener('click', () => {
   void browser.runtime.openOptionsPage()
@@ -24,6 +26,19 @@ async function main(): Promise<void> {
   // initial boot path never touches this, matching panel.html's own static
   // "embed not responding" default for the first-ever hello loop.
   let capFallbackTimer: ReturnType<typeof setTimeout> | undefined
+
+  // Live-test UX decision (B43 C2, PR #139): the hint ("Click the ✳ chip…")
+  // shows only while the embed is ready AND no field has EVER connected
+  // through it yet (everConnected is monotonic — once true, the hint is
+  // gone for the rest of this panel's life, even across a later
+  // disconnect). embedReady tracks the same ready/not-ready this module
+  // already surfaces via statusEl, kept separately here since onReadyChange
+  // only receives the edge, not a queryable current value.
+  let embedReady = false
+  let everConnected = false
+  function updateHint(): void {
+    hintEl.hidden = !embedReady || everConnected
+  }
 
   // I5 (closing sweep): a throw here (e.g. the port already disconnected —
   // SW crash, extension update, or simply MV3 suspending an idle worker —
@@ -52,6 +67,8 @@ async function main(): Promise<void> {
         // mid-way through the second attempt and flips a live
         // "connecting…" back to "embed not responding".
         clearTimeout(capFallbackTimer)
+        embedReady = ready
+        updateHint()
         if (ready) {
           statusEl.textContent = 'connected'
         } else {
@@ -71,11 +88,23 @@ async function main(): Promise<void> {
         }
         postToPort({ ctl: { kind: 'embedReady', ready } } satisfies PortMessage)
       },
+      onFieldConnected: () => {
+        everConnected = true
+        updateHint()
+        disconnectBtn.hidden = false
+      },
+      onFieldDisconnected: () => {
+        disconnectBtn.hidden = true
+      },
     },
     browser.runtime.getManifest().version,
   )
 
   port.onMessage.addListener((data) => relay.fromPort(data))
+
+  disconnectBtn.addEventListener('click', () => {
+    postToPort({ ctl: { kind: 'disconnect' } } satisfies PortMessage)
+  })
 
   // The SW can die out from under a live panel port — not just a crash: only
   // port TRAFFIC resets MV3's ~30s idle timer, so a quiet worker suspending

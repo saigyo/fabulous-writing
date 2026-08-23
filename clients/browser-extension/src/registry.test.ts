@@ -328,3 +328,26 @@ describe('Registry — panelPortGone', () => {
     expect(effects).toHaveLength(1)
   })
 })
+
+// The panel's Disconnect button (live-test UX decision, B43 C2 PR #139).
+describe('Registry — disconnectRequested', () => {
+  it('routes a ctl disconnect to the tab holding the connected field', () => {
+    const registry = new Registry()
+    registry.fieldConnected(W, TAB_A, fieldConnected('f1'))
+    const effects = registry.disconnectRequested(W)
+    expect(effects).toEqual([
+      { kind: 'send', to: 'field', windowId: W, tabId: TAB_A, message: { ctl: { kind: 'disconnect' } } },
+    ])
+  })
+
+  it('is a no-op when the window has no connected field', () => {
+    const registry = new Registry()
+    expect(registry.disconnectRequested(W)).toEqual([])
+  })
+
+  it('is a no-op for a window the registry has never seen', () => {
+    const registry = new Registry()
+    registry.fieldConnected(W, TAB_A, fieldConnected('f1'))
+    expect(registry.disconnectRequested(999)).toEqual([])
+  })
+})

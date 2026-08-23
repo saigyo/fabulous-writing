@@ -188,4 +188,16 @@ export class Registry {
     const w = this.windows.get(windowId)
     if (w) w.panelReady = false
   }
+
+  // The panel's Disconnect button (live-test UX decision, B43 C2 PR #139).
+  // Routes to the tab holding THIS window's currently-connected field, if
+  // any — dropped entirely when there is none (nothing to disconnect).
+  disconnectRequested(windowId: number): Effect[] {
+    const w = this.windows.get(windowId)
+    if (!w || !w.field) return []
+    return [{
+      kind: 'send', to: 'field', windowId, tabId: w.field.tabId,
+      message: { ctl: { kind: 'disconnect' } },
+    }]
+  }
 }
