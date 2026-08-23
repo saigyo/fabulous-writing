@@ -167,6 +167,110 @@ describe('startSession: selectFinding -> track + flash', () => {
 
     session.detach()
   })
+
+  // Distinguishes "selectedId was actually cleared to null" from "the id
+  // string 'f1' was merely left tracked" — with only ONE finding, clicking
+  // again would return to it either way (the cycle has nowhere else to go).
+  // Two overlapping findings at the same position make the two cases
+  // diverge: a genuinely-cleared selection restarts the cycle at the first
+  // hit ('f1'); a stale-but-unflashed 'f1' would instead continue the old
+  // cycle onward to 'f2'.
+  it('selectFinding with id null does not flash (no new timer scheduled) and clears the tracked selection, restarting the next click cycle at the first hit', () => {
+    vi.useFakeTimers()
+    try {
+      const send = vi.fn()
+      const session = startSession(el, send)
+      session.handleEmbedMessage(embedMsg({
+        type: 'findings',
+        payload: {
+          fieldId: session.fieldId,
+          findings: [
+            { id: 'f1', from: 4, to: 9, severity: 'error', category: 'spelling' },
+            { id: 'f2', from: 4, to: 9, severity: 'warning', category: 'style' },
+          ],
+        },
+      }))
+      session.handleEmbedMessage(embedMsg({
+        type: 'selectFinding',
+        payload: { fieldId: session.fieldId, id: 'f1' },
+      }))
+      const timersAfterFirstFlash = vi.getTimerCount()
+      expect(timersAfterFirstFlash).toBeGreaterThan(0)
+
+      session.handleEmbedMessage(embedMsg({
+        type: 'selectFinding',
+        payload: { fieldId: session.fieldId, id: null },
+      }))
+
+      // No new flash was scheduled for a null selection.
+      expect(vi.getTimerCount()).toBe(timersAfterFirstFlash)
+
+      el.selectionStart = 6
+      el.selectionEnd = 6
+      send.mockClear()
+      el.dispatchEvent(new Event('click'))
+
+      expect(lastSent(send)).toEqual({
+        fw: PROTOCOL_VERSION,
+        type: 'markingClicked',
+        payload: { fieldId: session.fieldId, id: 'f1' },
+      })
+
+      session.detach()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('startSession: findings/selectFinding after detach', () => {
+  it('a findings message after detach() does not touch the (disposed) overlay content', () => {
+    const send = vi.fn()
+    const session = startSession(el, send)
+    // Captured before detach: the overlay is removed from `document` by
+    // dispose(), so a document.querySelector-based check can't tell "the
+    // guard blocked the call" apart from "the call ran but landed on an
+    // already-detached node" — checking the overlay's OWN content, via a
+    // reference held from before detach, can.
+    const overlay = el.previousElementSibling as HTMLDivElement
+    session.detach()
+    const contentAtDetach = overlay.innerHTML
+
+    expect(() => session.handleEmbedMessage(embedMsg({
+      type: 'findings',
+      payload: {
+        fieldId: session.fieldId,
+        findings: [{ id: 'f1', from: 4, to: 9, severity: 'error', category: 'spelling' }],
+      },
+    }))).not.toThrow()
+
+    expect(overlay.innerHTML).toBe(contentAtDetach)
+  })
+
+  it('a selectFinding message after detach() does not schedule a flash timer against the disposed adapter', () => {
+    vi.useFakeTimers()
+    try {
+      const send = vi.fn()
+      const session = startSession(el, send)
+      session.handleEmbedMessage(embedMsg({
+        type: 'findings',
+        payload: {
+          fieldId: session.fieldId,
+          findings: [{ id: 'f1', from: 4, to: 9, severity: 'error', category: 'spelling' }],
+        },
+      }))
+      session.detach()
+
+      session.handleEmbedMessage(embedMsg({
+        type: 'selectFinding',
+        payload: { fieldId: session.fieldId, id: 'f1' },
+      }))
+
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('startSession: click -> markingClicked', () => {
@@ -328,6 +432,17 @@ describe('startSession: stop()', () => {
       payload: { fieldId: session.fieldId },
     })
     expect(el.previousElementSibling?.className).not.toBe('fw-mirror-overlay')
+  })
+
+  it('is idempotent — a second call does not send a second fieldDisconnected', () => {
+    const send = vi.fn()
+    const session = startSession(el, send)
+    session.stop()
+    send.mockClear()
+
+    expect(() => session.stop()).not.toThrow()
+
+    expect(send).not.toHaveBeenCalled()
   })
 })
 

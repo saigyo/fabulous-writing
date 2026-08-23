@@ -527,17 +527,29 @@ describe('createTextareaAdapter: flashFinding', () => {
 // MEASURED rect delta instead. happy-dom performs no real layout, so
 // getBoundingClientRect is stubbed directly to exercise the delta math.
 describe('createTextareaAdapter: host-page overlay positioning (measured rect delta)', () => {
-  let restoreDivRect: (() => void) | null = null
+  // Captured ONCE, at describe-body evaluation time (before any test in this
+  // file has had a chance to stub it) — NOT re-captured per stubRects() call.
+  // The convergence test below calls stubRects() twice in the same test; if
+  // "the real original" were re-read from the prototype on the second call,
+  // it would capture the FIRST call's stub instead of the true original,
+  // and afterEach would then leave the prototype poisoned with that stub for
+  // every later test in this file that creates a div and measures its rect.
+  const realDivGetBoundingClientRect = HTMLDivElement.prototype.getBoundingClientRect
 
   afterEach(() => {
-    restoreDivRect?.()
-    restoreDivRect = null
+    Object.defineProperty(HTMLDivElement.prototype, 'getBoundingClientRect', {
+      value: realDivGetBoundingClientRect,
+      configurable: true,
+    })
   })
 
   // Stubs getBoundingClientRect on `el` directly (it already exists) and on
   // HTMLDivElement.prototype (the overlay doesn't exist yet — it's created
   // inside createTextareaAdapter — so only a div created during this test
-  // can pick it up; el is a textarea and is unaffected by it).
+  // can pick it up; el is a textarea and is unaffected by it). Safe to call
+  // more than once per test (e.g. to change the stubbed rects mid-test) —
+  // restoration is always to the describe-scoped real original above, never
+  // to whatever the prototype happened to hold at call time.
   function stubRects(elRect: { top: number; left: number }, overlayRect: { top: number; left: number }) {
     const fakeRect = (r: { top: number; left: number }) =>
       ({ top: r.top, left: r.left, right: 0, bottom: 0, width: 0, height: 0, x: r.left, y: r.top, toJSON() {} }) as DOMRect
@@ -545,17 +557,10 @@ describe('createTextareaAdapter: host-page overlay positioning (measured rect de
       value: () => fakeRect(elRect),
       configurable: true,
     })
-    const original = HTMLDivElement.prototype.getBoundingClientRect
     Object.defineProperty(HTMLDivElement.prototype, 'getBoundingClientRect', {
       value: () => fakeRect(overlayRect),
       configurable: true,
     })
-    restoreDivRect = () => {
-      Object.defineProperty(HTMLDivElement.prototype, 'getBoundingClientRect', {
-        value: original,
-        configurable: true,
-      })
-    }
   }
 
   it('shifts the overlay by the delta between the field rect and the fresh overlay rect', () => {
@@ -605,6 +610,25 @@ describe('createTextareaAdapter: host-page overlay positioning (measured rect de
 
     adapter.dispose()
     ;(globalThis as { ResizeObserver: unknown }).ResizeObserver = OriginalResizeObserver
+  })
+
+  // Regression pin: the convergence test above calls stubRects() TWICE in
+  // the same test. If afterEach restored to whatever stubRects() last
+  // captured as "the original" (re-read from the prototype on each call,
+  // rather than a single describe-scoped capture), it would restore to the
+  // FIRST call's stub instead of the true original — poisoning every later
+  // test in this file that measures a fresh div's rect. Runs last in this
+  // describe block, right after the double-stubbing test, to catch exactly
+  // that ordering.
+  it('does not leak the getBoundingClientRect stub onto a later, unrelated div', () => {
+    const probe = document.createElement('div')
+    document.body.appendChild(probe)
+
+    const rect = probe.getBoundingClientRect()
+
+    expect(rect.top).toBe(0)
+    expect(rect.left).toBe(0)
+    probe.remove()
   })
 })
 
@@ -659,6 +683,161 @@ describe('createTextareaAdapter: host-page paint order + visibility', () => {
     expect(el.style.position).toBe('')
     expect(el.style.zIndex).toBe('')
     expect(el.style.backgroundColor).toBe('')
+  })
+
+  // Controller ruling (narrowing the plan's original "z-index: 1
+  // unconditionally" mandate): a field that already has its own explicit
+  // z-index has already chosen where it sits relative to the rest of the
+  // host page — promoting it further to 1 could put it below content it
+  // was deliberately layered under, so it's left alone. The overlay's own
+  // z-index is still always forced to 0 (idempotent with simulator.css's
+  // own rule) regardless of which branch the field took.
+  it('a field with its own explicit z-index (computed, not "auto") is left untouched; the overlay still gets z-index 0', () => {
+    el.style.zIndex = '5'
+
+    const adapter = createTextareaAdapter(el)
+
+    expect(el.style.zIndex).toBe('5')
+    const overlay = el.previousElementSibling as HTMLDivElement
+    expect(overlay.style.zIndex).toBe('0')
+
+    adapter.dispose()
+  })
+
+  it('a field with computed z-index auto (the default, unset case) is promoted to 1; the overlay gets 0', () => {
+    const adapter = createTextareaAdapter(el)
+
+    expect(el.style.zIndex).toBe('1')
+    const overlay = el.previousElementSibling as HTMLDivElement
+    expect(overlay.style.zIndex).toBe('0')
+
+    adapter.dispose()
+  })
+})
+
+// Controller ruling: the plan's original claim that no separate scroll
+// re-sync is needed (the overlay "already shares the field's scrolling
+// context" as a DOM sibling) is true for PAGE-level scroll but false for an
+// INNER scroller — a scrollable ancestor that is itself unpositioned still
+// resolves the overlay's containing block as if that ancestor weren't
+// scrolled, so scrolling it moves the field but not the overlay. See the
+// module comment and syncOverlayGeometry's own comment for the full story.
+describe('createTextareaAdapter: document-level scroll re-sync (inner scrollers)', () => {
+  const realDivGetBoundingClientRect = HTMLDivElement.prototype.getBoundingClientRect
+
+  afterEach(() => {
+    Object.defineProperty(HTMLDivElement.prototype, 'getBoundingClientRect', {
+      value: realDivGetBoundingClientRect,
+      configurable: true,
+    })
+  })
+
+  it('registers a capturing, passive document scroll listener at creation, and removes it on dispose', () => {
+    const addSpy = vi.spyOn(document, 'addEventListener')
+    const removeSpy = vi.spyOn(document, 'removeEventListener')
+
+    const adapter = createTextareaAdapter(el)
+
+    const addCall = addSpy.mock.calls.find(([type]) => type === 'scroll')
+    expect(addCall).toBeDefined()
+    expect(addCall?.[2]).toMatchObject({ capture: true, passive: true })
+
+    adapter.dispose()
+
+    const removeCall = removeSpy.mock.calls.find(([type]) => type === 'scroll')
+    expect(removeCall).toBeDefined()
+    // Only the capture flag has to match for removeEventListener to target
+    // the same listener — passive is irrelevant to listener identity.
+    expect(removeCall?.[2]).toMatchObject({ capture: true })
+
+    addSpy.mockRestore()
+    removeSpy.mockRestore()
+  })
+
+  it('re-syncs the overlay geometry on a document scroll event, throttled to at most one pending rAF', () => {
+    const fakeRect = (r: { top: number; left: number }) =>
+      ({ top: r.top, left: r.left, right: 0, bottom: 0, width: 0, height: 0, x: r.left, y: r.top, toJSON() {} }) as DOMRect
+    let elRect = { top: 0, left: 0 }
+    Object.defineProperty(el, 'getBoundingClientRect', {
+      value: () => fakeRect(elRect),
+      configurable: true,
+    })
+    // A realistic (self-consistent) stub: the overlay's measured rect
+    // tracks whatever top/left it's CURRENTLY been placed at, as if it
+    // really rendered there — mirroring the convergence property the
+    // measured-delta approach relies on (a second sync with the rects
+    // already equal adds a zero delta), across any number of re-syncs, not
+    // just one.
+    Object.defineProperty(HTMLDivElement.prototype, 'getBoundingClientRect', {
+      value: function (this: HTMLDivElement) {
+        return fakeRect({ top: parseFloat(this.style.top) || 0, left: parseFloat(this.style.left) || 0 })
+      },
+      configurable: true,
+    })
+
+    const rafCallbacks: FrameRequestCallback[] = []
+    const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((cb) => {
+      rafCallbacks.push(cb)
+      return rafCallbacks.length
+    })
+
+    const adapter = createTextareaAdapter(el)
+    const overlay = el.previousElementSibling as HTMLDivElement
+    expect(overlay.style.top).toBe('0px')
+
+    // An inner (unpositioned) scrollable ancestor scrolls under the field —
+    // simulate the field's rect having moved without the overlay's own.
+    elRect = { top: -40, left: 0 }
+    document.dispatchEvent(new Event('scroll'))
+    expect(rafCallbacks).toHaveLength(1)
+
+    // A second scroll before the queued frame has run must not schedule a
+    // second rAF — throttled to at most one pending sync.
+    document.dispatchEvent(new Event('scroll'))
+    expect(rafCallbacks).toHaveLength(1)
+
+    rafCallbacks[0](0)
+    expect(overlay.style.top).toBe('-40px')
+
+    // Once that frame has run, a further scroll schedules a fresh sync.
+    elRect = { top: -60, left: 0 }
+    document.dispatchEvent(new Event('scroll'))
+    expect(rafCallbacks).toHaveLength(2)
+    rafCallbacks[1](0)
+    expect(overlay.style.top).toBe('-60px')
+
+    adapter.dispose()
+    rafSpy.mockRestore()
+  })
+
+  it('a document scroll after dispose() does not schedule a re-sync', () => {
+    const rafCallbacks: FrameRequestCallback[] = []
+    const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((cb) => {
+      rafCallbacks.push(cb)
+      return rafCallbacks.length
+    })
+
+    const adapter = createTextareaAdapter(el)
+    adapter.dispose()
+
+    document.dispatchEvent(new Event('scroll'))
+
+    expect(rafCallbacks).toHaveLength(0)
+    rafSpy.mockRestore()
+  })
+
+  it('dispose() cancels a still-pending scroll-triggered sync', () => {
+    const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame').mockReturnValue(42)
+    const cafSpy = vi.spyOn(globalThis, 'cancelAnimationFrame').mockImplementation(() => {})
+
+    const adapter = createTextareaAdapter(el)
+    document.dispatchEvent(new Event('scroll'))
+    adapter.dispose()
+
+    expect(cafSpy).toHaveBeenCalledWith(42)
+
+    rafSpy.mockRestore()
+    cafSpy.mockRestore()
   })
 })
 
