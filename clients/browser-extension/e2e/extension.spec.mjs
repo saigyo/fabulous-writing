@@ -166,18 +166,6 @@ export default async function runSpec({
       panelPage = await context.newPage()
       openPages.push(['panel', panelPage])
       await panelPage.goto(`chrome-extension://${extensionId}/panel.html`)
-      // TEST-ONLY layout fix, not a product change: panel.html/panel.ts ship
-      // no CSS at all, so the un-styled #embed iframe (and the page's own
-      // html/body) render at the UA-default iframe size (300x150 CSS px)
-      // instead of filling the available space — reproducible with a plain
-      // screenshot, and not specific to this test harness: the same missing
-      // CSS would render the REAL Chrome side panel just as tiny. Flagged
-      // in the run report as a real product gap for a follow-up task;
-      // Task 10's own scope is e2e/ files only, so it is worked around here
-      // rather than patched in panel.html.
-      await panelPage.addStyleTag({
-        content: 'html,body{height:100%;margin:0} #embed{width:100%;height:100%;border:0;display:block}',
-      })
     })
 
     // ---- Step 4: focus field, click affordance chip ----
