@@ -113,6 +113,32 @@ class TestFlyConfigYaml:
         for name in SECRET_ENV_NAMES:
             assert f"{name}:" not in text, name
 
+    def test_embed_allowlists_exactly_the_pinned_extension(self, fly_settings):
+        # Cross-pin (B43 C2, #134): the allowlist entry must be derived from
+        # clients/browser-extension/public/manifest.json's "key", so rotating
+        # the key without updating the deployment config fails CI here, not
+        # at a user's side panel. Chromium's ID scheme: sha256 over the DER
+        # public key, first 16 bytes, each nibble mapped 0-15 -> a-p (the
+        # JS twin lives in clients/browser-extension/scripts/extension-id.mjs).
+        import base64
+        import hashlib
+        import json
+
+        manifest = json.loads(
+            (
+                REPO_ROOT / "clients" / "browser-extension" / "public" / "manifest.json"
+            ).read_text(encoding="utf-8")
+        )
+        digest = hashlib.sha256(base64.b64decode(manifest["key"])).digest()
+        expected = "".join(
+            "abcdefghijklmnop"[nibble]
+            for byte in digest[:16]
+            for nibble in (byte >> 4, byte & 0xF)
+        )
+        assert fly_settings.embed.allowed_ancestors == [
+            f"chrome-extension://{expected}"
+        ]
+
 
 class TestFlyToml:
     def test_app_identity(self, fly_toml):

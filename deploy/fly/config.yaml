@@ -50,3 +50,11 @@ routing:
       cheap: { provider: claude, model: "claude-haiku-4-5" }
       local: { provider: ollama, model: "qwen3:8b" }
     zh: *anthropic_cjk
+
+embed:
+  # The unpacked C2 browser extension (B43): ID derived from the pinned
+  # manifest key — guarded against drift by test_fly_config.py. Deploying
+  # this change is config-only: `fly deploy --ha=false -c deploy/fly/fly.toml`
+  # (no image bump needed; [[files]] re-delivers config.yaml).
+  allowed_ancestors:
+    - chrome-extension://llflkhlppiamgpmmaheccjjhccjlhbpf
