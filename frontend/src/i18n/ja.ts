@@ -320,4 +320,5 @@ export const ja: Messages = {
   embedWaiting: 'ホストアプリケーションを待っています…',
   embedDisconnected: '接続されているテキスト欄はありません。',
   embedReplaceFailed: 'ホストアプリケーションが変更を適用できませんでした。テキストが変わった可能性があります。',
+  embedToggleSelectors: '設定の表示を切り替え',
 }

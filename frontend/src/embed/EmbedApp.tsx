@@ -13,6 +13,7 @@ import { languageLabel } from '../languages'
 import { Sidebar } from '../sidebar/Sidebar'
 import { useStore } from '../state/store'
 import type { Language } from '../types'
+import { readSelectorsCollapsed, writeSelectorsCollapsed } from './embedPrefs'
 import { getEmbedOutbound } from './embedRef'
 
 /**
@@ -31,6 +32,22 @@ export function EmbedApp() {
   // "a field was connected and then went away" (embedDisconnected) — purely
   // local to this component; nothing else needs to know the difference.
   const [everConnected, setEverConnected] = useState(false)
+  // Owner UX round 2 (B43 C2): the selector block (Profile/Language/Domain/
+  // LLM) collapses independently of the always-visible action row (globe,
+  // ✳, Check, account menu). Lazy initializer so the very first render
+  // already reflects a prior session's choice instead of flashing expanded
+  // before collapsing — persisted via embedPrefs.ts, deliberately outside
+  // the Prefs schema (state/prefsStorage.ts) since it's local to this embed
+  // page, not synced with the main app.
+  const [selectorsCollapsed, setSelectorsCollapsed] = useState(() => readSelectorsCollapsed())
+
+  function toggleSelectorsCollapsed(): void {
+    setSelectorsCollapsed((prev) => {
+      const next = !prev
+      writeSelectorsCollapsed(next)
+      return next
+    })
+  }
 
   useHeaderData()
 
@@ -118,38 +135,61 @@ export function EmbedApp() {
   return (
     <div className="embed-app">
       <header className="embed-header">
-        <LocaleSwitcher />
         <div className="header-controls">
-          {/* Grouped so the narrow (≤480px) embed.css media block can grid
-              these four wide controls 2-per-row (Profile+Language,
-              Domain+LLM) without touching the compact trailing controls
-              below (auto-toggle, Check, account menu), which keep wrapping
-              onto their own row exactly as before. display: contents at
-              wider widths (embed.css) makes this wrapper invisible to
-              layout there, so ProfileSelector/label/label/LlmSelector are
-              still direct flex children of .header-controls — pixel
-              parity with the pre-existing wide layout. */}
-          <div className="embed-selectors">
-            <ProfileSelector />
-            <label>
-              {m.language}
-              <select
-                value={store.language}
-                onChange={(e) => store.setLanguage(e.target.value as Language)}
-              >
-                {store.languages.map((info) => (
-                  <option key={info.code} value={info.code}>
-                    {languageLabel(info, m)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              {m.domain}
-              <DomainMultiSelect />
-            </label>
-            <LlmSelector />
-          </div>
+          {/* Owner UX round 2 (B43 C2): the selector block collapses
+              independently of the action row below it (globe, chevron, ✳,
+              Check, account menu), which stays visible regardless. Grouped
+              so the narrow (≤480px) embed.css media block can grid these
+              four controls 2-per-row (Profile+Language, Domain+LLM)
+              without touching the action row, which keeps wrapping onto
+              its own row exactly as before. display: contents at wider
+              widths (embed.css) makes this wrapper invisible to layout
+              there, so ProfileSelector/label/label/LlmSelector are still
+              direct flex children of .header-controls — pixel parity with
+              the pre-existing wide layout. Unmounted rather than hidden
+              when collapsed: no extra CSS needed, and nothing in a
+              collapsed selector (a stale <select> value, an open popover)
+              can linger in the DOM. */}
+          {!selectorsCollapsed && (
+            <div className="embed-selectors">
+              <ProfileSelector />
+              <label>
+                {m.language}
+                <select
+                  value={store.language}
+                  onChange={(e) => store.setLanguage(e.target.value as Language)}
+                >
+                  {store.languages.map((info) => (
+                    <option key={info.code} value={info.code}>
+                      {languageLabel(info, m)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                {m.domain}
+                <DomainMultiSelect />
+              </label>
+              <LlmSelector />
+            </div>
+          )}
+          {/* Owner UX round 2 (B43 C2): the globe joins this always-visible
+              action row (it used to sit in its own row above), right next
+              to the chevron that collapses/expands the selector block
+              above. */}
+          <LocaleSwitcher />
+          <button
+            type="button"
+            className="embed-selectors-toggle"
+            aria-expanded={!selectorsCollapsed}
+            aria-label={m.embedToggleSelectors}
+            title={m.embedToggleSelectors}
+            onClick={toggleSelectorsCollapsed}
+          >
+            <span className="chevron" aria-hidden="true">
+              {selectorsCollapsed ? '▸' : '▾'}
+            </span>
+          </button>
           {!llmDisabled(store.user) && (
             <button
               type="button"

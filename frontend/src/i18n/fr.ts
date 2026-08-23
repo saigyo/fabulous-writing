@@ -335,4 +335,5 @@ export const fr: Messages = {
   embedWaiting: "En attente de l'application hôte…",
   embedDisconnected: 'Aucun champ de texte connecté.',
   embedReplaceFailed: "L'application hôte n'a pas pu appliquer la modification — le texte a peut-être changé.",
+  embedToggleSelectors: 'Afficher ou masquer les réglages',
 }

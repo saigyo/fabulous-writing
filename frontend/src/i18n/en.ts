@@ -314,4 +314,5 @@ export const en: Messages = {
   embedWaiting: 'Waiting for the host application…',
   embedDisconnected: 'No text field connected.',
   embedReplaceFailed: "The host application couldn't apply the change — the text may have changed.",
+  embedToggleSelectors: 'Toggle the selectors',
 }

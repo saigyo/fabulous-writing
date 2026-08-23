@@ -334,4 +334,5 @@ export const es: Messages = {
   embedWaiting: 'Esperando a la aplicación anfitriona…',
   embedDisconnected: 'Ningún campo de texto conectado.',
   embedReplaceFailed: 'La aplicación anfitriona no pudo aplicar el cambio; puede que el texto haya cambiado.',
+  embedToggleSelectors: 'Mostrar u ocultar los ajustes',
 }

@@ -19,7 +19,14 @@
       header {
         display: flex;
         align-items: center;
-        justify-content: space-between;
+        /* B43 C2 (owner UX round 2): Chrome's own side-panel chrome already
+           titles the panel, so there is no left-side content left to space
+           against — Disconnect (when connected) and Options right-align as
+           a pair. The row still takes height only from its own padding plus
+           whichever buttons are visible, same as before: Options is always
+           rendered, so the row never collapses to zero height. */
+        justify-content: flex-end;
+        gap: 8px;
         padding: 8px 12px;
         flex: none;
       }
@@ -46,7 +53,9 @@
   </head>
   <body>
     <header>
-      <span>Fabulous Writing</span>
+      <!-- No title here (B43 C2, owner UX round 2): the real Chrome side
+           panel already shows "Fabulous Writing" in its own chrome — a
+           second copy just repeated it. -->
       <button id="disconnect" type="button" hidden>Disconnect</button>
       <button id="options" type="button">Options</button>
     </header>

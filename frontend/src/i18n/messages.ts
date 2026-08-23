@@ -311,4 +311,7 @@ export interface Messages {
   embedWaiting: string
   embedDisconnected: string
   embedReplaceFailed: string
+  // B43 C2 (owner UX round 2): accessible name for the selector-section
+  // collapse/expand chevron in the embed's action row.
+  embedToggleSelectors: string
 }
