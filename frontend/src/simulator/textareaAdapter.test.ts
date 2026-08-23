@@ -946,6 +946,226 @@ describe('createTextareaAdapter: uniform background re-sync (round 5, F1+F3+F4)'
   })
 })
 
+// Copilot round 6, F3+F4+F5: the round-5 uniform mechanism's flip-to-''
+// unmask step revealed the STYLESHEET value, not the host's own ORIGINAL
+// INLINE value — wrong for any host whose field HAD an inline value for the
+// property (color, image, or a longhand) before the adapter ever ran. F5,
+// additionally: the longhand write was gated only on whether the IMAGE was
+// still owned, not the individual longhand, so a longhand the host changed
+// mid-session (image itself untouched) got clobbered back to 'initial'
+// anyway. This mechanism has produced a real finding three rounds running —
+// this matrix exhausts the family rather than adding one more one-off test:
+// {color, image, one representative longhand (background-size)} ×
+// {no original inline, original inline present, host changes inline
+// mid-session} × {stylesheet value changes mid-session, stylesheet value
+// removed}, asserting what the overlay shows after the next tick and what
+// dispose() restores.
+describe('createTextareaAdapter: background sync ownership matrix (round 6, F3+F4+F5)', () => {
+  type Prop = 'backgroundColor' | 'backgroundImage' | 'backgroundSize'
+
+  interface Probe {
+    prop: Prop
+    // The host's own inline value, when the "original inline present" case
+    // sets one before the adapter is ever created.
+    originalInline: string
+    // What the adapter itself writes into el.style[prop] while it owns the
+    // property (mirrors syncBackground's own writtenBackgroundColor/Image/
+    // Longhands values).
+    writtenValue: string
+    // The stylesheet-derived value in place at creation time, before any
+    // mid-session mutation.
+    initialStylesheet: string
+    // A different stylesheet-derived value, modeling a mid-session CHANGE
+    // (a theme class toggle) that does not fall into either property's own
+    // "nothing here" (transparent/none) special case.
+    changedStylesheet: string
+    // The stylesheet-derived value modeling a mid-session REMOVAL — the
+    // property's own "nothing here" value where one exists (transparent for
+    // color, none for image); an arbitrary distinct value for the longhand,
+    // which has no such special case in the code and is just copied verbatim.
+    removedStylesheet: string
+    // A value the HOST's own script would plausibly write, syntactically
+    // VALID for this property — happy-dom's CSSStyleDeclaration setter
+    // silently rejects (no-ops) an invalid value the way a real browser
+    // does, so a placeholder like 'HOST_OWN_VALUE' would never actually
+    // land in el.style[prop] for backgroundColor/backgroundImage, making
+    // the "host wins" assertion vacuous for those two properties.
+    hostValue: string
+  }
+
+  const PROBES: Probe[] = [
+    {
+      prop: 'backgroundColor',
+      originalInline: 'rgb(1, 2, 3)',
+      writtenValue: 'transparent',
+      initialStylesheet: 'rgb(10, 20, 30)',
+      changedStylesheet: 'rgb(40, 50, 60)',
+      removedStylesheet: 'transparent',
+      hostValue: 'rgb(99, 98, 97)',
+    },
+    {
+      prop: 'backgroundImage',
+      originalInline: 'linear-gradient(red, blue)',
+      writtenValue: 'none',
+      initialStylesheet: 'linear-gradient(green, yellow)',
+      changedStylesheet: 'linear-gradient(cyan, magenta)',
+      removedStylesheet: 'none',
+      // happy-dom's CSSStyleDeclaration setter normalizes an unquoted url()
+      // to a quoted one on read-back — write and assert against that same
+      // normalized form.
+      hostValue: 'url("host-own.png")',
+    },
+    {
+      prop: 'backgroundSize',
+      originalInline: '20px',
+      writtenValue: 'initial',
+      initialStylesheet: '16px',
+      changedStylesheet: '32px',
+      removedStylesheet: 'auto',
+      hostValue: '48px',
+    },
+  ]
+
+  const realGetComputedStyle = window.getComputedStyle
+
+  // A getComputedStyle stand-in modeling real cascade precedence for exactly
+  // ONE property under test (`prop`): the field's OWN current inline value
+  // always wins, exactly like a real browser; only when it's unset does the
+  // "stylesheet-derived" value (`valueRef.current`) show through. Every
+  // other background* field passes through to the real computed style
+  // unaffected — EXCEPT background-image, which is pinned present for the
+  // `backgroundSize` probe row so the longhand branch runs on every tick
+  // regardless of the (irrelevant, for that row) image's own real value —
+  // same isolation the round-5 F4 test uses.
+  function mockComputedStyleFor(prop: Prop, valueRef: { current: string }) {
+    return vi.spyOn(window, 'getComputedStyle').mockImplementation((target, pseudo) => {
+      const real = realGetComputedStyle(target, pseudo ?? undefined)
+      if (target !== el) return real
+      const base: Record<string, string> = {
+        position: real.position,
+        zIndex: real.zIndex,
+        backgroundColor: real.backgroundColor,
+        backgroundImage: prop === 'backgroundSize' ? 'linear-gradient(red, blue)' : real.backgroundImage,
+        backgroundSize: real.backgroundSize,
+        backgroundPosition: real.backgroundPosition,
+        backgroundRepeat: real.backgroundRepeat,
+        backgroundOrigin: real.backgroundOrigin,
+        backgroundClip: real.backgroundClip,
+        backgroundAttachment: real.backgroundAttachment,
+      }
+      base[prop] = el.style[prop] || valueRef.current
+      return base as unknown as CSSStyleDeclaration
+    })
+  }
+
+  for (const probe of PROBES) {
+    describe(probe.prop, () => {
+      for (const inlineCase of ['absent', 'present'] as const) {
+        const hasOriginalInline = inlineCase === 'present'
+
+        describe(`original inline ${inlineCase}`, () => {
+          it(
+            hasOriginalInline
+              ? 'a stylesheet value CHANGE mid-session has no effect — inline always wins the cascade'
+              : 'a stylesheet value CHANGE mid-session reaches the overlay',
+            () => {
+              vi.useFakeTimers()
+              if (hasOriginalInline) el.style[probe.prop] = probe.originalInline
+              const valueRef = { current: probe.initialStylesheet }
+              const spy = mockComputedStyleFor(probe.prop, valueRef)
+              const adapter = createTextareaAdapter(el)
+              try {
+                const overlay = el.previousElementSibling as HTMLDivElement
+                const expectedInitial = hasOriginalInline ? probe.originalInline : probe.initialStylesheet
+                expect(overlay.style[probe.prop]).toBe(expectedInitial)
+
+                valueRef.current = probe.changedStylesheet
+                vi.advanceTimersByTime(1000)
+
+                expect(overlay.style[probe.prop]).toBe(hasOriginalInline ? probe.originalInline : probe.changedStylesheet)
+                expect(el.style[probe.prop]).toBe(probe.writtenValue)
+
+                adapter.dispose()
+                expect(el.style[probe.prop]).toBe(hasOriginalInline ? probe.originalInline : '')
+              } finally {
+                // dispose() is idempotent (every restore is itself guarded)
+                // — call it again regardless of an assertion failure above,
+                // so an undisposed adapter never leaks its document-level
+                // scroll/resize listeners and interval into LATER, unrelated
+                // tests.
+                adapter.dispose()
+                spy.mockRestore()
+                vi.useRealTimers()
+              }
+            },
+          )
+
+          it(
+            hasOriginalInline
+              ? 'a stylesheet value REMOVAL mid-session has no effect — inline always wins the cascade'
+              : 'a stylesheet value REMOVAL mid-session clears the overlay',
+            () => {
+              vi.useFakeTimers()
+              if (hasOriginalInline) el.style[probe.prop] = probe.originalInline
+              const valueRef = { current: probe.initialStylesheet }
+              const spy = mockComputedStyleFor(probe.prop, valueRef)
+              const adapter = createTextareaAdapter(el)
+              try {
+                const overlay = el.previousElementSibling as HTMLDivElement
+
+                valueRef.current = probe.removedStylesheet
+                vi.advanceTimersByTime(1000)
+
+                expect(overlay.style[probe.prop]).toBe(hasOriginalInline ? probe.originalInline : probe.removedStylesheet)
+                expect(el.style[probe.prop]).toBe(probe.writtenValue)
+
+                adapter.dispose()
+                expect(el.style[probe.prop]).toBe(hasOriginalInline ? probe.originalInline : '')
+              } finally {
+                adapter.dispose()
+                spy.mockRestore()
+                vi.useRealTimers()
+              }
+            },
+          )
+
+          it('a host-changed inline value mid-session wins permanently, and dispose() leaves it alone', () => {
+            vi.useFakeTimers()
+            if (hasOriginalInline) el.style[probe.prop] = probe.originalInline
+            const valueRef = { current: probe.initialStylesheet }
+            const spy = mockComputedStyleFor(probe.prop, valueRef)
+            const adapter = createTextareaAdapter(el)
+            try {
+              const overlay = el.previousElementSibling as HTMLDivElement
+              const beforeHostChange = overlay.style[probe.prop]
+
+              // The host's own script takes over this property mid-session —
+              // not through this module. Must be a syntactically VALID value
+              // for this property: happy-dom's CSSStyleDeclaration setter
+              // silently no-ops an invalid one, same as a real browser.
+              el.style[probe.prop] = probe.hostValue
+              vi.advanceTimersByTime(1000)
+
+              // Frozen: the overlay keeps its last adapter-synced value...
+              expect(overlay.style[probe.prop]).toBe(beforeHostChange)
+              // ...and the host's own value is left untouched, never clobbered.
+              expect(el.style[probe.prop]).toBe(probe.hostValue)
+
+              adapter.dispose()
+              // dispose() must not restore over a host-changed value either.
+              expect(el.style[probe.prop]).toBe(probe.hostValue)
+            } finally {
+              adapter.dispose()
+              spy.mockRestore()
+              vi.useRealTimers()
+            }
+          })
+        })
+      }
+    })
+  }
+})
+
 // Part A / Task 6 (B43 C2): paint order + visibility on an arbitrary host
 // page. simulator.css's `.sim-field-wrap textarea` rule already gives the
 // simulator's demo field `position: relative; z-index: 1; background:
