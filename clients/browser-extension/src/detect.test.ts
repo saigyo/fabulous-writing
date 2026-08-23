@@ -40,6 +40,16 @@ describe('isEligibleField', () => {
     expect(isEligibleField(el)).toBe(false)
   })
 
+  it('rejects a textarea inside a disabled fieldset', () => {
+    const fieldset = document.createElement('fieldset')
+    fieldset.disabled = true
+    const el = document.createElement('textarea')
+    fieldset.appendChild(el)
+    document.body.appendChild(fieldset)
+    stubRect(el, MIN_FIELD_WIDTH + 80, MIN_FIELD_HEIGHT + 40)
+    expect(isEligibleField(el)).toBe(false)
+  })
+
   it('rejects a textarea shorter than MIN_FIELD_HEIGHT (200x20)', () => {
     const el = document.createElement('textarea')
     document.body.appendChild(el)

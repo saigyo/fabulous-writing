@@ -10,7 +10,9 @@ export const MIN_FIELD_HEIGHT = 40
 /** Visible, enabled, writable <textarea> at least MIN_* in rendered size. */
 export function isEligibleField(el: EventTarget | null): el is HTMLTextAreaElement {
   if (!(el instanceof HTMLTextAreaElement)) return false
-  if (el.disabled || el.readOnly) return false
+  // :disabled catches direct el.disabled and fieldset-inherited disabling; check parent fieldset as fallback for incomplete DOM impls.
+  const isDisabled = el.disabled || (el.closest('fieldset:disabled') !== null) || el.matches(':disabled')
+  if (isDisabled || el.readOnly) return false
   const rect = el.getBoundingClientRect()
   return rect.width >= MIN_FIELD_WIDTH && rect.height >= MIN_FIELD_HEIGHT
 }
