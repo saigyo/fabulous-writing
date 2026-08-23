@@ -90,11 +90,19 @@ export function startSession(
   function handleEmbedMessage(msg: Envelope<EmbedMessage>): void {
     switch (msg.type) {
       case 'findings':
+        // A detached session's adapter is disposed — its overlay is gone,
+        // so setMarkings would render into a detached DOM node for no
+        // reason. Same early return as applyReplacement's detached guard.
+        if (detached) return
         if (msg.payload.fieldId !== fieldId) return
         currentFindings = msg.payload.findings
         adapter.setMarkings(msg.payload.findings)
         return
       case 'selectFinding':
+        // Same reasoning as 'findings' above — flashFinding schedules a
+        // fresh 700ms timer against the (disposed) overlay if allowed to
+        // run after detach.
+        if (detached) return
         if (msg.payload.fieldId !== fieldId) return
         selectedId = msg.payload.id
         if (msg.payload.id !== null) adapter.flashFinding(msg.payload.id)

@@ -27,21 +27,36 @@
 //   defines offsetParent as `body` for an unpositioned tree, which is not
 //   the absolute overlay's actual containing block). Instead,
 //   syncOverlayGeometry self-corrects by a MEASURED rect delta between the
-//   field and the overlay every time it runs (creation and every resize) —
-//   exact under any containing block/margin/wrapper, convergent in one
-//   step, and needing no separate scroll re-sync since the overlay is a
-//   DOM sibling of the field and so already shares its scrolling context.
-// - Paint order + visibility: the field itself is coerced onto its own
-//   stacking context above the overlay (`position: relative` only if it
-//   was computed `static`; `z-index: 1` unconditionally) and made
-//   transparent, after the overlay is given a copy of the field's own
-//   (previously opaque) background color to paint instead — matching what
-//   simulator.css's `.sim-field-wrap textarea` rule already does for the
-//   simulator's own demo field via a stylesheet. Without this, a
-//   real host field with an opaque background (GitHub's composer, say)
-//   would hide every mark; a static-positioned field would instead have the
-//   overlay paint OVER its real text. dispose() restores the three inline
-//   values (position/z-index/background-color) it touched, verbatim.
+//   field and the overlay every time it runs — exact under any containing
+//   block/margin/wrapper, and convergent in one step. Page-level scroll
+//   needs no extra handling: an absolutely positioned box scrolls with the
+//   rest of the document like everything else. An INNER scroller does — a
+//   scrollable ancestor that is itself unpositioned still resolves the
+//   overlay's containing block exactly as if that ancestor weren't
+//   scrolled at all, so scrolling it moves the field but not the overlay.
+//   createTextareaAdapter registers a capturing, passive, rAF-throttled
+//   document-level `scroll` listener (an inner scroller's own scroll event
+//   does not bubble, so only the capture phase sees it) that re-runs
+//   syncOverlayGeometry — self-correcting the same way a resize does. In
+//   the simulator this listener is inert (no inner scroller, and page
+//   scroll needed nothing to begin with), so nothing visibly changes.
+// - Paint order + visibility: the field is promoted above the overlay only
+//   where it doesn't already have its own explicit stacking position —
+//   `position: relative` when computed `static`; `z-index: 1` when
+//   computed `auto` (a field with its own explicit z-index has already
+//   chosen where it sits relative to the rest of the host page; forcing it
+//   to 1 could put it below content it was deliberately layered under) —
+//   and the overlay itself always gets an inline `z-index: 0` (idempotent
+//   with simulator.css's own `.fw-mirror-overlay` rule). The field is also
+//   made background-transparent, after the overlay is given a copy of the
+//   field's own (previously opaque, non-transparent) background color to
+//   paint instead — matching what simulator.css's `.sim-field-wrap
+//   textarea` rule already does for the simulator's own demo field via a
+//   stylesheet. Without this, a real host field with an opaque background
+//   (GitHub's composer, say) would hide every mark; a static-positioned,
+//   auto-z-index field would instead have the overlay paint OVER its real
+//   text. dispose() restores the three inline values it may have touched
+//   on the field (position/z-index/background-color) verbatim.
 import type { FieldAdapter, MarkingSpan } from '../embed/protocol'
 import { SEVERITIES } from '../findings/severity'
 
@@ -89,12 +104,13 @@ function syncOverlayGeometry(el: HTMLTextAreaElement, overlay: HTMLDivElement) {
   // Self-correct by the MEASURED delta between the field's rect and the
   // overlay's own (possibly still-off) rect, added on top of whatever
   // top/left the overlay is currently holding. Exact under any containing
-  // block/margin/wrapper, converges in one step (a second call with the
-  // rects now equal adds a zero delta), and needs no separate scroll
-  // re-sync — the overlay is a DOM sibling of the field, so it already
-  // shares the field's scrolling context. In the simulator, `.sim-field-wrap`
-  // already positions the field's containing block at the wrapper's own
-  // origin, so the delta computed here is 0 and nothing visibly moves.
+  // block/margin/wrapper, and converges in one step (a second call with the
+  // rects now equal adds a zero delta) — which is also what makes this
+  // function safe to call from the rAF-throttled document scroll listener
+  // below (see the module comment for why that listener exists at all). In
+  // the simulator, `.sim-field-wrap` already positions the field's
+  // containing block at the wrapper's own origin, so the delta computed
+  // here is 0 and nothing visibly moves.
   const fieldRect = el.getBoundingClientRect()
   const overlayRect = overlay.getBoundingClientRect()
   overlay.style.top = `${(parseFloat(overlay.style.top) || 0) + fieldRect.top - overlayRect.top}px`
@@ -130,14 +146,12 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
   // Host-page paint order + visibility (module comment): save the field's
   // own inline position/z-index/background-color BEFORE touching any of
   // them, so dispose() can restore them verbatim (empty string when they
-  // were unset). Only coerce `position` when it computes `static` — a field
-  // that already establishes its own stacking context (relative/absolute/
-  // sticky/fixed, e.g. the simulator's own `.sim-field-wrap textarea` rule)
-  // is left alone. `z-index` and the background swap always run: the field
-  // must out-rank the overlay it paints below either way, and the overlay
-  // must take over the field's own (previously opaque) background so
-  // highlights still sit on the expected ground once the field itself goes
-  // transparent.
+  // were unset). Only coerce `position`/`z-index` when the field doesn't
+  // already have its own explicit stacking position — a field that already
+  // establishes one (relative/absolute/sticky/fixed position, or an
+  // explicit z-index, e.g. the simulator's own `.sim-field-wrap textarea`
+  // rule) is left alone; forcing a z-index onto a field that chose its own
+  // could put it below host content it was deliberately layered under.
   const savedPosition = el.style.position
   const savedZIndex = el.style.zIndex
   const savedBackgroundColor = el.style.backgroundColor
@@ -148,14 +162,29 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
   if (computedPosition === 'static' || computedPosition === '') {
     el.style.position = 'relative'
   }
-  el.style.zIndex = '1'
+  // Same happy-dom quirk as position above: an unset z-index computes to ''
+  // there instead of the real initial value 'auto'.
+  const computedZIndex = getComputedStyle(el).zIndex
+  if (computedZIndex === 'auto' || computedZIndex === '') {
+    el.style.zIndex = '1'
+  }
+  // The overlay's own z-index is always forced to 0 — idempotent with
+  // simulator.css's own `.fw-mirror-overlay { z-index: 0 }` rule, and
+  // correct regardless of whether the field's z-index above just came from
+  // us or was already there: either way the overlay must paint below it.
+  overlay.style.zIndex = '0'
   const computedBackgroundColor = getComputedStyle(el).backgroundColor
-  // happy-dom leaves an unset background-color as '' rather than resolving
-  // it to its initial value (transparent) the way a real browser would;
-  // assigning '' to overlay.style.backgroundColor would clear the overlay's
-  // own `background: transparent` shorthand entirely instead of leaving it
-  // at its already-transparent default, so only copy over a real value.
-  if (computedBackgroundColor) {
+  // Skip the copy for happy-dom's '' default AND for a real, fully
+  // transparent background ('transparent', or the 'rgba(0, 0, 0, 0)' a real
+  // browser resolves either keyword to) — there's nothing meaningful to
+  // paint onto the overlay in any of those cases, and assigning '' would
+  // clear the overlay's own `background: transparent` shorthand entirely
+  // instead of leaving it at its already-transparent default.
+  const computedBackgroundIsTransparent =
+    computedBackgroundColor === '' ||
+    computedBackgroundColor === 'transparent' ||
+    computedBackgroundColor === 'rgba(0, 0, 0, 0)'
+  if (!computedBackgroundIsTransparent) {
     overlay.style.backgroundColor = computedBackgroundColor
   }
   el.style.backgroundColor = 'transparent'
@@ -172,6 +201,25 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
     ? new ResizeObserver(() => syncOverlayGeometry(el, overlay))
     : null
   resizeObserver?.observe(el)
+
+  // Host-page overlay position (module comment): a resize observer alone
+  // only catches the field's OWN size changing — an unpositioned scrollable
+  // ANCESTOR scrolling underneath the field desyncs the overlay just the
+  // same, and that scroll event does not bubble, so a document-level
+  // listener needs the capture phase to see it at all. rAF-throttled to at
+  // most one re-sync per animation frame no matter how many scroll events
+  // fire in between — syncOverlayGeometry's measured-delta approach makes
+  // every re-sync self-correcting regardless of how many were coalesced, so
+  // this is purely a perf concern, not a correctness one.
+  let pendingScrollSync: number | null = null
+  function handleDocumentScroll() {
+    if (pendingScrollSync !== null) return
+    pendingScrollSync = requestAnimationFrame(() => {
+      pendingScrollSync = null
+      syncOverlayGeometry(el, overlay)
+    })
+  }
+  document.addEventListener('scroll', handleDocumentScroll, { capture: true, passive: true })
 
   // Finding 5: a textarea renders one extra, empty line box for a trailing
   // "\n" (the caret can sit on a line below the last character); a
@@ -403,6 +451,11 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
       el.removeEventListener('input', handleInput)
       el.removeEventListener('scroll', handleScroll)
       resizeObserver?.disconnect()
+      document.removeEventListener('scroll', handleDocumentScroll, { capture: true })
+      if (pendingScrollSync !== null) {
+        cancelAnimationFrame(pendingScrollSync)
+        pendingScrollSync = null
+      }
       if (flashTimer !== null) clearTimeout(flashTimer)
       flashTimer = null
       changeCb = null
