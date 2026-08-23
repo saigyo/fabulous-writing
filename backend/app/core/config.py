@@ -1,3 +1,4 @@
+import ipaddress
 import math
 import os
 import re
@@ -263,21 +264,36 @@ class EmbedSettings(BaseModel):
         scheme_pattern = re.compile(r"[a-z][a-z0-9+.\-]*")
         label_pattern = re.compile(r"[A-Za-z0-9]([A-Za-z0-9\-]*[A-Za-z0-9])?")
 
+        def is_valid_port(port: str) -> bool:
+            # isascii() first: str.isdigit() accepts non-ASCII decimal digits
+            # (e.g. Arabic-Indic), which int() parses — see the hostname-port
+            # comment below; same rule here.
+            return port.isascii() and port.isdigit() and 1 <= int(port) <= 65535
+
         def is_valid_origin(entry: str) -> bool:
             scheme, sep, rest = entry.partition("://")
             if not sep or not scheme_pattern.fullmatch(scheme) or not rest:
                 return False
+            if rest.startswith("["):
+                # IPv6 bracket literal (C2, #134): [<literal>] with an
+                # optional :port. IPv6Address does the real validation
+                # (rejecting IPv4-in-brackets and non-address strings) —
+                # EXCEPT zone IDs (fe80::1%eth0), which it accepts since
+                # Python 3.9 but which can never match a real Origin
+                # header, so reject '%' explicitly first.
+                literal, bracket, tail = rest[1:].partition("]")
+                if not bracket or "%" in literal:
+                    return False
+                try:
+                    ipaddress.IPv6Address(literal)
+                except ValueError:
+                    return False
+                if tail == "":
+                    return True
+                return tail.startswith(":") and is_valid_port(tail[1:])
             if ":" in rest:
                 host, _, port = rest.rpartition(":")
-                # isascii() first (Copilot round 12): str.isdigit() accepts
-                # non-ASCII decimal digits too (e.g. Arabic-Indic ١٢٣),
-                # which int() happily parses -- normalized would carry a
-                # non-Latin-1 port straight into the CSP header, where h11
-                # fails to serialize it at request time instead of this
-                # startup validator catching it.
-                if not (port.isascii() and port.isdigit()) or not (
-                    1 <= int(port) <= 65535
-                ):
+                if not is_valid_port(port):
                     return False
             else:
                 host = rest

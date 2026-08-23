@@ -603,6 +603,35 @@ class TestEmbedSettings:
         settings = Settings.model_validate({"embed": {"allowed_ancestors": ["self"]}})
         assert settings.embed.allowed_ancestors == ["'self'"]
 
+    def test_ipv6_bracket_literal_accepted(self):
+        settings = Settings.model_validate(
+            {"embed": {"allowed_ancestors": ["http://[::1]:8000"]}}
+        )
+        assert settings.embed.allowed_ancestors == ["http://[::1]:8000"]
+
+    def test_ipv6_bracket_literal_without_port_accepted(self):
+        settings = Settings.model_validate(
+            {"embed": {"allowed_ancestors": ["https://[2001:db8::1]"]}}
+        )
+        assert settings.embed.allowed_ancestors == ["https://[2001:db8::1]"]
+
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            "http://[::1",           # unclosed bracket
+            "http://[not-an-ip]",    # not an IPv6 literal
+            "http://[::1]x",         # trailing junk after the bracket
+            "http://[::1]:99999",    # port out of range
+            "http://[::1]:١٢٣",      # non-ASCII digits (same guard as hostnames)
+            "http://[]",             # empty literal
+            "http://[1.2.3.4]",      # IPv4 in brackets is not an IPv6 literal
+            "http://[fe80::1%eth0]", # zone ID — can never match an Origin header
+        ],
+    )
+    def test_ipv6_bracket_literal_rejected(self, entry):
+        with pytest.raises(ValidationError, match="allowed_ancestors"):
+            Settings.model_validate({"embed": {"allowed_ancestors": [entry]}})
+
     @pytest.mark.parametrize("entry", [
         "not a url",
         "https://exa mple.com",
