@@ -1313,6 +1313,25 @@ describe('createTextareaAdapter: host-page paint order + visibility', () => {
 
     adapter.dispose()
   })
+
+  // Finding (Copilot round 9): z-index promotion should only apply to
+  // originally-static fields. A field already positioned (absolute/fixed/
+  // sticky/relative) with z-index auto has already established its own
+  // stacking context and must be left alone — promoting it could move it
+  // above/below the host's toolbars/popovers despite the code's promise to
+  // leave explicitly positioned fields alone.
+  it('a field with position:absolute and z-index:auto keeps z-index untouched; the overlay still gets z-index 0', () => {
+    el.style.position = 'absolute'
+
+    const adapter = createTextareaAdapter(el)
+
+    expect(el.style.position).toBe('absolute')
+    expect(el.style.zIndex).toBe('')
+    const overlay = el.previousElementSibling as HTMLDivElement
+    expect(overlay.style.zIndex).toBe('0')
+
+    adapter.dispose()
+  })
 })
 
 // Controller ruling: the plan's original claim that no separate scroll

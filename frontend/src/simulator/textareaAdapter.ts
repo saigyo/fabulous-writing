@@ -261,9 +261,14 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
     el.style.position = writtenPosition
   }
   // Same happy-dom quirk as position above: an unset z-index computes to ''
-  // there instead of the real initial value 'auto'.
+  // there instead of the real initial value 'auto'. Only apply the z-index
+  // promotion when the field was originally static and we just set position:
+  // relative — a field already positioned (absolute/fixed/sticky/relative)
+  // with z-index: auto has already established its own stacking context and
+  // must be left alone to avoid moving it above/below the host's own
+  // toolbars/popovers.
   const computedZIndex = getComputedStyle(el).zIndex
-  if (computedZIndex === 'auto' || computedZIndex === '') {
+  if (writtenPosition !== null && (computedZIndex === 'auto' || computedZIndex === '')) {
     writtenZIndex = '1'
     el.style.zIndex = writtenZIndex
   }
