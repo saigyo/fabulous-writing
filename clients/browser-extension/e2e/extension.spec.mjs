@@ -153,6 +153,7 @@ export default async function runSpec({
     let panelPage
     await step('3. options page: set server URL (exercises Task 9)', async () => {
       const optionsPage = await context.newPage()
+      openPages.push(['options', optionsPage])
       await optionsPage.goto(`chrome-extension://${extensionId}/options.html`)
       await optionsPage.locator('#server-url-input').fill(BACKEND)
       await optionsPage.locator('[data-action="save"]').click()
@@ -306,6 +307,13 @@ export default async function runSpec({
   } catch (err) {
     failed = true
     for (const [name, page] of openPages) {
+      // Tolerate an already-closed page (the options page is explicitly
+      // closed on the success path of step 3; a failure elsewhere in that
+      // same step can still leave it open and mid-interaction, which is
+      // exactly the case this screenshot exists to capture) — skip it
+      // rather than let a "Target closed" error from screenshot() itself
+      // interrupt diagnostics for the other open pages.
+      if (page.isClosed()) continue
       try {
         await page.screenshot({ path: path.join(tmpDir, `failure-${name}.png`) })
       } catch {
