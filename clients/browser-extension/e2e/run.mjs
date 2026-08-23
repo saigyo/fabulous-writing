@@ -255,17 +255,43 @@ async function killChild(child) {
   }
 }
 
-async function teardown() {
-  log('teardown: stopping backend and fixture server (only processes this run spawned)')
-  tearingDown = true
-  if (fixtureServer) {
-    await new Promise((resolve) => fixtureServer.close(resolve))
-    fixtureServer = null
-  }
-  if (backendChild) {
-    await killChild(backendChild)
-    backendChild = null
-  }
+let teardownPromise = null
+
+// Idempotent: safe to call more than once (e.g. a signal arriving while the
+// main()-driven teardown is already in flight) — killChild is a no-op on an
+// already-exited child, and the fixtureServer/backendChild refs are nulled
+// after the first run, so a second call's guarded blocks just skip straight
+// through. teardownPromise additionally collapses concurrent callers onto
+// the SAME in-flight teardown rather than racing two parallel ones.
+function teardown() {
+  if (teardownPromise) return teardownPromise
+  teardownPromise = (async () => {
+    log('teardown: stopping backend and fixture server (only processes this run spawned)')
+    tearingDown = true
+    if (fixtureServer) {
+      await new Promise((resolve) => fixtureServer.close(resolve))
+      fixtureServer = null
+    }
+    if (backendChild) {
+      await killChild(backendChild)
+      backendChild = null
+    }
+  })()
+  return teardownPromise
+}
+
+// Ctrl+C (SIGINT) or a SIGTERM (e.g. `kill` without -9) otherwise takes
+// Node's default action — immediate exit with no teardown — which leaves
+// uvicorn bound to 8100 and the next run's preflight refusing to start.
+// Registering these makes an interrupted run tear down exactly like a
+// resolved/rejected main() does, then exit with the conventional
+// 128+signal code.
+for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]]) {
+  process.on(signal, async () => {
+    log(`received ${signal}, tearing down`)
+    await teardown()
+    process.exit(code)
+  })
 }
 
 async function main() {
