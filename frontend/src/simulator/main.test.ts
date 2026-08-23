@@ -459,6 +459,44 @@ describe('simulator main: Disconnect button', () => {
   })
 })
 
+// F2 (C2): selectFinding also drives the adapter's persistent selected
+// marker (protocol.ts's optional FieldAdapter.setSelected), alongside the
+// existing flashFinding call.
+describe('simulator main: selectFinding -> persistent selected marker (F2)', () => {
+  it('applies fw-mark-selected on select and clears it on a null selectFinding', async () => {
+    const iframeEl = document.getElementById('embed') as HTMLIFrameElement
+    vi.spyOn(iframeEl.contentWindow!, 'postMessage').mockImplementation(() => {})
+    await import('./main')
+    const connectBtn = document.getElementById('connect') as HTMLButtonElement
+
+    iframeEl.dispatchEvent(new Event('load'))
+    embedMessage(iframeEl, {
+      type: 'ready',
+      payload: { protocolVersion: PROTOCOL_VERSION, features: [] },
+    })
+    connectBtn.click()
+    embedMessage(iframeEl, {
+      type: 'findings',
+      payload: {
+        fieldId: 'sim-field',
+        findings: [{ id: 'f1', from: 0, to: 5, severity: 'warning', category: 'style' }],
+      },
+    })
+
+    embedMessage(iframeEl, {
+      type: 'selectFinding',
+      payload: { fieldId: 'sim-field', id: 'f1' },
+    })
+    expect(document.querySelector('[data-finding-ids~="f1"]')?.className).toContain('fw-mark-selected')
+
+    embedMessage(iframeEl, {
+      type: 'selectFinding',
+      payload: { fieldId: 'sim-field', id: null },
+    })
+    expect(document.querySelector('[data-finding-ids~="f1"]')?.className).not.toContain('fw-mark-selected')
+  })
+})
+
 // Finding 21: the status line now renders even before Connect is clicked —
 // a cold, unauthenticated embed can show signed-out from the start (real
 // embed's F5 behavior, bridge.ts), and the simulator must reflect it rather

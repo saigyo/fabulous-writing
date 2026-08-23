@@ -246,6 +246,59 @@ describe('panel: connect hint + Disconnect button (live-test UX decision, B43 C2
   })
 })
 
+// F1 (B43 C2 round 3): the panel's port is exactly as quiet during a check
+// as the field's — same keepalive protection, reusing the Disconnect
+// button's own connected-state signal (setFieldConnected).
+describe('panel: F1 keepalive ping timer', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function pingCount(port: MockPort): number {
+    return port.postMessage.mock.calls.filter(
+      ([msg]) => (msg as { ctl?: { kind?: string } }).ctl?.kind === 'ping',
+    ).length
+  }
+
+  // Same reasoning as scout.test.ts's own PAST_PING_INTERVAL_MS: this file
+  // has no access to panel.ts's private PING_INTERVAL_MS, so it advances
+  // generously past the documented 20s cadence instead of mirroring it.
+  const PAST_PING_INTERVAL_MS = 21_000
+
+  it('sends no ping while no field is connected, then pings on cadence once one is', async () => {
+    const { port } = await bootPanel()
+
+    vi.advanceTimersByTime(PAST_PING_INTERVAL_MS)
+    expect(pingCount(port)).toBe(0)
+
+    port.onMessage.emit({ relay: fieldConnectedEnvelope })
+
+    vi.advanceTimersByTime(PAST_PING_INTERVAL_MS)
+    expect(pingCount(port)).toBe(1)
+
+    vi.advanceTimersByTime(PAST_PING_INTERVAL_MS)
+    expect(pingCount(port)).toBe(2)
+  })
+
+  it('stops pinging once the field disconnects', async () => {
+    const { port } = await bootPanel()
+    port.onMessage.emit({ relay: fieldConnectedEnvelope })
+    vi.advanceTimersByTime(PAST_PING_INTERVAL_MS)
+    expect(pingCount(port)).toBe(1)
+
+    port.onMessage.emit({ relay: fieldDisconnectedEnvelope })
+    const afterDisconnect = pingCount(port)
+
+    vi.advanceTimersByTime(PAST_PING_INTERVAL_MS * 2)
+    expect(pingCount(port)).toBe(afterDisconnect)
+  })
+})
+
 // B43 C2 (owner UX round 2): the status line stops showing a resting
 // "connected" — it renders ONLY "connecting…" (during a reload's hello
 // loop), "embed not responding" (the cap), or nothing at all once the embed

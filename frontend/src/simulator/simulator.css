@@ -111,6 +111,18 @@ body {
   background: #bfdbfe;
 }
 
+/* F2 (C2): persistent selection marker — the selected finding stays
+   visibly marked (unlike fw-mark-flash's momentary 700ms pulse), mirroring
+   App.css's own main-editor `.fw-finding.fw-selected` (soft accent fill +
+   thin outline). Declared BEFORE fw-mark-flash so a flash on an already-
+   selected mark still shows the flash's own thicker outline on top for the
+   pulse's duration, settling back to this once the flash class is removed. */
+.fw-mark-selected {
+  background: #6e56cf26;
+  outline: 1px solid #6e56cf;
+  outline-offset: 1px;
+}
+
 .fw-mark-flash {
   outline: 2px solid #6e56cf;
   outline-offset: 1px;

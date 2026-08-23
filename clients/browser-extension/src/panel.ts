@@ -18,6 +18,12 @@ optionsBtn.addEventListener('click', () => {
   void browser.runtime.openOptionsPage()
 })
 
+// F1 (B43 C2 round 3): same reasoning as scout.ts's own PING_INTERVAL_MS —
+// the panel's port is exactly as quiet during a check (an LLM check running,
+// the user reading findings) as the field's, so it needs the same keepalive
+// against the ~30s MV3 idle timer.
+const PING_INTERVAL_MS = 20_000
+
 async function main(): Promise<void> {
   const serverOrigin = await getServerUrl()
   const port = browser.runtime.connect({ name: 'panel' })
@@ -26,6 +32,11 @@ async function main(): Promise<void> {
   // initial boot path never touches this, matching panel.html's own static
   // "embed not responding" default for the first-ever hello loop.
   let capFallbackTimer: ReturnType<typeof setTimeout> | undefined
+  // Started/stopped by setFieldConnected below (F1) — reusing its
+  // connected-state signal rather than tracking a second boolean: the ping
+  // only matters while a field is actually connected, the same condition
+  // that already drives the Disconnect button.
+  let pingTimer: ReturnType<typeof setInterval> | undefined
 
   // Live-test UX decision (B43 C2, PR #139): the hint ("Click the ✳ chip…")
   // shows only while the embed is ready AND no field has EVER connected
@@ -54,6 +65,18 @@ async function main(): Promise<void> {
   // other fieldConnected.
   function setFieldConnected(connected: boolean): void {
     disconnectBtn.hidden = !connected
+    // F1: start/stop the keepalive ping timer on the same edge that drives
+    // the Disconnect button — no field connected means nothing worth
+    // protecting from the idle timer.
+    if (connected) {
+      clearInterval(pingTimer)
+      pingTimer = setInterval(() => {
+        postToPort({ ctl: { kind: 'ping' } } satisfies PortMessage)
+      }, PING_INTERVAL_MS)
+    } else {
+      clearInterval(pingTimer)
+      pingTimer = undefined
+    }
   }
 
   // I5 (closing sweep): a throw here (e.g. the port already disconnected —
@@ -138,7 +161,14 @@ async function main(): Promise<void> {
   // reconnected field is never relayed; simplest correct recovery, matching
   // onServerUrlChanged below, is to reload and let the panel reconnect and
   // re-derive fresh state via a new panelHello.
-  port.onDisconnect.addListener(() => location.reload())
+  port.onDisconnect.addListener(() => {
+    // F1: belt-and-suspenders — a real reload tears the timer down anyway,
+    // but this keeps the panel's own state consistent in the instant before
+    // that navigation actually happens (and under test, where reload is a
+    // no-op).
+    clearInterval(pingTimer)
+    location.reload()
+  })
 
   window.addEventListener('message', (event) => {
     if (event.origin !== serverOrigin || event.source !== iframeEl.contentWindow) return

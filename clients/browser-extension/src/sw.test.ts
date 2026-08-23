@@ -294,3 +294,36 @@ describe('sw.ts — port bookkeeping', () => {
     expect(portA.postMessage).not.toHaveBeenCalledWith(errorCtl)
   })
 })
+
+// F1 (B43 C2 round 3): the ping's own ARRIVAL on the port is what resets
+// MV3's idle timer — sw.ts drops it with no reply and no registry effect,
+// on both the field port (scout's own keepalive) and the panel port (the
+// panel's own).
+describe('sw.ts — F1 keepalive ping is dropped with no reply and no effect', () => {
+  it('a ping on the field port gets no reply and does not touch the panel', () => {
+    const W = 2001
+    const T = 2002
+    const panelPort = connectPanel(W)
+    const fieldPort = connectField(T, W)
+    panelPort.postMessage.mockClear()
+
+    fieldPort.onMessage.emit({ ctl: { kind: 'ping' } })
+
+    expect(fieldPort.postMessage).not.toHaveBeenCalled()
+    expect(panelPort.postMessage).not.toHaveBeenCalled()
+  })
+
+  it('a ping on the panel port gets no reply and does not touch the field', () => {
+    const W = 2003
+    const T = 2004
+    const panelPort = connectPanel(W)
+    const fieldPort = connectField(T, W)
+    panelPort.postMessage.mockClear()
+    fieldPort.postMessage.mockClear()
+
+    panelPort.onMessage.emit({ ctl: { kind: 'ping' } })
+
+    expect(panelPort.postMessage).not.toHaveBeenCalled()
+    expect(fieldPort.postMessage).not.toHaveBeenCalled()
+  })
+})

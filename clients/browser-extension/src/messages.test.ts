@@ -50,6 +50,10 @@ describe('parsePortMessage', () => {
     expect(parsePortMessage({ ctl: { kind: 'disconnect' } })).toEqual({ ctl: { kind: 'disconnect' } })
   })
 
+  it('accepts a ping ctl message (F1 keepalive, B43 C2 round 3)', () => {
+    expect(parsePortMessage({ ctl: { kind: 'ping' } })).toEqual({ ctl: { kind: 'ping' } })
+  })
+
   it.each([null, undefined, 'hello', 42, true])('returns null for non-object %s', (value) => {
     expect(parsePortMessage(value)).toBeNull()
   })

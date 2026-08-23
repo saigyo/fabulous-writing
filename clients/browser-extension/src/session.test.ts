@@ -223,6 +223,68 @@ describe('startSession: selectFinding -> track + flash', () => {
   })
 })
 
+// F2 (C2): selectFinding also drives the adapter's persistent selected
+// marker (protocol.ts's optional FieldAdapter.setSelected), alongside the
+// existing flash.
+describe('startSession: selectFinding -> persistent selected marker (F2)', () => {
+  it('marks the selected finding with fw-mark-selected, and it survives a subsequent findings re-render', () => {
+    const send = vi.fn()
+    const session = startSession(el, send)
+    session.handleEmbedMessage(embedMsg({
+      type: 'findings',
+      payload: {
+        fieldId: session.fieldId,
+        findings: [{ id: 'f1', from: 4, to: 9, severity: 'error', category: 'spelling' }],
+      },
+    }))
+
+    session.handleEmbedMessage(embedMsg({
+      type: 'selectFinding',
+      payload: { fieldId: session.fieldId, id: 'f1' },
+    }))
+
+    expect(document.querySelector('[data-finding-ids~="f1"]')?.className).toContain('fw-mark-selected')
+
+    // A fresh findings message rebuilds the overlay's marks — the selection
+    // must be re-applied, not lost.
+    session.handleEmbedMessage(embedMsg({
+      type: 'findings',
+      payload: {
+        fieldId: session.fieldId,
+        findings: [{ id: 'f1', from: 4, to: 9, severity: 'error', category: 'spelling' }],
+      },
+    }))
+    expect(document.querySelector('[data-finding-ids~="f1"]')?.className).toContain('fw-mark-selected')
+
+    session.detach()
+  })
+
+  it('clears the selected marker when selectFinding is sent with id: null', () => {
+    const send = vi.fn()
+    const session = startSession(el, send)
+    session.handleEmbedMessage(embedMsg({
+      type: 'findings',
+      payload: {
+        fieldId: session.fieldId,
+        findings: [{ id: 'f1', from: 4, to: 9, severity: 'error', category: 'spelling' }],
+      },
+    }))
+    session.handleEmbedMessage(embedMsg({
+      type: 'selectFinding',
+      payload: { fieldId: session.fieldId, id: 'f1' },
+    }))
+    expect(document.querySelector('[data-finding-ids~="f1"]')?.className).toContain('fw-mark-selected')
+
+    session.handleEmbedMessage(embedMsg({
+      type: 'selectFinding',
+      payload: { fieldId: session.fieldId, id: null },
+    }))
+    expect(document.querySelector('[data-finding-ids~="f1"]')?.className).not.toContain('fw-mark-selected')
+
+    session.detach()
+  })
+})
+
 describe('startSession: findings/selectFinding after detach', () => {
   it('a findings message after detach() does not touch the (disposed) overlay content', () => {
     const send = vi.fn()

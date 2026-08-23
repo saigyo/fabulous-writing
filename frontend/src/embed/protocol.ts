@@ -256,5 +256,12 @@ export interface FieldAdapter {
   setMarkings(spans: MarkingSpan[]): void
   clearMarkings(): void
   flashFinding(id: string): void
+  // C2 addition: an OPTIONAL persistent selection marker, distinct from
+  // flashFinding's momentary 700ms pulse — the selected finding stays
+  // visibly marked while selected, matching the main editor's own
+  // `.fw-selected` behavior. Optional so it's backward compatible: a host
+  // adapter that doesn't implement it (pre-C2) simply keeps the flash-only
+  // behavior it already had. `id: null` clears the persistent mark.
+  setSelected?(id: string | null): void
   dispose(): void
 }

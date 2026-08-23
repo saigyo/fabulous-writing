@@ -96,6 +96,7 @@ iframeEl.addEventListener('load', () => {
   currentFindings = []
   selectedFindingId = null
   adapter.clearMarkings()
+  adapter.setSelected?.(null)
   connectBtn.disabled = true
   disconnectBtn.disabled = true
   // Finding 25: a reload drops in a fresh embed shim with no memory of the
@@ -148,6 +149,7 @@ disconnectBtn.addEventListener('click', () => {
   currentFindings = []
   selectedFindingId = null
   adapter.clearMarkings()
+  adapter.setSelected?.(null)
   send({ type: 'fieldDisconnected', payload: { fieldId: FIELD_ID } })
   disconnectBtn.disabled = true
   connectBtn.disabled = !ready
@@ -224,6 +226,12 @@ window.addEventListener('message', (event) => {
       // selection changed some other way (e.g. picked in the embed's own
       // sidebar).
       selectedFindingId = msg.payload.id
+      // F2 (C2): setSelected FIRST — it re-renders the overlay's marks from
+      // scratch (textareaAdapter.ts's render(), via
+      // overlay.replaceChildren()), which would wipe out flashFinding's own
+      // fw-mark-flash class if that ran first. id: null included, so a
+      // toggle-off clears the persistent marker too.
+      adapter.setSelected?.(msg.payload.id)
       if (msg.payload.id !== null) adapter.flashFinding(msg.payload.id)
       break
     case 'applyReplacement': {

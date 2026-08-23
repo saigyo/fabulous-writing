@@ -41,6 +41,21 @@
 .embed-app .header-controls .locale-switch {
   width: var(--control-h);
   height: var(--control-h);
+  justify-content: center;
+  gap: 0;
+}
+
+/* Owner UX round 3 (B43 C2, screenshot): App.css's .locale-caret (▾) is
+   sized/spaced for the wide desktop header, where it sits beside the globe
+   next to the wordmark with room to spare. Packed into the square
+   action-row control above, it read as a stray, off-size, misaligned mark
+   under/next to the globe. The select itself (embed.css's own inset:0 hit
+   target below) already covers the whole square regardless, so hiding the
+   caret loses no functionality — just neutralizes the cosmetic clash — and
+   centers the globe glyph alone in the box (the justify-content: center
+   above, now acting on a single flex child). */
+.embed-app .header-controls .locale-switch .locale-caret {
+  display: none;
 }
 
 /* Latent bug, surfaced by moving the globe next to other controls: App.css's

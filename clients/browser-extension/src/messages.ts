@@ -38,6 +38,13 @@ export type CtlMessage =
   // (registry.disconnectRequested), so there is no OTHER field it could
   // wrongly land on the way detach/status's fieldId scoping guards against.
   | { kind: 'disconnect' }
+  // scout -> sw, panel -> sw (F1, B43 C2 round 3): a lightweight keepalive
+  // sent every 20s while a session/connected field is active. No payload,
+  // no reply — the message's own ARRIVAL is what resets MV3's ~30s idle
+  // timer (only port TRAFFIC does, per sw.ts's own header comment); a quiet
+  // stretch with no other traffic (an LLM check running, the user reading
+  // findings) would otherwise starve the worker and drop the session mid-way.
+  | { kind: 'ping' }
 
 export const HOST_KIND = 'browser-extension'
 
@@ -55,7 +62,7 @@ const STATUS_PHASE_MAP: Record<StatusMessage['payload']['phase'], true> = {
 }
 const STATUS_PHASES = new Set(Object.keys(STATUS_PHASE_MAP))
 
-const CTL_KINDS = new Set(['openPanel', 'panelHello', 'embedReady', 'detach', 'status', 'disconnect'])
+const CTL_KINDS = new Set(['openPanel', 'panelHello', 'embedReady', 'detach', 'status', 'disconnect', 'ping'])
 
 function parseCtlMessage(data: unknown): CtlMessage | null {
   if (typeof data !== 'object' || data === null) return null
@@ -64,6 +71,7 @@ function parseCtlMessage(data: unknown): CtlMessage | null {
   switch (d.kind) {
     case 'openPanel':
     case 'disconnect':
+    case 'ping':
       break
     case 'panelHello':
       if (typeof d.windowId !== 'number') return null

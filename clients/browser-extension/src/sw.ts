@@ -5,11 +5,17 @@
 // inspecting message content.
 //
 // Accepted v1 limits (both apply to the Registry instance below):
-// 1. The registry is entirely in-memory. This is ACCEPTED for v1 NOT because
-//    an open runtime port keeps an MV3 worker alive indefinitely — it
-//    doesn't; only port TRAFFIC resets the ~30s idle timer, so a quiet
-//    session can still lose the worker and its in-memory state — but because
-//    BOTH sides recover when that happens: the scout reconnects on the next
+// 1. The registry is entirely in-memory. This in-memory registry is now
+//    PROTECTED, for the common case, by active-session heartbeats (F1, B43
+//    C2 round 3): while a field session is live, scout.ts pings this worker
+//    every 20s over the field port, and panel.ts does the same over the
+//    panel port while a field is connected — both through the guarded 'ping'
+//    ctl (messages.ts), whose ARRIVAL is what resets the ~30s idle timer (see
+//    the ctl handling below). Suspension can still happen in two cases,
+//    neither of which loses anything: with NO session/connected field (there
+//    is nothing in the registry worth keeping alive), or on an extension
+//    update/crash (a heartbeat can't prevent either). Both recovery paths are
+//    unchanged from before the heartbeat: the scout reconnects on the next
 //    user interaction (port onDisconnect tears its session down to an idle
 //    chip; the next click/focus lazily reopens a port and re-registers,
 //    scout.ts's handlePortDisconnect), and the panel reloads itself the
@@ -111,6 +117,10 @@ function handleFieldMessage(tabId: number, windowId: number, port: Port, data: u
           postSafely(port, { ctl: { kind: 'status', phase: 'error', findingCount: 0 } })
         }
       })
+    } else if (parsed.ctl.kind === 'ping') {
+      // F1 keepalive (messages.ts's own CtlMessage comment): the ping's
+      // ARRIVAL already did its job — it reset MV3's idle timer just by
+      // being delivered on this port. No reply, no registry effect.
     }
     return
   }
@@ -159,6 +169,9 @@ function handlePanelMessage(state: { windowId: number | null }, port: Port, data
       execute(registry.panelReady(state.windowId, parsed.ctl.ready))
     } else if (parsed.ctl.kind === 'disconnect') {
       execute(registry.disconnectRequested(state.windowId))
+    } else if (parsed.ctl.kind === 'ping') {
+      // F1 keepalive — see handleFieldMessage's own comment above; no reply,
+      // no registry effect.
     }
     return
   }

@@ -59,6 +59,20 @@
   background: rgba(191, 219, 254, 0.35);
 }
 
+/* F2 (C2): persistent selection marker — the selected finding stays
+ * visibly marked, unlike fw-mark-flash's momentary 700ms pulse. Same
+ * translucent-friendly treatment as the severity fills above (a host's own
+ * dark theme must still show through), and declared BEFORE fw-mark-flash so
+ * a flash on an already-selected mark still shows the flash's own thicker
+ * outline on top for the pulse's duration, settling back to this once the
+ * flash class is removed.
+ */
+[data-fw-overlay] .fw-mark-selected {
+  background: rgba(110, 86, 207, 0.18);
+  outline: 1px solid rgba(110, 86, 207, 0.9);
+  outline-offset: 1px;
+}
+
 [data-fw-overlay] .fw-mark-flash {
   outline: 2px solid rgba(110, 86, 207, 0.9);
   outline-offset: 1px;
