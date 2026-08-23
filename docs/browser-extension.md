@@ -3,7 +3,7 @@
 Design source: `docs/superpowers/specs/2026-08-22-b43-embeddable-clients-design.md`.
 The extension (`clients/browser-extension/`) is the first host client of the
 embed surface documented in [frontend-architecture.md](frontend-architecture.md#embed-surface-b43-c1):
-a Chromium MV3 extension that finds eligible text fields on arbitrary sites,
+a Chromium MV3 extension that finds eligible textareas on arbitrary sites,
 opens a side panel hosting the server's `/embed` page in an iframe, and relays
 the bridge protocol between the two. Acceptance benchmark: GitHub issue/PR
 description and comment boxes.

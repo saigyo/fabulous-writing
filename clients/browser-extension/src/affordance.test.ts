@@ -119,6 +119,53 @@ describe('createAffordance: setState/setCount', () => {
   })
 })
 
+// Copilot round 1, F6: the button's visible content is a bare glyph — an
+// accessible name must track state/count alongside it.
+describe('createAffordance: aria-label tracks state/count', () => {
+  it('updates as setState/setCount change', () => {
+    const affordance = createAffordance(() => {})
+    affordance.showFor(el)
+    const button = affordance.host.shadowRoot!.querySelector('button')!
+
+    expect(button.getAttribute('aria-label')).toBe('Connect Fabulous Writing')
+
+    affordance.setState('busy')
+    expect(button.getAttribute('aria-label')).toBe('Connecting Fabulous Writing…')
+
+    affordance.setState('connected')
+    expect(button.getAttribute('aria-label')).toBe('Fabulous Writing connected — click to disconnect')
+
+    affordance.setCount(3)
+    expect(button.getAttribute('aria-label')).toBe('3 findings — click to disconnect')
+
+    affordance.setCount(0)
+    expect(button.getAttribute('aria-label')).toBe('Fabulous Writing connected — click to disconnect')
+
+    affordance.setState('signed-out')
+    expect(button.getAttribute('aria-label')).toBe('Fabulous Writing: signed out')
+
+    affordance.setState('error')
+    expect(button.getAttribute('aria-label')).toBe('Fabulous Writing: error')
+
+    affordance.dispose()
+  })
+})
+
+// Copilot round 1, F7: `all: unset` on the button wipes its native focus
+// ring — a replacement :focus-visible style must be present in the shadow
+// stylesheet.
+describe('createAffordance: focus-visible style', () => {
+  it('the shadow stylesheet defines a visible :focus-visible outline for the button', () => {
+    const affordance = createAffordance(() => {})
+    affordance.showFor(el)
+
+    const style = affordance.host.shadowRoot!.querySelector('style')!
+    expect(style.textContent).toMatch(/button:focus-visible\s*\{[^}]*outline:\s*[^;]+;/)
+
+    affordance.dispose()
+  })
+})
+
 describe('createAffordance: hide/dispose', () => {
   it('hide() removes it from view without destroying the host', () => {
     const affordance = createAffordance(() => {})
