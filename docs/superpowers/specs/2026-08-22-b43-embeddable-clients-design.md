@@ -237,6 +237,17 @@ Chromium-only API outside the panel-host module and the manifest.
    position behind the textarea (`mark: 'overlay'`). `ContentEditableAdapter`
    (C3): CSS Custom Highlight API for markings, `Range`-based best-effort
    replacement — same interface, nothing outside the adapter changes.
+
+   > **Amendment (amended during C2, 2026-08-23):** `selectFinding` now
+   > also drives a persistent selected marker, not just the momentary
+   > flash — the owner's expectation is that the selected finding's overlay
+   > mark stays visibly marked while selected, the way the main editor's
+   > own `.fw-selected` does. `FieldAdapter` gains an OPTIONAL
+   > `setSelected?(id: string | null): void` (`protocol.ts`); a host that
+   > handles `selectFinding` calls it alongside `flashFinding`, `id: null`
+   > included, on every selection change. Optional keeps this backward
+   > compatible — a host adapter that doesn't implement it keeps the
+   > flash-only behavior this table already documents.
 3. **Panel host page** (extension origin, opened via `chrome.sidePanel`; the
    affordance click supplies the required user gesture). Contains the embed
    iframe; `src` from extension options (`chrome.storage`: server URL, default

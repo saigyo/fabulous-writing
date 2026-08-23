@@ -29,12 +29,19 @@ const HIDE_DELAY_MS = 250
 // design, and beginReacquire below for the handoff.
 const REACQUIRE_GRACE_MS = 2000
 const REACQUIRE_POLL_MS = 200
+// F1 (B43 C2 round 3): Chrome's MV3 service worker suspends after ~30s of no
+// port TRAFFIC (sw.ts's own header comment) — a quiet stretch during a live
+// session (an LLM check running 10-30s, the user reading findings) has none,
+// so the worker can die and drop the session mid-check with no user action
+// at fault. 20s keeps every gap comfortably under the ~30s timer.
+const PING_INTERVAL_MS = 20_000
 
 let port: Port | null = null
 let session: Session | null = null
 let sessionEl: HTMLTextAreaElement | null = null
 let reacquireTimer: ReturnType<typeof setTimeout> | undefined
 let reacquirePoll: ReturnType<typeof setInterval> | undefined
+let pingTimer: ReturnType<typeof setInterval> | undefined
 // The live session's own display state/count, tracked separately from
 // what's actually rendered: renderChip() below only projects this onto the
 // chip when the field currently shown IS the session's own field — hovering
@@ -112,6 +119,34 @@ function postOpenPanel(): void {
   }
 }
 
+// F1: same guarded, non-throwing shape as postOpenPanel — a dead port must
+// not blow up the interval callback, and ensurePort() itself never throws.
+function postPing(): void {
+  try {
+    ensurePort()?.postMessage({ ctl: { kind: 'ping' } } satisfies PortMessage)
+  } catch {
+    // dead port — nothing to recover here; the next tick retries
+  }
+}
+
+// Started the moment a session becomes active (chip click, or a successful
+// reacquire reconnect) and stopped everywhere a session stops being active
+// (user disconnect, sw-initiated detach, port death, self-detach entering
+// the reacquire grace window, pagehide) — see this file's own call sites of
+// startPingTimer/stopPingTimer. Idempotent: safe to call even when already
+// (not) running.
+function startPingTimer(): void {
+  stopPingTimer()
+  pingTimer = setInterval(postPing, PING_INTERVAL_MS)
+}
+
+function stopPingTimer(): void {
+  if (pingTimer !== undefined) {
+    clearInterval(pingTimer)
+    pingTimer = undefined
+  }
+}
+
 function stopReacquire(): void {
   if (reacquireTimer !== undefined) {
     clearTimeout(reacquireTimer)
@@ -144,9 +179,11 @@ function reconnect(el: HTMLTextAreaElement, oldEl: HTMLTextAreaElement): void {
   session = startSession(el, send, () => {
     if (sessionEl !== el) return
     session = null
+    stopPingTimer()
     beginReacquire(fingerprint, el)
   })
   sessionEl = el
+  startPingTimer()
   if (wasShown) {
     shownEl = el
     affordance.showFor(el)
@@ -187,6 +224,7 @@ function stopCurrentSession(): void {
     session = null
   }
   stopReacquire()
+  stopPingTimer()
   sessionEl = null
   renderChip()
 }
@@ -212,6 +250,7 @@ function handleChipClick(el: HTMLTextAreaElement): void {
     session = null
   }
   stopReacquire()
+  stopPingTimer()
   sessionEl = null
   postOpenPanel()
   sessionState = 'busy'
@@ -231,9 +270,11 @@ function handleChipClick(el: HTMLTextAreaElement): void {
   session = startSession(el, send, () => {
     if (sessionEl !== el) return
     session = null
+    stopPingTimer()
     beginReacquire(fingerprint, el)
   })
   sessionEl = el
+  startPingTimer()
   renderChip()
 }
 
@@ -260,6 +301,7 @@ function handlePortMessage(data: unknown): void {
       if (!session || parsed.ctl.fieldId !== session.fieldId) return
       session.detach()
       session = null
+      stopPingTimer()
       sessionEl = null
       renderChip()
       return
@@ -314,6 +356,7 @@ function handlePortDisconnect(disconnected: Port): void {
   session?.detach()
   session = null
   stopReacquire()
+  stopPingTimer()
   sessionEl = null
   port = null
   renderChip()
@@ -443,6 +486,7 @@ window.addEventListener('pagehide', () => {
   }
   session = null
   stopReacquire()
+  stopPingTimer()
   sessionEl = null
   shownEl = null
   cancelHide()

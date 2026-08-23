@@ -55,13 +55,20 @@ Three contexts, wired by a fourth Chromium-only piece:
   `detach`, panel-not-ready buffers nothing and re-synthesizes `fieldConnected`
   on the next `embedReady`) unit-testable without mocking a single port. The
   registry is in-memory; an open runtime port does NOT keep an MV3 service
-  worker alive indefinitely — only port *traffic* resets its ~30s idle timer,
-  so a quiet worker can still suspend and lose the registry's in-memory state
-  even with a port still connected. Both sides recover when that happens: the
-  scout lazily reconnects on the next user interaction (its port's
-  `onDisconnect` tears the session down to an idle chip; the next click/focus
-  reopens a port and re-registers), and the panel reloads itself the moment
-  its own port disconnects, re-deriving fresh state via a new `panelHello`
+  worker alive indefinitely — only port *traffic* resets its ~30s idle timer.
+  This in-memory registry is now **protected by active-session heartbeats**
+  (F1, B43 C2 round 3): while a field session is live, the scout pings the
+  worker every 20s over the field port, and the panel does the same over the
+  panel port while a field is connected — a lightweight `{kind:'ping'}` ctl
+  (`messages.ts`) whose ARRIVAL is what resets the idle timer; `sw.ts` drops
+  it with no reply and no registry effect. Suspension can still happen with
+  **no session** (harmless — there is nothing in the registry worth keeping
+  alive) or **on an extension update/crash** (a heartbeat can't prevent
+  either) — the recovery paths for both are unchanged: the scout lazily
+  reconnects on the next user interaction (its port's `onDisconnect` tears
+  the session down to an idle chip; the next click/focus reopens a port and
+  re-registers), and the panel reloads itself the moment its own port
+  disconnects, re-deriving fresh state via a new `panelHello`
   (`chrome.storage.session`-backed registry survival is deferred, noted in a
   code comment in `registry.ts`/`sw.ts`).
 - **Panel host page** — `panel.html` + `src/panel.ts`/`src/relay.ts`, opened

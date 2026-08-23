@@ -19,6 +19,8 @@ import './scout'
 // access to that constant, so it advances generously past it instead of
 // mirroring the exact value.
 const PAST_HIDE_DELAY_MS = 1000
+// Same reasoning, for scout.ts's own (private) PING_INTERVAL_MS (F1).
+const PAST_PING_INTERVAL_MS = 21_000
 
 function stubRect(el: HTMLElement): void {
   el.getBoundingClientRect = () => ({
@@ -461,6 +463,100 @@ describe('scout: split-pill click routing (live-test UX decision, B43 C2 PR #139
 // session.ts's MutationObserver correctly self-detaches, but a hard stop
 // there used to cost the whole session. scout.ts now opens a short grace
 // window that probes for a same-fingerprint replacement first.
+// F1 (B43 C2 round 3): the keepalive ping timer starts the moment a session
+// becomes active and stops the moment it doesn't — a quiet stretch (an LLM
+// check running, the user reading findings) with no other port traffic must
+// still keep Chrome's ~30s MV3 idle timer from firing and dropping the
+// session.
+describe('scout: F1 keepalive ping timer', () => {
+  function pingCount(port: MockPort): number {
+    return port.postMessage.mock.calls.filter(
+      ([msg]) => (msg as { ctl?: { kind?: string } }).ctl?.kind === 'ping',
+    ).length
+  }
+
+  it('sends no ping before a session starts, then one ctl ping per interval while connected', () => {
+    vi.useFakeTimers()
+    try {
+      const el = eligibleField()
+      show(el)
+      const port = lastConnectedPort()
+
+      // No session yet (idle chip) — no ping timer running.
+      vi.advanceTimersByTime(PAST_PING_INTERVAL_MS)
+      expect(pingCount(port)).toBe(0)
+
+      clickChip()
+      expect(pingCount(port)).toBe(0)
+
+      vi.advanceTimersByTime(PAST_PING_INTERVAL_MS)
+      expect(pingCount(port)).toBe(1)
+
+      vi.advanceTimersByTime(PAST_PING_INTERVAL_MS)
+      expect(pingCount(port)).toBe(2)
+
+      port.onDisconnect.emit(port)
+      el.remove()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops pinging once the session is disconnected (the × segment)', () => {
+    vi.useFakeTimers()
+    try {
+      const el = eligibleField()
+      show(el)
+      const port = lastConnectedPort()
+      clickChip()
+      vi.advanceTimersByTime(PAST_PING_INTERVAL_MS)
+      expect(pingCount(port)).toBe(1)
+
+      clickDisconnect()
+      const afterDisconnect = pingCount(port)
+
+      vi.advanceTimersByTime(PAST_PING_INTERVAL_MS * 2)
+      expect(pingCount(port)).toBe(afterDisconnect)
+
+      port.onDisconnect.emit(port)
+      el.remove()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops pinging once the port itself dies', () => {
+    vi.useFakeTimers()
+    try {
+      const el = eligibleField()
+      show(el)
+      const port = lastConnectedPort()
+      clickChip()
+      vi.advanceTimersByTime(PAST_PING_INTERVAL_MS)
+      expect(pingCount(port)).toBe(1)
+
+      port.onDisconnect.emit(port)
+
+      vi.advanceTimersByTime(PAST_PING_INTERVAL_MS * 2)
+      // The port is dead — nothing to assert pings against, but a live
+      // (unhandled) timer would throw trying to post through the reused
+      // mock, or a subsequent interaction would open a second, spuriously
+      // ping-armed port. Reconnecting confirms no stray timer survived.
+      show(el)
+      const newPort = lastConnectedPort()
+      expect(newPort).not.toBe(port)
+      expect(pingCount(newPort)).toBe(0)
+      vi.advanceTimersByTime(PAST_PING_INTERVAL_MS)
+      expect(pingCount(newPort)).toBe(0)
+
+      newPort.onDisconnect.emit(newPort)
+      el.remove()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('scout: field re-acquisition after DOM replacement (live-test finding, B43 C2 PR #139)', () => {
   it('a same-id replacement appearing within the grace window silently reconnects: a NEW fieldConnected is sent, the chip never goes idle', async () => {
     vi.useFakeTimers()

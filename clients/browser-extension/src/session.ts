@@ -114,6 +114,12 @@ export function startSession(
         if (detached) return
         if (msg.payload.fieldId !== fieldId) return
         selectedId = msg.payload.id
+        // F2 (C2): setSelected FIRST — it re-renders the overlay's marks
+        // from scratch (textareaAdapter.ts's render(), via
+        // overlay.replaceChildren()), which would wipe out flashFinding's
+        // own fw-mark-flash class if that ran first. id: null included, so
+        // a toggle-off clears the persistent marker too.
+        adapter.setSelected?.(msg.payload.id)
         if (msg.payload.id !== null) adapter.flashFinding(msg.payload.id)
         return
       case 'applyReplacement': {

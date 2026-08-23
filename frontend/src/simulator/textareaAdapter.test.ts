@@ -551,6 +551,73 @@ describe('createTextareaAdapter: flashFinding', () => {
   })
 })
 
+// F2 (C2): the persistent selection marker — unlike flashFinding's momentary
+// 700ms pulse, the selected finding stays visibly marked (fw-mark-selected)
+// for as long as it's selected, including across a re-render (a fresh
+// setMarkings call rebuilds every mark element from scratch via
+// overlay.replaceChildren()).
+describe('createTextareaAdapter: setSelected', () => {
+  it('applies fw-mark-selected to the segment covering the selected id, and it survives a subsequent re-render', () => {
+    const adapter = createTextareaAdapter(el)
+    const spans = [{ id: 'f1', from: 4, to: 9, severity: 'error' as const, category: 'spelling' as const }]
+    adapter.setMarkings(spans)
+
+    adapter.setSelected?.('f1')
+    expect(document.querySelector('[data-finding-ids~="f1"]')?.className).toContain('fw-mark-selected')
+
+    // A fresh setMarkings call (e.g. an updated findings list from the
+    // embed) rebuilds the overlay's marks from scratch — the selected class
+    // must be re-applied by render() itself, not just have been a one-shot
+    // DOM mutation from the setSelected call above.
+    adapter.setMarkings(spans)
+    expect(document.querySelector('[data-finding-ids~="f1"]')?.className).toContain('fw-mark-selected')
+
+    adapter.dispose()
+  })
+
+  it('clears the selected class once setSelected(null) is called', () => {
+    const adapter = createTextareaAdapter(el)
+    adapter.setMarkings([{ id: 'f1', from: 4, to: 9, severity: 'error', category: 'spelling' }])
+    adapter.setSelected?.('f1')
+    expect(document.querySelector('[data-finding-ids~="f1"]')?.className).toContain('fw-mark-selected')
+
+    adapter.setSelected?.(null)
+    expect(document.querySelector('[data-finding-ids~="f1"]')?.className).not.toContain('fw-mark-selected')
+
+    adapter.dispose()
+  })
+
+  it('a shared segment covering overlapping findings selects when ANY of its ids matches', () => {
+    const adapter = createTextareaAdapter(el)
+    // A: [0,10), B: [5,15) — staggered overlap (same shape as the
+    // "overlapping and nested spans" describe block above); [5,10) carries
+    // both ids.
+    adapter.setMarkings([
+      { id: 'a', from: 0, to: 10, severity: 'warning', category: 'style' },
+      { id: 'b', from: 5, to: 15, severity: 'suggestion', category: 'style' },
+    ])
+
+    adapter.setSelected?.('a')
+
+    const shared = document.querySelector('[data-finding-ids~="b"]')
+    expect(shared?.getAttribute('data-finding-ids')).toBe('a b')
+    expect(shared?.className).toContain('fw-mark-selected')
+
+    // The B-only segment [10,15) must NOT be marked selected.
+    const bOnly = [...document.querySelectorAll('.fw-mark')]
+      .find((m) => m.getAttribute('data-finding-ids') === 'b')
+    expect(bOnly?.className).not.toContain('fw-mark-selected')
+
+    adapter.dispose()
+  })
+
+  it('is a no-op when the selected id is not currently marked', () => {
+    const adapter = createTextareaAdapter(el)
+    expect(() => adapter.setSelected?.('does-not-exist')).not.toThrow()
+    adapter.dispose()
+  })
+})
+
 // Part A / Task 6 (B43 C2): host-page overlay positioning. The overlay is
 // `position: absolute; top: 0; left: 0`, which resolves against its
 // CONTAINING BLOCK, not necessarily the field's own position — on an

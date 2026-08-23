@@ -495,6 +495,12 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
 
   let changeCb: (() => void) | null = null
   let currentSpans: MarkingSpan[] = []
+  // F2 (C2): the currently-selected finding id, or null — stored here (not
+  // just applied once as a DOM mutation) so render() can re-apply the
+  // fw-mark-selected class on every re-render (a fresh setMarkings call
+  // rebuilds the overlay's mark elements from scratch via
+  // overlay.replaceChildren(), which would otherwise silently drop it).
+  let selectedId: string | null = null
   // Finding 23: dispose() clears this so a flash that's still pending when
   // the adapter is torn down (a field disconnecting mid-flash) can't fire
   // its classList.remove against a mark whose overlay has already been
@@ -586,6 +592,13 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
       const mark = document.createElement('span')
       mark.className = `fw-mark fw-mark-${topSeverity}`
       mark.dataset.findingIds = covering.map((span) => span.id).join(' ')
+      // F2 (C2): a shared (overlapping-findings) segment selects when ANY
+      // of the ids it carries matches the currently-selected one — same
+      // "carries every finding that covers it" reasoning the sweep above
+      // already applies to severity/flashFinding's own ~= attribute match.
+      if (selectedId !== null && covering.some((span) => span.id === selectedId)) {
+        mark.classList.add('fw-mark-selected')
+      }
       // Copilot round 2 (B43 C2), S6b: a host page's own CSS can target bare
       // element selectors (e.g. `span { display: block }`) that would shift
       // this mark out of inline flow and desync the mirror's line-wrapping
@@ -753,6 +766,10 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
         flashTimer = null
         mark.classList.remove('fw-mark-flash')
       }, FLASH_MS)
+    },
+    setSelected(id) {
+      selectedId = id
+      render()
     },
     dispose() {
       el.removeEventListener('input', handleInput)
