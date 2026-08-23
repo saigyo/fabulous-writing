@@ -119,15 +119,17 @@ auth:
 # embedding is off until a deployment opts in. Each entry is self (bare,
 # unquoted -- YAML's own quotes around 'self' are stripped, leaving the
 # bare word either way; covers same-origin) or a scheme://host[:port]
-# origin (no wildcards, no paths). Additional origin limits: lowercase
-# scheme only, no IPv6 literals (yet), no trailing-dot FQDNs, no
-# underscores in a hostname label. The main SPA is never frameable,
-# regardless of this setting.
+# origin (no wildcards, no paths). IPv6 bracket literals are supported:
+# http://[::1]:8000 or https://[2001:db8::1] (zone IDs rejected). Additional
+# origin limits: lowercase scheme only, no trailing-dot FQDNs, no underscores
+# in a hostname label. The main SPA is never frameable, regardless of this
+# setting.
 # embed:
 #   allowed_ancestors:
 #     - self
 #     - chrome-extension://<extension-id>
 #     - https://example.com
+#     - http://[::1]:8000
 
 # Required environment variables (never stored in this file). FW_AUTH_SECRET
 # is the only one with an escape hatch: ephemeral_secret above (dev only).
