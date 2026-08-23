@@ -7,6 +7,7 @@ import type {
   Envelope, FieldConnectedMessage, FieldDisconnectedMessage, SelectFindingMessage, TextChangedMessage,
 } from '../../../frontend/src/embed/protocol'
 import { browserMock, createMockPort, type MockPort } from './testing/browserMock'
+import { chromeMock } from './testing/chromeMock'
 import './sw'
 
 function fieldConnected(fieldId: string, text = 'hello'): Envelope<FieldConnectedMessage> {
@@ -61,16 +62,20 @@ describe('sw.ts — port bookkeeping', () => {
 
     // A new content-script port connects under the SAME tabId (same-tab
     // navigation) and re-registers before portA's onDisconnect fires — no
-    // ordering guarantee between those two browser events.
+    // ordering guarantee between those two browser events. S1 fix: this
+    // connect itself now synthesizes an immediate fieldDisconnected for the
+    // stale f1 (a fieldPortGone effect run before the new port is stored),
+    // so the panel sees that BEFORE portB's own fieldConnected.
     const portB = connectField(T, W)
-    portB.onMessage.emit({ relay: fieldConnected('f2') })
     expect(panelPort.postMessage).toHaveBeenCalledTimes(2)
+    portB.onMessage.emit({ relay: fieldConnected('f2') })
+    expect(panelPort.postMessage).toHaveBeenCalledTimes(3)
 
     // The OLD port's disconnect arrives late.
     portA.onDisconnect.emit(portA)
 
     // No spurious fieldDisconnected/badge synthesis from the stale event.
-    expect(panelPort.postMessage).toHaveBeenCalledTimes(2)
+    expect(panelPort.postMessage).toHaveBeenCalledTimes(3)
 
     // portB is still tracked in fieldPorts: a message routed FROM the panel
     // TO the field must still reach it.
@@ -81,7 +86,7 @@ describe('sw.ts — port bookkeeping', () => {
     // And the registry still has the field connected: portB's own traffic
     // still relays to the panel.
     portB.onMessage.emit({ relay: textChanged('f2', 'more text') })
-    expect(panelPort.postMessage).toHaveBeenCalledTimes(3)
+    expect(panelPort.postMessage).toHaveBeenCalledTimes(4)
   })
 
   // Copilot round 1, F1: onDisconnect's identity guard alone isn't enough —
@@ -99,20 +104,23 @@ describe('sw.ts — port bookkeeping', () => {
     expect(panelPort.postMessage).toHaveBeenCalledTimes(1)
 
     // Same-tab navigation: a new port re-registers under T before portA's
-    // onDisconnect (or even any disconnect at all) fires.
+    // onDisconnect (or even any disconnect at all) fires. S1 fix: this
+    // connect itself now synthesizes an immediate fieldDisconnected for the
+    // stale f1 before portB's own fieldConnected.
     const portB = connectField(T, W)
-    portB.onMessage.emit({ relay: fieldConnected('f2') })
     expect(panelPort.postMessage).toHaveBeenCalledTimes(2)
+    portB.onMessage.emit({ relay: fieldConnected('f2') })
+    expect(panelPort.postMessage).toHaveBeenCalledTimes(3)
 
     // portA delivers a late fieldDisconnected. Must be dropped silently —
     // NOT relayed to the panel, and must not clear the registry's field
     // (which is now f2, registered by portB).
     portA.onMessage.emit({ relay: fieldDisconnected('f1') })
-    expect(panelPort.postMessage).toHaveBeenCalledTimes(2)
+    expect(panelPort.postMessage).toHaveBeenCalledTimes(3)
 
     // The registry still has f2 connected: portB's own traffic still relays.
     portB.onMessage.emit({ relay: textChanged('f2', 'more text') })
-    expect(panelPort.postMessage).toHaveBeenCalledTimes(3)
+    expect(panelPort.postMessage).toHaveBeenCalledTimes(4)
   })
 
   it('a stale panel-port disconnect (arriving after a reconnect for the same window) does not ' +
@@ -176,5 +184,73 @@ describe('sw.ts — port bookkeeping', () => {
     field.onMessage.emit({ relay: msg })
     expect(panelB.postMessage).toHaveBeenCalledTimes(2)
     expect(panelB.postMessage).toHaveBeenNthCalledWith(2, { relay: msg })
+  })
+
+  // Copilot round 2, S1: the scout opens its port on hover, before it has
+  // sent any fieldConnected of its own — so a same-tab navigation can
+  // register a NEW, still-idle port for the same tabId before the OLD port's
+  // onDisconnect fires. Without evicting the stale field the moment the new
+  // port registers, the registry would keep the OLD field connected forever
+  // (the old port's late disconnect is identity-ignored, same as the tests
+  // above), stranding the panel on a field that's actually gone.
+  it('an idle replacement port connecting before any fieldConnected evicts the stale field immediately: panel gets fieldDisconnected, badge clears, registry has no field, and the old port\'s late disconnect stays a no-op', () => {
+    const W = 909
+    const T = 1010
+    const panelPort = connectPanel(W)
+
+    const portA = connectField(T, W)
+    portA.onMessage.emit({ relay: fieldConnected('f1') })
+    expect(panelPort.postMessage).toHaveBeenCalledTimes(1)
+
+    // Same-tab navigation opens a NEW, still-idle port under the same
+    // tabId — no fieldConnected sent yet.
+    const portB = connectField(T, W)
+
+    // The stale field must be evicted the moment portB registers, not left
+    // dangling until portA's disconnect eventually (if ever) arrives.
+    expect(panelPort.postMessage).toHaveBeenCalledTimes(2)
+    expect(panelPort.postMessage).toHaveBeenNthCalledWith(2, { relay: fieldDisconnected('f1') })
+    expect(chromeMock.action.setBadgeText).toHaveBeenCalledWith({ tabId: T, text: '' })
+
+    // The registry has no field at all right now: a message that would only
+    // relay if w.field were (wrongly) still set to the old field is dropped.
+    portB.onMessage.emit({ relay: textChanged('f1', 'still stale?') })
+    expect(panelPort.postMessage).toHaveBeenCalledTimes(2)
+
+    // portA's late disconnect is a complete no-op: fieldPorts already points
+    // at portB.
+    portA.onDisconnect.emit(portA)
+    expect(panelPort.postMessage).toHaveBeenCalledTimes(2)
+
+    // portB can still register its own field normally afterward.
+    portB.onMessage.emit({ relay: fieldConnected('f2') })
+    expect(panelPort.postMessage).toHaveBeenCalledTimes(3)
+    expect(panelPort.postMessage).toHaveBeenNthCalledWith(3, { relay: fieldConnected('f2') })
+  })
+
+  // Copilot round 2, S3: openPanel's sidePanel.open() rejection is async — by
+  // the time it settles, a same-tab navigation may have superseded the
+  // originating port with a new one for the same tabId. The failure ctl must
+  // only ever reach the port that actually initiated the (now-failed)
+  // openPanel call, never "whichever port currently occupies fieldPorts for
+  // this tab".
+  it('a superseded port\'s openPanel rejection does not deliver an error ctl to the replacement port (or the stale one)', async () => {
+    const W = 1111
+    const T = 1212
+    connectPanel(W)
+    const portA = connectField(T, W)
+    chromeMock.sidePanel.open.mockImplementationOnce(() => Promise.reject(new Error('boom')))
+    portA.onMessage.emit({ ctl: { kind: 'openPanel' } })
+
+    // Same-tab navigation supersedes portA before its openPanel rejection
+    // has had a chance to settle.
+    const portB = connectField(T, W)
+
+    // Flush the rejected promise's microtask queue.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const errorCtl = { ctl: { kind: 'status', phase: 'error', findingCount: 0 } }
+    expect(portB.postMessage).not.toHaveBeenCalledWith(errorCtl)
+    expect(portA.postMessage).not.toHaveBeenCalledWith(errorCtl)
   })
 })

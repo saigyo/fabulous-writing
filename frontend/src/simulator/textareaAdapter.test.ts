@@ -939,6 +939,136 @@ describe('createTextareaAdapter: document-level scroll re-sync (inner scrollers)
   })
 })
 
+// Copilot round 2 (B43 C2), S2: getBoundingClientRect() reports
+// viewport-space pixels; overlay.style.top/left resolve against the
+// overlay's containing-block-space. Under a scaled ancestor those two spaces
+// differ by the scale factor, so the measured delta must be divided by it
+// before being applied — otherwise the correction over/undershoots (and,
+// via the 1s safety interval, oscillates/diverges).
+describe('createTextareaAdapter: transform-scale-aware overlay geometry sync', () => {
+  const realDivGetBoundingClientRect = HTMLDivElement.prototype.getBoundingClientRect
+
+  afterEach(() => {
+    Object.defineProperty(HTMLDivElement.prototype, 'getBoundingClientRect', {
+      value: realDivGetBoundingClientRect,
+      configurable: true,
+    })
+  })
+
+  function stubRects(
+    elRect: { top: number; left: number },
+    overlayRect: { top: number; left: number; width: number; height: number },
+  ) {
+    const fakeElRect = { ...elRect, right: 0, bottom: 0, width: 0, height: 0, x: elRect.left, y: elRect.top, toJSON() { return {} } } as DOMRect
+    const fakeOverlayRect = { ...overlayRect, right: 0, bottom: 0, x: overlayRect.left, y: overlayRect.top, toJSON() { return {} } } as DOMRect
+    Object.defineProperty(el, 'getBoundingClientRect', {
+      value: () => fakeElRect,
+      configurable: true,
+    })
+    Object.defineProperty(HTMLDivElement.prototype, 'getBoundingClientRect', {
+      value: () => fakeOverlayRect,
+      configurable: true,
+    })
+  }
+
+  it('divides the measured delta by the effective scale under a scaled ancestor, landing exactly in one sync', () => {
+    // The field's own (unscaled, containing-block-space) size is 200x80 —
+    // MIRRORED_PROPS copies this onto overlay.style.width/height. The
+    // overlay's ON-SCREEN rect (viewport space, under a 2x-scaled ancestor)
+    // reports double that: 400x160.
+    el.style.width = '200px'
+    el.style.height = '80px'
+    stubRects({ top: 216, left: 16 }, { top: 200, left: 0, width: 400, height: 160 })
+
+    const adapter = createTextareaAdapter(el)
+
+    const overlay = el.previousElementSibling as HTMLDivElement
+    // Unscaled delta would be (216-200, 16-0) = (16, 16) — wrong by 2x under
+    // a scale of 2. Dividing by the recovered scale (400/200 = 2, 160/80 =
+    // 2) lands exactly on the true, unscaled 8px offset.
+    expect(overlay.style.top).toBe('8px')
+    expect(overlay.style.left).toBe('8px')
+
+    adapter.dispose()
+  })
+
+  it('unscaled behavior is unchanged: a zero-size overlay rect (no real layout, e.g. under test) falls back to a scale of 1', () => {
+    stubRects({ top: 108, left: 8 }, { top: 100, left: 0, width: 0, height: 0 })
+
+    const adapter = createTextareaAdapter(el)
+
+    const overlay = el.previousElementSibling as HTMLDivElement
+    expect(overlay.style.top).toBe('8px')
+    expect(overlay.style.left).toBe('8px')
+
+    adapter.dispose()
+  })
+})
+
+// Copilot round 2 (B43 C2), S6b: a host page's own bare-element CSS (e.g.
+// `span { display: block }`) could shift a mark span out of inline flow,
+// desyncing the mirror's wrapped-line layout from the real textarea
+// underneath. Every layout-critical property is set inline on the span so
+// host CSS — which always loses to an inline style — cannot touch it.
+describe('createTextareaAdapter: mark spans carry inline layout neutralizers', () => {
+  it('sets display/margin/padding/border/font/letter-spacing/white-space inline on every rendered mark', () => {
+    const adapter = createTextareaAdapter(el)
+    adapter.setMarkings([{ id: 'f1', from: 4, to: 9, severity: 'error', category: 'spelling' }])
+
+    const mark = document.querySelector('[data-finding-ids="f1"]') as HTMLElement
+    expect(mark.style.display).toBe('inline')
+    expect(mark.style.margin).toBe('0px')
+    expect(mark.style.padding).toBe('0px')
+    expect(mark.style.border).toBe('0px')
+    expect(mark.style.font).toBe('inherit')
+    expect(mark.style.letterSpacing).toBe('inherit')
+    expect(mark.style.whiteSpace).toBe('inherit')
+
+    adapter.dispose()
+  })
+})
+
+// Copilot round 2 (B43 C2), S6a: the overlay carries the attribute the C2
+// browser extension's MARKS_CSS scopes every `.fw-mark*` rule under
+// (clients/browser-extension/src/marks.css.ts) — an arbitrary host page's
+// own CSS could otherwise restyle any element it happens to give one of
+// these (plausibly-colliding) class names via that global stylesheet.
+describe('createTextareaAdapter: overlay carries the mark-scoping attribute', () => {
+  it('sets data-fw-overlay on the mirror overlay', () => {
+    const adapter = createTextareaAdapter(el)
+
+    const overlay = el.previousElementSibling as HTMLDivElement
+    expect(overlay.dataset.fwOverlay).toBe('')
+
+    adapter.dispose()
+  })
+})
+
+// Copilot round 2 (B43 C2), S4: dispose() must restore a property only if
+// its CURRENT inline value still equals what the adapter itself wrote — a
+// host that legitimately changes one of these mid-session (its own
+// re-render, a theme toggle) must not have that change clobbered.
+describe('createTextareaAdapter: dispose only restores properties the host has not since changed', () => {
+  it('a host mutation to backgroundColor mid-session is left alone by dispose; untouched position/z-index still restore to their pre-session snapshot', () => {
+    const adapter = createTextareaAdapter(el)
+    expect(el.style.position).toBe('relative')
+    expect(el.style.zIndex).toBe('1')
+    expect(el.style.backgroundColor).toBe('transparent')
+
+    // The host legitimately re-styles the field mid-session.
+    el.style.backgroundColor = 'rgb(10, 20, 30)'
+
+    adapter.dispose()
+
+    // The host's own change is left exactly as the host left it.
+    expect(el.style.backgroundColor).toBe('rgb(10, 20, 30)')
+    // Properties the host never touched still restore to their pre-session
+    // (here: unset) snapshot, exactly as before this fix.
+    expect(el.style.position).toBe('')
+    expect(el.style.zIndex).toBe('')
+  })
+})
+
 describe('createTextareaAdapter: dispose', () => {
   it('removes the mirror overlay from the DOM', () => {
     const adapter = createTextareaAdapter(el)
