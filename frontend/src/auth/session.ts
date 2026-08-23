@@ -78,6 +78,18 @@ export async function login(email: string, password: string): Promise<boolean> {
     // session never activates over A's still-live check.
     invalidateDocumentWork()
     cancelInFlightCheck()
+    // activateEmbed() belongs in THIS branch, not unconditionally below: it
+    // resets the embed shim's session-scoped state (hostDoc.ts's
+    // activateSession() settles any pending replacement as 'refused' and
+    // clears tracked findings) before republishing. A same-user re-login
+    // (the password-change flow's silent re-auth) is not a user change at
+    // all — calling this for it would tear down THIS SAME user's still-live
+    // LLM check exactly like the invalidate/cancel pair above would, just
+    // through the embed shim instead of the main app's check subscription.
+    // Login-form-first still works: previousUserId is undefined then, so
+    // this branch (previousUserId !== user.id) is taken and the embed still
+    // activates on that very first login.
+    activateEmbed()
   }
   discardForeignBuffer(user.id)   // keeps this user's own unsaved work
   // Local mode returns refresh_token/expires_at as null (backend/app/api/
@@ -98,14 +110,6 @@ export async function login(email: string, password: string): Promise<boolean> {
   // the current user while they stay mounted.
   useStore.getState().bumpAuthGeneration()
   scheduleRefresh()
-  // Post-resetSessionState, post-auth-commit: a field connected while the
-  // login form was showing survives this reset in the embed shim itself
-  // (hostDoc.ts) even though the store's connectedField/tracked/docWords/
-  // docChars just got cleared above (on a cross-user login) — republish
-  // restores the store's view of it. A no-op in the main app and while
-  // nothing is connected (embed/activateSlot.ts), so this stays unguarded
-  // for every login, including the same-user re-login branch.
-  activateEmbed()
   return true
 }
 

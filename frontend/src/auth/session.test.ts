@@ -349,6 +349,24 @@ describe('login', () => {
     expect(invalidateDocumentWork).not.toHaveBeenCalled()
     expect(cancelSpy).not.toHaveBeenCalled()
   })
+
+  // Closing-review item 2: activateEmbed() used to run unconditionally on
+  // every login, including a same-user re-login (the password-change flow's
+  // silent re-auth) — hostDoc.ts's activateSession() settles any pending
+  // replacement as 'refused', tearing down a live LLM check the SAME user
+  // is still waiting on. It now lives inside the cross-user branch only,
+  // next to invalidateDocumentWork()/cancelInFlightCheck() above — this
+  // pins the same invariant those calls already have for the same-user case.
+  it('does not call the registered activateEmbed handler on a same-user re-login', async () => {
+    useStore.setState({ user: user(1), authStatus: 'authenticated' })
+    const activateSpy = vi.fn()
+    setEmbedActivateHandler(activateSpy)
+    vi.mocked(postLogin).mockResolvedValue({ token: 'tok2', refresh_token: null, expires_at: null, user: user(1) })
+
+    await login('a@example.com', 'pw')
+
+    expect(activateSpy).not.toHaveBeenCalled()
+  })
 })
 
 describe('logout', () => {

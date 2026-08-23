@@ -198,6 +198,60 @@ describe('createTextareaAdapter: applyReplacement', () => {
     expect(cb).not.toHaveBeenCalled()
     adapter.dispose()
   })
+
+  // Finding 1/6: an out-of-range or inverted vector must refuse BEFORE the
+  // expectedText compare, which alone is not enough to catch these —
+  // String.slice()/setSelectionRange silently clamp or truncate an
+  // out-of-range argument, so each vector below passes `expectedText` the
+  // value the CLAMPED slice would actually equal. Without the explicit
+  // range guard, the compare would pass and the replacement would apply at
+  // the wrong (clamped) position instead of being refused outright — so
+  // these vectors mutation-verify the guard itself, not just "some" refusal.
+  it('to beyond the value length: expectedText matches the clamped slice, but the guard still refuses', () => {
+    const adapter = createTextareaAdapter(el)
+    const before = el.value // 'The quikc brown fox'
+    const clampedSlice = before.slice(4, 1000) // === before.slice(4) — what a bare String.slice would return
+
+    const result = adapter.applyReplacement(4, 1000, 'X', clampedSlice)
+
+    expect(result).toEqual({ ok: false, text: before })
+    expect(el.value).toBe(before)
+    adapter.dispose()
+  })
+
+  it('inverted range (to < from): the coincidental empty slice must not pass as an empty expectedText', () => {
+    const adapter = createTextareaAdapter(el)
+    const before = el.value
+
+    const result = adapter.applyReplacement(9, 4, 'X', '') // before.slice(9, 4) === ''
+
+    expect(result).toEqual({ ok: false, text: before })
+    expect(el.value).toBe(before)
+    adapter.dispose()
+  })
+
+  it('negative from: the coincidental empty slice must not pass as an empty expectedText', () => {
+    const adapter = createTextareaAdapter(el)
+    const before = el.value
+
+    const result = adapter.applyReplacement(-5, 3, 'X', '') // before.slice(-5, 3) === ''
+
+    expect(result).toEqual({ ok: false, text: before })
+    expect(el.value).toBe(before)
+    adapter.dispose()
+  })
+
+  it('non-integer (NaN) from: slice()/setSelectionRange would silently truncate NaN to 0', () => {
+    const adapter = createTextareaAdapter(el)
+    const before = el.value
+    const truncatedSlice = before.slice(0, 5) // what slice(NaN, 5) truncates to
+
+    const result = adapter.applyReplacement(NaN, 5, 'X', truncatedSlice)
+
+    expect(result).toEqual({ ok: false, text: before })
+    expect(el.value).toBe(before)
+    adapter.dispose()
+  })
 })
 
 describe('createTextareaAdapter: setMarkings/clearMarkings', () => {
@@ -320,9 +374,14 @@ describe('createTextareaAdapter: overlapping and nested spans', () => {
     adapter.dispose()
   })
 
-  // The sweep-line's tie-break at a shared boundary point (Copilot round
-  // 10's comment: ends before starts) must keep two merely-adjacent spans
-  // from being fused into one shared segment.
+  // Finding 26: there is no explicit ends-before-starts tie-break at a
+  // shared boundary — render()'s inner while loop drains EVERY event at a
+  // boundary position (regardless of order between them) before `active` is
+  // ever read to build the next segment's covering set, and each span's own
+  // end is removed by its own index independent of any other span's start
+  // being added at the same position. That drain-before-read is what keeps
+  // two merely-adjacent spans from fusing into one shared segment, not an
+  // ordering between their events.
   it('two adjacent (non-overlapping) spans render as separate segments, not one shared segment', () => {
     const adapter = createTextareaAdapter(el)
     // D: [0,5), E: [5,10) — D ends exactly where E begins.
@@ -342,7 +401,102 @@ describe('createTextareaAdapter: overlapping and nested spans', () => {
   })
 })
 
+// Finding 5: a textarea renders an extra empty line box for a trailing
+// "\n"; a `white-space: pre-wrap` overlay div does not, unless something is
+// appended after that newline to keep CSS from collapsing the line away.
+// happy-dom doesn't lay out text, so this only pins the DOM-content contract
+// (the guard character is present, appended last) — not the visual line
+// height itself, which needs a real browser (see the adapter's own comment).
+describe('createTextareaAdapter: trailing-newline desync guard', () => {
+  it('appends a zero-width space after the last text node when the value ends with a newline', () => {
+    el.value = 'line one\n'
+    const adapter = createTextareaAdapter(el)
+
+    const overlay = document.querySelector('.fw-mirror-overlay') as HTMLDivElement
+    expect(overlay.textContent).toBe('line one\n​')
+    expect(overlay.lastChild?.textContent).toBe('​')
+
+    adapter.dispose()
+  })
+
+  it('does not append the guard character when the value does not end with a newline', () => {
+    el.value = 'no trailing newline'
+    const adapter = createTextareaAdapter(el)
+
+    const overlay = document.querySelector('.fw-mirror-overlay') as HTMLDivElement
+    expect(overlay.textContent).toBe('no trailing newline')
+    expect(overlay.textContent?.includes('​')).toBe(false)
+
+    adapter.dispose()
+  })
+
+  it('also applies on the marked-spans render path, not just the plain-text one', () => {
+    el.value = 'quikc\n'
+    const adapter = createTextareaAdapter(el)
+
+    adapter.setMarkings([{ id: 'f1', from: 0, to: 5, severity: 'error', category: 'spelling' }])
+
+    const overlay = document.querySelector('.fw-mirror-overlay') as HTMLDivElement
+    expect(overlay.lastChild?.textContent).toBe('​')
+
+    adapter.dispose()
+  })
+})
+
+// Finding 29: the styles the overlay's correctness depends on (not just this
+// demo page's own look) are set inline in JS — the C2 browser extension
+// lifts this adapter onto host pages that never load simulator.css.
+describe('createTextareaAdapter: critical styles are set inline, not left to a stylesheet', () => {
+  it('sets position/pointerEvents/overflow/color/background inline at creation', () => {
+    const adapter = createTextareaAdapter(el)
+
+    const overlay = document.querySelector('.fw-mirror-overlay') as HTMLDivElement
+    expect(overlay.style.position).toBe('absolute')
+    expect(overlay.style.top).toBe('0px')
+    expect(overlay.style.left).toBe('0px')
+    expect(overlay.style.pointerEvents).toBe('none')
+    expect(overlay.style.overflow).toBe('hidden')
+    expect(overlay.style.color).toBe('transparent')
+    expect(overlay.style.background).toContain('transparent')
+
+    adapter.dispose()
+  })
+})
+
+// Finding 24: the overlay's scroll position is synced once right after the
+// first render, not only on the textarea's own first 'scroll' event — a
+// textarea can already be scrolled at creation time.
+describe('createTextareaAdapter: initial scroll sync', () => {
+  it('syncs the overlay scroll position at creation, before any scroll event', () => {
+    el.scrollTop = 42
+    el.scrollLeft = 7
+
+    const adapter = createTextareaAdapter(el)
+
+    const overlay = document.querySelector('.fw-mirror-overlay') as HTMLDivElement
+    expect(overlay.scrollTop).toBe(42)
+    expect(overlay.scrollLeft).toBe(7)
+
+    adapter.dispose()
+  })
+})
+
 describe('createTextareaAdapter: flashFinding', () => {
+  // Finding 22: a finding id containing a CSS-special character (a colon or
+  // bracket, both meaningful in selector syntax) must not throw when it's
+  // interpolated into the attribute selector.
+  it('CSS.escape()s the id before building the attribute selector', () => {
+    const adapter = createTextareaAdapter(el)
+    const trickyId = 'f:1[x]'
+    adapter.setMarkings([{ id: trickyId, from: 4, to: 9, severity: 'error', category: 'spelling' }])
+
+    expect(() => adapter.flashFinding(trickyId)).not.toThrow()
+    const mark = document.querySelector(`[data-finding-ids="${CSS.escape(trickyId)}"]`)
+    expect(mark?.className).toContain('fw-mark-flash')
+
+    adapter.dispose()
+  })
+
   it('pulses the fw-mark-flash class on the matching mark, then removes it', () => {
     vi.useFakeTimers()
     const adapter = createTextareaAdapter(el)
@@ -375,5 +529,37 @@ describe('createTextareaAdapter: dispose', () => {
     adapter.dispose()
 
     expect(document.querySelectorAll('.fw-mirror-overlay').length).toBe(0)
+  })
+
+  // Finding 23: dispose() clears a still-pending flash timer, nulls
+  // changeCb, and removes the input/scroll listeners.
+  it('clears a pending flash timer so it never fires after dispose', () => {
+    vi.useFakeTimers()
+    const adapter = createTextareaAdapter(el)
+    adapter.setMarkings([{ id: 'f1', from: 4, to: 9, severity: 'error', category: 'spelling' }])
+    adapter.flashFinding('f1')
+    const mark = document.querySelector('[data-finding-ids="f1"]') as HTMLElement
+    expect(mark.className).toContain('fw-mark-flash')
+
+    adapter.dispose()
+
+    expect(() => vi.runAllTimers()).not.toThrow()
+    // The timer that would have removed the class was cleared, not merely
+    // detached-and-ignored — the class is still present on the captured
+    // (now-detached) element.
+    expect(mark.className).toContain('fw-mark-flash')
+    vi.useRealTimers()
+  })
+
+  it('removes the input/scroll listeners: further changes do not call the registered onChange callback', () => {
+    const adapter = createTextareaAdapter(el)
+    const cb = vi.fn()
+    adapter.onChange(cb)
+
+    adapter.dispose()
+    el.value = 'changed after dispose'
+    el.dispatchEvent(new Event('input'))
+
+    expect(cb).not.toHaveBeenCalled()
   })
 })

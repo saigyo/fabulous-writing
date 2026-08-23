@@ -648,6 +648,16 @@ describe('resetSession', () => {
 // republish() restores the store's view of it without tearing down the
 // shim's own private fieldId/buffer/items.
 describe('republish', () => {
+  // Finding 10: sessionActive is now set to true BEFORE the unconnected
+  // early-return, not after, so a login while no field has ever connected
+  // still leaves the session marked active. There is no black-box way to
+  // observe the flag directly through HostDoc's public surface — the only
+  // place that reads it (syncBuffer's gate, reached via textChanged) is
+  // unreachable without fieldId !== null, and the only path back to that
+  // (fieldConnected) unconditionally re-arms sessionActive = true itself —
+  // so this stays a no-throw/no-op-on-the-store assertion, same as before;
+  // the ordering is a documented invariant fix, not a black-box-observable
+  // behavior change today.
   it('is a no-op while unconnected', () => {
     const outbound = fakeOutbound()
     const doc: HostDoc = createHostDoc(outbound)

@@ -26,15 +26,30 @@ function statusPhase(state: {
   llmError: string | null
 }): 'idle' | 'checking' | 'llm-running' | 'error' | 'signed-out' {
   if (state.authStatus !== 'authenticated') return 'signed-out'
-  if (state.llmError) return 'error'
+  // Finding 13: checkPhase takes precedence over a lingering llmError — a
+  // fresh check/re-check already in flight (fast or llm) supersedes the
+  // PREVIOUS run's error the moment it starts, same as the main app's own
+  // UI treats a new check as clearing the old failure. Checking llmError
+  // first would keep reporting 'error' through an entire retry, hiding its
+  // progress from the host until it either finishes or fails again.
   if (state.checkPhase === 'fast') return 'checking'
   if (state.checkPhase === 'llm') return 'llm-running'
+  if (state.llmError) return 'error'
   return 'idle'
 }
 
 export function startBridge(): Bridge {
   let pinnedSource: MessageEventSource | null = null
   let pinnedOrigin: string | null = null
+  // Explicit, not derived from pinnedSource/pinnedOrigin truthiness (finding
+  // 3): an opaque origin ("null", e.g. a sandboxed iframe with no
+  // allow-same-origin) is unauthenticable — pinnedOrigin would still get
+  // set to the literal string "null", and postToHost's later
+  // pinnedSource.postMessage(msg, "null") THROWS (postMessage rejects
+  // "null" as a targetOrigin), taking down the bridge's listener. `pinned`
+  // is the single source of truth for "may this hello win the pin", checked
+  // before either field is ever written.
+  let pinned = false
   let hostKindValue = 'web'
   let hostDoc: HostDoc | null = null
   let listener: ((event: MessageEvent) => void) | null = null
@@ -42,7 +57,7 @@ export function startBridge(): Bridge {
   let lastStatusKey: string | null = null
 
   function postToHost(message: EmbedMessage) {
-    if (!pinnedSource || !pinnedOrigin) return
+    if (!pinned || !pinnedSource || !pinnedOrigin) return
     ;(pinnedSource as Window).postMessage(envelope(message), pinnedOrigin)
   }
 
@@ -55,7 +70,7 @@ export function startBridge(): Bridge {
   }
 
   function emitStatusIfChanged() {
-    if (!pinnedSource) return
+    if (!pinned) return
     const state = useStore.getState()
     const key = statusKey(state)
     if (key === lastStatusKey) return
@@ -123,7 +138,7 @@ export function startBridge(): Bridge {
   function handleMessage(event: MessageEvent) {
     const msg = parseHostMessage(event.data)
     if (!msg) return
-    if (!pinnedSource || !pinnedOrigin) {
+    if (!pinned) {
       if (msg.type !== 'hello') return
       // Security (Copilot round 9): the CSP's frame-ancestors directive
       // restricts who may FRAME this page — it is not an access-control on
@@ -143,8 +158,17 @@ export function startBridge(): Bridge {
       // so a null event.source can never equal it.
       if (window.parent === window) return
       if (event.source !== window.parent) return
+      // Finding 3: an opaque origin — event.origin is "" (some older/edge
+      // engines) or the literal string "null" (a sandboxed parent with no
+      // allow-same-origin, or a data: URL) — is unauthenticable: there is
+      // no origin left to pin future messages against, and pinnedOrigin
+      // being set to "null" would make every later postToHost() call throw
+      // (postMessage rejects "null" as a targetOrigin). Refuse the pin
+      // outright; a later hello from a real origin can still win it.
+      if (!event.origin || event.origin === 'null') return
       pinnedSource = event.source
       pinnedOrigin = event.origin
+      pinned = true
     } else if (event.source !== pinnedSource || event.origin !== pinnedOrigin) {
       return
     }

@@ -81,17 +81,18 @@ body {
    box model/font metrics (synced in JS via getComputedStyle), so its
    fw-mark-* highlight backgrounds show through the textarea's transparent
    background underneath the real, editable text. Never receives pointer
-   events — the textarea stays the only interactive surface. */
+   events — the textarea stays the only interactive surface.
+
+   Finding 29: position/overflow/pointer-events/color/background and the
+   geometry copies are load-bearing for correctness (not just this page's
+   look), so createTextareaAdapter() now sets them inline in JS itself —
+   the C2 browser extension lifts this adapter onto arbitrary host pages
+   that never load this stylesheet. z-index is the only rule left here: it
+   only reinforces paint order on THIS demo page (the overlay already
+   paints behind the textarea from DOM order alone, since both are
+   position: absolute with no z-index set inline). */
 .fw-mirror-overlay {
-  position: absolute;
   z-index: 0;
-  top: 0;
-  left: 0;
-  overflow: hidden;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  pointer-events: none;
-  color: transparent;
 }
 
 .fw-mark {

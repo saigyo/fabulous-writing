@@ -118,8 +118,11 @@ auth:
 # frame-ancestors CSP directive. Empty (the default) renders 'none' —
 # embedding is off until a deployment opts in. Each entry is self (bare,
 # unquoted -- YAML's own quotes around 'self' are stripped, leaving the
-# bare word either way) or a scheme://host[:port] origin (no wildcards, no
-# paths). The main SPA is never frameable, regardless of this setting.
+# bare word either way; covers same-origin) or a scheme://host[:port]
+# origin (no wildcards, no paths). Additional origin limits: lowercase
+# scheme only, no IPv6 literals (yet), no trailing-dot FQDNs, no
+# underscores in a hostname label. The main SPA is never frameable,
+# regardless of this setting.
 # embed:
 #   allowed_ancestors:
 #     - self

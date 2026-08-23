@@ -236,6 +236,33 @@ describe('startBridge: origin pinning and routing', () => {
     expect(bridge.hostKind()).toBe('web')
   })
 
+  // Finding 3: an opaque origin ("" or the literal string "null") is
+  // unauthenticable and must not win the pin — pinning it would make every
+  // later postToHost() call throw (postMessage rejects "null" as a
+  // targetOrigin). A later hello from a real origin can still pin normally.
+  it.each(['', 'null'])(
+    'a hello with an opaque origin (%j) does not pin, and a later good hello still pins',
+    (opaqueOrigin) => {
+      const bridge = startBridge()
+      const hostDoc = stubHostDoc()
+      bridge.attach(hostDoc)
+      const parent = embeddedParent()
+
+      dispatchHost(helloMessage(), opaqueOrigin, parent)
+      expect(parent.postMessage).not.toHaveBeenCalled()
+
+      dispatchHost(helloMessage(), ORIGIN_A, parent)
+      expect(parent.postMessage).toHaveBeenCalled()
+      const [replyPayload, replyOrigin] = (parent.postMessage as ReturnType<typeof vi.fn>).mock.calls[0]
+      expect(replyPayload).toEqual({
+        fw: PROTOCOL_VERSION,
+        type: 'ready',
+        payload: { protocolVersion: PROTOCOL_VERSION, features: [] },
+      })
+      expect(replyOrigin).toBe(ORIGIN_A)
+    },
+  )
+
   it('drops post-hello messages whose origin differs from the pinned origin', () => {
     const bridge = startBridge()
     const hostDoc = stubHostDoc()
@@ -454,6 +481,24 @@ describe('startBridge: status stream', () => {
 
     const calls = statusCalls(source)
     expect(calls[calls.length - 1].payload.phase).toBe('error')
+  })
+
+  // Finding 13: checkPhase (fast/llm) now takes precedence over a lingering
+  // llmError — a retry already in flight must report its own progress, not
+  // the PREVIOUS run's error, until it either finishes or fails again.
+  it('checkPhase fast/llm takes precedence over a lingering llmError', () => {
+    const { source } = pinnedBridge()
+    useStore.setState({ llmError: 'boom' })
+    useStore.setState({ checkPhase: 'fast' })
+    expect(statusCalls(source).at(-1)?.payload.phase).toBe('checking')
+
+    useStore.setState({ checkPhase: 'llm' })
+    expect(statusCalls(source).at(-1)?.payload.phase).toBe('llm-running')
+
+    // Once the retry finishes (back to idle) with the error still set,
+    // 'error' reasserts itself.
+    useStore.setState({ checkPhase: 'idle' })
+    expect(statusCalls(source).at(-1)?.payload.phase).toBe('error')
   })
 
   it('includes tracked.length as findingCount and only emits on change', () => {

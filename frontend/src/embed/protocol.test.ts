@@ -140,4 +140,51 @@ describe('parseHostMessage', () => {
       }),
     ).not.toBeNull()
   })
+
+  // Finding 9: an empty-string fieldId passes typeof === 'string' but can
+  // never legitimately name a connected field — reject it at the parser for
+  // every message shape that carries one, same as a missing/non-string one.
+  it('rejects an empty-string fieldId on every message shape that carries one', () => {
+    expect(
+      parseHostMessage({
+        fw: PROTOCOL_VERSION,
+        type: 'fieldConnected',
+        payload: { fieldId: '', text: 't', capabilities: caps, meta: { url: '', fieldKind: '' } },
+      }),
+    ).toBeNull()
+    expect(
+      parseHostMessage({
+        fw: PROTOCOL_VERSION, type: 'textChanged', payload: { fieldId: '', text: 't' },
+      }),
+    ).toBeNull()
+    expect(
+      parseHostMessage({
+        fw: PROTOCOL_VERSION,
+        type: 'replaceResult',
+        requestId: 'r1',
+        payload: { fieldId: '', ok: true, text: 'hi' },
+      }),
+    ).toBeNull()
+    expect(
+      parseHostMessage({
+        fw: PROTOCOL_VERSION, type: 'markingClicked', payload: { fieldId: '', id: 'finding-1' },
+      }),
+    ).toBeNull()
+    expect(
+      parseHostMessage({
+        fw: PROTOCOL_VERSION, type: 'fieldDisconnected', payload: { fieldId: '' },
+      }),
+    ).toBeNull()
+  })
+
+  // Finding 9: markingClicked's id is a finding id, not a field id, but the
+  // same emptiness hazard applies — an empty string is a string, not a real
+  // finding id.
+  it('rejects markingClicked with an empty-string id', () => {
+    expect(
+      parseHostMessage({
+        fw: PROTOCOL_VERSION, type: 'markingClicked', payload: { fieldId: 'f1', id: '' },
+      }),
+    ).toBeNull()
+  })
 })

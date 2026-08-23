@@ -526,8 +526,9 @@ reachable from the `embed` entry (`OutputChunk.imports`/`dynamicImports`), and f
 any reachable chunk's `moduleIds` includes a `@codemirror/` or `codemirror` package path
 — the assertion behind the spec's tree-shaking claim, checked against the real bundled
 module graph rather than a source-level guess. `frontend/package.json` exposes it as
-`npm run check:embed`; it is **not yet wired** into `frontend.yml`'s CI job — it was run
-manually for this slice, and wiring it into CI is C2's job, per the plan.
+`npm run check:embed`, run as its own step in `frontend.yml`'s CI job, after `Build`
+(it walks the built output, not source) and before the test/coverage artifacts are
+uploaded.
 
 ## Profiles in the frontend
 

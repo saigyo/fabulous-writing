@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
+from app.api.checks import CheckRequest
 from app.checkers.llm.provider import FakeProvider, GenerationResult, LLMProvider, TokenUsage
 from app.core.config import (
     CreditCostSettings,
@@ -1562,3 +1563,9 @@ class TestCheckClientTag:
             },
         )
         assert response.status_code == 202
+        # Finding 30: pin the model-level default directly too, not only via
+        # the 202 through the API — a future refactor that keeps the
+        # endpoint happy (e.g. a handler overriding client before
+        # validation runs) could silently break the field's own default
+        # without this failing.
+        assert CheckRequest(text="x", language="en").client == "web"
