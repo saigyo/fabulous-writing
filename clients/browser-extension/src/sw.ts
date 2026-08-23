@@ -5,13 +5,18 @@
 // inspecting message content.
 //
 // Accepted v1 limits (both apply to the Registry instance below):
-// 1. The registry is entirely in-memory. This is ACCEPTED for v1 because
-//    Chrome >= 116 (this extension's own manifest `minimum_chrome_version`)
-//    keeps a service worker alive for as long as any runtime port stays
-//    connected — so state is lost only on an extension update or a SW crash,
-//    not on routine idle-suspend/wake. The recovery path for that loss is the
-//    scout's reconnect-on-next-interaction (Task 7); a
-//    `chrome.storage.session`-backed registry is a later hardening.
+// 1. The registry is entirely in-memory. This is ACCEPTED for v1 NOT because
+//    an open runtime port keeps an MV3 worker alive indefinitely — it
+//    doesn't; only port TRAFFIC resets the ~30s idle timer, so a quiet
+//    session can still lose the worker and its in-memory state — but because
+//    BOTH sides recover when that happens: the scout reconnects on the next
+//    user interaction (port onDisconnect tears its session down to an idle
+//    chip; the next click/focus lazily reopens a port and re-registers,
+//    scout.ts's handlePortDisconnect), and the panel reloads itself the
+//    moment its own port disconnects (panel.ts's
+//    `port.onDisconnect.addListener(() => location.reload())`), re-deriving
+//    fresh state via a new panelHello. A `chrome.storage.session`-backed
+//    registry is a later hardening, not a correctness requirement for v1.
 // 2. The registry keys field/panel state on the windowId captured at
 //    port-connect time. Dragging a connected tab into another browser window
 //    keeps it routed to the OLD window's panel until that field reconnects
@@ -52,7 +57,14 @@ function execute(effects: Effect[]): void {
   }
 }
 
-function handleFieldMessage(tabId: number, windowId: number, data: unknown): void {
+function handleFieldMessage(tabId: number, windowId: number, port: Port, data: unknown): void {
+  // A superseded port (same-tab navigation opened a NEW port and
+  // re-registered under this tabId before the OLD port's onDisconnect fired
+  // — no ordering guarantee between those two events, see the onDisconnect
+  // guard below) must not affect state under the new port's tabId. Without
+  // this, a late fieldDisconnected from the old port would clear the field
+  // the new port already re-registered.
+  if (fieldPorts.get(tabId) !== port) return
   const parsed = parsePortMessage(data)
   if (parsed === null) return
   if ('ctl' in parsed) {
@@ -61,8 +73,8 @@ function handleFieldMessage(tabId: number, windowId: number, data: unknown): voi
       // requires a user gesture, and any microtask hop before it drops the
       // gesture context propagated from the content-script click.
       openPanel(windowId, () => {
-        const port = fieldPorts.get(tabId)
-        if (port) postSafely(port, { ctl: { kind: 'status', phase: 'error', findingCount: 0 } })
+        const fieldPort = fieldPorts.get(tabId)
+        if (fieldPort) postSafely(fieldPort, { ctl: { kind: 'status', phase: 'error', findingCount: 0 } })
       })
     }
     return
@@ -84,19 +96,38 @@ function handlePanelMessage(state: { windowId: number | null }, port: Port, data
   if (parsed === null) return
   if ('ctl' in parsed) {
     if (parsed.ctl.kind === 'panelHello') {
-      state.windowId = parsed.ctl.windowId
-      panelPorts.set(state.windowId, port)
+      const windowId = parsed.ctl.windowId
+      const existing = panelPorts.get(windowId)
+      if (existing && existing !== port) {
+        // This hello REPLACES a still-registered different port for the
+        // same window (the old panel hasn't disconnected yet — its
+        // identity-guarded onDisconnect below never fires panelPortGone for
+        // an already-superseded port). Without resetting readiness here, the
+        // registry would stay panelReady from the old panel and this new
+        // panel's own embedReady(true) below would hit rule 4's duplicate
+        // no-op — never synthesizing the fieldConnected the new panel needs
+        // to render the current field. A fresh panel always starts
+        // not-ready. (registry.panelReady(_, false) never returns effects,
+        // so there's nothing to execute().)
+        registry.panelReady(windowId, false)
+      }
+      state.windowId = windowId
+      panelPorts.set(windowId, port)
       return
     }
-    if (parsed.ctl.kind === 'embedReady' && state.windowId !== null) {
+    // Everything past the hello requires currency: a stale panel port (one
+    // superseded by a replacement already registered under this windowId,
+    // whose onMessage nonetheless still fires) must not affect the live
+    // panel's state.
+    if (state.windowId === null || panelPorts.get(state.windowId) !== port) return
+    if (parsed.ctl.kind === 'embedReady') {
       execute(registry.panelReady(state.windowId, parsed.ctl.ready))
     }
     return
   }
-  if (state.windowId !== null) {
-    // Panel ports carry only embed->sw envelopes — see the module comment.
-    execute(registry.embedRelay(state.windowId, parsed.relay as Envelope<EmbedMessage>))
-  }
+  if (state.windowId === null || panelPorts.get(state.windowId) !== port) return
+  // Panel ports carry only embed->sw envelopes — see the module comment.
+  execute(registry.embedRelay(state.windowId, parsed.relay as Envelope<EmbedMessage>))
 }
 
 browser.runtime.onConnect.addListener((port) => {
@@ -109,7 +140,7 @@ browser.runtime.onConnect.addListener((port) => {
     const tabId = tab.id
     const windowId = tab.windowId
     fieldPorts.set(tabId, port)
-    port.onMessage.addListener((data) => handleFieldMessage(tabId, windowId, data))
+    port.onMessage.addListener((data) => handleFieldMessage(tabId, windowId, port, data))
     port.onDisconnect.addListener(() => {
       // Guard against a stale disconnect: same-tab navigation can connect a
       // NEW port and re-register it under this tabId before the OLD port's

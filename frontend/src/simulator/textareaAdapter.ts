@@ -358,6 +358,30 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
   // one full page off from the real, already-scrolled text underneath.
   handleScroll()
 
+  // Copilot round 1 (B43 C2), finding F5: ResizeObserver and the scroll
+  // listener above only catch a change in the field's own SIZE or in scroll
+  // position — neither fires for a same-sized field that simply MOVES (a
+  // banner above it finishes loading, a sibling element expands/collapses,
+  // a flex/grid reflow shifts the row). No DOM event exists for "an element's
+  // position changed for a reason that wasn't a resize or a scroll", so two
+  // best-effort nets catch what's left: a window 'resize' listener (a
+  // viewport resize can itself reflow the page even when the field's own box
+  // doesn't change size) and a low-frequency safety interval. Both simply
+  // re-run syncOverlayGeometry, whose measured-rect-delta approach (module
+  // comment) makes every re-sync self-correcting and idempotent when nothing
+  // moved — cheap even at this frequency, since it's only two
+  // getBoundingClientRect() reads. The interval only runs while marks are
+  // actually on screen (currentSpans non-empty) — there's nothing worth
+  // re-syncing for an overlay that's just an invisible copy of plain text.
+  const POSITION_DRIFT_CHECK_MS = 1000
+  function handleWindowResize() {
+    syncOverlayGeometry(el, overlay)
+  }
+  window.addEventListener('resize', handleWindowResize)
+  const positionDriftInterval = setInterval(() => {
+    if (currentSpans.length > 0) syncOverlayGeometry(el, overlay)
+  }, POSITION_DRIFT_CHECK_MS)
+
   return {
     capabilities: () => ({ mark: 'overlay', replace: 'reliable' }),
     extract: () => el.value,
@@ -456,6 +480,8 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
         cancelAnimationFrame(pendingScrollSync)
         pendingScrollSync = null
       }
+      window.removeEventListener('resize', handleWindowResize)
+      clearInterval(positionDriftInterval)
       if (flashTimer !== null) clearTimeout(flashTimer)
       flashTimer = null
       changeCb = null

@@ -51,6 +51,12 @@ const CHIP_STYLE = `
     background: #52525b;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
   }
+  /* "all: unset" above also wipes the button's native focus ring — restore
+     a visible one for keyboard activation (Finding F7). */
+  button:focus-visible {
+    outline: 2px solid #6e56cf;
+    outline-offset: 1px;
+  }
   button[data-state='connected'] { background: #16a34a; }
   button[data-state='busy'] { background: #6e56cf; }
   button[data-state='signed-out'] { background: #d97706; }
@@ -69,6 +75,26 @@ function glyphFor(state: AffordanceState, count: number): string {
       return '…'
     case 'idle':
       return '✳'
+  }
+}
+
+// Finding F6: the button's visible content is a bare glyph (a checkmark, a
+// count, an exclamation point) — meaningless to a screen reader without a
+// state-aware accessible name alongside it.
+function ariaLabelFor(state: AffordanceState, count: number): string {
+  switch (state) {
+    case 'connected':
+      return count > 0
+        ? `${count} findings — click to disconnect`
+        : 'Fabulous Writing connected — click to disconnect'
+    case 'signed-out':
+      return 'Fabulous Writing: signed out'
+    case 'error':
+      return 'Fabulous Writing: error'
+    case 'busy':
+      return 'Connecting Fabulous Writing…'
+    case 'idle':
+      return 'Connect Fabulous Writing'
   }
 }
 
@@ -94,6 +120,7 @@ export function createAffordance(onClick: (el: HTMLTextAreaElement) => void): Af
   function render(): void {
     button.dataset.state = state
     button.textContent = glyphFor(state, count)
+    button.setAttribute('aria-label', ariaLabelFor(state, count))
   }
   render()
   root.appendChild(button)

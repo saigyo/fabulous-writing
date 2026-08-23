@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Fabulous Writing",
   "version": "0.1.0",
-  "description": "Check your writing in any text field with your Fabulous Writing server.",
+  "description": "Check your writing in text boxes (textareas) on any site with your Fabulous Writing server.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2pSjs2UeeRrs6K7WFo+XQ9k+iuRepCOmKPwSGsa1mg/mqZZnCnHwv14uH0X4AuJSbASTS6pNoSDhXEeQQefW63ruXwMShrz6JQ28MhJKP+RP3Y+RYTqr2vOW2HsUYKy/qmVtdtLUM16sHDZVPfgcKMlM+BLAvXnbwRn9QnlLinlOIhFr8K+pqBI3S5hcFP2m7Kdm0r1wCpVaTCugfnU4Ej0V2gv2+ewMf/xnhyQdIOx799ptGAJyJ4Vv/duU9qK81WfIIs4QgZn9BtIXBWQ/ZGcV7smHn4ysXTRtQrivPv79AzN2LPh187BEplCj4YDjxI+x99vyw9Oo2b6IKlfobwIDAQAB",
   "minimum_chrome_version": "116",
   "permissions": ["sidePanel", "storage"],

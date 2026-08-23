@@ -506,7 +506,13 @@ describe('createTextareaAdapter: flashFinding', () => {
     const mark = document.querySelector('[data-finding-ids="f1"]')
     expect(mark?.className).toContain('fw-mark-flash')
 
-    vi.runAllTimers()
+    // Not vi.runAllTimers(): the adapter now also holds a recurring
+    // position-drift setInterval (F5) that reschedules itself forever, which
+    // runAllTimers() would spin on until vitest's own infinite-loop guard
+    // aborts it. runOnlyPendingTimers() fires everything currently queued
+    // (including that interval's next tick) exactly once, which is enough to
+    // also fire the one-shot flash timeout under test here.
+    vi.runOnlyPendingTimers()
     expect(mark?.className).not.toContain('fw-mark-flash')
 
     adapter.dispose()
@@ -629,6 +635,98 @@ describe('createTextareaAdapter: host-page overlay positioning (measured rect de
     expect(rect.top).toBe(0)
     expect(rect.left).toBe(0)
     probe.remove()
+  })
+})
+
+// Copilot round 1 (B43 C2), finding F5: ResizeObserver only reports the
+// field's own SIZE changing; a same-sized field that MOVES (a banner above
+// it finishes loading, a sibling expands) desyncs the overlay with no
+// scroll or resize-of-the-field event to catch it. Two best-effort nets:
+// a window 'resize' listener, and a low-frequency safety interval that only
+// runs while marks are on screen.
+describe('createTextareaAdapter: position-drift re-sync (window resize + safety interval)', () => {
+  // el is a fresh element per test (beforeEach above), so only the shared
+  // HTMLDivElement.prototype stub needs restoring — the el-level stub below
+  // is a per-instance own-property assignment, discarded with the element.
+  const realDivGetBoundingClientRect = HTMLDivElement.prototype.getBoundingClientRect
+
+  afterEach(() => {
+    Object.defineProperty(HTMLDivElement.prototype, 'getBoundingClientRect', {
+      value: realDivGetBoundingClientRect,
+      configurable: true,
+    })
+  })
+
+  function stubRects(elRect: { top: number; left: number }, overlayRect: { top: number; left: number }) {
+    const fakeRect = (r: { top: number; left: number }) =>
+      ({ top: r.top, left: r.left, right: 0, bottom: 0, width: 0, height: 0, x: r.left, y: r.top, toJSON() {} }) as DOMRect
+    el.getBoundingClientRect = () => fakeRect(elRect)
+    Object.defineProperty(HTMLDivElement.prototype, 'getBoundingClientRect', {
+      value: () => fakeRect(overlayRect),
+      configurable: true,
+    })
+  }
+
+  it('a window resize event re-syncs the overlay geometry', () => {
+    stubRects({ top: 108, left: 8 }, { top: 100, left: 0 })
+    const adapter = createTextareaAdapter(el)
+    const overlay = el.previousElementSibling as HTMLDivElement
+    expect(overlay.style.top).toBe('8px')
+
+    // The field moved (its containing block reflowed) without resizing or
+    // scrolling — only a window resize fires here.
+    stubRects({ top: 250, left: 8 }, { top: 108, left: 8 })
+    window.dispatchEvent(new Event('resize'))
+
+    expect(overlay.style.top).toBe('150px')
+    adapter.dispose()
+  })
+
+  it('the safety interval re-syncs while marks are displayed, but not while none are shown', () => {
+    vi.useFakeTimers()
+    stubRects({ top: 108, left: 8 }, { top: 100, left: 0 })
+    const adapter = createTextareaAdapter(el)
+    const overlay = el.previousElementSibling as HTMLDivElement
+    expect(overlay.style.top).toBe('8px')
+
+    // No marks displayed yet: the field moves, but the interval must not
+    // re-sync for an overlay with nothing worth re-syncing.
+    stubRects({ top: 250, left: 8 }, { top: 108, left: 8 })
+    vi.advanceTimersByTime(1000)
+    expect(overlay.style.top).toBe('8px')
+
+    // A mark is now on screen: the same drift must get caught by the next
+    // interval tick.
+    adapter.setMarkings([{ id: 'f1', from: 0, to: 3, severity: 'error', category: 'spelling' }])
+    vi.advanceTimersByTime(1000)
+    expect(overlay.style.top).toBe('150px')
+
+    // Marks cleared again: a further drift must stop being re-synced.
+    adapter.clearMarkings()
+    stubRects({ top: 400, left: 8 }, { top: 150, left: 8 })
+    vi.advanceTimersByTime(1000)
+    expect(overlay.style.top).toBe('150px')
+
+    adapter.dispose()
+    vi.useRealTimers()
+  })
+
+  it('dispose() removes the window resize listener and clears the safety interval', () => {
+    vi.useFakeTimers()
+    stubRects({ top: 108, left: 8 }, { top: 100, left: 0 })
+    const adapter = createTextareaAdapter(el)
+    const overlay = el.previousElementSibling as HTMLDivElement
+    adapter.setMarkings([{ id: 'f1', from: 0, to: 3, severity: 'error', category: 'spelling' }])
+    expect(overlay.style.top).toBe('8px')
+
+    adapter.dispose()
+    stubRects({ top: 250, left: 8 }, { top: 108, left: 8 })
+    window.dispatchEvent(new Event('resize'))
+    vi.advanceTimersByTime(5000)
+
+    // Neither mechanism touches the (now-disposed, detached) overlay.
+    expect(overlay.style.top).toBe('8px')
+    vi.useRealTimers()
   })
 })
 
