@@ -1,6 +1,41 @@
 <!doctype html>
 <html lang="en">
-  <head><meta charset="utf-8" /><title>Fabulous Writing</title></head>
+  <head>
+    <meta charset="utf-8" />
+    <title>Fabulous Writing</title>
+    <!-- Minimal, unbranded layout only — the embed inside the iframe
+         carries the real UI. Without this, the page (and the REAL Chrome
+         side panel, not just this dev/e2e harness) renders the #embed
+         iframe at the UA-default 300x150px instead of filling the panel:
+         a full-height flex column with the header at its natural height
+         and the iframe filling the rest. -->
+    <style>
+      html, body { height: 100%; margin: 0; }
+      body {
+        display: flex;
+        flex-direction: column;
+        font: 13px system-ui, sans-serif;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 12px;
+        flex: none;
+      }
+      #status {
+        margin: 0 12px 8px;
+        color: #666;
+        flex: none;
+      }
+      #embed {
+        flex: 1;
+        width: 100%;
+        border: 0;
+        display: block;
+      }
+    </style>
+  </head>
   <body>
     <header>
       <span>Fabulous Writing</span>
