@@ -465,6 +465,9 @@ Detailed developer documentation:
   the CodeMirror `StateField` that owns finding positions, the checking lifecycle
   (debounce, staleness/supersede guards), finding identity across checks, profile
   semantics, i18n, and testing.
+- **[Browser extension](docs/browser-extension.md)** — the Chromium extension
+  host client (`clients/browser-extension/`): architecture, unpacked install,
+  development, e2e, and the GitHub manual acceptance checklist.
 
 ### Tests and CI
 

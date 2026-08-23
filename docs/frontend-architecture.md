@@ -144,19 +144,26 @@ future return to the middleware wouldn't need a storage-format migration, though
 nothing today migrates an old-format blob; a version mismatch is just treated as
 absent and defaults apply. The pre-B1 single blob that mixed one shared token with
 the last user's preferences, `fabulous-writing-settings`, is deleted once at boot and
-never read again. A blob holds exactly six fields — `uiLocale`,
+never read again. A blob holds exactly seven fields — `uiLocale`, `language`,
 `lastProfileByLanguage`, `rulesCollapsed`, `currentDocId`, `docSidebarCollapsed`,
 `docFoldersCollapsed` — and nothing else: `token` and `user` are never part of it,
 `user` being re-fetched via `GET /api/auth/me` on every load rather than cached (see
-Auth above).
+Auth above). `language` was added in B43 C2 (`persist check language across
+reloads`): the extension's side panel reloads the whole `/embed` page on every
+server-URL change and on a stale-hello re-arm, both of which used to reset the
+checking language to the default — persisting it means the panel's checking
+language survives its own reloads exactly like every other header preference.
+Opening a document still overrides it with the document's own `language` (see
+`documents.ts`'s `openDocument`), so this only changes what a *fresh* session
+(no document, or the embed, which has no document manager) starts from.
 
 `loadUserPrefs(userId)` applies the signed-in user's stored fields over
-`PREFS_DEFAULTS` (the same six-field slice of `INITIAL_DATA`) in one atomic
+`PREFS_DEFAULTS` (the same seven-field slice of `INITIAL_DATA`) in one atomic
 `setState`. Landing defaults and blob together in a single step is what closes the
 #34 leak: a user with no blob of their own gets exactly the defaults, never a value
 left behind in memory by whoever was signed in before. A write subscriber
 (`initPrefsPersistence()`, registered once from `main.tsx`) replaces the old
-`partialize`: it runs on every store change but writes only past two guards — the six
+`partialize`: it runs on every store change but writes only past two guards — the seven
 pref fields must actually have changed by reference (an identity check, safe because
 their setters always produce new values, and cheap enough to skip high-frequency
 fields like `docWords`/`docChars` on every keystroke) and `user` must be non-null.
@@ -503,8 +510,9 @@ affordance reachable from inside it. `embed/embed.css` styles the narrow layout.
 page — a `<textarea>` host that plays the HOST role of the protocol by hand (sending
 `hello`/`fieldConnected`/`textChanged` and handling the embed's replies) around an
 iframe pointed at `/embed`. `simulator/textareaAdapter.ts`'s `createTextareaAdapter` is
-the reference `FieldAdapter` implementation and doubles as the blueprint a later browser
-extension's real adapter is meant to be lifted from: a mirror `<div>` sits behind the
+the reference `FieldAdapter` implementation; as of B43 C2 it is also the browser
+extension's *actual* adapter, imported directly rather than copied (see "Browser
+extension package" below) — a mirror `<div>` sits behind the
 `<textarea>` in paint order, geometry-synced to it (box model and font metrics, not
 paint properties), holding the same text with `fw-mark-*` spans painting finding
 highlights through the textarea's transparent background — the overlay never receives
@@ -516,6 +524,42 @@ forcing an `expectedText` mismatch and a `replaceResult { ok: false }` — the o
 reach that branch from the UI, since the simulator's echo loop is otherwise synchronous.
 `vite.config.ts` deliberately does **not** list `simulator.html` as a build input — it
 exists for `npm run dev` only, never ships in `dist/`.
+
+### Browser extension package (B43 C2)
+
+`clients/browser-extension/` (outside `frontend/`, but sharing its source tree) is the
+first real host client of the embed surface — a Chromium MV3 extension. Full
+architecture, install, and development docs live in
+[browser-extension.md](browser-extension.md); this section is only about the seam
+between the two packages.
+
+The extension imports several `frontend/src` modules directly by relative path (no
+publish/link step, no copy) — a protocol-breaking change fails `tsc --noEmit` in the
+extension package, not at runtime:
+
+- `embed/protocol.ts` — the bridge contract (`Envelope`, message types,
+  `PROTOCOL_VERSION`, parsers) — both sides of the bridge, embed and extension, import
+  the exact same module.
+- `simulator/textareaAdapter.ts` — no longer just the simulator's reference
+  implementation: `createTextareaAdapter` is the extension's real, only `FieldAdapter`.
+  As of this slice it also carries the **host-page contract**: the mirror-overlay
+  positioning (`position`/`z-index` coercion only when the host field has no explicit
+  stacking position of its own, `expectedText`-verified undo-preserving replacement,
+  the captured document-level `scroll` listener for unpositioned scrollable ancestors)
+  was written to survive being embedded in an arbitrary third-party page — GitHub, not
+  just the simulator's own controlled test harness — and the extension's
+  `src/session.ts` is a verbatim port of the simulator's own host-side connect/apply
+  logic onto a real DOM field instead of a demo one.
+- `simulator/clickHitTest.ts` — `findingIdAt`, the smallest-span-wins click hit test;
+  `session.ts` uses it exactly as `simulator/main.ts` does to turn a real click's caret
+  position into a `markingClicked` message.
+
+Two further modules are shared only *transitively*, pulled in by the three above rather
+than imported directly by any extension file: `findings/severity.ts` (`SEVERITIES`,
+used by both `protocol.ts`'s validation and `textareaAdapter.ts`'s mark styling) and
+`types.ts` (`Category`/`Severity`, the shared API vocabulary `protocol.ts` is typed
+against). Their presence in the extension's bundle is a consequence of depending on
+`protocol.ts`/`textareaAdapter.ts`, not a separate seam of its own.
 
 ### Bundle guard
 

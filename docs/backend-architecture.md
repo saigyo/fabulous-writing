@@ -189,10 +189,27 @@ origin — validated by parsing the scheme, each hostname label, and the port
 separately, not a single regex `fullmatch` against the whole string (a permissive
 `scheme://host(:port)?` pattern would full-match strings that aren't valid origins,
 e.g. an out-of-range port or a label starting with a hyphen). No wildcards, no paths,
-lowercase scheme only, no IPv6 literals, no trailing-dot FQDNs, no underscores in a
-label. Validated at startup like the other embed/proxy knobs; a malformed entry fails
-boot rather than silently disabling the whole CSP directive in some browsers.
-YAML-only, same as `cors.origins` and `environment` — no environment-variable override.
+lowercase scheme only, no trailing-dot FQDNs, no underscores in a label. **IPv6 bracket
+literals are supported** (C2, #134) — `[<literal>]` with an optional `:port`, e.g.
+`http://[::1]:8000` — validated with `ipaddress.IPv6Address` (which rejects
+IPv4-in-brackets and non-address strings), except zone IDs (`fe80::1%eth0`), accepted by
+`IPv6Address` since Python 3.9 but rejected here explicitly since a zone ID can never
+match a real `Origin` header. Validated at startup like the other embed/proxy knobs; a
+malformed entry fails boot rather than silently disabling the whole CSP directive in
+some browsers. YAML-only, same as `cors.origins` and `environment` — no
+environment-variable override.
+
+**The browser extension's allowlist entry is cross-pinned in CI.** The C2 browser
+extension (`clients/browser-extension/`, see
+[browser-extension.md](browser-extension.md)) ships with a `key` pinned in its
+manifest so its unpacked extension ID is stable across machines; that ID is what
+`deploy/fly/config.yaml`'s `embed.allowed_ancestors` allowlists
+(`chrome-extension://<id>`). `backend/tests/test_fly_config.py`'s
+`test_embed_allowlists_exactly_the_pinned_extension` reimplements the same ID
+derivation (sha256 over the manifest's decoded `key`, first 16 bytes, nibble-mapped to
+`a`–`p`) in Python and asserts the fly config's allowlist matches exactly — so rotating
+the manifest key without updating the deployment config fails CI, not a user's side
+panel.
 
 **`environment` gates the API docs routes** (`dev` | `staging` | `production`,
 default `production` — YAML-only, same as `cors.origins`, no environment-variable
