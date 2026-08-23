@@ -1,4 +1,5 @@
 import { LOCALES, type Locale } from '../i18n/messages'
+import type { Language } from '../types'
 
 /** The persisted-preferences schema (B1, #34). Deliberately declared
  * standalone rather than derived from the store type: this is a storage
@@ -12,6 +13,7 @@ export interface Prefs {
   currentDocId: number | null
   docSidebarCollapsed: boolean
   docFoldersCollapsed: number[]
+  language: Language
 }
 
 export const PREF_KEYS = [
@@ -21,7 +23,12 @@ export const PREF_KEYS = [
   'currentDocId',
   'docSidebarCollapsed',
   'docFoldersCollapsed',
+  'language',
 ] as const satisfies readonly (keyof Prefs)[]
+
+// The seven codes are a fixed contract, so this is declared locally as part
+// of the storage schema rather than imported from the UI catalog.
+const LANGUAGE_CODES = ['en', 'de', 'fr', 'es', 'it', 'ja', 'zh'] as const
 
 // Continues the legacy blob's numbering (it retired at v2) so the version
 // number never moves backwards. There are no older versions to migrate:
@@ -196,6 +203,8 @@ const VALIDATORS: { [K in keyof Prefs]: (v: unknown) => v is Prefs[K] } = {
   currentDocId: (v): v is number | null => v === null || typeof v === 'number',
   docSidebarCollapsed: (v): v is boolean => typeof v === 'boolean',
   docFoldersCollapsed: isNumberArray,
+  language: (v): v is Language =>
+    typeof v === 'string' && (LANGUAGE_CODES as readonly string[]).includes(v),
 }
 
 /** Returns the stored preference fields for the user, or null when absent,

@@ -7,7 +7,7 @@ import {
 } from './prefsStorage'
 import { INITIAL_DATA, useStore } from './store'
 
-/** The six persisted fields' slice of INITIAL_DATA — the single defaults
+/** The seven persisted fields' slice of INITIAL_DATA — the single defaults
  * definition shared by the loader, the tests, and (via spread) every
  * load. */
 export const PREFS_DEFAULTS: Prefs = {
@@ -21,6 +21,7 @@ export const PREFS_DEFAULTS: Prefs = {
   currentDocId: INITIAL_DATA.currentDocId,
   docSidebarCollapsed: INITIAL_DATA.docSidebarCollapsed,
   docFoldersCollapsed: [...INITIAL_DATA.docFoldersCollapsed],
+  language: INITIAL_DATA.language,
 }
 
 const pick = (state: Prefs): Prefs => ({
@@ -30,6 +31,7 @@ const pick = (state: Prefs): Prefs => ({
   currentDocId: state.currentDocId,
   docSidebarCollapsed: state.docSidebarCollapsed,
   docFoldersCollapsed: state.docFoldersCollapsed,
+  language: state.language,
 })
 
 /** Applies the user's stored preferences over the declared defaults in ONE

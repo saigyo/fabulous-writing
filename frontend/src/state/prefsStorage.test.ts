@@ -31,6 +31,7 @@ const prefs: Prefs = {
   currentDocId: 7,
   docSidebarCollapsed: true,
   docFoldersCollapsed: [1, 2],
+  language: 'en',
 }
 
 describe('token accessors', () => {
@@ -163,6 +164,7 @@ describe('readPrefs / writePrefs', () => {
           currentDocId: '7',
           docSidebarCollapsed: 1,
           docFoldersCollapsed: [1, null],
+          language: 'klingon',
         },
         version: 2,
       }),
@@ -179,6 +181,19 @@ describe('readPrefs / writePrefs', () => {
       }),
     )
     expect(readPrefs(1)).toEqual({ uiLocale: 'de' })
+  })
+
+  it('round-trips language', () => {
+    writePrefs(7, { ...prefs, language: 'de' })
+    expect(readPrefs(7)).toMatchObject({ language: 'de' })
+  })
+
+  it('drops an invalid language value', () => {
+    localStorage.setItem(
+      prefsKey(7),
+      JSON.stringify({ version: 2, state: { language: 'klingon' } }),
+    )
+    expect(readPrefs(7)).not.toHaveProperty('language')
   })
 })
 
