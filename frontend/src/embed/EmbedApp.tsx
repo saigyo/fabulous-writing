@@ -120,25 +120,36 @@ export function EmbedApp() {
       <header className="embed-header">
         <LocaleSwitcher />
         <div className="header-controls">
-          <ProfileSelector />
-          <label>
-            {m.language}
-            <select
-              value={store.language}
-              onChange={(e) => store.setLanguage(e.target.value as Language)}
-            >
-              {store.languages.map((info) => (
-                <option key={info.code} value={info.code}>
-                  {languageLabel(info, m)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            {m.domain}
-            <DomainMultiSelect />
-          </label>
-          <LlmSelector />
+          {/* Grouped so the narrow (≤480px) embed.css media block can grid
+              these four wide controls 2-per-row (Profile+Language,
+              Domain+LLM) without touching the compact trailing controls
+              below (auto-toggle, Check, account menu), which keep wrapping
+              onto their own row exactly as before. display: contents at
+              wider widths (embed.css) makes this wrapper invisible to
+              layout there, so ProfileSelector/label/label/LlmSelector are
+              still direct flex children of .header-controls — pixel
+              parity with the pre-existing wide layout. */}
+          <div className="embed-selectors">
+            <ProfileSelector />
+            <label>
+              {m.language}
+              <select
+                value={store.language}
+                onChange={(e) => store.setLanguage(e.target.value as Language)}
+              >
+                {store.languages.map((info) => (
+                  <option key={info.code} value={info.code}>
+                    {languageLabel(info, m)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              {m.domain}
+              <DomainMultiSelect />
+            </label>
+            <LlmSelector />
+          </div>
           {!llmDisabled(store.user) && (
             <button
               type="button"
