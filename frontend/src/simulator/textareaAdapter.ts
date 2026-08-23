@@ -255,7 +255,10 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
       }
       const prev = document.activeElement
       const { scrollTop, scrollLeft } = el
-      el.focus()
+      // preventScroll suppresses the default behavior of scrolling the focused
+      // element into view, which would jerk the scroll position on every apply
+      // in a real host page. The scroll position is manually restored below.
+      el.focus({ preventScroll: true })
       el.setSelectionRange(from, to)
       // setRangeText truncates the textarea's native undo stack (measured
       // in Chromium) — every programmatic edit through it collapses undo
@@ -283,7 +286,7 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
       }
       el.scrollTop = scrollTop
       el.scrollLeft = scrollLeft
-      if (prev instanceof HTMLElement && prev !== el) prev.focus()
+      if (prev instanceof HTMLElement && prev !== el) prev.focus({ preventScroll: true })
       return { ok: true, text: el.value }
     },
     setMarkings(spans) {
