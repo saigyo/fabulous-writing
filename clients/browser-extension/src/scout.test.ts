@@ -12,6 +12,7 @@
 // unit-tested below, since a real 'pagehide' event dispatches and runs
 // scout's listener the same as any other delegated one under happy-dom.
 import { describe, expect, it, vi } from 'vitest'
+import { setServerUrl } from './settings'
 import { browserMock, type MockPort } from './testing/browserMock'
 import './scout'
 
@@ -653,5 +654,89 @@ describe('scout: field re-acquisition after DOM replacement (live-test finding, 
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+// Issue #142 round 2 (Copilot finding): sw.ts's registry-driven
+// serverChanged() has no entry for a field mid-reacquire (its own removal
+// already cleared the registry) — the scout must abort the grace window
+// itself, and must also locally tear down a LIVE session as belt-and-
+// suspenders for a lost/never-arriving SW detach ctl.
+describe('scout: server-URL change (issue #142 round 2)', () => {
+  it('aborts a pending reacquire outright: probing stops, chip idles, and a matching element ' +
+    'appearing afterward does not rebind', async () => {
+    vi.useFakeTimers()
+    try {
+      const el = eligibleField()
+      el.id = 'box'
+      show(el)
+      const port = lastConnectedPort()
+      clickChip()
+      port.onMessage.emit({ ctl: { kind: 'status', phase: 'checking', findingCount: 0 } })
+      expect(allFieldConnectedIds(port)).toHaveLength(1)
+
+      el.remove()
+      await Promise.resolve() // session.ts's MutationObserver self-detach -> beginReacquire
+      expect(chipButton().dataset.state).not.toBe('idle') // still probing
+
+      await setServerUrl('https://other.example')
+
+      expect(chipButton().dataset.state).toBe('idle')
+
+      // A same-id replacement appears AFTER the URL change — must not
+      // rebind even though it would have matched the (now-aborted) probe.
+      const replacement = eligibleField()
+      replacement.id = 'box'
+      vi.advanceTimersByTime(2500) // > the reacquire grace window
+
+      expect(allFieldConnectedIds(port)).toHaveLength(1) // no second connect
+      expect(chipButton().dataset.state).toBe('idle')
+
+      port.onDisconnect.emit(port)
+      replacement.remove()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('locally detaches and idles a LIVE session, without any SW detach ctl ever arriving on the ' +
+    'port', async () => {
+    const el = eligibleField()
+    el.id = 'box'
+    show(el)
+    const port = lastConnectedPort()
+    clickChip()
+    port.onMessage.emit({ ctl: { kind: 'status', phase: 'checking', findingCount: 0 } })
+    expect(chipButton().dataset.state).toBe('connected')
+    expect(allFieldConnectedIds(port)).toHaveLength(1)
+
+    // No incoming ctl of any kind — this teardown must be entirely
+    // client-side, driven by the settings subscription itself.
+    await setServerUrl('https://another.example')
+
+    expect(chipButton().dataset.state).toBe('idle')
+
+    // Reconnecting produces a genuinely NEW session (new fieldId), proving
+    // the old one was actually torn down (adapter disposed, session
+    // nulled) rather than just painted idle cosmetically.
+    clickChip()
+    expect(allFieldConnectedIds(port)).toHaveLength(2)
+    expect(allFieldConnectedIds(port)[1]).not.toBe(allFieldConnectedIds(port)[0])
+
+    port.onDisconnect.emit(port)
+    el.remove()
+  })
+
+  it('is a no-op when there is no live session and no pending reacquire', async () => {
+    const el = eligibleField()
+    show(el)
+    const port = lastConnectedPort()
+    expect(chipButton().dataset.state).toBe('idle')
+
+    await setServerUrl('https://yet-another.example')
+
+    expect(chipButton().dataset.state).toBe('idle')
+    port.onDisconnect.emit(port)
+    el.remove()
   })
 })

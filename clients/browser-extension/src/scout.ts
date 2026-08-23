@@ -17,6 +17,7 @@ import { isEligibleField } from './detect'
 import { parsePortMessage, type PortMessage } from './messages'
 import { computeFingerprint, findFingerprintMatch, type Fingerprint } from './reacquire'
 import { startSession, type Session } from './session'
+import { onServerUrlChanged } from './settings'
 
 type Port = ReturnType<typeof browser.runtime.connect>
 
@@ -448,6 +449,34 @@ document.addEventListener('focusin', (e) => handleEnter(e.target))
 document.addEventListener('focusout', (e) => handleLeave(e.target, (e as FocusEvent).relatedTarget))
 document.addEventListener('mouseover', (e) => handleEnter(e.target))
 document.addEventListener('mouseout', (e) => handleLeave(e.target, (e as MouseEvent).relatedTarget))
+
+// Issue #142 round 2 (Copilot finding): sw.ts's own onServerUrlChanged
+// subscription (registry.serverChanged()) detaches every window's field
+// through the REGISTRY — but a field mid-REACQUISITION grace window
+// (beginReacquire above) has no live registry entry for its tab (the
+// field's own removal already cleared it, same as any other self-detach),
+// so no detach ctl would ever reach here, and a pending reacquire's later
+// match would silently rebind and start flowing text to the newly
+// configured server with no click ever having happened. The scout
+// subscribes directly too and handles this two-layer, client-only case
+// locally: (a) a pending reacquire is aborted outright — the grace
+// window's whole purpose (reconnecting a field the USER still owns)
+// doesn't apply once the server underneath it has changed; (b) a LIVE
+// session's local teardown is belt-and-suspenders for the SW's own detach
+// ctl arriving over the port — covers any ordering where that ctl is lost
+// (SW dead/restarting, port already gone) rather than depending on it.
+onServerUrlChanged(() => {
+  const hadReacquire = reacquireTimer !== undefined
+  stopReacquire()
+  const hadSession = session !== null
+  if (session) session.detach()
+  if (hadSession || hadReacquire) {
+    session = null
+    sessionEl = null
+    stopPingTimer()
+    renderChip()
+  }
+})
 
 // Copilot round 3, S6: pagehide can be followed by pageshow restoring the
 // page from the back/forward cache (bfcache) instead of a real reload — the
