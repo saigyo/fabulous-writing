@@ -1,0 +1,103 @@
+name: Chrome Extension Release
+
+# Extension releases share the repo's single GH release channel with the
+# server releases (release.yml, tags v*). The chrome-ext-v* prefix keeps the
+# two cycles apart: neither workflow ever fires for the other's tags. Future
+# clients follow the same pattern (safari-ext-v*, jetbrains-v*, ...).
+on:
+  push:
+    tags: ["chrome-ext-v*"]
+
+concurrency:
+  group: chrome-extension-release
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: clients/browser-extension
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate tag and extract version
+        id: version
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^chrome-ext-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag '$GITHUB_REF_NAME' is not chrome-ext-vX.Y.Z — refusing to release" >&2
+            exit 1
+          fi
+          echo "version=${GITHUB_REF_NAME#chrome-ext-v}" >> "$GITHUB_OUTPUT"
+
+      - name: Assert manifest version matches tag
+        env:
+          TAG_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          MANIFEST_VERSION=$(jq -r .version public/manifest.json)
+          if [[ "$MANIFEST_VERSION" != "$TAG_VERSION" ]]; then
+            echo "manifest.json version '$MANIFEST_VERSION' != tag version '$TAG_VERSION' — retag or bump the manifest" >&2
+            exit 1
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: clients/browser-extension/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Package dist
+        id: package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        # The zip unpacks to a single fabulous-writing-chrome-extension-X.Y.Z/
+        # folder ready for chrome://extensions "Load unpacked".
+        run: |
+          FOLDER="fabulous-writing-chrome-extension-$VERSION"
+          cp -R dist "$FOLDER"
+          zip -r "$FOLDER.zip" "$FOLDER"
+          echo "zip=clients/browser-extension/$FOLDER.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ZIP: ${{ steps.package.outputs.zip }}
+        # --latest=false keeps the repo's "latest release" pointer on server
+        # releases; no --generate-notes (it would diff against the latest
+        # server tag and produce a mixed changelog).
+        run: |
+          cat > /tmp/release-notes.md <<EOF
+          Chromium-family browser extension (Chrome, Edge, Brave) for Fabulous Writing.
+
+          ## Install
+
+          1. Download and unpack \`fabulous-writing-chrome-extension-$VERSION.zip\`.
+          2. Open \`chrome://extensions\`, enable **Developer mode**.
+          3. Click **Load unpacked** and select the unpacked \`fabulous-writing-chrome-extension-$VERSION\` folder.
+
+          Chrome may warn about developer-mode extensions after a restart — expected for unpacked installs. See \`docs/browser-extension.md\` for usage and local-backend setup.
+          EOF
+          gh release create "$GITHUB_REF_NAME" \
+            --title "Chrome extension v$VERSION" \
+            --notes-file /tmp/release-notes.md \
+            --latest=false \
+            --verify-tag \
+            "$ZIP"
