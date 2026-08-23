@@ -111,6 +111,13 @@ browser.runtime.onConnect.addListener((port) => {
     fieldPorts.set(tabId, port)
     port.onMessage.addListener((data) => handleFieldMessage(tabId, windowId, data))
     port.onDisconnect.addListener(() => {
+      // Guard against a stale disconnect: same-tab navigation can connect a
+      // NEW port and re-register it under this tabId before the OLD port's
+      // onDisconnect fires (no ordering guarantee between those events). If
+      // the map no longer points at THIS port, it was already superseded —
+      // the disconnect of a superseded port must be a complete no-op, never
+      // evicting the live port or wiping a still-connected field.
+      if (fieldPorts.get(tabId) !== port) return
       fieldPorts.delete(tabId)
       execute(registry.fieldPortGone(windowId, tabId))
     })
@@ -121,10 +128,12 @@ browser.runtime.onConnect.addListener((port) => {
     const state: { windowId: number | null } = { windowId: null }
     port.onMessage.addListener((data) => handlePanelMessage(state, port, data))
     port.onDisconnect.addListener(() => {
-      if (state.windowId !== null) {
-        panelPorts.delete(state.windowId)
-        registry.panelPortGone(state.windowId)
-      }
+      if (state.windowId === null) return
+      // Same guard as the field-port branch above, for a superseded panel
+      // reconnect racing its predecessor's disconnect.
+      if (panelPorts.get(state.windowId) !== port) return
+      panelPorts.delete(state.windowId)
+      registry.panelPortGone(state.windowId)
     })
   }
 })
