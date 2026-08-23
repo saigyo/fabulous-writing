@@ -520,6 +520,148 @@ describe('createTextareaAdapter: flashFinding', () => {
   })
 })
 
+// Part A / Task 6 (B43 C2): host-page overlay positioning. The overlay is
+// `position: absolute; top: 0; left: 0`, which resolves against its
+// CONTAINING BLOCK, not necessarily the field's own position — on an
+// arbitrary host page (no simulator.css wrapper), self-correct by a
+// MEASURED rect delta instead. happy-dom performs no real layout, so
+// getBoundingClientRect is stubbed directly to exercise the delta math.
+describe('createTextareaAdapter: host-page overlay positioning (measured rect delta)', () => {
+  let restoreDivRect: (() => void) | null = null
+
+  afterEach(() => {
+    restoreDivRect?.()
+    restoreDivRect = null
+  })
+
+  // Stubs getBoundingClientRect on `el` directly (it already exists) and on
+  // HTMLDivElement.prototype (the overlay doesn't exist yet — it's created
+  // inside createTextareaAdapter — so only a div created during this test
+  // can pick it up; el is a textarea and is unaffected by it).
+  function stubRects(elRect: { top: number; left: number }, overlayRect: { top: number; left: number }) {
+    const fakeRect = (r: { top: number; left: number }) =>
+      ({ top: r.top, left: r.left, right: 0, bottom: 0, width: 0, height: 0, x: r.left, y: r.top, toJSON() {} }) as DOMRect
+    Object.defineProperty(el, 'getBoundingClientRect', {
+      value: () => fakeRect(elRect),
+      configurable: true,
+    })
+    const original = HTMLDivElement.prototype.getBoundingClientRect
+    Object.defineProperty(HTMLDivElement.prototype, 'getBoundingClientRect', {
+      value: () => fakeRect(overlayRect),
+      configurable: true,
+    })
+    restoreDivRect = () => {
+      Object.defineProperty(HTMLDivElement.prototype, 'getBoundingClientRect', {
+        value: original,
+        configurable: true,
+      })
+    }
+  }
+
+  it('shifts the overlay by the delta between the field rect and the fresh overlay rect', () => {
+    stubRects({ top: 108, left: 8 }, { top: 100, left: 0 })
+
+    const adapter = createTextareaAdapter(el)
+
+    // Queried via el.previousElementSibling (not document.querySelector),
+    // which is robust to any other .fw-mirror-overlay left in the document
+    // by an unrelated test — matches the "beforebegin" insertion contract
+    // exactly.
+    const overlay = el.previousElementSibling as HTMLDivElement
+    expect(overlay.style.top).toBe('8px')
+    expect(overlay.style.left).toBe('8px')
+
+    adapter.dispose()
+  })
+
+  it('a second sync with equal rects leaves the overlay position unchanged (convergence)', () => {
+    stubRects({ top: 108, left: 8 }, { top: 100, left: 0 })
+
+    const captured: { cb: (() => void) | null } = { cb: null }
+    const OriginalResizeObserver = (globalThis as { ResizeObserver?: unknown }).ResizeObserver
+    class StubResizeObserver {
+      constructor(cb: () => void) {
+        captured.cb = cb
+      }
+      observe = vi.fn()
+      disconnect = vi.fn()
+      unobserve = vi.fn()
+    }
+    ;(globalThis as { ResizeObserver: unknown }).ResizeObserver = StubResizeObserver
+
+    const adapter = createTextareaAdapter(el)
+    const overlay = el.previousElementSibling as HTMLDivElement
+    expect(overlay.style.top).toBe('8px')
+    expect(overlay.style.left).toBe('8px')
+
+    // Real layout would now report the overlay's rect as equal to the
+    // field's (it has moved to sit exactly on top of it) — simulate that by
+    // updating the stub before the resize-triggered re-sync.
+    stubRects({ top: 108, left: 8 }, { top: 108, left: 8 })
+    captured.cb?.()
+
+    expect(overlay.style.top).toBe('8px')
+    expect(overlay.style.left).toBe('8px')
+
+    adapter.dispose()
+    ;(globalThis as { ResizeObserver: unknown }).ResizeObserver = OriginalResizeObserver
+  })
+})
+
+// Part A / Task 6 (B43 C2): paint order + visibility on an arbitrary host
+// page. simulator.css's `.sim-field-wrap textarea` rule already gives the
+// simulator's demo field `position: relative; z-index: 1; background:
+// transparent` — a real host page never loads that stylesheet, so this
+// module must set the load-bearing values itself, inline.
+describe('createTextareaAdapter: host-page paint order + visibility', () => {
+  it('a statically-positioned field gets position:relative and z-index:1', () => {
+    const adapter = createTextareaAdapter(el)
+
+    expect(el.style.position).toBe('relative')
+    expect(el.style.zIndex).toBe('1')
+
+    adapter.dispose()
+  })
+
+  it('a field with an inline background paints it on the OVERLAY, while the field itself becomes transparent', () => {
+    el.style.backgroundColor = 'rgb(255, 0, 0)'
+
+    const adapter = createTextareaAdapter(el)
+
+    const overlay = el.previousElementSibling as HTMLDivElement
+    expect(overlay.style.backgroundColor).toBe('rgb(255, 0, 0)')
+    expect(el.style.backgroundColor).toBe('transparent')
+
+    adapter.dispose()
+  })
+
+  it('dispose() restores previously-set inline position/z-index/background-color verbatim', () => {
+    el.style.position = 'absolute'
+    el.style.zIndex = '5'
+    el.style.backgroundColor = 'rgb(0, 0, 255)'
+
+    const adapter = createTextareaAdapter(el)
+    adapter.dispose()
+
+    expect(el.style.position).toBe('absolute')
+    expect(el.style.zIndex).toBe('5')
+    expect(el.style.backgroundColor).toBe('rgb(0, 0, 255)')
+  })
+
+  it('dispose() restores previously-UNSET inline position/z-index/background-color to empty strings', () => {
+    expect(el.style.position).toBe('')
+    expect(el.style.zIndex).toBe('')
+    expect(el.style.backgroundColor).toBe('')
+
+    const adapter = createTextareaAdapter(el)
+    adapter.dispose()
+
+    expect(el.style.position).toBe('')
+    expect(el.style.zIndex).toBe('')
+    expect(el.style.backgroundColor).toBe('')
+  })
+})
+
 describe('createTextareaAdapter: dispose', () => {
   it('removes the mirror overlay from the DOM', () => {
     const adapter = createTextareaAdapter(el)

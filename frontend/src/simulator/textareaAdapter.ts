@@ -11,6 +11,37 @@
 // real, editable text. The overlay never receives pointer events — it
 // exists purely to paint; the textarea stays the sole interactive surface
 // (see main.ts's own click handling for "click a finding" instead).
+//
+// Host-page contract (C2 lift): two more load-bearing pieces the simulator
+// happens to also satisfy via simulator.css, but that only this module can
+// guarantee once it runs on an arbitrary host page that never loads that
+// stylesheet:
+// - Overlay position (syncOverlayGeometry): the overlay is
+//   `position: absolute; top: 0; left: 0`, which lands it at the origin of
+//   its CONTAINING BLOCK (the nearest positioned ancestor, or the initial
+//   containing block if there is none) — not necessarily the field's own
+//   position. The simulator's `.sim-field-wrap` wrapper happens to supply
+//   `position: relative`, making that origin coincide with the field; an
+//   arbitrary host page usually doesn't, and the field's own
+//   offsetTop/offsetLeft can't be used to correct for it either (CSSOM
+//   defines offsetParent as `body` for an unpositioned tree, which is not
+//   the absolute overlay's actual containing block). Instead,
+//   syncOverlayGeometry self-corrects by a MEASURED rect delta between the
+//   field and the overlay every time it runs (creation and every resize) —
+//   exact under any containing block/margin/wrapper, convergent in one
+//   step, and needing no separate scroll re-sync since the overlay is a
+//   DOM sibling of the field and so already shares its scrolling context.
+// - Paint order + visibility: the field itself is coerced onto its own
+//   stacking context above the overlay (`position: relative` only if it
+//   was computed `static`; `z-index: 1` unconditionally) and made
+//   transparent, after the overlay is given a copy of the field's own
+//   (previously opaque) background color to paint instead — matching what
+//   simulator.css's `.sim-field-wrap textarea` rule already does for the
+//   simulator's own demo field via a stylesheet. Without this, a
+//   real host field with an opaque background (GitHub's composer, say)
+//   would hide every mark; a static-positioned field would instead have the
+//   overlay paint OVER its real text. dispose() restores the three inline
+//   values (position/z-index/background-color) it touched, verbatim.
 import type { FieldAdapter, MarkingSpan } from '../embed/protocol'
 import { SEVERITIES } from '../findings/severity'
 
@@ -52,6 +83,22 @@ function syncOverlayGeometry(el: HTMLTextAreaElement, overlay: HTMLDivElement) {
     ;(overlay.style as unknown as Record<string, string>)[prop as string] =
       computed[prop] as string
   }
+  // Host-page overlay position (module comment): the overlay's
+  // `top: 0; left: 0` resolves against its CONTAINING BLOCK, which need not
+  // coincide with the field's own position on an arbitrary host page.
+  // Self-correct by the MEASURED delta between the field's rect and the
+  // overlay's own (possibly still-off) rect, added on top of whatever
+  // top/left the overlay is currently holding. Exact under any containing
+  // block/margin/wrapper, converges in one step (a second call with the
+  // rects now equal adds a zero delta), and needs no separate scroll
+  // re-sync — the overlay is a DOM sibling of the field, so it already
+  // shares the field's scrolling context. In the simulator, `.sim-field-wrap`
+  // already positions the field's containing block at the wrapper's own
+  // origin, so the delta computed here is 0 and nothing visibly moves.
+  const fieldRect = el.getBoundingClientRect()
+  const overlayRect = overlay.getBoundingClientRect()
+  overlay.style.top = `${(parseFloat(overlay.style.top) || 0) + fieldRect.top - overlayRect.top}px`
+  overlay.style.left = `${(parseFloat(overlay.style.left) || 0) + fieldRect.left - overlayRect.left}px`
 }
 
 export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
@@ -79,6 +126,40 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
   // textarea itself, so it must be hidden from assistive tech.
   overlay.setAttribute('aria-hidden', 'true')
   el.insertAdjacentElement('beforebegin', overlay)
+
+  // Host-page paint order + visibility (module comment): save the field's
+  // own inline position/z-index/background-color BEFORE touching any of
+  // them, so dispose() can restore them verbatim (empty string when they
+  // were unset). Only coerce `position` when it computes `static` — a field
+  // that already establishes its own stacking context (relative/absolute/
+  // sticky/fixed, e.g. the simulator's own `.sim-field-wrap textarea` rule)
+  // is left alone. `z-index` and the background swap always run: the field
+  // must out-rank the overlay it paints below either way, and the overlay
+  // must take over the field's own (previously opaque) background so
+  // highlights still sit on the expected ground once the field itself goes
+  // transparent.
+  const savedPosition = el.style.position
+  const savedZIndex = el.style.zIndex
+  const savedBackgroundColor = el.style.backgroundColor
+  // happy-dom's getComputedStyle leaves an unset `position` as '' rather
+  // than resolving it to its initial value 'static' the way a real browser
+  // would — treat both as the static case under test.
+  const computedPosition = getComputedStyle(el).position
+  if (computedPosition === 'static' || computedPosition === '') {
+    el.style.position = 'relative'
+  }
+  el.style.zIndex = '1'
+  const computedBackgroundColor = getComputedStyle(el).backgroundColor
+  // happy-dom leaves an unset background-color as '' rather than resolving
+  // it to its initial value (transparent) the way a real browser would;
+  // assigning '' to overlay.style.backgroundColor would clear the overlay's
+  // own `background: transparent` shorthand entirely instead of leaving it
+  // at its already-transparent default, so only copy over a real value.
+  if (computedBackgroundColor) {
+    overlay.style.backgroundColor = computedBackgroundColor
+  }
+  el.style.backgroundColor = 'transparent'
+
   syncOverlayGeometry(el, overlay)
 
   // Geometry is otherwise captured once at creation time — a host resizing
@@ -326,6 +407,11 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
       flashTimer = null
       changeCb = null
       overlay.remove()
+      // Restore the three inline values the paint-order setup above may
+      // have touched, verbatim (an empty string puts back "unset").
+      el.style.position = savedPosition
+      el.style.zIndex = savedZIndex
+      el.style.backgroundColor = savedBackgroundColor
     },
   }
 }
