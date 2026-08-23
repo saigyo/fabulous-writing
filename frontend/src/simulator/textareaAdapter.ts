@@ -284,33 +284,32 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
   // comparing against the latest value this function actually wrote.
   let writtenBackgroundColor: string | null = null
   let writtenBackgroundImage: string | null = null
+  // Copilot round 5, F1+F3+F4: syncBackground copies every one of these
+  // properties (color, image, the 6 image-positioning longhands) through
+  // the SAME recipe, uniformly, rather than three near-identical blocks
+  // that had each picked up fixes independently and inconsistently:
+  //   1. Unmask: while the field's CURRENT inline value for a property is
+  //      still this function's own last write (an "override"), that inline
+  //      value beats any stylesheet rule in the cascade, so a plain
+  //      getComputedStyle() read would just echo the override back forever
+  //      and never see a host theme switch (a class toggle, a
+  //      prefers-color-scheme flip) that only changed the UNDERLYING rule.
+  //      Flip the override off, take the read, put it back — synchronously,
+  //      same tick, so nothing can paint in between. (Round 4, F2, extended
+  //      here to the longhands too — F4's bug was that their own reads were
+  //      never unmasked this way, so a `background-size` change reached
+  //      the overlay only for the FIRST image, never again after that.)
+  //   2. Copy to the overlay EXACTLY the underlying value, including the
+  //      "nothing here" cases (transparent/none) — F1/F3's bug was a
+  //      skip-and-keep-stale branch here: once the underlying value went
+  //      transparent/none, the overlay kept whatever (possibly opaque)
+  //      value it had from before, while the field stayed forced
+  //      transparent — so the STALE color/image kept showing through.
+  //   3. A host-changed inline value (the field's current value no longer
+  //      matches what this function wrote) still wins permanently: the
+  //      outer `if` below is false in that case, so this stops touching
+  //      that property for the rest of the session, exactly as before.
   function syncBackground(): void {
-    // Skip the copy for happy-dom's '' default AND for a real, fully
-    // transparent background ('transparent', or the 'rgba(0, 0, 0, 0)' a
-    // real browser resolves either keyword to) — there's nothing
-    // meaningful to paint onto the overlay in any of those cases, and
-    // assigning '' would clear the overlay's own `background: transparent`
-    // shorthand entirely instead of leaving it at its already-transparent
-    // default. "Always written" on the FIELD side (unlike position/z-index
-    // above, this has no "field already has its own value" branch to
-    // skip) — but only while the field's current inline value still
-    // matches what this function itself last wrote; once the host sets its
-    // own value directly, that write wins and this stops touching it.
-    //
-    // Copilot round 4 (closing sweep), F2: once this function has WRITTEN
-    // its own inline override, that inline value beats any stylesheet rule
-    // in the cascade — so a later getComputedStyle() read here would just
-    // read this function's own prior write back, forever, never the host's
-    // real underlying value. A host theme switch (a class toggle, a
-    // prefers-color-scheme flip) only changes the UNDERLYING rule; with the
-    // override still in place, computed style can never see it. Fix:
-    // whenever the field's current inline value is still this function's
-    // own override, clear it, take the computed read (now unmasked), then
-    // immediately re-apply the override — both writes and the read happen
-    // synchronously in the same tick, so no paint can occur in between and
-    // nothing ever flickers. A host-changed inline value (the outer `if`
-    // below is false in that case) still wins permanently, exactly as
-    // before: the flip is skipped entirely for that property.
     const backgroundColorOverrideActive =
       writtenBackgroundColor !== null && el.style.backgroundColor === writtenBackgroundColor
     if (writtenBackgroundColor === null || backgroundColorOverrideActive) {
@@ -321,9 +320,10 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
         computedBackgroundColor === '' ||
         computedBackgroundColor === 'transparent' ||
         computedBackgroundColor === 'rgba(0, 0, 0, 0)'
-      if (!computedBackgroundIsTransparent) {
-        overlay.style.backgroundColor = computedBackgroundColor
-      }
+      // F1: explicit reset, always — never skip this assignment, or a
+      // theme flip TO transparent leaves the overlay's prior (possibly
+      // opaque) color visibly in place underneath the now-transparent field.
+      overlay.style.backgroundColor = computedBackgroundIsTransparent ? 'transparent' : computedBackgroundColor
       writtenBackgroundColor = 'transparent'
       el.style.backgroundColor = writtenBackgroundColor
     }
@@ -333,23 +333,13 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
     // gradient (`linear-gradient(...)`, a data-URI pattern, GitHub's own
     // themed composer backgrounds) still painted that image ABOVE the
     // overlay, hiding marks under it exactly the way an opaque
-    // background-color used to. Same fix, same shape as background-color
-    // just above: copy the field's COMPUTED background-image onto the
-    // overlay (so it still paints, just now behind the real text instead
-    // of on top of the marks) and clear the field's own to 'none' so only
-    // the overlay's copy shows through. Unlike background-color, this is
-    // guarded like position/z-index above (a null `writtenBackgroundImage`
-    // means "never touched") rather than "always written": there is
-    // nothing to move and nothing to clear when the computed value is
-    // already 'none', so skip both the overlay copy and the field mutation
-    // entirely in that case — which also means an initially-image-less
-    // field whose OWN inline backgroundImage this function has therefore
-    // never touched keeps reflecting the host's real, live computed value
-    // on every re-sync, so a background-image gained mid-session (M6) is
-    // still picked up here the same way a background-color change is.
-    // F2: same flip as background-color above — an inline 'none' this
-    // function wrote itself would otherwise mask the host's real underlying
-    // background-image (or lack of one) in every later computed read.
+    // background-color used to. Unlike background-color, the FIELD-side
+    // write stays guarded to "there is currently an image" — an
+    // initially-image-less field's own inline backgroundImage is left
+    // completely untouched (never forced to 'none' for nothing), so it
+    // keeps reflecting the host's real, live computed value on every
+    // re-sync, and a background-image gained mid-session is picked up here
+    // the same way a background-color change is.
     const backgroundImageOverrideActive =
       writtenBackgroundImage !== null && el.style.backgroundImage === writtenBackgroundImage
     if (writtenBackgroundImage === null || backgroundImageOverrideActive) {
@@ -360,8 +350,11 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
       // background-image computes to '' there instead of the real initial
       // value 'none'.
       const computedBackgroundImageIsNone = computedBackgroundImage === '' || computedBackgroundImage === 'none'
+      // F3: explicit reset, always — an image the host removes (theme
+      // toggle, class swap) must clear the overlay's stale prior copy
+      // rather than leaving it painted forever.
+      overlay.style.backgroundImage = computedBackgroundImageIsNone ? 'none' : computedBackgroundImage
       if (!computedBackgroundImageIsNone) {
-        overlay.style.backgroundImage = computedBackgroundImage
         writtenBackgroundImage = 'none'
         el.style.backgroundImage = writtenBackgroundImage
         // M5: the longhands that position/size/tile the image, copied
@@ -372,8 +365,30 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
         // each property's own distinct initial value) since they have no
         // visible effect on the field now that its own image is gone.
         for (const prop of BACKGROUND_IMAGE_LONGHANDS) {
-          overlay.style[prop] = getComputedStyle(el)[prop]
+          // F4: same unmask-before-read step as color/image above — a
+          // longhand's own inline value may still be this function's OWN
+          // prior 'initial' write (from an earlier tick, same image still
+          // present), which would otherwise mask the host's real
+          // underlying layout value (e.g. a changed background-size) on
+          // every subsequent read.
+          const longhandOverrideActive = el.style[prop] === 'initial'
+          if (longhandOverrideActive) el.style[prop] = ''
+          const computedLonghand = getComputedStyle(el)[prop]
+          if (longhandOverrideActive) el.style[prop] = 'initial'
+          overlay.style[prop] = computedLonghand
           el.style[prop] = 'initial'
+        }
+      } else {
+        // F3, continued: nothing left to size/position without an image —
+        // reset the overlay's longhand copies too rather than leaving them
+        // at a stale prior image's values. 'initial' (not '') matches the
+        // overlay's own creation-time state (its `background: transparent`
+        // shorthand already resolves every other longhand to 'initial' —
+        // see the M6/F2-era test comment below) and — unlike unsetting the
+        // longhand outright — keeps happy-dom's `background` shorthand
+        // getter able to serialize the overlay's style at all.
+        for (const prop of BACKGROUND_IMAGE_LONGHANDS) {
+          overlay.style[prop] = 'initial'
         }
       }
     }

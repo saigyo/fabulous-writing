@@ -27,12 +27,18 @@ beforeEach(() => {
 })
 
 describe('createAffordance: showFor', () => {
-  it('attaches exactly one shadow host to document.documentElement (not body), positioned at the top-right corner', () => {
+  // Copilot round 5, F5: the host used to be appended to documentElement,
+  // outside the field's own subtree entirely; it now lives as the field's
+  // own NEXT SIBLING so it's reachable by Tab right after the field (see
+  // the "keyboard reachability" describe block below for the adjacency
+  // contract itself).
+  it('attaches exactly one shadow host as the field\'s own next sibling, positioned at the top-right corner', () => {
     const affordance = createAffordance(() => {})
     affordance.showFor(el)
 
-    expect(affordance.host.parentElement).toBe(document.documentElement)
-    expect(document.body.contains(affordance.host)).toBe(false)
+    expect(affordance.host.parentElement).toBe(el.parentElement)
+    expect(affordance.host.previousElementSibling).toBe(el)
+    expect(document.body.contains(affordance.host)).toBe(true)
     expect(affordance.host.shadowRoot).not.toBeNull()
     expect(affordance.host.style.top).toBe('50px')
     expect(affordance.host.style.left).toBe('300px')
@@ -52,11 +58,110 @@ describe('createAffordance: showFor', () => {
 
     expect(affordance.host).toBe(firstHost)
     expect(document.documentElement.querySelectorAll('[data-fw-affordance]').length).toBe(1)
+    // Moved to be the SECOND field's next sibling now, not left behind
+    // next to the first.
+    expect(affordance.host.previousElementSibling).toBe(el2)
     expect(affordance.host.style.top).toBe('10px')
     expect(affordance.host.style.left).toBe('220px')
 
     affordance.dispose()
     el2.remove()
+  })
+})
+
+// Copilot round 5, F5: the host sat at the end of documentElement — Tab
+// from the field went to the page's own next control, and focusout hid the
+// chip before a keyboard user could ever reach it.
+describe('createAffordance: keyboard reachability (F5, round 5)', () => {
+  it('the host is el.nextElementSibling after showFor, putting the chip next in Tab order', () => {
+    const affordance = createAffordance(() => {})
+    affordance.showFor(el)
+
+    expect(el.nextElementSibling).toBe(affordance.host)
+
+    affordance.dispose()
+  })
+
+  it('corrects for a containing block that is not the field\'s own page origin (measured-delta, same technique as textareaAdapter.ts)', () => {
+    const affordance = createAffordance(() => {})
+    // Simulate a containing block that isn't the page origin: the same
+    // top/left the naive calculation sets lands the host somewhere OTHER
+    // than (50, 300) — as if some positioned ancestor between the host and
+    // the viewport shifted it.
+    affordance.host.getBoundingClientRect = () => (
+      { top: 40, left: 90, right: 90, bottom: 40, width: 0, height: 0, x: 90, y: 40, toJSON() { return {} } }
+    )
+    affordance.showFor(el)
+
+    // Naive target was (50, 300); the host actually landed at (40, 90) for
+    // those values, so the correction shifts by (+10, +210).
+    expect(affordance.host.style.top).toBe('60px')
+    expect(affordance.host.style.left).toBe('510px')
+
+    affordance.dispose()
+  })
+
+  it('a host detached along with the field (a Turbo body swap) is re-attached cleanly on the next showFor', () => {
+    const wrapper = document.createElement('div')
+    document.body.appendChild(wrapper)
+    wrapper.appendChild(el)
+
+    const affordance = createAffordance(() => {})
+    affordance.showFor(el)
+    expect(affordance.host.isConnected).toBe(true)
+
+    // The whole subtree holding both the field and its now-adjacent chip
+    // host is torn out at once — reposition()'s own isConnected guard
+    // (exercised via the interval/scroll paths, not directly here) is what
+    // keeps a chip whose host died this way from being positioned.
+    wrapper.remove()
+    expect(affordance.host.isConnected).toBe(false)
+    expect(el.isConnected).toBe(false)
+
+    // Turbo replaces the field with a fresh subtree — reuse `el` here to
+    // model "the field is back", appended in a brand new location.
+    document.body.appendChild(el)
+    affordance.showFor(el)
+
+    expect(affordance.host.isConnected).toBe(true)
+    expect(affordance.host.previousElementSibling).toBe(el)
+
+    affordance.dispose()
+    wrapper.remove()
+  })
+})
+
+// Copilot round 5, F6: same class of bug as the adapter's own — the
+// scroll/resize listeners only catch a scroll or a window resize, not a
+// same-sized field that simply MOVES (a layout-only reflow).
+describe('createAffordance: 1s position-drift safety interval (F6, round 5)', () => {
+  it('repositions on a moved rect via the interval, with no scroll/resize event', () => {
+    vi.useFakeTimers()
+    const affordance = createAffordance(() => {})
+    affordance.showFor(el)
+    expect(affordance.host.style.top).toBe('50px')
+
+    stubRect(el, 200, 5, 205, 230)
+    vi.advanceTimersByTime(1000)
+    expect(affordance.host.style.top).toBe('200px')
+
+    affordance.dispose()
+    vi.useRealTimers()
+  })
+
+  it('is cleared when hidden: a later interval tick after hide() does not reposition', () => {
+    vi.useFakeTimers()
+    const affordance = createAffordance(() => {})
+    affordance.showFor(el)
+
+    affordance.hide()
+    stubRect(el, 999, 5, 1005, 1030)
+    vi.advanceTimersByTime(2000)
+
+    expect(affordance.host.style.top).not.toBe('999px')
+
+    affordance.dispose()
+    vi.useRealTimers()
   })
 })
 

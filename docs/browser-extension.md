@@ -153,8 +153,12 @@ Set **Server URL** to whichever server you're checking against:
 - `http://localhost:8000` points the panel at your own locally-running
   backend (the owner's usual `uv run uvicorn app.main:app --reload --port
   8000` dev stack) — set this when developing against a local server. Only
-  an `http://`/`https://` origin (no path, query, or fragment) is accepted;
-  an invalid value shows a validation message instead of saving.
+  an `http://`/`https://` origin (no path, query, or fragment) is accepted,
+  and `http://` is allowed for a loopback host only (`localhost`,
+  `*.localhost`, a `127.0.0.0/8` literal, or `[::1]`) — every other host
+  requires `https://`, since credentials and document text would otherwise
+  cross the network in cleartext; an invalid value shows a validation
+  message instead of saving.
 
 The panel reloads on save (its own `onServerUrlChanged` listener), so no
 manual extension reload is needed.

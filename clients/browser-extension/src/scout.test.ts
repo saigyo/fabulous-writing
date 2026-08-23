@@ -240,6 +240,44 @@ describe('scout: leave handling is identity-based (Copilot round 3, S1)', () => 
   })
 })
 
+// Copilot round 5, F5: the chip is now reachable by keyboard (Tab lands on
+// it right after the field, since affordance.ts's showFor inserts the host
+// as the field's own next sibling). handleEnter's isChipHost(target) check
+// already covered this via the SHARED focusin/mouseover delegation — this
+// pins that a keyboard focus round-trip (not just a pointer one) keeps the
+// chip shown.
+describe('scout: hide-on-leave round trip via keyboard focus (F5, round 5)', () => {
+  it('Tab from the field onto the chip keeps it shown, and Shift+Tab back to the field keeps it shown too', () => {
+    vi.useFakeTimers()
+    try {
+      const el = eligibleField()
+      show(el)
+      const host = affordanceHost()
+      expect(host.style.display).not.toBe('none')
+
+      // Tab from the field: focus leaves the field toward the host (an
+      // event crossing the shadow boundary is retargeted to the host by
+      // the platform, so dispatching focusin ON the host directly models
+      // a real Tab keypress landing on the chip button inside it).
+      el.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: host }))
+      host.dispatchEvent(new FocusEvent('focusin', { bubbles: true }))
+      vi.advanceTimersByTime(PAST_HIDE_DELAY_MS)
+      expect(host.style.display).not.toBe('none')
+
+      // Shift+Tab back to the field.
+      host.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: el }))
+      vi.advanceTimersByTime(PAST_HIDE_DELAY_MS)
+      expect(host.style.display).not.toBe('none')
+
+      const port = lastConnectedPort()
+      port.onDisconnect.emit(port)
+      el.remove()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('scout: pagehide/bfcache teardown (Copilot round 3, S6; I2 closing sweep)', () => {
   it('resets session/shown/port state on pagehide so a post-restore focusin shows a clean idle chip through a NEW port', () => {
     const el = eligibleField()

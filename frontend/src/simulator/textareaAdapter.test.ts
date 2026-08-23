@@ -816,6 +816,136 @@ describe('createTextareaAdapter: position-drift re-sync (window resize + safety 
   })
 })
 
+// Copilot round 5 (Copilot review round 5), F1+F3+F4: syncBackground's
+// "skip and keep stale" branches for color/image, and the longhands' own
+// un-unmasked reads, all fixed by rebuilding it as one uniform pass.
+describe('createTextareaAdapter: uniform background re-sync (round 5, F1+F3+F4)', () => {
+  it('F1: an opaque-to-transparent theme flip clears the overlay color instead of leaving it stale', () => {
+    vi.useFakeTimers()
+    const realGetComputedStyle = window.getComputedStyle
+    let underlyingColor = 'rgb(10, 20, 30)'
+    const spy = vi.spyOn(window, 'getComputedStyle').mockImplementation((target, pseudo) => {
+      const real = realGetComputedStyle(target, pseudo ?? undefined)
+      if (target !== el) return real
+      return {
+        position: real.position,
+        zIndex: real.zIndex,
+        backgroundColor: el.style.backgroundColor || underlyingColor,
+        backgroundImage: real.backgroundImage,
+        backgroundSize: real.backgroundSize,
+        backgroundPosition: real.backgroundPosition,
+        backgroundRepeat: real.backgroundRepeat,
+        backgroundOrigin: real.backgroundOrigin,
+        backgroundClip: real.backgroundClip,
+        backgroundAttachment: real.backgroundAttachment,
+      } as CSSStyleDeclaration
+    })
+
+    try {
+      const adapter = createTextareaAdapter(el)
+      const overlay = el.previousElementSibling as HTMLDivElement
+      expect(overlay.style.backgroundColor).toBe('rgb(10, 20, 30)')
+
+      // Host theme switch: the underlying color goes fully transparent.
+      underlyingColor = 'transparent'
+      vi.advanceTimersByTime(1000)
+
+      // Explicit reset, not the stale opaque color from before.
+      expect(overlay.style.backgroundColor).toBe('transparent')
+      expect(el.style.backgroundColor).toBe('transparent')
+
+      adapter.dispose()
+    } finally {
+      spy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('F3: an image removed by the host theme clears the overlay image instead of leaving it stale', () => {
+    vi.useFakeTimers()
+    const realGetComputedStyle = window.getComputedStyle
+    let underlyingImage = 'linear-gradient(red, blue)'
+    const spy = vi.spyOn(window, 'getComputedStyle').mockImplementation((target, pseudo) => {
+      const real = realGetComputedStyle(target, pseudo ?? undefined)
+      if (target !== el) return real
+      return {
+        position: real.position,
+        zIndex: real.zIndex,
+        backgroundColor: real.backgroundColor,
+        backgroundImage: el.style.backgroundImage || underlyingImage,
+        backgroundSize: real.backgroundSize,
+        backgroundPosition: real.backgroundPosition,
+        backgroundRepeat: real.backgroundRepeat,
+        backgroundOrigin: real.backgroundOrigin,
+        backgroundClip: real.backgroundClip,
+        backgroundAttachment: real.backgroundAttachment,
+      } as CSSStyleDeclaration
+    })
+
+    try {
+      const adapter = createTextareaAdapter(el)
+      const overlay = el.previousElementSibling as HTMLDivElement
+      expect(overlay.style.backgroundImage).toBe('linear-gradient(red, blue)')
+
+      // Host theme switch: the underlying image is removed entirely.
+      underlyingImage = 'none'
+      vi.advanceTimersByTime(1000)
+
+      // Explicit reset, not the stale gradient from before.
+      expect(overlay.style.backgroundImage).toBe('none')
+
+      adapter.dispose()
+    } finally {
+      spy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('F4: a longhand change (background-size) reaches the overlay on the next tick', () => {
+    vi.useFakeTimers()
+    const realGetComputedStyle = window.getComputedStyle
+    let underlyingSize = '16px'
+    const spy = vi.spyOn(window, 'getComputedStyle').mockImplementation((target, pseudo) => {
+      const real = realGetComputedStyle(target, pseudo ?? undefined)
+      if (target !== el) return real
+      return {
+        position: real.position,
+        zIndex: real.zIndex,
+        backgroundColor: real.backgroundColor,
+        // Always an image present, so the longhand branch keeps running
+        // every tick — isolating the longhand's own unmask/read from the
+        // image's.
+        backgroundImage: 'linear-gradient(red, blue)',
+        backgroundSize: el.style.backgroundSize === 'initial' ? real.backgroundSize : underlyingSize,
+        backgroundPosition: real.backgroundPosition,
+        backgroundRepeat: real.backgroundRepeat,
+        backgroundOrigin: real.backgroundOrigin,
+        backgroundClip: real.backgroundClip,
+        backgroundAttachment: real.backgroundAttachment,
+      } as CSSStyleDeclaration
+    })
+
+    try {
+      const adapter = createTextareaAdapter(el)
+      const overlay = el.previousElementSibling as HTMLDivElement
+      expect(overlay.style.backgroundSize).toBe('16px')
+
+      // Host changes the underlying background-size (e.g. a responsive
+      // composer background) while the field's own inline value stays the
+      // adapter's own 'initial' override the whole time.
+      underlyingSize = '32px'
+      vi.advanceTimersByTime(1000)
+
+      expect(overlay.style.backgroundSize).toBe('32px')
+
+      adapter.dispose()
+    } finally {
+      spy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+})
+
 // Part A / Task 6 (B43 C2): paint order + visibility on an arbitrary host
 // page. simulator.css's `.sim-field-wrap textarea` rule already gives the
 // simulator's demo field `position: relative; z-index: 1; background:
