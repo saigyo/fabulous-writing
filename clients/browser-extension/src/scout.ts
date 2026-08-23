@@ -34,28 +34,50 @@ let sessionState: Exclude<AffordanceState, 'idle'> = 'busy'
 let sessionCount = 0
 let shownEl: HTMLTextAreaElement | null = null
 let hideTimer: ReturnType<typeof setTimeout> | undefined
-let marksInjected = false
+let marksStyleEl: HTMLStyleElement | null = null
 
+// M1 (closing sweep): a boolean flag alone isn't a DOM check — if anything
+// removes the injected <style> from document.head (a framework that
+// rewrites head wholesale, document.write, a head-managing SPA), the flag
+// stays true forever and every mark renders with no background from then
+// on. Re-check the element itself is still connected, not just whether one
+// was ever created.
 function ensureMarksStyle(): void {
-  if (marksInjected) return
-  marksInjected = true
+  if (marksStyleEl?.isConnected) return
   const style = document.createElement('style')
   style.setAttribute('data-fw-marks', '')
   style.textContent = MARKS_CSS
   document.head.appendChild(style)
+  marksStyleEl = style
 }
 
-function ensurePort(): Port {
+// I3 (closing sweep): sw.ts has postSafely and panel.ts has the toPort
+// try/catch precisely because a dead port throws — browser.runtime.connect
+// and Port.postMessage both throw when the extension is reloaded/updated
+// while this tab stays open ("Extension context invalidated"). The scout is
+// the one context that lives in an arbitrary, long-lived host page, so
+// ensurePort()/send() must be the same non-throwing shape: an uncaught
+// throw here would otherwise fire on every hover/click for the rest of the
+// tab's life (showAffordance runs from document-level delegation).
+function ensurePort(): Port | null {
   if (port) return port
-  const p = browser.runtime.connect({ name: 'field' })
-  p.onMessage.addListener(handlePortMessage)
-  p.onDisconnect.addListener(handlePortDisconnect)
-  port = p
-  return p
+  try {
+    const p = browser.runtime.connect({ name: 'field' })
+    p.onMessage.addListener(handlePortMessage)
+    p.onDisconnect.addListener(handlePortDisconnect)
+    port = p
+    return p
+  } catch {
+    return null
+  }
 }
 
 function send(message: Envelope<HostMessage>): void {
-  ensurePort().postMessage({ relay: message } satisfies PortMessage)
+  try {
+    ensurePort()?.postMessage({ relay: message } satisfies PortMessage)
+  } catch {
+    // dead port — nothing to recover here; the next interaction retries
+  }
 }
 
 function renderChip(): void {
@@ -89,11 +111,32 @@ function handleAffordanceClick(el: HTMLTextAreaElement): void {
     session = null
     sessionEl = null
   }
-  ensurePort().postMessage({ ctl: { kind: 'openPanel' } } satisfies PortMessage)
+  // I3: same non-throwing shape as send() above — a dead port here must not
+  // block the rest of this handler (startSession below still needs to run
+  // so the chip and adapter reflect the click, even if the sw can't be
+  // reached to open the panel).
+  try {
+    ensurePort()?.postMessage({ ctl: { kind: 'openPanel' } } satisfies PortMessage)
+  } catch {
+    // dead port — nothing to recover here
+  }
   ensureMarksStyle()
   sessionState = 'busy'
   sessionCount = 0
-  session = startSession(el, send)
+  // M2 (closing sweep): a session that auto-detaches ITSELF (the field left
+  // the document — session.ts's own MutationObserver) has no other way to
+  // tell scout, which would otherwise keep session/sessionEl pointing at a
+  // torn-down session forever — renderChip() would keep painting
+  // "connected/N" for a session that no longer exists, and a click would
+  // silently no-op (session.stop() early-returns on already-detached). The
+  // identity check guards against a race where THIS field's own session has
+  // already been replaced by the time the callback fires.
+  session = startSession(el, send, () => {
+    if (sessionEl !== el) return
+    session = null
+    sessionEl = null
+    renderChip()
+  })
   sessionEl = el
   renderChip()
 }
@@ -116,6 +159,14 @@ function handlePortMessage(data: unknown): void {
       return
     }
     if (parsed.ctl.kind === 'status') {
+      // M3 (closing sweep): a status ctl for a fieldId that isn't the
+      // CURRENT session's — a trailing status from a chip-click already
+      // superseded by a same-tab reconnect to a different field — must not
+      // paint the wrong field's chip. fieldId is optional on this ctl (the
+      // sw's own openPanel-failure error status, sent before any session
+      // exists to name, carries none) — only a NAMED, mismatched fieldId is
+      // dropped.
+      if (parsed.ctl.fieldId !== undefined && parsed.ctl.fieldId !== session?.fieldId) return
       sessionState = parsed.ctl.phase === 'signed-out' ? 'signed-out'
         : parsed.ctl.phase === 'error' ? 'error'
         : 'connected'
@@ -243,12 +294,36 @@ document.addEventListener('mouseout', (e) => handleLeave(e.target, (e as MouseEv
 // host from the DOM, and showFor() (via the next showAffordance call)
 // already re-appends it when not connected, so it recreates cleanly on the
 // next interaction.
+//
+// I2 (closing sweep): two more ordering problems here. (a) session.stop()
+// sends fieldDisconnected through the runtime port AS THE PAGE IS BEING
+// TORN DOWN — Port.postMessage on a port the browser has already severed
+// throws, same as any runtime call after an extension reload; with I3
+// applied, send() itself no longer throws, but the try/catch stays as
+// cheap belt-and-suspenders against session.stop() throwing for some other
+// reason (it must never abort the resets below). (b) `port` itself
+// survived this reset untouched, even though the comment above claims
+// post-restore state is "identical to a fresh page load" — if the browser
+// severed the port while the page was frozen, ensurePort() would hand back
+// that same dead port forever (its onDisconnect, if it ever fires, belongs
+// to a page that's gone). Disconnect and null it here too, same shape as
+// every other field reset, so the next interaction opens a fresh one.
 window.addEventListener('pagehide', () => {
-  session?.stop()
+  try {
+    session?.stop()
+  } catch {
+    // page is going away
+  }
   session = null
   sessionEl = null
   shownEl = null
   cancelHide()
+  try {
+    port?.disconnect()
+  } catch {
+    // already gone
+  }
+  port = null
   affordance.dispose()
 })
 

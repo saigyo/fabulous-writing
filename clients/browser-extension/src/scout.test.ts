@@ -240,10 +240,11 @@ describe('scout: leave handling is identity-based (Copilot round 3, S1)', () => 
   })
 })
 
-describe('scout: pagehide/bfcache teardown (Copilot round 3, S6)', () => {
-  it('resets session/shown state on pagehide so a post-restore focusin shows a clean idle chip', () => {
+describe('scout: pagehide/bfcache teardown (Copilot round 3, S6; I2 closing sweep)', () => {
+  it('resets session/shown/port state on pagehide so a post-restore focusin shows a clean idle chip through a NEW port', () => {
     const el = eligibleField()
     show(el)
+    expect(browserMock.runtime.connect).toHaveBeenCalledTimes(1)
     const port = lastConnectedPort()
     clickChip()
     port.onMessage.emit({ ctl: { kind: 'status', phase: 'checking', findingCount: 3 } })
@@ -252,6 +253,10 @@ describe('scout: pagehide/bfcache teardown (Copilot round 3, S6)', () => {
     // pagehide (e.g. navigating away, possibly into the bfcache).
     window.dispatchEvent(new Event('pagehide'))
     expect(affordanceHost()).toBeNull()
+    // I2: the port itself must be disconnected and nulled too, not just the
+    // session/shown state above — otherwise ensurePort() would hand back
+    // this same (possibly already-severed) port forever.
+    expect(port.disconnect).toHaveBeenCalledTimes(1)
 
     // pageshow from the bfcache restores the page without re-running any
     // module top-level code — the next interaction is a plain focusin on the
@@ -264,8 +269,17 @@ describe('scout: pagehide/bfcache teardown (Copilot round 3, S6)', () => {
     // 'connected' (the stale, already-stopped session's own last state)
     // instead of a clean idle chip for the field's post-restore reconnect.
     expect(freshHost!.shadowRoot!.querySelector('button')!.dataset.state).toBe('idle')
+    // I2 / M14: the post-restore interaction above must have opened a NEW
+    // port, not reused the pre-pagehide (nulled) one.
+    expect(browserMock.runtime.connect).toHaveBeenCalledTimes(2)
+    const newPort = lastConnectedPort()
+    expect(newPort).not.toBe(port)
 
+    // A trailing disconnect of the OLD, already-nulled port must be a
+    // harmless no-op — tolerant of the port having been nulled out from
+    // under it.
     port.onDisconnect.emit(port)
+    newPort.onDisconnect.emit(newPort)
     el.remove()
   })
 })
@@ -287,5 +301,25 @@ describe('scout: chip state is gated per shown field', () => {
     portA.onDisconnect.emit(portA)
     elA.remove()
     elB.remove()
+  })
+})
+
+describe('scout: I3 closing sweep — a throwing runtime.connect must not escape hover delegation', () => {
+  it('a throwing browser.runtime.connect ("Extension context invalidated") during hover does not throw out of the mouseover listener', () => {
+    // The scout is the one context that lives in an arbitrary, long-lived
+    // host page — an extension reload/update while the tab stays open makes
+    // EVERY browser.runtime.connect call throw, and showAffordance() (run
+    // from document-level mouseover delegation) calls ensurePort()
+    // unconditionally. Before I3, this threw uncaught on every hover over
+    // any textarea on the page, forever, for the life of the tab.
+    browserMock.runtime.connect.mockImplementationOnce(() => {
+      throw new Error('Extension context invalidated.')
+    })
+    const el = eligibleField()
+
+    expect(() => show(el)).not.toThrow()
+    expect(chipButton().dataset.state).toBe('idle')
+
+    el.remove()
   })
 })

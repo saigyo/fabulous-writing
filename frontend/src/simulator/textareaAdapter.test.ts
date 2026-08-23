@@ -994,6 +994,12 @@ describe('createTextareaAdapter: transform-scale-aware overlay geometry sync', (
       value: realDivGetBoundingClientRect,
       configurable: true,
     })
+    // I1 (closing sweep): only ever stubbed as an own property directly on
+    // HTMLDivElement.prototype (below) — delete it to fall back to the real
+    // (inherited, happy-dom-default-0) HTMLElement.prototype getter, same
+    // shape as this describe's own getBoundingClientRect restore.
+    delete (HTMLDivElement.prototype as unknown as Record<string, unknown>).offsetWidth
+    delete (HTMLDivElement.prototype as unknown as Record<string, unknown>).offsetHeight
   })
 
   function stubRects(
@@ -1012,14 +1018,28 @@ describe('createTextareaAdapter: transform-scale-aware overlay geometry sync', (
     })
   }
 
+  // I1 (closing sweep): the scale denominator is the overlay's UNTRANSFORMED
+  // layout border box — offsetWidth/offsetHeight — not
+  // overlay.style.width/height (see textareaAdapter.ts's own module comment
+  // on syncOverlayGeometry for why the latter is wrong). happy-dom's
+  // offsetWidth/offsetHeight always default to 0, so every case below that
+  // expects a non-1 recovered scale must stub them to the overlay's own
+  // true (untransformed) border-box size.
+  function stubOverlayOffset(width: number, height: number) {
+    Object.defineProperty(HTMLDivElement.prototype, 'offsetWidth', { value: width, configurable: true })
+    Object.defineProperty(HTMLDivElement.prototype, 'offsetHeight', { value: height, configurable: true })
+  }
+
   it('divides the measured delta by the effective scale under a scaled ancestor, landing exactly in one sync', () => {
-    // The field's own (unscaled, containing-block-space) size is 200x80 —
-    // MIRRORED_PROPS copies this onto overlay.style.width/height. The
-    // overlay's ON-SCREEN rect (viewport space, under a 2x-scaled ancestor)
-    // reports double that: 400x160.
+    // The field's own (unscaled) border box is 200x80 — no padding/border,
+    // so its offsetWidth/Height (what the overlay's own offset is stubbed
+    // to match) coincide with the computed CSS width/height MIRRORED_PROPS
+    // copies onto the overlay. The overlay's ON-SCREEN rect (viewport
+    // space, under a 2x-scaled ancestor) reports double that: 400x160.
     el.style.width = '200px'
     el.style.height = '80px'
     stubRects({ top: 216, left: 16 }, { top: 200, left: 0, width: 400, height: 160 })
+    stubOverlayOffset(200, 80)
 
     const adapter = createTextareaAdapter(el)
 
@@ -1035,6 +1055,31 @@ describe('createTextareaAdapter: transform-scale-aware overlay geometry sync', (
 
   it('unscaled behavior is unchanged: a zero-size overlay rect (no real layout, e.g. under test) falls back to a scale of 1', () => {
     stubRects({ top: 108, left: 8 }, { top: 100, left: 0, width: 0, height: 0 })
+
+    const adapter = createTextareaAdapter(el)
+
+    const overlay = el.previousElementSibling as HTMLDivElement
+    expect(overlay.style.top).toBe('8px')
+    expect(overlay.style.left).toBe('8px')
+
+    adapter.dispose()
+  })
+
+  // I1: a content-box field (the default, and the box model outside the
+  // simulator's own `* { box-sizing: border-box }`) with padding/border
+  // used to report a PHANTOM scale here even with NO ancestor transform at
+  // all — overlay.style.width/height held the field's CONTENT-box size
+  // (say, a computed height of 100px) while the overlay's own on-screen
+  // rect was its BORDER box (100 + 24px padding + 2px border = 126px),
+  // producing a bogus scale of 126/100 = 1.26 and under-applying every
+  // measured delta by 21%. offsetWidth/offsetHeight are always the
+  // border-box size regardless of box-sizing, so stubbing the overlay's
+  // offset to match its own on-screen rect exactly (as it always does with
+  // no ancestor transform) must land at scale 1 — the full, unscaled delta,
+  // not 79% of it.
+  it('a content-box field with padding/border does not produce a phantom scale with no ancestor transform', () => {
+    stubRects({ top: 108, left: 8 }, { top: 100, left: 0, width: 126, height: 126 })
+    stubOverlayOffset(126, 126)
 
     const adapter = createTextareaAdapter(el)
 

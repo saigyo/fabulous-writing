@@ -30,6 +30,13 @@ export interface Session {
 export function startSession(
   el: HTMLTextAreaElement,
   send: (msg: Envelope<HostMessage>) => void,
+  // M2 (closing sweep): a session that detaches ITSELF (the MutationObserver
+  // below noticing the field left the document) has no other way to tell
+  // its owner — without this, scout's own session/sessionEl refs would keep
+  // pointing at a torn-down session forever. Optional: only scout.ts's own
+  // real usage needs it; a caller that doesn't care about self-detach (most
+  // of this file's own tests) can omit it.
+  onDetached?: () => void,
 ): Session {
   // crypto.randomUUID is secure-context-gated (a content script shares the
   // host page's context), so on a plain-http site it's simply undefined —
@@ -69,7 +76,9 @@ export function startSession(
   // script — auto-disconnect the moment the field itself leaves the
   // document, rather than leaking a session no host page can reach anymore.
   const observer = new MutationObserver(() => {
-    if (!el.isConnected) stop()
+    if (detached || el.isConnected) return
+    stop()
+    onDetached?.()
   })
   observer.observe(document.documentElement, { childList: true, subtree: true })
 

@@ -226,7 +226,9 @@ describe('Registry — rule 5: embedRelay', () => {
     const effects = registry.embedRelay(W, status('checking', 3))
     expect(effects).toEqual([
       { kind: 'badge', tabId: TAB_A, text: '3' },
-      { kind: 'send', to: 'field', windowId: W, tabId: TAB_A, message: { ctl: { kind: 'status', phase: 'checking', findingCount: 3 } } },
+      // M3 (closing sweep): fieldId scopes the ctl to the field that is
+      // CURRENT at the time this status arrives.
+      { kind: 'send', to: 'field', windowId: W, tabId: TAB_A, message: { ctl: { kind: 'status', phase: 'checking', findingCount: 3, fieldId: 'f1' } } },
     ])
     expect(effects.some((e) => e.kind === 'send' && 'message' in e && 'relay' in e.message)).toBe(false)
   })
@@ -244,6 +246,25 @@ describe('Registry — rule 5: embedRelay', () => {
     registry.fieldPortGone(W, TAB_A)
     const effects = registry.embedRelay(W, status('idle', 0))
     expect(effects).toEqual([{ kind: 'badge', tabId: TAB_A, text: '' }])
+  })
+
+  // M4 (closing sweep): the FIRST post-disconnect status still satisfies
+  // rule 5 above (the badge-clear a live embed's own final status
+  // delivers), but lastFieldTabId is a one-shot after that — a window that
+  // no longer has a live field must not keep re-writing TAB_A's badge on
+  // every further stray status. This matters most after a cross-window
+  // tab-move (fieldPortGone(oldWindow, tab), a fresh fieldConnected in the
+  // NEW window's own registry entry): a trailing status from the OLD
+  // window's now-amnesiac embed must not wipe the badge the tab's NEW
+  // window is actively painting.
+  it('does not repeat the badge write for a second post-disconnect status in the same window', () => {
+    const registry = new Registry()
+    registry.fieldConnected(W, TAB_A, fieldConnected('f1'))
+    registry.fieldPortGone(W, TAB_A)
+    registry.embedRelay(W, status('idle', 0))
+
+    const effects = registry.embedRelay(W, status('checking', 5))
+    expect(effects).toEqual([])
   })
 
   it('routes non-status embed messages verbatim to the connected tab field port', () => {

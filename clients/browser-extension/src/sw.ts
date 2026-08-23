@@ -30,6 +30,19 @@
 //    connect-time windowId alongside it, and the replacement branch clears
 //    the OLD window's entry by that stored windowId — so the ghost no longer
 //    survives; only the routing-follows-the-old-window caveat remains.
+//
+//    M12 (closing sweep): the same connect-time windowId caveat also reaches
+//    openPanel (handleFieldMessage below) — sidePanel.open() is called with
+//    the WINDOW ID captured when the field's port connected, so a chip
+//    click just after a drag-between-windows (before the field's port
+//    reconnects and re-registers under the new window) opens the side
+//    panel in the tab's OLD window instead of the one the user is looking
+//    at, or the open call rejects outright for a since-closed window
+//    (delivering the async error ctl below to a chip that did nothing
+//    wrong). No cheap fix exists here either: a `tabs.get` await before
+//    sidePanel.open() would drop the user-gesture context the synchronous
+//    call depends on. Accepted for v1, same shape as this limit's own
+//    routing caveat above.
 import browser from 'webextension-polyfill'
 import type { EmbedMessage, Envelope, HostMessage } from '../../../frontend/src/embed/protocol'
 import { parsePortMessage, type PortMessage } from './messages'
