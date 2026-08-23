@@ -318,4 +318,5 @@ export const zh: Messages = {
   embedWaiting: '正在等待宿主应用…',
   embedDisconnected: '未连接文本框。',
   embedReplaceFailed: '宿主应用无法应用此更改——文本可能已更改。',
+  embedToggleSelectors: '切换设置显示',
 }

@@ -70,11 +70,16 @@ async function main(): Promise<void> {
         embedReady = ready
         updateHint()
         if (ready) {
-          statusEl.textContent = 'connected'
+          // B43 C2 (owner UX round 2): no resting "connected" text — once
+          // the embed is ready, the status line has nothing left to say.
+          // hintEl (updateHint above) covers "ready, nothing connected
+          // yet" on its own line; when a field is or was connected, this
+          // line is simply empty/hidden.
+          statusEl.textContent = ''
         } else {
           // relay.start()'s true->false edge (the iframe 'load' re-arm): the
-          // stale "connected" text must not linger through a fresh hello
-          // loop, but landing straight on "embed not responding" would
+          // stale status text must not linger through a fresh hello loop,
+          // but landing straight on "embed not responding" would
           // misreport an ordinary reload as a permanent failure before the
           // new loop even gets a chance. Show a connecting state instead,
           // and fall back to "embed not responding" only if THIS attempt

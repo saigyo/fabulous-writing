@@ -12,6 +12,7 @@
 // only thing under test is "a throwing port.postMessage must not escape".
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PROTOCOL_VERSION } from '../../../frontend/src/embed/protocol'
+import { HELLO_RETRY_MS, MAX_HELLO_ATTEMPTS } from './relay'
 import { browserMock, type MockPort } from './testing/browserMock'
 
 const SERVER_ORIGIN = 'https://fabulous-writing.fly.dev' // settings.ts's DEFAULT_SERVER_URL
@@ -197,5 +198,55 @@ describe('panel: connect hint + Disconnect button (live-test UX decision, B43 C2
     disconnectBtn.click()
 
     expect(port.postMessage).toHaveBeenCalledWith({ ctl: { kind: 'disconnect' } })
+  })
+})
+
+// B43 C2 (owner UX round 2): the status line stops showing a resting
+// "connected" — it renders ONLY "connecting…" (during a reload's hello
+// loop), "embed not responding" (the cap), or nothing at all once the embed
+// is ready. The "click the chip" case is hintEl's own job (tested above);
+// this block pins statusEl's text specifically.
+describe('panel: status line has no resting "connected" text (B43 C2)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('keeps the static "embed not responding" default until the embed first readies, then clears', async () => {
+    const { iframeEl } = await bootPanel()
+    const statusEl = document.getElementById('status') as HTMLElement
+    expect(statusEl.textContent).toBe('embed not responding')
+
+    emitReady(iframeEl)
+    expect(statusEl.textContent).toBe('')
+  })
+
+  it('a reload shows "connecting…" and clears again once the new embed readies', async () => {
+    const { iframeEl } = await bootPanel()
+    emitReady(iframeEl)
+    const statusEl = document.getElementById('status') as HTMLElement
+    expect(statusEl.textContent).toBe('')
+
+    // iframe 'load' re-arm (relay.start()'s true->false edge).
+    iframeEl.dispatchEvent(new Event('load'))
+    expect(statusEl.textContent).toBe('connecting…')
+
+    emitReady(iframeEl)
+    expect(statusEl.textContent).toBe('')
+  })
+
+  it('falls back to "embed not responding" if the reload never readies within the cap', async () => {
+    const { iframeEl } = await bootPanel()
+    emitReady(iframeEl)
+    iframeEl.dispatchEvent(new Event('load'))
+    const statusEl = document.getElementById('status') as HTMLElement
+    expect(statusEl.textContent).toBe('connecting…')
+
+    vi.advanceTimersByTime(HELLO_RETRY_MS * MAX_HELLO_ATTEMPTS)
+    expect(statusEl.textContent).toBe('embed not responding')
   })
 })

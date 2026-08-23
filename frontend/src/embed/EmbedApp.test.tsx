@@ -76,6 +76,7 @@ afterEach(() => {
   vi.clearAllMocks()
   vi.useRealTimers()
   setEmbedOutbound(null)
+  localStorage.clear()
 })
 
 beforeEach(() => {
@@ -420,5 +421,83 @@ describe('EmbedApp', () => {
 
       expect(runCheck).toHaveBeenCalledWith(false)
     })
+  })
+})
+
+// Owner UX round 2 (B43 C2): the selector block (Profile/Language/Domain/
+// LLM) collapses independently of the always-visible action row. The
+// chevron toggle lives in that action row and carries the accessible name +
+// aria-expanded; the collapsed state persists to localStorage under its own
+// embed-only key (embedPrefs.ts), not the Prefs schema.
+describe('EmbedApp: collapsible selector section (B43 C2)', () => {
+  const STORAGE_KEY = 'fw-embed-selectors-collapsed'
+
+  it('is expanded by default, with the toggle reporting aria-expanded=true', () => {
+    render(<EmbedApp />)
+
+    expect(screen.getByText(en.profile)).toBeTruthy()
+    const toggle = screen.getByRole('button', { name: en.embedToggleSelectors })
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('clicking the toggle collapses the selectors (unmounted) and flips aria-expanded', () => {
+    render(<EmbedApp />)
+    const toggle = screen.getByRole('button', { name: en.embedToggleSelectors })
+
+    fireEvent.click(toggle)
+
+    expect(screen.queryByText(en.profile)).toBeNull()
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('clicking the toggle again re-expands the selectors', () => {
+    render(<EmbedApp />)
+    const toggle = screen.getByRole('button', { name: en.embedToggleSelectors })
+
+    fireEvent.click(toggle)
+    fireEvent.click(toggle)
+
+    expect(screen.getByText(en.profile)).toBeTruthy()
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('the action row (Check button) stays visible while the selectors are collapsed', () => {
+    render(<EmbedApp />)
+    const toggle = screen.getByRole('button', { name: en.embedToggleSelectors })
+
+    fireEvent.click(toggle)
+
+    expect(screen.getByText(en.check)).toBeTruthy()
+  })
+
+  it('persists the collapsed state to localStorage, keyed independently of the Prefs schema', () => {
+    render(<EmbedApp />)
+    const toggle = screen.getByRole('button', { name: en.embedToggleSelectors })
+
+    fireEvent.click(toggle)
+
+    expect(localStorage.getItem(STORAGE_KEY)).toBe('true')
+
+    fireEvent.click(toggle)
+
+    expect(localStorage.getItem(STORAGE_KEY)).toBe('false')
+  })
+
+  it('restores a collapsed state from a prior session on mount', () => {
+    localStorage.setItem(STORAGE_KEY, 'true')
+
+    render(<EmbedApp />)
+
+    expect(screen.queryByText(en.profile)).toBeNull()
+    const toggle = screen.getByRole('button', { name: en.embedToggleSelectors })
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('treats an absent/invalid stored value as expanded (the documented default)', () => {
+    localStorage.setItem(STORAGE_KEY, 'garbage')
+
+    render(<EmbedApp />)
+
+    expect(screen.getByText(en.profile)).toBeTruthy()
   })
 })

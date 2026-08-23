@@ -330,4 +330,5 @@ export const de: Messages = {
   embedWaiting: 'Warte auf die Host-Anwendung…',
   embedDisconnected: 'Kein Textfeld verbunden.',
   embedReplaceFailed: 'Die Host-Anwendung konnte die Änderung nicht übernehmen — der Text hat sich vielleicht geändert.',
+  embedToggleSelectors: 'Einstellungen ein-/ausklappen',
 }

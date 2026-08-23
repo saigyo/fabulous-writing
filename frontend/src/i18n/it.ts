@@ -329,4 +329,5 @@ export const it: Messages = {
   embedWaiting: "In attesa dell'applicazione ospite…",
   embedDisconnected: 'Nessun campo di testo collegato.',
   embedReplaceFailed: "L'applicazione ospite non ha potuto applicare la modifica — forse il testo è cambiato.",
+  embedToggleSelectors: 'Mostra o nascondi le impostazioni',
 }

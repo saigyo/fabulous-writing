@@ -32,6 +32,60 @@
   align-items: flex-end;
 }
 
+/* Owner UX round 2 (B43 C2): the globe used to sit outside .header-controls
+   entirely (its own row, App.css's .header layout), so it never needed an
+   explicit box size. Here it shares a bottom-aligned row (embed-header
+   .header-controls's own align-items: flex-end above) with --control-h
+   controls (auto-toggle, Check, the selects) — a fixed square matches their
+   footprint instead of sizing to the icon's own tiny intrinsic content. */
+.embed-app .header-controls .locale-switch {
+  width: var(--control-h);
+  height: var(--control-h);
+}
+
+/* Latent bug, surfaced by moving the globe next to other controls: App.css's
+   .locale-switch select is position: absolute; inset: 0 with no explicit
+   width, meant to exactly overlay the small 🌐▾ icon it sits on top of. In
+   Chromium a native <select> keeps an implicit min-width: auto (its own
+   option text's min-content) that inset-only sizing — and even an explicit
+   width: 100% — does NOT override, so the real (opacity: 0) hit target came
+   out ~130px wide regardless, silently overlapping and intercepting clicks
+   on whatever sat to its right. Invisible before (the locale switcher had
+   nothing else within 130px in App.css's wider .header row); here it swallowed
+   clicks on the collapse chevron and auto-toggle. min-width: 0 is the actual
+   fix (verified against Playwright's own getBoundingClientRect probe —
+   width: 100% alone was not enough); the explicit width/height above then
+   gives it a definite, non-auto box to fill. */
+.embed-app .header-controls .locale-switch select {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+}
+
+/* Selector-section collapse/expand chevron (Owner UX round 2, B43 C2):
+   sized and styled to match .auto-toggle right next to it — a plain square
+   icon button, not a themed toggle (no aria-pressed here, this one uses
+   aria-expanded). */
+.embed-app .header-controls .embed-selectors-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--control-h);
+  width: var(--control-h);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.embed-app .header-controls .embed-selectors-toggle:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .embed-connection-strip {
   padding: 0.35rem 0.75rem;
   font-size: 0.75rem;
@@ -77,9 +131,10 @@
      requested layout with no explicit placement needed. This wrapper must
      itself take the full header-controls row (flex: 1 1 100%, same trick
      the old per-label rule used) so the grid has the full width to split in
-     half; the compact trailing controls (auto-toggle, Check, account menu)
-     are untouched siblings outside .embed-selectors and keep wrapping onto
-     their own row exactly as before. */
+     half; the always-visible action row (globe, chevron, auto-toggle,
+     Check, account menu — Owner UX round 2, B43 C2) is a set of untouched
+     siblings outside .embed-selectors and keeps wrapping onto its own row
+     exactly as before, whether or not the selector block is even rendered. */
   .embed-app .header-controls > .embed-selectors {
     flex: 1 1 100%;
   }
