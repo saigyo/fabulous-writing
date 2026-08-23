@@ -166,6 +166,99 @@ describe('createAffordance: focus-visible style', () => {
   })
 })
 
+// Copilot round 2 (B43 C2), S5: the chip never repositioned while shown — a
+// page scroll or window resize that moves the anchor field left it visually
+// detached from the field until the next showFor. Same pattern as
+// textareaAdapter.ts's own document-level scroll re-sync: rAF-throttled,
+// registered while shown, torn down in hide()/dispose().
+describe('createAffordance: repositions while shown on scroll/resize', () => {
+  it('a document scroll event while shown repositions the chip, rAF-throttled to at most one pending sync', () => {
+    const rafCallbacks: FrameRequestCallback[] = []
+    const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((cb) => {
+      rafCallbacks.push(cb)
+      return rafCallbacks.length
+    })
+
+    const affordance = createAffordance(() => {})
+    affordance.showFor(el)
+    expect(affordance.host.style.top).toBe('50px')
+    expect(affordance.host.style.left).toBe('300px')
+
+    stubRect(el, 10, 5, 205, 40)
+    document.dispatchEvent(new Event('scroll'))
+    expect(rafCallbacks).toHaveLength(1)
+
+    // A second scroll before the queued frame runs must not schedule a
+    // second rAF.
+    document.dispatchEvent(new Event('scroll'))
+    expect(rafCallbacks).toHaveLength(1)
+
+    rafCallbacks[0](0)
+    expect(affordance.host.style.top).toBe('10px')
+    expect(affordance.host.style.left).toBe('205px')
+
+    affordance.dispose()
+    rafSpy.mockRestore()
+  })
+
+  it('a window resize event while shown also repositions the chip', () => {
+    const rafCallbacks: FrameRequestCallback[] = []
+    const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((cb) => {
+      rafCallbacks.push(cb)
+      return rafCallbacks.length
+    })
+
+    const affordance = createAffordance(() => {})
+    affordance.showFor(el)
+
+    stubRect(el, 77, 3, 199, 120)
+    window.dispatchEvent(new Event('resize'))
+    expect(rafCallbacks).toHaveLength(1)
+    rafCallbacks[0](0)
+
+    expect(affordance.host.style.top).toBe('77px')
+    expect(affordance.host.style.left).toBe('199px')
+
+    affordance.dispose()
+    rafSpy.mockRestore()
+  })
+
+  it('hide() and dispose() remove the scroll/resize listeners', () => {
+    const docAddSpy = vi.spyOn(document, 'addEventListener')
+    const docRemoveSpy = vi.spyOn(document, 'removeEventListener')
+    const winAddSpy = vi.spyOn(window, 'addEventListener')
+    const winRemoveSpy = vi.spyOn(window, 'removeEventListener')
+
+    const affordance = createAffordance(() => {})
+    affordance.showFor(el)
+
+    const scrollAdd = docAddSpy.mock.calls.find(([type]) => type === 'scroll')
+    expect(scrollAdd).toBeDefined()
+    expect(scrollAdd?.[2]).toMatchObject({ capture: true, passive: true })
+    expect(winAddSpy).toHaveBeenCalledWith('resize', expect.any(Function))
+
+    affordance.hide()
+    expect(docRemoveSpy.mock.calls.some(([type]) => type === 'scroll')).toBe(true)
+    expect(winRemoveSpy).toHaveBeenCalledWith('resize', expect.any(Function))
+
+    // Showing again re-attaches the listeners; dispose() removes them once more.
+    docAddSpy.mockClear()
+    affordance.showFor(el)
+    expect(docAddSpy.mock.calls.some(([type]) => type === 'scroll')).toBe(true)
+
+    docRemoveSpy.mockClear()
+    winRemoveSpy.mockClear()
+    affordance.dispose()
+    expect(docRemoveSpy.mock.calls.some(([type]) => type === 'scroll')).toBe(true)
+    expect(winRemoveSpy).toHaveBeenCalledWith('resize', expect.any(Function))
+
+    docAddSpy.mockRestore()
+    docRemoveSpy.mockRestore()
+    winAddSpy.mockRestore()
+    winRemoveSpy.mockRestore()
+  })
+})
+
 describe('createAffordance: hide/dispose', () => {
   it('hide() removes it from view without destroying the host', () => {
     const affordance = createAffordance(() => {})

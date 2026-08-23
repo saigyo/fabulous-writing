@@ -73,8 +73,17 @@ function handleFieldMessage(tabId: number, windowId: number, port: Port, data: u
       // requires a user gesture, and any microtask hop before it drops the
       // gesture context propagated from the content-script click.
       openPanel(windowId, () => {
-        const fieldPort = fieldPorts.get(tabId)
-        if (fieldPort) postSafely(fieldPort, { ctl: { kind: 'status', phase: 'error', findingCount: 0 } })
+        // Only the port that INITIATED this openPanel may receive the
+        // failure ctl. sidePanel.open()'s rejection is async — by the time
+        // it settles, a same-tab navigation may have superseded this port
+        // with a new one under the same tabId. Sending to "whichever port
+        // currently occupies fieldPorts.get(tabId)" would mark the
+        // REPLACEMENT session failed for an error that belongs to this
+        // (now-stale) one, so compare identity against the captured `port`
+        // closure variable rather than re-reading the map by tabId alone.
+        if (fieldPorts.get(tabId) === port) {
+          postSafely(port, { ctl: { kind: 'status', phase: 'error', findingCount: 0 } })
+        }
       })
     }
     return
@@ -139,6 +148,20 @@ browser.runtime.onConnect.addListener((port) => {
     }
     const tabId = tab.id
     const windowId = tab.windowId
+    const existing = fieldPorts.get(tabId)
+    if (existing && existing !== port) {
+      // An idle scout can open a new port for this tab (hover, before it has
+      // sent any fieldConnected of its own — e.g. same-tab navigation) BEFORE
+      // the old port's onDisconnect fires — no ordering guarantee between a
+      // new port's onConnect and an old port's onDisconnect. The old port's
+      // eventual disconnect is then identity-ignored below (fieldPorts
+      // already points at the new port), so its fieldPortGone effects
+      // (clearing the stale field, notifying the panel, clearing the badge)
+      // must run HERE, before the new port is stored, or the registry keeps
+      // the OLD field connected forever — the panel would show it as still
+      // connected until the user manually reconnects.
+      execute(registry.fieldPortGone(windowId, tabId))
+    }
     fieldPorts.set(tabId, port)
     port.onMessage.addListener((data) => handleFieldMessage(tabId, windowId, port, data))
     port.onDisconnect.addListener(() => {

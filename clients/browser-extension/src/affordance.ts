@@ -116,6 +116,39 @@ export function createAffordance(onClick: (el: HTMLTextAreaElement) => void): Af
   let state: AffordanceState = 'idle'
   let count = 0
   let currentEl: HTMLTextAreaElement | null = null
+  // Copilot round 2 (B43 C2), S5: while the chip is shown it must track its
+  // anchor field's position — a page scroll (document-level, capture-phase,
+  // same reasoning as textareaAdapter.ts's own document scroll listener: an
+  // inner scroller's scroll event doesn't bubble) or a window resize can
+  // move the field without the chip ever being told to re-show. rAF-
+  // throttled to at most one pending reposition, same shape as the adapter's
+  // own scroll re-sync.
+  let visible = false
+  let pendingReposition: number | null = null
+
+  function reposition(): void {
+    if (!currentEl) return
+    const rect = currentEl.getBoundingClientRect()
+    host.style.top = `${rect.top + window.scrollY}px`
+    host.style.left = `${rect.right + window.scrollX}px`
+  }
+
+  function scheduleReposition(): void {
+    if (pendingReposition !== null) return
+    pendingReposition = requestAnimationFrame(() => {
+      pendingReposition = null
+      reposition()
+    })
+  }
+
+  function stopTrackingPosition(): void {
+    document.removeEventListener('scroll', scheduleReposition, { capture: true })
+    window.removeEventListener('resize', scheduleReposition)
+    if (pendingReposition !== null) {
+      cancelAnimationFrame(pendingReposition)
+      pendingReposition = null
+    }
+  }
 
   function render(): void {
     button.dataset.state = state
@@ -138,19 +171,24 @@ export function createAffordance(onClick: (el: HTMLTextAreaElement) => void): Af
     host,
     showFor(el) {
       currentEl = el
-      const rect = el.getBoundingClientRect()
       // Anchored to the field's top-right corner: left/top name that
       // corner's page coordinates (viewport rect + scroll offset); the
       // transform below pulls the chip back so it straddles the corner
       // instead of growing off the field entirely.
-      host.style.top = `${rect.top + window.scrollY}px`
-      host.style.left = `${rect.right + window.scrollX}px`
+      reposition()
       host.style.transform = 'translate(-100%, -50%)'
       if (!host.isConnected) document.documentElement.appendChild(host)
       host.style.display = ''
+      if (!visible) {
+        visible = true
+        document.addEventListener('scroll', scheduleReposition, { capture: true, passive: true })
+        window.addEventListener('resize', scheduleReposition)
+      }
     },
     hide() {
       host.style.display = 'none'
+      visible = false
+      stopTrackingPosition()
     },
     setState(next) {
       state = next
@@ -161,6 +199,8 @@ export function createAffordance(onClick: (el: HTMLTextAreaElement) => void): Af
       render()
     },
     dispose() {
+      visible = false
+      stopTrackingPosition()
       host.remove()
     },
   }

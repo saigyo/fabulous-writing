@@ -113,13 +113,45 @@ function syncOverlayGeometry(el: HTMLTextAreaElement, overlay: HTMLDivElement) {
   // here is 0 and nothing visibly moves.
   const fieldRect = el.getBoundingClientRect()
   const overlayRect = overlay.getBoundingClientRect()
-  overlay.style.top = `${(parseFloat(overlay.style.top) || 0) + fieldRect.top - overlayRect.top}px`
-  overlay.style.left = `${(parseFloat(overlay.style.left) || 0) + fieldRect.left - overlayRect.left}px`
+  // Copilot round 2 (B43 C2), S2: getBoundingClientRect() reports
+  // VIEWPORT-space pixels, but overlay.style.top/left resolve against the
+  // overlay's CONTAINING-BLOCK-space (unscaled) coordinate system. Those two
+  // spaces coincide only when nothing between the overlay and the viewport
+  // carries a CSS `transform: scale(...)` — under a scaled ancestor, a
+  // viewport-space delta means a different number of containing-block pixels
+  // depending on the scale factor, so applying it unmodified over/
+  // undershoots every time. Worse, that error compounds through the 1s
+  // safety interval re-sync above: each pass "corrects" by the wrong amount,
+  // which oscillates for a scale in (1, 2) and diverges outright above 2.
+  // Recover the effective scale by comparing the overlay's just-measured,
+  // on-screen rect to its own style width/height (the containing-block-space
+  // size the MIRRORED_PROPS copy loop above just set from the field's
+  // computed style) and divide the delta by it before applying — exact for a
+  // pure, uniform scale. Rotation/skew are out of scope: there is no single
+  // scalar to divide by, and the module comment above documents this as an
+  // accepted limitation, not a bug. NaN/zero (no real layout, e.g. under
+  // test, or a not-yet-laid-out overlay) falls back to a scale of 1, which
+  // is exactly the old, unscaled behavior.
+  const rawScaleX = overlayRect.width / parseFloat(overlay.style.width)
+  const rawScaleY = overlayRect.height / parseFloat(overlay.style.height)
+  const scaleX = Number.isFinite(rawScaleX) && rawScaleX !== 0 ? rawScaleX : 1
+  const scaleY = Number.isFinite(rawScaleY) && rawScaleY !== 0 ? rawScaleY : 1
+  overlay.style.top = `${(parseFloat(overlay.style.top) || 0) + (fieldRect.top - overlayRect.top) / scaleY}px`
+  overlay.style.left = `${(parseFloat(overlay.style.left) || 0) + (fieldRect.left - overlayRect.left) / scaleX}px`
 }
 
 export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
   const overlay = document.createElement('div')
   overlay.className = 'fw-mirror-overlay'
+  // Copilot round 2 (B43 C2), S6a: marks the overlay so the C2 browser
+  // extension's MARKS_CSS (clients/browser-extension/src/marks.css.ts) can
+  // scope every `.fw-mark*` rule under `[data-fw-overlay]` — a host page's
+  // own CSS could otherwise restyle any element it happens to give one of
+  // these class names (they're generic enough to collide). Setting it here,
+  // unconditionally, is shared-file-safe: it's inert for the simulator
+  // (simulator.css's own `.fw-mirror-overlay`-scoped selectors don't
+  // reference this attribute and need no change).
+  overlay.dataset.fwOverlay = ''
   // Finding 29 (portability): set the styles the overlay's correctness
   // DEPENDS on inline, in JS, rather than leaving them to simulator.css —
   // this adapter is the blueprint the C2 browser extension's real adapter
@@ -155,18 +187,31 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
   const savedPosition = el.style.position
   const savedZIndex = el.style.zIndex
   const savedBackgroundColor = el.style.backgroundColor
+  // Copilot round 2 (B43 C2), S4: dispose() must restore a property only if
+  // its CURRENT inline value still equals what the adapter itself wrote —
+  // otherwise the host legitimately changed it DURING the session (its own
+  // re-render, a theme toggle) and dispose reverting it would clobber that
+  // change out from under the host. Recording `writtenPosition`/
+  // `writtenZIndex` as null below (rather than always tracking a value) also
+  // captures the "adapter never touched this property at all" case: when the
+  // field already has its own explicit position/z-index, this block doesn't
+  // write to it, and dispose (further below) must never restore it either.
+  let writtenPosition: string | null = null
+  let writtenZIndex: string | null = null
   // happy-dom's getComputedStyle leaves an unset `position` as '' rather
   // than resolving it to its initial value 'static' the way a real browser
   // would — treat both as the static case under test.
   const computedPosition = getComputedStyle(el).position
   if (computedPosition === 'static' || computedPosition === '') {
-    el.style.position = 'relative'
+    writtenPosition = 'relative'
+    el.style.position = writtenPosition
   }
   // Same happy-dom quirk as position above: an unset z-index computes to ''
   // there instead of the real initial value 'auto'.
   const computedZIndex = getComputedStyle(el).zIndex
   if (computedZIndex === 'auto' || computedZIndex === '') {
-    el.style.zIndex = '1'
+    writtenZIndex = '1'
+    el.style.zIndex = writtenZIndex
   }
   // The overlay's own z-index is always forced to 0 — idempotent with
   // simulator.css's own `.fw-mirror-overlay { z-index: 0 }` rule, and
@@ -187,7 +232,11 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
   if (!computedBackgroundIsTransparent) {
     overlay.style.backgroundColor = computedBackgroundColor
   }
-  el.style.backgroundColor = 'transparent'
+  // Always written (unlike position/z-index above, this has no "field
+  // already has its own value" branch to skip) — dispose's guard below
+  // compares against this same literal.
+  const writtenBackgroundColor = 'transparent'
+  el.style.backgroundColor = writtenBackgroundColor
 
   syncOverlayGeometry(el, overlay)
 
@@ -330,6 +379,21 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
       const mark = document.createElement('span')
       mark.className = `fw-mark fw-mark-${topSeverity}`
       mark.dataset.findingIds = covering.map((span) => span.id).join(' ')
+      // Copilot round 2 (B43 C2), S6b: a host page's own CSS can target bare
+      // element selectors (e.g. `span { display: block }`) that would shift
+      // this mark out of inline flow and desync the mirror's line-wrapping
+      // from the real textarea underneath. Set every layout-critical
+      // property inline so host CSS — which loses to an inline style
+      // regardless of specificity — cannot touch it; MARKS_CSS itself only
+      // ever sets paint-only properties (background/outline), so there's no
+      // conflict with the adapter's own cosmetic styling here.
+      mark.style.display = 'inline'
+      mark.style.margin = '0'
+      mark.style.padding = '0'
+      mark.style.border = '0'
+      mark.style.font = 'inherit'
+      mark.style.letterSpacing = 'inherit'
+      mark.style.whiteSpace = 'inherit'
       mark.textContent = text.slice(start, end)
       overlay.append(mark)
     }
@@ -486,11 +550,24 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
       flashTimer = null
       changeCb = null
       overlay.remove()
-      // Restore the three inline values the paint-order setup above may
-      // have touched, verbatim (an empty string puts back "unset").
-      el.style.position = savedPosition
-      el.style.zIndex = savedZIndex
-      el.style.backgroundColor = savedBackgroundColor
+      // Restore the inline values the paint-order setup above may have
+      // touched, verbatim (an empty string puts back "unset") — but ONLY
+      // where the CURRENT inline value still equals what THIS adapter wrote.
+      // A property never written in the first place (writtenPosition/
+      // writtenZIndex null: the field already had its own explicit value) is
+      // left alone entirely; one that WAS written but the host has since
+      // legitimately changed (mid-session re-render, theme toggle) is left
+      // at the host's own value rather than clobbered back to the pre-session
+      // snapshot.
+      if (writtenPosition !== null && el.style.position === writtenPosition) {
+        el.style.position = savedPosition
+      }
+      if (writtenZIndex !== null && el.style.zIndex === writtenZIndex) {
+        el.style.zIndex = savedZIndex
+      }
+      if (el.style.backgroundColor === writtenBackgroundColor) {
+        el.style.backgroundColor = savedBackgroundColor
+      }
     },
   }
 }
