@@ -259,6 +259,55 @@ describe('createAffordance: repositions while shown on scroll/resize', () => {
   })
 })
 
+// I4 (closing sweep): currentEl was only ever replaced by the next showFor
+// — nothing dropped it when the anchor field left the DOM (a Turbo/React
+// re-render removing it fires no mouseout/focusout scout's leave path can
+// key on). A ghost chip would then jump to (0,0) on the next reposition
+// (a detached node's getBoundingClientRect is all zeros) and a real click
+// on it would start a full session on a detached textarea.
+describe('createAffordance: detached anchor (I4, closing sweep)', () => {
+  it('reposition() with a detached currentEl hides the chip instead of jumping to (0,0)', () => {
+    const rafCallbacks: FrameRequestCallback[] = []
+    const rafSpy = vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((cb) => {
+      rafCallbacks.push(cb)
+      return rafCallbacks.length
+    })
+
+    const affordance = createAffordance(() => {})
+    affordance.showFor(el)
+    expect(affordance.host.style.display).not.toBe('none')
+
+    el.remove()
+    // A detached node's own getBoundingClientRect reports all zeros — if
+    // reposition() didn't check isConnected, this scroll would drive the
+    // chip's top/left to '0px' rather than hiding it.
+    document.dispatchEvent(new Event('scroll'))
+    expect(rafCallbacks).toHaveLength(1)
+    rafCallbacks[0](0)
+
+    expect(affordance.host.style.display).toBe('none')
+    expect(affordance.host.style.top).not.toBe('0px')
+    expect(affordance.host.style.left).not.toBe('0px')
+
+    affordance.dispose()
+    rafSpy.mockRestore()
+  })
+
+  it('a trusted click with a detached currentEl does not invoke the callback', () => {
+    const onClick = vi.fn()
+    const affordance = createAffordance(onClick)
+    affordance.showFor(el)
+
+    el.remove()
+    const button = affordance.host.shadowRoot!.querySelector('button')!
+    button.dispatchEvent(trustedClick())
+
+    expect(onClick).not.toHaveBeenCalled()
+
+    affordance.dispose()
+  })
+})
+
 describe('createAffordance: hide/dispose', () => {
   it('hide() removes it from view without destroying the host', () => {
     const affordance = createAffordance(() => {})
