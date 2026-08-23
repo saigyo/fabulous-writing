@@ -14,6 +14,12 @@ import path from 'node:path'
 import { chromium } from 'playwright-core'
 
 const BACKEND = 'http://localhost:8100'
+// Issue #142: a second, equally-valid loopback origin for the SAME backend
+// (uvicorn binds 127.0.0.1 — see e2e/run.mjs's own comment) — different from
+// BACKEND by hostname only, which is enough to be a distinct origin (and
+// therefore a distinct, unauthenticated storage partition for the panel's
+// embed iframe) while still passing settings.ts's normalizeServerUrl.
+const BACKEND_ALT = 'http://127.0.0.1:8100'
 const FIXTURE_URL = 'http://localhost:8101/fixture.html'
 
 let currentStep = 'setup'
@@ -311,7 +317,66 @@ export default async function runSpec({
         .waitFor({ timeout: 10000 })
     })
 
-    console.log('  [spec] all 10 steps PASSED')
+    // ---- Step 11: reconnect (fresh field session) so step 12 has a live,
+    // marked-up connection to hard-disconnect ----
+    await step('11. fixture: reconnect via chip, retype to get a fresh overlay mark', async () => {
+      await fixture.bringToFront()
+      await textarea.hover()
+      await affordanceHost.waitFor({ state: 'visible' })
+      await chip.click()
+      await textarea.fill('This is is a test.')
+      await mark.waitFor({ state: 'visible', timeout: 20000 })
+    })
+
+    // ---- Step 12 (issue #142): changing the server URL hard-disconnects
+    // every session — overlay markings clear, the chip goes idle, and the
+    // panel reloads to a fresh (unauthenticated) state for the new origin,
+    // with no leftover connected-field state from the old one ----
+    await step('12. options: change server URL — overlay clears, chip idles, panel resets', async () => {
+      const optionsPage = await context.newPage()
+      openPages.push(['options-2', optionsPage])
+      await optionsPage.goto(`chrome-extension://${extensionId}/options.html`)
+      await optionsPage.locator('#server-url-input').fill(BACKEND_ALT)
+      await optionsPage.locator('[data-action="save"]').click()
+      await optionsPage
+        .locator('[role="status"]')
+        .filter({ hasText: 'Saved' })
+        .waitFor({ timeout: 5000 })
+      await optionsPage.close()
+
+      await fixture.bringToFront()
+      await fixture
+        .locator('.fw-mirror-overlay')
+        .waitFor({ state: 'detached', timeout: 10000 })
+      await fixture.waitForFunction(
+        () => document.querySelector('[data-fw-affordance]')?.shadowRoot
+          ?.querySelector('button')?.dataset.state === 'idle',
+        { timeout: 10000 },
+      )
+
+      // The panel reloaded for the new (cross-origin) server — its embed
+      // iframe is a fresh, unauthenticated session with nothing carried over
+      // from the old origin. Wait for the reload to settle on EITHER a login
+      // form or the connection strip (whichever this origin lands on — a
+      // deliberately loose readiness signal, not an assertion about which),
+      // then assert the general "not connected to the old field" shape: if a
+      // connection strip is present, it must not show the OLD field's
+      // connection — never login-form specifics.
+      await panelPage.bringToFront()
+      await embedFrame.locator('input[type="email"], .embed-connection-strip')
+        .first()
+        .waitFor({ timeout: 15000 })
+      const staleConnectionCount = await embedFrame
+        .locator('.embed-connection-strip')
+        .filter({ hasText: FIXTURE_URL })
+        .count()
+      assert.equal(
+        staleConnectionCount, 0,
+        'panel still shows the OLD field connection after a server-URL change',
+      )
+    })
+
+    console.log('  [spec] all 12 steps PASSED')
   } catch (err) {
     failed = true
     for (const [name, page] of openPages) {

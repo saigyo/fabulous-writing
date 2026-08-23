@@ -200,4 +200,31 @@ export class Registry {
       message: { ctl: { kind: 'disconnect' } },
     }]
   }
+
+  // Issue #142: the extension's server URL changed. Every window's connected
+  // field must hard-disconnect — otherwise the content script keeps painting
+  // the OLD server's markings, and a kept field re-synthesized to the panel
+  // (panelReady's own fieldConnected replay) would flow that field's text to
+  // a DIFFERENT server without an explicit user connect (a privacy issue,
+  // not just a staleness one). Reuses the same detach ctl a cross-tab replace
+  // already sends (rule 1) — the scout's existing detach handler disposes
+  // the session silently, idles the chip, and never re-acquires on its own.
+  // panelReady is deliberately left untouched: the panel reloads itself on
+  // the server-URL change (Options page behavior, unrelated to this
+  // registry) and re-arms readiness through its own existing panelHello path
+  // — there is nothing for this operation to do with that flag.
+  serverChanged(): Effect[] {
+    const effects: Effect[] = []
+    for (const [windowId, w] of this.windows) {
+      if (!w.field) continue
+      const { tabId, fieldId } = w.field
+      effects.push({
+        kind: 'send', to: 'field', windowId, tabId,
+        message: { ctl: { kind: 'detach', fieldId } },
+      })
+      effects.push({ kind: 'badge', tabId, text: '' })
+      w.field = null
+    }
+    return effects
+  }
 }
