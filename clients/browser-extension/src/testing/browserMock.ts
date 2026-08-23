@@ -22,6 +22,10 @@ export interface MockPort {
   disconnect: ReturnType<typeof vi.fn>
   onMessage: ReturnType<typeof createEventTarget<[unknown]>>
   onDisconnect: ReturnType<typeof createEventTarget<[MockPort]>>
+  // Only present on ports handed to an onConnect listener (the
+  // background/service-worker side) — mirrors webextension-polyfill's
+  // Runtime.Port.sender, used by sw.ts to read tabId/windowId for field ports.
+  sender?: { tab?: { id?: number; windowId?: number } }
 }
 
 type StorageChange = { oldValue?: unknown; newValue?: unknown }
@@ -50,6 +54,23 @@ export const connectMock = vi.fn((connectInfo?: { name?: string }): MockPort => 
   onMessage: createEventTarget<[unknown]>(),
   onDisconnect: createEventTarget<[MockPort]>(),
 }))
+
+// The onConnect-side counterpart of connectMock: builds the port object a
+// background listener (sw.ts's `browser.runtime.onConnect.addListener`)
+// receives, including `sender.tab` for field ports. The test drives the
+// connection by calling `browserMock.runtime.onConnect.emit(port)`.
+export function createMockPort(name: string, sender?: MockPort['sender']): MockPort {
+  return {
+    name,
+    postMessage: vi.fn(),
+    disconnect: vi.fn(),
+    onMessage: createEventTarget<[unknown]>(),
+    onDisconnect: createEventTarget<[MockPort]>(),
+    sender,
+  }
+}
+
+const runtimeOnConnect = createEventTarget<[MockPort]>()
 
 const storageLocalGet = vi.fn(async (keys?: StorageKeys) => readKeys(keys))
 
@@ -97,6 +118,7 @@ export const browserMock = {
   runtime: {
     connect: connectMock,
     getManifest: runtimeGetManifest,
+    onConnect: runtimeOnConnect,
   },
   windows: {
     getCurrent: windowsGetCurrent,
