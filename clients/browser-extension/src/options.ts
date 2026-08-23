@@ -5,12 +5,14 @@ export async function initOptions(): Promise<void> {
   root.innerHTML = ''
 
   // Create the form elements
-  const label = document.createElement('label')
-  label.textContent = 'Server URL:'
-
   const input = document.createElement('input')
+  input.id = 'server-url-input'
   input.type = 'url'
   input.value = await getServerUrl()
+
+  const label = document.createElement('label')
+  label.setAttribute('for', 'server-url-input')
+  label.textContent = 'Server URL:'
 
   const note = document.createElement('div')
   note.textContent = 'Your Fabulous Writing server. The panel reloads on change.'
@@ -70,5 +72,8 @@ export async function initOptions(): Promise<void> {
   root.appendChild(form)
 }
 
-initOptions().catch(console.error)
+// Auto-invoke only in browser context; tests import this module before #root exists
+if (document.getElementById('root')) {
+  initOptions().catch(console.error)
+}
 console.debug('fw: options loaded')
