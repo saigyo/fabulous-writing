@@ -42,11 +42,30 @@ const hostTextChangedEnvelope = {
   payload: { fieldId: 'f1', text: 'hello' },
 }
 
+const hostFieldConnectedEnvelope = {
+  fw: PROTOCOL_VERSION,
+  type: 'fieldConnected',
+  payload: {
+    fieldId: 'f1',
+    text: '',
+    capabilities: { mark: 'overlay', replace: 'reliable' },
+    meta: { url: 'https://example.com', fieldKind: 'textarea' },
+  },
+}
+
+const hostFieldDisconnectedEnvelope = {
+  fw: PROTOCOL_VERSION,
+  type: 'fieldDisconnected',
+  payload: { fieldId: 'f1' },
+}
+
 function makeCallbacks() {
   return {
     toEmbed: vi.fn<(msg: object) => void>(),
     toPort: vi.fn<(msg: PortMessage) => void>(),
     onReadyChange: vi.fn<(ready: boolean) => void>(),
+    onFieldConnected: vi.fn<() => void>(),
+    onFieldDisconnected: vi.fn<() => void>(),
   }
 }
 
@@ -247,6 +266,46 @@ describe('createRelay: fromPort', () => {
     relay.fromPort(null)
     relay.fromPort('a string')
     expect(cb.toEmbed).not.toHaveBeenCalled()
+  })
+})
+
+// Live-test UX decision (B43 C2, PR #139): pure side-channel observation of
+// fromPort's own pass-through traffic — panel.ts's connect hint and
+// Disconnect button both derive their signal from these, without altering
+// what fromPort actually forwards.
+describe('createRelay: fromPort field-connect observation', () => {
+  it('fires onFieldConnected alongside forwarding a fieldConnected envelope', () => {
+    const cb = makeCallbacks()
+    const relay = createRelay(cb, '0.1.0')
+    relay.fromPort({ relay: hostFieldConnectedEnvelope })
+    expect(cb.onFieldConnected).toHaveBeenCalledTimes(1)
+    expect(cb.onFieldDisconnected).not.toHaveBeenCalled()
+    expect(cb.toEmbed).toHaveBeenCalledWith(hostFieldConnectedEnvelope)
+  })
+
+  it('fires onFieldDisconnected alongside forwarding a fieldDisconnected envelope', () => {
+    const cb = makeCallbacks()
+    const relay = createRelay(cb, '0.1.0')
+    relay.fromPort({ relay: hostFieldDisconnectedEnvelope })
+    expect(cb.onFieldDisconnected).toHaveBeenCalledTimes(1)
+    expect(cb.onFieldConnected).not.toHaveBeenCalled()
+    expect(cb.toEmbed).toHaveBeenCalledWith(hostFieldDisconnectedEnvelope)
+  })
+
+  it('fires neither for an unrelated host message', () => {
+    const cb = makeCallbacks()
+    const relay = createRelay(cb, '0.1.0')
+    relay.fromPort({ relay: hostTextChangedEnvelope })
+    expect(cb.onFieldConnected).not.toHaveBeenCalled()
+    expect(cb.onFieldDisconnected).not.toHaveBeenCalled()
+  })
+
+  it('does not throw when the callbacks are omitted (optional)', () => {
+    const relay = createRelay(
+      { toEmbed: vi.fn(), toPort: vi.fn(), onReadyChange: vi.fn() },
+      '0.1.0',
+    )
+    expect(() => relay.fromPort({ relay: hostFieldConnectedEnvelope })).not.toThrow()
   })
 })
 

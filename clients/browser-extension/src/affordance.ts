@@ -38,10 +38,49 @@ export interface Affordance {
   readonly host: HTMLElement
 }
 
+// Live-test finding (B43 C2, PR #139): the chip used to straddle the
+// field's top-right corner (anchored AT the corner, pulled back by half its
+// own size via a -100%/-50% transform) — on a host page whose own UI sits
+// snug against the field's top edge (e.g. GitHub's markdown toolbar
+// directly above the composer textarea), that outward straddle put the
+// chip's top half underneath the host's own toolbar, leaving only the
+// bottom half paintable/clickable. Anchoring fully INSIDE the corner
+// instead (inset by this many px from both the top and right edges, same
+// Grammarly-style inside-corner pattern) keeps the whole chip within the
+// field's own box, where no host UI has a reason to paint over it. Also
+// stays clear of the bottom-right corner, where a host's own resize grip
+// commonly lives.
+const CHIP_INSET_PX = 6
+
+// Live-test UX decision (B43 C2, PR #139): a plain click on a CONNECTED
+// chip used to disconnect — a destructive action one accidental click away,
+// with no confirmation. The chip is now a split pill: the main segment
+// (glyph/count) is never destructive — connected, it re-sends ctl openPanel
+// to open/focus the side panel, same as an idle click starts one. Only the
+// separate × segment, revealed by hovering or focusing the pill, disconnects.
+// `.pill`'s own `overflow: hidden` clips the × to zero width until then.
+//
+// Growth direction: the pill is positioned via `left` + `transform:
+// translateX(-100%)` (see showFor/reposition below) — a translateX(-100%)
+// pins the box's RIGHT edge at that `left` point and grows the box LEFT of
+// it, regardless of how wide the box itself is. So the × segment, laid out
+// AFTER the main segment (i.e. on the pill's right, in normal reading
+// order), makes the whole pill wider WITHOUT moving its right edge — growth
+// is automatically leftward, into the field's own inset-anchored corner,
+// never past the field's right edge. No extra positioning logic needed for
+// the reveal; picked over shifting the pill left or mirroring the ×'s DOM
+// order for exactly this reason.
 const CHIP_STYLE = `
   :host {
     all: initial;
     position: absolute;
+  }
+  .pill {
+    display: flex;
+    align-items: stretch;
+    border-radius: 11px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
   }
   button {
     all: unset;
@@ -49,26 +88,45 @@ const CHIP_STYLE = `
     display: flex;
     align-items: center;
     justify-content: center;
+    cursor: pointer;
+    color: #fff;
+    font: 600 12px/1 system-ui, sans-serif;
+  }
+  /* "all: unset" above also wipes the button's native focus ring — restore
+     a visible one for keyboard activation (Finding F7). Inset (not offset)
+     so the ring stays inside the pill's own clipped/rounded edge. */
+  button:focus-visible {
+    outline: 2px solid #6e56cf;
+    outline-offset: -2px;
+  }
+  .main {
     min-width: 22px;
     height: 22px;
     padding: 0 6px;
-    border-radius: 11px;
-    font: 600 12px/1 system-ui, sans-serif;
-    cursor: pointer;
-    color: #fff;
     background: #52525b;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
   }
-  /* "all: unset" above also wipes the button's native focus ring — restore
-     a visible one for keyboard activation (Finding F7). */
-  button:focus-visible {
-    outline: 2px solid #6e56cf;
-    outline-offset: 1px;
+  .pill[data-state='connected'] .main { background: #16a34a; }
+  .pill[data-state='busy'] .main { background: #6e56cf; }
+  .pill[data-state='signed-out'] .main { background: #d97706; }
+  .pill[data-state='error'] .main { background: #dc2626; }
+  .disconnect {
+    width: 0;
+    height: 22px;
+    background: #3f3f46;
+    transition: width 150ms ease;
   }
-  button[data-state='connected'] { background: #16a34a; }
-  button[data-state='busy'] { background: #6e56cf; }
-  button[data-state='signed-out'] { background: #d97706; }
-  button[data-state='error'] { background: #dc2626; }
+  /* Gated on the pill's own state: idle has no session to disconnect, so
+     hovering/focusing an idle chip never reveals the ×. */
+  .pill:not([data-state='idle']):hover .disconnect,
+  .pill:not([data-state='idle']):focus-within .disconnect {
+    width: 20px;
+  }
+  .disconnect:hover {
+    background: #dc2626;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .disconnect { transition: none; }
+  }
 `
 
 function glyphFor(state: AffordanceState, count: number): string {
@@ -88,13 +146,15 @@ function glyphFor(state: AffordanceState, count: number): string {
 
 // Finding F6: the button's visible content is a bare glyph (a checkmark, a
 // count, an exclamation point) — meaningless to a screen reader without a
-// state-aware accessible name alongside it.
+// state-aware accessible name alongside it. Live-test UX decision: the main
+// segment is no longer a disconnect affordance (that's the × now), so its
+// label describes opening the panel instead.
 function ariaLabelFor(state: AffordanceState, count: number): string {
   switch (state) {
     case 'connected':
       return count > 0
-        ? `${count} findings — click to disconnect`
-        : 'Fabulous Writing connected — click to disconnect'
+        ? `${count} findings — open Fabulous Writing`
+        : 'connected — open Fabulous Writing'
     case 'signed-out':
       return 'Fabulous Writing: signed out'
     case 'error':
@@ -106,7 +166,10 @@ function ariaLabelFor(state: AffordanceState, count: number): string {
   }
 }
 
-export function createAffordance(onClick: (el: HTMLTextAreaElement) => void): Affordance {
+export function createAffordance(
+  onClick: (el: HTMLTextAreaElement) => void,
+  onDisconnect: (el: HTMLTextAreaElement) => void,
+): Affordance {
   const host = document.createElement('div')
   host.setAttribute('data-fw-affordance', '')
   host.style.position = 'absolute'
@@ -118,8 +181,18 @@ export function createAffordance(onClick: (el: HTMLTextAreaElement) => void): Af
   style.textContent = CHIP_STYLE
   root.appendChild(style)
 
+  const pill = document.createElement('div')
+  pill.className = 'pill'
+
   const button = document.createElement('button')
   button.type = 'button'
+  button.className = 'main'
+
+  const disconnectButton = document.createElement('button')
+  disconnectButton.type = 'button'
+  disconnectButton.className = 'disconnect'
+  disconnectButton.textContent = '×'
+  disconnectButton.setAttribute('aria-label', 'Disconnect this field')
 
   let state: AffordanceState = 'idle'
   let count = 0
@@ -168,8 +241,12 @@ export function createAffordance(onClick: (el: HTMLTextAreaElement) => void): Af
       return
     }
     const rect = currentEl.getBoundingClientRect()
-    host.style.top = `${rect.top + window.scrollY}px`
-    host.style.left = `${rect.right + window.scrollX}px`
+    // Inset from the top-right corner (see CHIP_INSET_PX's own comment) —
+    // top is pushed DOWN into the box, left is pulled IN from the right
+    // edge (the transform below then pulls the chip's own width back to
+    // the left of that point, same as it always has).
+    host.style.top = `${rect.top + window.scrollY + CHIP_INSET_PX}px`
+    host.style.left = `${rect.right + window.scrollX - CHIP_INSET_PX}px`
     // F5: same measured-delta self-correction textareaAdapter.ts's
     // syncOverlayGeometry uses (see its own module comment for the full
     // rationale) — the host's `position: absolute` containing block is no
@@ -255,12 +332,18 @@ export function createAffordance(onClick: (el: HTMLTextAreaElement) => void): Af
   }
 
   function render(): void {
+    // Set on both: the pill's own copy is what the reveal-gating CSS
+    // selector above keys off; the button's copy keeps `data-state`
+    // queryable directly off "the" (main) button, same as before the split.
+    pill.dataset.state = state
     button.dataset.state = state
     button.textContent = glyphFor(state, count)
     button.setAttribute('aria-label', ariaLabelFor(state, count))
   }
   render()
-  root.appendChild(button)
+  pill.appendChild(button)
+  pill.appendChild(disconnectButton)
+  root.appendChild(pill)
 
   button.addEventListener('click', (event) => {
     // A hostile page can focus a field and call .click() on this button
@@ -272,6 +355,12 @@ export function createAffordance(onClick: (el: HTMLTextAreaElement) => void): Af
     // has since been removed from the DOM (see reposition()'s own check
     // above) — refuse to start a session on a detached textarea.
     if (currentEl?.isConnected) onClick(currentEl)
+  })
+
+  disconnectButton.addEventListener('click', (event) => {
+    // Same two guards as the main segment's own click handler above.
+    if (!event.isTrusted) return
+    if (currentEl?.isConnected) onDisconnect(currentEl)
   })
 
   return {
@@ -295,12 +384,13 @@ export function createAffordance(onClick: (el: HTMLTextAreaElement) => void): Af
       // first would always report a zero rect and feed a bogus delta into
       // the correction.
       host.style.display = ''
-      // Anchored to the field's top-right corner: left/top name that
-      // corner's page coordinates (viewport rect + scroll offset); the
-      // transform below pulls the chip back so it straddles the corner
-      // instead of growing off the field entirely.
+      // Anchored INSIDE the field's top-right corner (CHIP_INSET_PX in from
+      // both edges): left/top name that inset point's page coordinates
+      // (viewport rect + scroll offset); the transform below pulls the
+      // chip's own width back to the left of it so the whole chip lands
+      // inside the field's box instead of straddling the corner outward.
       reposition()
-      host.style.transform = 'translate(-100%, -50%)'
+      host.style.transform = 'translateX(-100%)'
       if (!visible) {
         visible = true
         startTrackingPosition()

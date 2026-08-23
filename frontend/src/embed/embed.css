@@ -47,3 +47,57 @@
   flex: 1;
   border-left: none;
 }
+
+/* Live-test finding (B43 C2, PR #139): a real Chrome side panel is
+   typically ~320-420px wide — narrower than any window App.css's header was
+   ever designed against. .header-controls select's own max-width (App.css:
+   min(10.5rem, 12vw)) resolves to well under 50px at these widths, clipping
+   "Standard"/"English" down to a single letter; every rule below is scoped
+   under .embed-app (the header widgets are SHARED with the main app — no
+   selector here may leak into App.css's own, wider-window layout). Nothing
+   here touches App.css itself, and the breakpoint (480px, a little above
+   the stated 320-420px range) keeps the CURRENT wrap-based layout intact at
+   every width this embed has actually shipped at so far. */
+@media (max-width: 480px) {
+  /* Each wide control (profile, language, domain, LLM tier) becomes its own
+     full-width row; the compact controls that follow (the auto-toggle, the
+     Check button, the account badge) are deliberately left at their natural
+     width so flex-wrap collects them together onto one trailing row — no
+     markup change needed, just the asymmetry between "these grow to 100%"
+     and "these don't". */
+  .embed-app .header-controls > label,
+  .embed-app .header-controls > .llm-selector {
+    flex: 1 1 100%;
+  }
+
+  /* min-width is a floor, not the resting width — width: 100% (of the now
+     full-width row above) is what actually makes "Standard"/"English"
+     readable; min-width only guards the case where the row itself is
+     somehow narrower still. */
+  .embed-app .header-controls select,
+  .embed-app .domain-multiselect-toggle {
+    width: 100%;
+    max-width: 100%;
+    min-width: 8rem;
+  }
+
+  /* App.css's label-alignment trick (a small negative margin pulling the
+     select left under its label text) is a cosmetic sub-pixel nicety for
+     the desktop layout — harmless left uncorrected, but a plain 0 reads
+     cleaner once the select already spans the full row. */
+  .embed-app .header-controls label select,
+  .embed-app .domain-multiselect {
+    margin-left: 0;
+  }
+
+  /* The LLM Advanced popover (gear icon -> provider/model pin) is an
+     absolutely positioned OVERLAY, not part of the stacked-rows flow above
+     — it keeps its current, narrower select sizing rather than inheriting
+     the full-width rule (more specific than .header-controls select, so it
+     wins regardless of declaration order).  */
+  .embed-app .header-controls .llm-advanced-body select {
+    width: auto;
+    max-width: min(10.5rem, 40vw);
+    min-width: 0;
+  }
+}

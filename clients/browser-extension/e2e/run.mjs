@@ -317,7 +317,7 @@ async function main() {
   fixtureServer = await spawnFixtureServer()
 
   log('running extension.spec.mjs')
-  const { default: runSpec } = await import('./extension.spec.mjs')
+  const { default: runSpec, runConnectFirstSpec } = await import('./extension.spec.mjs')
   await runSpec({
     adminEmail: ADMIN_EMAIL,
     adminPassword,
@@ -327,6 +327,24 @@ async function main() {
     headless: !process.env.HEADFUL,
   })
   log('extension.spec.mjs PASSED')
+
+  // Live-test finding (B43 C2, PR #139): a SEPARATE fresh profile (own
+  // sub-dir, own login) — the default spec above always opens the panel tab
+  // BEFORE the chip click, so it never exercises the real production
+  // order (chip click while no panel exists yet). Reuses the SAME backend
+  // and fixture server already running.
+  const connectFirstTmpDir = path.join(tmpDir, 'connect-first')
+  await mkdir(connectFirstTmpDir, { recursive: true })
+  log('running extension.spec.mjs: connect-first scenario')
+  await runConnectFirstSpec({
+    adminEmail: ADMIN_EMAIL,
+    adminPassword,
+    extensionId,
+    distDir: EXT_DIST,
+    tmpDir: connectFirstTmpDir,
+    headless: !process.env.HEADFUL,
+  })
+  log('extension.spec.mjs connect-first scenario PASSED')
 }
 
 main()

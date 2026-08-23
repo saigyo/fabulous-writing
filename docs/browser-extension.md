@@ -19,11 +19,32 @@ Three contexts, wired by a fourth Chromium-only piece:
   moment it's interacted with) and shows a shadow-DOM-isolated connect chip
   (`src/affordance.ts`) near an eligible field (`src/detect.ts`: a visible,
   enabled, writable `<textarea>` at least 120×40px — `<input>` is out of scope
-  for v1, see below). Clicking the chip starts a **session**
-  (`src/session.ts`), which owns one field's adapter (lifted straight from the
+  for v1, see below), anchored INSIDE the field's top-right corner (inset a
+  few px from both edges — a live-test finding found the chip straddling the
+  corner outward got half-covered by a host's own UI sitting snug against
+  the field, e.g. GitHub's markdown toolbar). Idle, clicking the chip starts
+  a **session** (`src/session.ts`), which owns one field's adapter (lifted
+  straight from the
   C1 host simulator's reference implementation,
   `frontend/src/simulator/textareaAdapter.ts`) and speaks the bridge protocol
-  over a lazily-opened `browser.runtime` port.
+  over a lazily-opened `browser.runtime` port. The chip is a **split pill**
+  (live-test UX decision, B43 C2 PR #139): a plain click on the main
+  (glyph/count) segment is never destructive — idle it connects, connected it
+  re-opens/focuses the panel — only the separate **×** segment (revealed on
+  hover/focus, `src/affordance.ts`) or the panel's own **Disconnect** button
+  (`panel.ts`, routed through a new `disconnect` ctl via `sw.ts`'s
+  `registry.disconnectRequested`) disconnects.
+  **Field re-acquisition** (`src/reacquire.ts` + `scout.ts`): a host that
+  replaces the field's DOM node on blur (a React-style re-render — GitHub's
+  own composer among them) makes `session.ts`'s `MutationObserver`
+  self-detach, same as before — but scout now opens a short (~2s) grace
+  window that fingerprints the lost field (id, then name, then
+  aria-label(ledby), then a form-relative index as a last resort, captured
+  at session start) and probes the document for a same-fingerprint
+  replacement before giving up. A match starts a genuinely NEW session (new
+  `fieldId` — the embed re-extracts text and re-checks); the chip never
+  flickers to idle during the probe. A user-initiated disconnect (× or the
+  panel button) never triggers this — only the self-detach path does.
 - **Service worker** — `src/sw.ts`. Wires real ports to a pure state machine,
   `src/registry.ts` (the **connection registry**): one connected field per
   browser window, bound to its tab, routed by port name (`'field'` from the
@@ -50,7 +71,13 @@ Three contexts, wired by a fourth Chromium-only piece:
   the `hello` handshake retry loop (250ms, capped at 30 attempts — long enough
   for a slow dev-server cold start without leaving the panel silently stuck)
   and is deliberately polyfill-free so it stays unit-testable with fake
-  timers.
+  timers. Live-test UX decision (B43 C2 PR #139): `panel.ts` shows a
+  one-line hint ("Click the ✳ chip on a text box to connect it.") whenever
+  the embed is ready but no field has EVER connected through it yet — gone
+  for good the first time one does — derived from `relay.ts`'s `fromPort`
+  observing host-role `fieldConnected`/`fieldDisconnected` traffic as it
+  passes through (a side channel, not a change to what gets forwarded). The
+  same observation also gates the panel's **Disconnect** button.
 - **`src/panelHost.ts`** — the single Chromium-only seam. Every other module
   imports only `webextension-polyfill`; this one file makes the three
   `chrome.sidePanel`/`chrome.action` calls the extension needs
@@ -239,10 +266,26 @@ allowlists the extension ID derived from `public/manifest.json`), and a
 static file server for `e2e/fixture.html` on port **8101**. Ports 8100/8101
 are deliberately never 5173/8000 (the owner's own dev servers); the script
 aborts rather than killing whatever holds either port. `e2e/extension.spec.mjs`
-then drives the real 10-step flow with `playwright-core` and
-`--load-extension`: fixture page affordance → options page → connect → login
-inside the embed iframe → type → finding renders → overlay + apply → chip
-state → disconnect.
+exports TWO scenarios, both driven against that same backend/fixture server:
+
+- The default export (10 steps): fixture page affordance → options page →
+  panel tab opened → connect → login inside the embed iframe → type →
+  finding renders → overlay + apply → chip state → disconnect via the
+  chip's **×** segment. This opens the panel tab BEFORE the chip click, so
+  it exercises the LIVE-RELAY connect path (the registry already has a
+  ready panel when `fieldConnected` arrives) — real `chrome.sidePanel.open`
+  is stubbed to reject for the run's duration (a real side panel is a second
+  'panel' port under the same windowId, which would silently steal traffic
+  from the tab this spec drives; the SW's own onError fallback is harmless).
+- `runConnectFirstSpec` (6 steps, own fresh profile): reproduces the REAL
+  production order instead — chip clicked FIRST, no panel tab open yet, so
+  the field connects while the registry buffers it and `chrome.sidePanel.
+  open` is left real (opens a genuine, Playwright-undrivable side panel; the
+  spec's OWN panel tab is a second 'panel' port that supersedes it via
+  sw.ts's "last hello wins" routing once its own panelHello lands). Exercises
+  the SYNTHESIS path (registry rule 4) and the panel-replacement
+  readiness-reset live, disconnects via the panel's **Disconnect** button
+  (not the ×) for coverage of that path too.
 
 **`VITE_API_URL=""` is required**, not optional, when building the frontend
 for this e2e run. `frontend/src/api/client.ts`'s API base falls back to the
@@ -272,8 +315,15 @@ server.
 
 **Issue description box:**
 
-- [ ] Hover/focus the box; the connect chip appears; clicking it opens the
-      side panel and the box shows the connected/busy state
+- [ ] Hover/focus the box; the connect chip appears, anchored INSIDE the
+      box's top-right corner (not straddling it outward) — check it is not
+      covered by GitHub's own markdown toolbar sitting just above the box
+- [ ] Clicking the chip opens the side panel and the box shows the
+      connected/busy state; a SECOND plain click on the chip re-opens/
+      focuses the panel rather than disconnecting
+- [ ] Hovering/focusing the connected chip reveals a **×** segment; clicking
+      it disconnects (the panel's own **Disconnect** button, beside its
+      connection status, does the same)
 - [ ] Type text; a finding appears in the panel's sidebar
 - [ ] The overlay mark aligns with the flagged text, including across
       **wrapped lines** (not just the first line of a long paragraph)
@@ -284,7 +334,7 @@ server.
       normal entry in the field's native undo history, not a scripted
       overwrite
 
-**PR comment box:** same five checks as the issue description box above.
+**PR comment box:** same checks as the issue description box above.
 
 **Turbo navigation:**
 
@@ -295,6 +345,18 @@ server.
       can reach
 - [ ] Navigate back to a field and reconnect — a fresh chip, fresh session,
       no stale panel state
+
+**Field replaced on blur (live-test finding, B43 C2 PR #139):** if a
+composer's own JS replaces the textarea node shortly after it loses focus
+(some progressive-enhancement editors do this) rather than leaving the page
+entirely:
+
+- [ ] The chip/session recovers silently within ~2s — no visible
+      disconnect, no need to re-hover/re-click — *if* the new field
+      preserves an id/name/aria-label or the same position among the page's
+      textareas (`src/reacquire.ts`'s fingerprint priority order)
+- [ ] If nothing matching appears within the window, the chip settles to
+      idle (a normal disconnect) rather than hanging
 
 **Long scrolling comment:**
 
@@ -320,6 +382,17 @@ server.
       that GitHub's own toolbars, dropdowns, and the **@-mention
       autocomplete** popover still paint above the composer, not underneath
       the mirror overlay
+
+**Narrow side panel (live-test finding, B43 C2 PR #139):** a real Chrome side
+panel is typically ~320-420px wide — narrower than any width the shared
+header widgets (`frontend/src/header/*`) were designed against.
+
+- [ ] Resize (or dock) the side panel down to ~320-360px; the Profile,
+      Language, Domain, and LLM tier controls each grow to their own
+      full-width row with fully readable text (not truncated to a single
+      letter) — the Check button and account badge share a final row
+- [ ] Widen the panel back out; the layout returns to the normal (desktop)
+      wrapped-row header
 
 **Sign-out and session persistence:**
 

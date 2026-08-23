@@ -18,7 +18,9 @@ const SERVER_ORIGIN = 'https://fabulous-writing.fly.dev' // settings.ts's DEFAUL
 
 function setupDom(): { iframeEl: HTMLIFrameElement } {
   document.body.innerHTML = `
+    <button id="disconnect" type="button" hidden>Disconnect</button>
     <p id="status" role="status">embed not responding</p>
+    <p id="hint" hidden>Click the ✳ chip on a text box to connect it.</p>
     <iframe id="embed" title="Fabulous Writing embed"></iframe>
     <button id="options" type="button">Options</button>
   `
@@ -40,6 +42,45 @@ function setupDom(): { iframeEl: HTMLIFrameElement } {
 function lastConnectedPort(): MockPort {
   const results = browserMock.runtime.connect.mock.results
   return results[results.length - 1].value as MockPort
+}
+
+const fieldConnectedEnvelope = {
+  fw: PROTOCOL_VERSION,
+  type: 'fieldConnected',
+  payload: {
+    fieldId: 'f1',
+    text: '',
+    capabilities: { mark: 'overlay', replace: 'reliable' },
+    meta: { url: 'https://example.com', fieldKind: 'textarea' },
+  },
+}
+
+const fieldDisconnectedEnvelope = {
+  fw: PROTOCOL_VERSION,
+  type: 'fieldDisconnected',
+  payload: { fieldId: 'f1' },
+}
+
+async function bootPanel(): Promise<{ iframeEl: HTMLIFrameElement; port: MockPort }> {
+  const { iframeEl } = setupDom()
+  await import('./panel')
+  await vi.waitFor(() => expect(browserMock.runtime.connect).toHaveBeenCalledTimes(1))
+  await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
+  return { iframeEl, port: lastConnectedPort() }
+}
+
+function emitReady(iframeEl: HTMLIFrameElement): void {
+  window.dispatchEvent(new MessageEvent('message', {
+    data: {
+      fw: PROTOCOL_VERSION,
+      type: 'ready',
+      payload: { protocolVersion: PROTOCOL_VERSION, features: [] },
+    },
+    origin: SERVER_ORIGIN,
+    source: iframeEl.contentWindow,
+  }))
 }
 
 describe('panel: I5 closing sweep — a dead port must not escape onReadyChange', () => {
@@ -92,5 +133,69 @@ describe('panel: I5 closing sweep — a dead port must not escape onReadyChange'
     } finally {
       window.removeEventListener('error', onError)
     }
+  })
+})
+
+// Live-test UX decision (B43 C2, PR #139): a one-line connect hint and a
+// Disconnect button, both derived from relay.ts's fromPort observation of
+// host-role fieldConnected/fieldDisconnected traffic (relay.test.ts's own
+// "fromPort field-connect observation" describe block pins the derivation
+// itself — this is panel.ts's own wiring of it to the DOM).
+describe('panel: connect hint + Disconnect button (live-test UX decision, B43 C2 PR #139)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('the hint stays hidden until the embed readies', async () => {
+    await bootPanel()
+    const hintEl = document.getElementById('hint') as HTMLElement
+    expect(hintEl.hidden).toBe(true)
+  })
+
+  it('the hint shows once the embed is ready, with no field connected yet', async () => {
+    const { iframeEl } = await bootPanel()
+    emitReady(iframeEl)
+    const hintEl = document.getElementById('hint') as HTMLElement
+    expect(hintEl.hidden).toBe(false)
+  })
+
+  it('a fieldConnected relay hides the hint for good, even after a later disconnect', async () => {
+    const { iframeEl, port } = await bootPanel()
+    emitReady(iframeEl)
+    const hintEl = document.getElementById('hint') as HTMLElement
+    expect(hintEl.hidden).toBe(false)
+
+    port.onMessage.emit({ relay: fieldConnectedEnvelope })
+    expect(hintEl.hidden).toBe(true)
+
+    port.onMessage.emit({ relay: fieldDisconnectedEnvelope })
+    expect(hintEl.hidden).toBe(true)
+  })
+
+  it('the Disconnect button is hidden until a field connects, shown while connected, hidden again on disconnect', async () => {
+    const { port } = await bootPanel()
+    const disconnectBtn = document.getElementById('disconnect') as HTMLButtonElement
+    expect(disconnectBtn.hidden).toBe(true)
+
+    port.onMessage.emit({ relay: fieldConnectedEnvelope })
+    expect(disconnectBtn.hidden).toBe(false)
+
+    port.onMessage.emit({ relay: fieldDisconnectedEnvelope })
+    expect(disconnectBtn.hidden).toBe(true)
+  })
+
+  it('clicking Disconnect posts a ctl disconnect message on the port', async () => {
+    const { port } = await bootPanel()
+    port.onMessage.emit({ relay: fieldConnectedEnvelope })
+    const disconnectBtn = document.getElementById('disconnect') as HTMLButtonElement
+
+    disconnectBtn.click()
+
+    expect(port.postMessage).toHaveBeenCalledWith({ ctl: { kind: 'disconnect' } })
   })
 })

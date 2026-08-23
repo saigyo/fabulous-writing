@@ -157,6 +157,8 @@ function handlePanelMessage(state: { windowId: number | null }, port: Port, data
     if (state.windowId === null || panelPorts.get(state.windowId) !== port) return
     if (parsed.ctl.kind === 'embedReady') {
       execute(registry.panelReady(state.windowId, parsed.ctl.ready))
+    } else if (parsed.ctl.kind === 'disconnect') {
+      execute(registry.disconnectRequested(state.windowId))
     }
     return
   }

@@ -141,7 +141,12 @@ export default async function runSpec({
     openPages.push(['fixture', fixture])
     const textarea = fixture.locator('#box')
     const affordanceHost = fixture.locator('[data-fw-affordance]')
-    const chip = affordanceHost.locator('button')
+    // Live-test UX decision (B43 C2, PR #139): the chip is a split pill —
+    // '.main' (glyph/count, never destructive) and '.disconnect' (the ×,
+    // revealed on hover/focus) are TWO buttons now, so a bare 'button'
+    // locator would be ambiguous (Playwright strict mode).
+    const chip = affordanceHost.locator('.main')
+    const disconnectChip = affordanceHost.locator('.disconnect')
 
     await step('2. fixture page: scout affordance appears on hover', async () => {
       await fixture.goto(FIXTURE_URL)
@@ -290,9 +295,15 @@ export default async function runSpec({
       )
     })
 
-    // ---- Step 10: disconnect ----
-    await step('10. disconnect: overlay removed, panel shows disconnected strip', async () => {
-      await chip.click()
+    // ---- Step 10: disconnect via the chip's × segment ----
+    await step('10. disconnect (chip ×): overlay removed, panel shows disconnected strip', async () => {
+      // Live-test UX decision (B43 C2, PR #139): a plain click on the main
+      // segment is no longer destructive — it re-opens/focuses the panel.
+      // Only the × (revealed on hover, since a non-idle chip's split pill
+      // gates the reveal that way) disconnects.
+      await chip.hover()
+      await disconnectChip.waitFor({ state: 'visible', timeout: 5000 })
+      await disconnectChip.click()
       await fixture.locator('.fw-mirror-overlay').waitFor({ state: 'detached', timeout: 10000 })
       await embedFrame
         .locator('.embed-connection-strip')
@@ -324,6 +335,155 @@ export default async function runSpec({
     if (!failed) {
       // Nothing else to clean up on the success path — the persistent
       // profile lives under tmpDir, which the caller owns.
+    }
+  }
+}
+
+// The REAL production order (live-test finding, B43 C2 PR #139): the chip
+// is clicked FIRST — the side panel does not exist yet — and only THEN does
+// a panel open, log in, and become ready. The default export above always
+// opens panelPage.html as a tab BEFORE the chip click (step 3 before step
+// 4), so it only ever exercises the LIVE-RELAY path (registry.fieldConnected
+// with panelReady already true) — the SYNTHESIS path (registry rule 4:
+// panelReady(true) synthesizing a buffered fieldConnected once the panel
+// catches up) had unit coverage but no live e2e coverage before this.
+//
+// chrome.sidePanel.open() is deliberately left UNSTUBBED here (unlike the
+// default export's own "neutralize the real side panel" step) — the click
+// below fires it for real, opening a genuine (Playwright-undrivable) side
+// panel target. The panel TAB this function then opens itself is therefore
+// a SECOND 'panel' port for the same window — sw.ts's registry keys
+// panelPorts by windowId with "last hello wins", so as long as this
+// function's own panelHello lands after the real side panel's (the fixed
+// delay below buys it a head start — a real side panel's own panelHello
+// reliably lands within ~150ms per manual probing), this tab becomes the
+// canonical one and every assertion below observes it. This also exercises
+// the panel-replacement readiness-reset path (sw.ts's handlePanelMessage:
+// a second panelHello for an already-registered windowId resets
+// panelReady(false) first) for real, live.
+export async function runConnectFirstSpec({
+  adminEmail,
+  adminPassword,
+  extensionId,
+  distDir,
+  tmpDir,
+  headless,
+}) {
+  let context
+  await step('connect-first: browser launch (separate fresh profile)', async () => {
+    const userDataDir = path.join(tmpDir, 'chrome-profile')
+    context = await chromium.launchPersistentContext(userDataDir, {
+      channel: 'chromium',
+      headless,
+      locale: 'en-US',
+      args: [
+        `--disable-extensions-except=${distDir}`,
+        `--load-extension=${distDir}`,
+      ],
+    })
+  })
+
+  const openPages = []
+  let failed = false
+  try {
+    const fixture = await context.newPage()
+    openPages.push(['fixture', fixture])
+    const textarea = fixture.locator('#box')
+    const affordanceHost = fixture.locator('[data-fw-affordance]')
+    const chip = affordanceHost.locator('.main')
+
+    await step('connect-first 1. options page: set server URL', async () => {
+      const optionsPage = await context.newPage()
+      openPages.push(['options', optionsPage])
+      await optionsPage.goto(`chrome-extension://${extensionId}/options.html`)
+      await optionsPage.locator('#server-url-input').fill(BACKEND)
+      await optionsPage.locator('[data-action="save"]').click()
+      await optionsPage
+        .locator('[role="status"]')
+        .filter({ hasText: 'Saved' })
+        .waitFor({ timeout: 5000 })
+      await optionsPage.close()
+    })
+
+    await step('connect-first 2. fixture: hover + click chip BEFORE any panel exists', async () => {
+      await fixture.goto(FIXTURE_URL)
+      await textarea.focus()
+      await textarea.hover()
+      await affordanceHost.waitFor({ state: 'visible', timeout: 10000 })
+      await chip.click()
+      await fixture.waitForFunction(
+        () => document.querySelector('[data-fw-affordance]')?.shadowRoot
+          ?.querySelector('.main')?.dataset.state !== 'idle',
+        { timeout: 5000 },
+      )
+      // Head start for the real side panel's own panelHello — see this
+      // function's own module comment for why this matters (last-hello-wins
+      // panel-port routing).
+      await fixture.waitForTimeout(800)
+    })
+
+    let panelPage
+    let embedFrame
+    await step('connect-first 3. open OUR OWN panel tab (second panel instance), log in', async () => {
+      panelPage = await context.newPage()
+      openPages.push(['panel', panelPage])
+      await panelPage.goto(`chrome-extension://${extensionId}/panel.html`)
+
+      embedFrame = panelPage.frameLocator('#embed')
+      await embedFrame.locator('input[type="email"]').waitFor({ timeout: 15000 })
+      await embedFrame.locator('input[type="email"]').fill(adminEmail)
+      await embedFrame.locator('input[type="password"]').fill(adminPassword)
+      await embedFrame.locator('.login-submit').click()
+      await embedFrame.locator('.sidebar').waitFor({ timeout: 15000 })
+    })
+
+    await step('connect-first 4. field connects: strip shows the fixture URL', async () => {
+      await embedFrame
+        .locator('.embed-connection-strip')
+        .filter({ hasText: FIXTURE_URL })
+        .waitFor({ timeout: 15000 })
+    })
+
+    const mark = fixture.locator('.fw-mirror-overlay .fw-mark').first()
+    await step('connect-first 5. typing produces a finding (panel row + fixture mark)', async () => {
+      await fixture.bringToFront()
+      await textarea.fill('This is is a test.')
+      await embedFrame.locator('.finding-row').first().waitFor({ timeout: 20000 })
+      await mark.waitFor({ state: 'visible', timeout: 20000 })
+    })
+
+    // Disconnect via the panel's OWN Disconnect button (not the chip's ×) —
+    // the default export's step 10 already exercises the × path; this
+    // scenario exercises the OTHER new disconnect path for live coverage.
+    await step('connect-first 6. disconnect via the panel Disconnect button', async () => {
+      const disconnectBtn = panelPage.locator('#disconnect')
+      await disconnectBtn.waitFor({ state: 'visible', timeout: 5000 })
+      await disconnectBtn.click()
+      await fixture.locator('.fw-mirror-overlay').waitFor({ state: 'detached', timeout: 10000 })
+      await embedFrame
+        .locator('.embed-connection-strip')
+        .filter({ hasText: 'No text field connected.' })
+        .waitFor({ timeout: 10000 })
+    })
+
+    console.log('  [spec] connect-first: all 6 steps PASSED')
+  } catch (err) {
+    failed = true
+    for (const [name, page] of openPages) {
+      if (page.isClosed()) continue
+      try {
+        await page.screenshot({ path: path.join(tmpDir, `failure-connect-first-${name}.png`) })
+      } catch {
+        // best-effort diagnostics only
+      }
+    }
+    if (!err.step) err.step = currentStep
+    throw err
+  } finally {
+    await context.close()
+    if (!failed) {
+      // Nothing else to clean up — the persistent profile lives under
+      // tmpDir, which the caller owns.
     }
   }
 }
