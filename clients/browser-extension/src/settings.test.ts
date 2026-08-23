@@ -12,8 +12,29 @@ describe('normalizeServerUrl', () => {
     expect(normalizeServerUrl('https://fw.example/')).toBe('https://fw.example')
   })
 
-  it('accepts http with a port', () => {
+  it('accepts http with a port on localhost', () => {
     expect(normalizeServerUrl('http://localhost:8100')).toBe('http://localhost:8100')
+  })
+
+  // Copilot round 5, F2: loopback-only http:// exemptions.
+  it('accepts http on the [::1] IPv6 loopback literal', () => {
+    expect(normalizeServerUrl('http://[::1]:8000')).toBe('http://[::1]:8000')
+  })
+
+  it('accepts http on a 127.0.0.0/8 loopback literal', () => {
+    expect(normalizeServerUrl('http://127.0.0.1:8000')).toBe('http://127.0.0.1:8000')
+  })
+
+  it('accepts http on a *.localhost subdomain', () => {
+    expect(normalizeServerUrl('http://sub.localhost:8000')).toBe('http://sub.localhost:8000')
+  })
+
+  it('rejects http on a non-loopback host', () => {
+    expect(normalizeServerUrl('http://server.example')).toBeNull()
+  })
+
+  it('accepts https on a non-loopback host', () => {
+    expect(normalizeServerUrl('https://server.example')).toBe('https://server.example')
   })
 
   it('rejects non-http(s) schemes', () => {

@@ -1,16 +1,24 @@
 // The shadow-DOM connect chip (spec: B43, C2 browser extension, Task 7).
-// One shadow host, attached to document.documentElement (not body — GitHub
-// and other Turbo-style sites replace body subtrees on navigation, which
-// would silently orphan a body-attached host). `mode: 'open'` is
-// deliberate: a closed shadow root would make affordance.test.ts's
-// assertions on the chip's own text/dataset impossible. Open mode does NOT
-// keep a hostile page from reaching in and restyling (or scripting) what's
-// inside — page JS can walk `host.shadowRoot` just like any other open
-// root; the styles-inside-root point above is only about accidental CSS
-// bleed FROM the page, not isolation from a hostile one (see the click
-// handler's isTrusted guard below for the actual defense). Hover/focus
-// lifecycle (when to show/hide, the leave-delay) is DRIVEN BY scout.ts —
-// this module only renders what it's told.
+// One shadow host. Copilot round 5, F5: inserted as the anchor field's own
+// NEXT DOM SIBLING (showFor, below) so the chip sits next in Tab order
+// right after the field — a host parked at the end of documentElement (the
+// original design) put Tab-from-field on the page's own next control
+// instead, making the chip unreachable by keyboard. The trade-off this
+// accepts: living inside the field's own subtree means a GitHub/Turbo-style
+// body swap that replaces that subtree can tear the host out too, not just
+// orphan it — reposition()'s own isConnected guard hides a chip whose host
+// died this way, and the next showFor's unconditional re-insert (also
+// idempotent for a still-attached host) re-attaches it cleanly the moment
+// the field is interacted with again. `mode: 'open'` is deliberate: a
+// closed shadow root would make affordance.test.ts's assertions on the
+// chip's own text/dataset impossible. Open mode does NOT keep a hostile
+// page from reaching in and restyling (or scripting) what's inside — page
+// JS can walk `host.shadowRoot` just like any other open root; the
+// styles-inside-root point above is only about accidental CSS bleed FROM
+// the page, not isolation from a hostile one (see the click handler's
+// isTrusted guard below for the actual defense). Hover/focus lifecycle
+// (when to show/hide, the leave-delay) is DRIVEN BY scout.ts — this module
+// only renders what it's told.
 export type AffordanceState = 'idle' | 'connected' | 'signed-out' | 'busy' | 'error'
 
 export interface Affordance {
@@ -147,9 +155,47 @@ export function createAffordance(onClick: (el: HTMLTextAreaElement) => void): Af
       hideInternal()
       return
     }
+    // F5 (Copilot review round 5): the host now lives as the field's own
+    // DOM sibling (below) rather than appended to documentElement — a
+    // Turbo/React body swap that removes the field's subtree can take the
+    // host down with it without ever removing currentEl itself (e.g. the
+    // field is re-created fresh elsewhere while this stale host is torn
+    // out). Same rationale as the currentEl check above: don't position a
+    // chip nobody can see; showFor's own re-insert (below) re-attaches it
+    // cleanly on the next interaction.
+    if (!host.isConnected) {
+      hideInternal()
+      return
+    }
     const rect = currentEl.getBoundingClientRect()
     host.style.top = `${rect.top + window.scrollY}px`
     host.style.left = `${rect.right + window.scrollX}px`
+    // F5: same measured-delta self-correction textareaAdapter.ts's
+    // syncOverlayGeometry uses (see its own module comment for the full
+    // rationale) — the host's `position: absolute` containing block is no
+    // longer guaranteed to be the page's own origin now that it's a DOM
+    // sibling of the field instead of a documentElement child, so top/left
+    // set from viewport+scroll coordinates alone can land it anywhere.
+    // Measure where the host's UNTRANSFORMED box actually landed (the
+    // cosmetic -100%/-50% pull-back transform held off during the
+    // measurement — it's an intentional, constant visual offset, not
+    // something to correct away) and shift top/left by the difference from
+    // where it was meant to land.
+    const savedTransform = host.style.transform
+    host.style.transform = 'none'
+    const hostRect = host.getBoundingClientRect()
+    host.style.transform = savedTransform
+    // A literal all-zero rect is happy-dom/jsdom's answer for any element
+    // under test (no layout engine — same fallback rationale as the
+    // phantom-scale guard in textareaAdapter.ts) — treat it as "nothing to
+    // correct by" rather than applying a bogus delta against a box that was
+    // never actually laid out.
+    const hostHasRealLayout =
+      hostRect.top !== 0 || hostRect.left !== 0 || hostRect.width !== 0 || hostRect.height !== 0
+    if (hostHasRealLayout) {
+      host.style.top = `${(parseFloat(host.style.top) || 0) + (rect.top - hostRect.top)}px`
+      host.style.left = `${(parseFloat(host.style.left) || 0) + (rect.right - hostRect.left)}px`
+    }
   }
 
   function scheduleReposition(): void {
@@ -160,12 +206,32 @@ export function createAffordance(onClick: (el: HTMLTextAreaElement) => void): Af
     })
   }
 
+  // F6: same low-frequency safety net as textareaAdapter.ts's own
+  // POSITION_DRIFT_CHECK_MS interval — the scroll/resize listeners above
+  // only catch a change in the anchor field's SCROLL POSITION or the
+  // window's own size; a same-sized field that simply MOVES (a banner
+  // above it finishes loading, a sibling expands/collapses, a flex/grid
+  // reflow shifts the row) fires neither. reposition() is idempotent when
+  // nothing moved, so this is cheap even at 1s.
+  const POSITION_DRIFT_CHECK_MS = 1000
+  let positionDriftInterval: ReturnType<typeof setInterval> | null = null
+
+  function startTrackingPosition(): void {
+    document.addEventListener('scroll', scheduleReposition, { capture: true, passive: true })
+    window.addEventListener('resize', scheduleReposition)
+    positionDriftInterval = setInterval(reposition, POSITION_DRIFT_CHECK_MS)
+  }
+
   function stopTrackingPosition(): void {
     document.removeEventListener('scroll', scheduleReposition, { capture: true })
     window.removeEventListener('resize', scheduleReposition)
     if (pendingReposition !== null) {
       cancelAnimationFrame(pendingReposition)
       pendingReposition = null
+    }
+    if (positionDriftInterval !== null) {
+      clearInterval(positionDriftInterval)
+      positionDriftInterval = null
     }
   }
 
@@ -193,18 +259,32 @@ export function createAffordance(onClick: (el: HTMLTextAreaElement) => void): Af
     host,
     showFor(el) {
       currentEl = el
+      // F5 (Copilot review round 5): insert the host as the field's own
+      // NEXT SIBLING — not appended at the end of documentElement — so the
+      // chip button is next in sequential (Tab) focus order right after
+      // the field. A host parked at the end of the DOM put Tab-from-field
+      // on the page's own next control instead, skipping the chip (and its
+      // focusout) entirely. Unconditional and idempotent: called on every
+      // showFor (including repeat calls for a field that's already
+      // adjacent), it simply re-inserts the host at the same spot — which
+      // is also what re-attaches it cleanly after a Turbo body swap tore
+      // the host out along with (or instead of) the field (see reposition()
+      // and its own isConnected guard).
+      el.insertAdjacentElement('afterend', host)
+      // display must be '' BEFORE reposition() measures the host's own
+      // rect (below) — a display:none box has no layout, so measuring it
+      // first would always report a zero rect and feed a bogus delta into
+      // the correction.
+      host.style.display = ''
       // Anchored to the field's top-right corner: left/top name that
       // corner's page coordinates (viewport rect + scroll offset); the
       // transform below pulls the chip back so it straddles the corner
       // instead of growing off the field entirely.
       reposition()
       host.style.transform = 'translate(-100%, -50%)'
-      if (!host.isConnected) document.documentElement.appendChild(host)
-      host.style.display = ''
       if (!visible) {
         visible = true
-        document.addEventListener('scroll', scheduleReposition, { capture: true, passive: true })
-        window.addEventListener('resize', scheduleReposition)
+        startTrackingPosition()
       }
     },
     hide() {

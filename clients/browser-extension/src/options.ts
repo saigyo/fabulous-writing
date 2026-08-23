@@ -39,7 +39,7 @@ export async function initOptions(): Promise<void> {
       await setServerUrl(normalized)
       statusLine.textContent = 'Saved'
     } else {
-      statusLine.textContent = 'Invalid URL format. Use http://localhost:8100 or https://example.com'
+      statusLine.textContent = 'Invalid URL format. Use https:// (http is allowed for localhost only)'
     }
   })
 
