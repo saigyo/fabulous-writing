@@ -58,11 +58,12 @@ describe('Registry — rule 1: fieldConnected', () => {
     ])
   })
 
-  it('same-tab reconnect with a new fieldId emits no detach effect (Critical-1 regression pin)', () => {
+  it('same-tab reconnect with a new fieldId emits no detach effect, but still clears the old ' +
+    'field\'s badge (Critical-1 regression pin; Copilot round 7, F2)', () => {
     const registry = new Registry()
     registry.fieldConnected(W, TAB_A, fieldConnected('f1'))
     const effects = registry.fieldConnected(W, TAB_A, fieldConnected('f2'))
-    expect(effects).toEqual([])
+    expect(effects).toEqual([{ kind: 'badge', tabId: TAB_A, text: '' }])
   })
 
   it('relays to the panel when the panel is ready', () => {
