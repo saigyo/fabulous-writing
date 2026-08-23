@@ -146,8 +146,9 @@ extension ID, so the hosted server's `embed.allowed_ancestors` entry works
 for all testers with zero server-side setup.
 
 Cutting an extension release: bump `version` in both
-`clients/browser-extension/package.json` and `public/manifest.json` (a unit
-test pins the pair together), merge, then tag `chrome-ext-vX.Y.Z` on main —
+`clients/browser-extension/package.json` and
+`clients/browser-extension/public/manifest.json` (a unit test pins the pair
+together), merge, then tag `chrome-ext-vX.Y.Z` on main —
 `.github/workflows/chrome-extension-release.yml` refuses a tag that doesn't
 match the manifest version, runs the lint/test/build gates, and attaches the
 zip to the GH release.
