@@ -94,10 +94,20 @@ const CHIP_STYLE = `
   }
   /* "all: unset" above also wipes the button's native focus ring — restore
      a visible one for keyboard activation (Finding F7). Inset (not offset)
-     so the ring stays inside the pill's own clipped/rounded edge. */
+     so the ring stays inside the pill's own clipped/rounded edge — same
+     reason both layers below are inset rather than an outward glow: .pill
+     clips overflow, so anything drawn OUTSIDE the border box is invisible.
+     Copilot round 11, F3: a single #6e56cf ring was IDENTICAL to the 'busy'
+     segment's own background (below), so it vanished completely on exactly
+     one of the five states it needs to be visible on. Two layers instead —
+     a white ring pulled 4px in, plus a dark line right at the edge — is
+     visible against every one of the pill's saturated backgrounds (the dark
+     line reads against the white ring itself even in the pathological case
+     where a background happened to be light). */
   button:focus-visible {
-    outline: 2px solid #6e56cf;
-    outline-offset: -2px;
+    outline: 2px solid #fff;
+    outline-offset: -4px;
+    box-shadow: inset 0 0 0 2px #1c1c21;
   }
   .main {
     min-width: 22px;
@@ -105,12 +115,29 @@ const CHIP_STYLE = `
     padding: 0 6px;
     background: #52525b;
   }
-  .pill[data-state='connected'] .main { background: #16a34a; }
+  /* Copilot round 11, F4: #16a34a with white 12px/600 text is ~3.3:1 —
+     below WCAG AA's 4.5:1 floor for text this small (12px doesn't qualify
+     as "large text" even at this weight). #166534 (same green family, one
+     step darker) is ~7.1:1 against white — verified via the standard
+     relative-luminance formula, not eyeballed; comfortably clears 4.5:1
+     with margin to spare for anti-aliasing at small sizes. */
+  .pill[data-state='connected'] .main { background: #166534; }
   .pill[data-state='busy'] .main { background: #6e56cf; }
   .pill[data-state='signed-out'] .main { background: #d97706; }
   .pill[data-state='error'] .main { background: #dc2626; }
   .disconnect {
     width: 0;
+    /* Owner report, round 11 F6: the connected pill showed a visible ×
+       sliver at rest even though width was 0 — the button rule above is
+       display:flex, and a flex item's default min-width:auto refuses to
+       shrink below its own CONTENT size (the × glyph) regardless of an
+       explicit width:0. min-width:0 opts back into the explicit width;
+       overflow:hidden is the belt-and-suspenders twin of the same fix (a
+       non-visible overflow also zeroes the flex automatic minimum size per
+       spec, and clips the glyph locally even if something else here ever
+       changes). */
+    min-width: 0;
+    overflow: hidden;
     height: 22px;
     background: #3f3f46;
     transition: width 150ms ease;

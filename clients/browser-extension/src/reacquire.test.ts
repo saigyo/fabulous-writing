@@ -22,22 +22,29 @@ beforeEach(() => {
 describe('computeFingerprint', () => {
   it('prefers a non-empty id over everything else', () => {
     const el = textarea({ id: 'box', name: 'n', 'aria-label': 'a' })
-    expect(computeFingerprint(el)).toEqual({ kind: 'id', value: 'box', formId: 'document' })
+    expect(computeFingerprint(el)).toEqual({ kind: 'id', value: 'box', formId: 'document', scopeKind: 'document' })
   })
 
   it('falls back to name when there is no id', () => {
     const el = textarea({ name: 'n', 'aria-label': 'a' })
-    expect(computeFingerprint(el)).toEqual({ kind: 'name', value: 'n', formId: 'document' })
+    document.body.appendChild(el)
+    expect(computeFingerprint(el)).toEqual({ kind: 'name', value: 'n', formId: 'document', scopeKind: 'document' })
   })
 
   it('falls back to aria-label when there is no id/name', () => {
     const el = textarea({ 'aria-label': 'Comment body' })
-    expect(computeFingerprint(el)).toEqual({ kind: 'aria', value: 'Comment body', formId: 'document' })
+    document.body.appendChild(el)
+    expect(computeFingerprint(el)).toEqual(
+      { kind: 'aria', value: 'Comment body', formId: 'document', scopeKind: 'document' },
+    )
   })
 
   it('falls back to aria-labelledby when there is no aria-label', () => {
     const el = textarea({ 'aria-labelledby': 'label-id' })
-    expect(computeFingerprint(el)).toEqual({ kind: 'aria', value: 'label-id', formId: 'document' })
+    document.body.appendChild(el)
+    expect(computeFingerprint(el)).toEqual(
+      { kind: 'aria', value: 'label-id', formId: 'document', scopeKind: 'document' },
+    )
   })
 
   it('falls back to form identity + index among the form\'s own textareas when there is no other identity', () => {
@@ -48,7 +55,9 @@ describe('computeFingerprint', () => {
     const el = textarea()
     form.append(other, el)
 
-    expect(computeFingerprint(el)).toEqual({ kind: 'formIndex', value: 'composer:1', formId: 'composer' })
+    expect(computeFingerprint(el)).toEqual(
+      { kind: 'formIndex', value: 'composer:1', formId: 'composer', scopeKind: 'form' },
+    )
   })
 
   it('falls back to a bare document scope when the field has no form ancestor', () => {
@@ -56,7 +65,9 @@ describe('computeFingerprint', () => {
     const el = textarea()
     document.body.append(other, el)
 
-    expect(computeFingerprint(el)).toEqual({ kind: 'formIndex', value: 'document:1', formId: 'document' })
+    expect(computeFingerprint(el)).toEqual(
+      { kind: 'formIndex', value: 'document:1', formId: 'document', scopeKind: 'document' },
+    )
   })
 
   // Copilot round 10, F3: name/aria fingerprints now also capture the
@@ -68,7 +79,7 @@ describe('computeFingerprint', () => {
     const el = textarea({ name: 'body' })
     form.appendChild(el)
 
-    expect(computeFingerprint(el)).toEqual({ kind: 'name', value: 'body', formId: 'composer' })
+    expect(computeFingerprint(el)).toEqual({ kind: 'name', value: 'body', formId: 'composer', scopeKind: 'form' })
   })
 })
 
@@ -76,19 +87,21 @@ describe('findFingerprintMatch', () => {
   it('matches by id', () => {
     const el = textarea({ id: 'box' })
     document.body.appendChild(el)
-    expect(findFingerprintMatch({ kind: 'id', value: 'box', formId: 'document' })).toBe(el)
+    expect(findFingerprintMatch({ kind: 'id', value: 'box', formId: 'document', scopeKind: 'document' })).toBe(el)
   })
 
   it('matches by name', () => {
     const el = textarea({ name: 'body' })
     document.body.appendChild(el)
-    expect(findFingerprintMatch({ kind: 'name', value: 'body', formId: 'document' })).toBe(el)
+    expect(findFingerprintMatch({ kind: 'name', value: 'body', formId: 'document', scopeKind: 'document' })).toBe(el)
   })
 
   it('matches by aria-label', () => {
     const el = textarea({ 'aria-label': 'Comment body' })
     document.body.appendChild(el)
-    expect(findFingerprintMatch({ kind: 'aria', value: 'Comment body', formId: 'document' })).toBe(el)
+    expect(
+      findFingerprintMatch({ kind: 'aria', value: 'Comment body', formId: 'document', scopeKind: 'document' }),
+    ).toBe(el)
   })
 
   it('matches by form identity + index', () => {
@@ -99,11 +112,13 @@ describe('findFingerprintMatch', () => {
     const el = textarea()
     form.append(other, el)
 
-    expect(findFingerprintMatch({ kind: 'formIndex', value: 'composer:1', formId: 'composer' })).toBe(el)
+    expect(
+      findFingerprintMatch({ kind: 'formIndex', value: 'composer:1', formId: 'composer', scopeKind: 'form' }),
+    ).toBe(el)
   })
 
   it('returns null when nothing matches', () => {
-    expect(findFingerprintMatch({ kind: 'id', value: 'nope', formId: 'document' })).toBeNull()
+    expect(findFingerprintMatch({ kind: 'id', value: 'nope', formId: 'document', scopeKind: 'document' })).toBeNull()
   })
 
   it('returns null for a match that exists but is not an eligible field (too small)', () => {
@@ -111,7 +126,9 @@ describe('findFingerprintMatch', () => {
     el.id = 'tiny'
     // No stubRect — happy-dom's default rect is 0x0, below MIN_FIELD_*.
     document.body.appendChild(el)
-    expect(findFingerprintMatch({ kind: 'id', value: 'tiny', formId: 'document' })).toBeNull()
+    expect(
+      findFingerprintMatch({ kind: 'id', value: 'tiny', formId: 'document', scopeKind: 'document' }),
+    ).toBeNull()
   })
 
   it('a same-shaped React-style rebuild (id-based field replaced by a fresh node with the same id) matches the NEW node', () => {
@@ -162,18 +179,6 @@ describe('findFingerprintMatch', () => {
       expect(match).not.toBe(bodyA)
     })
 
-    it('refuses (returns null) when an eligible name match is ambiguous within the searched scope', () => {
-      // No form ancestor for either — both share the document-wide scope.
-      const other = textarea({ name: 'body' })
-      const el = textarea({ name: 'body' })
-      document.body.append(other, el)
-      const fingerprint = computeFingerprint(el)
-
-      // Two equally-eligible textarea[name="body"] fields at document
-      // scope: neither is a safe rebind target.
-      expect(findFingerprintMatch(fingerprint)).toBeNull()
-    })
-
     it('a unique-in-form match still rebinds', () => {
       const form = document.createElement('form')
       form.id = 'composer'
@@ -185,6 +190,191 @@ describe('findFingerprintMatch', () => {
       el.remove()
       const rebuilt = textarea({ name: 'body' })
       form.appendChild(rebuilt)
+
+      expect(findFingerprintMatch(fingerprint)).toBe(rebuilt)
+    })
+  })
+})
+
+// Copilot round 11, F1+F2: reacquire's scope/ambiguity semantics restructured
+// into one explicit state machine (see reacquire.ts's own module comment).
+//
+// F1 — ambiguity is now decided at CAPTURE time: an attribute that is not
+// unique in its own scope when the session starts is NEVER used as this
+// fingerprint's identity, full stop — not "unique enough at rebind time",
+// which is what let a same-attribute SURVIVOR get mistaken for the
+// connected field's replacement once the connected field itself vanished.
+//
+// F2 — every fingerprint now carries an explicit scopeKind, fixed at
+// capture: 'document' (no form ancestor — document-wide search is safe BY
+// DESIGN) or 'form' (a form ancestor existed — the match is scoped to that
+// same form, and REFUSES rather than widening to the whole document if that
+// form cannot currently be resolved).
+//
+// Scenario table: {attribute unique at capture, ambiguous at capture} x
+// {form present, form absent this poll, form replaced-and-returns} x
+// {survivor with same attribute exists, doesn't}.
+describe('Copilot round 11, F1+F2: capture-time ambiguity and explicit form/document scoping', () => {
+  describe('F1: capture-time ambiguity decides the fingerprint kind, not rebind-time', () => {
+    it('unique at capture, form present -> kind stays "name", rebinds through a React-style replace', () => {
+      const form = document.createElement('form')
+      form.id = 'composer'
+      document.body.appendChild(form)
+      const el = textarea({ name: 'body' })
+      form.appendChild(el)
+
+      const fingerprint = computeFingerprint(el)
+      expect(fingerprint.kind).toBe('name')
+
+      el.remove()
+      const rebuilt = textarea({ name: 'body' })
+      form.appendChild(rebuilt)
+
+      expect(findFingerprintMatch(fingerprint)).toBe(rebuilt)
+    })
+
+    // The headline bug: two same-named textareas coexist AT CAPTURE — one
+    // connected (el), one not (survivor). The old code decided ambiguity
+    // only at rebind time, so once el vanished the survivor alone looked
+    // "unique" and was silently (and wrongly) treated as el's replacement.
+    it('ambiguous at capture (a same-attribute survivor already coexists) -> falls to formIndex, so the survivor is never mistaken for the connected field\'s replacement', () => {
+      const form = document.createElement('form')
+      form.id = 'composer'
+      document.body.appendChild(form)
+      const survivor = textarea({ name: 'body' })
+      const el = textarea({ name: 'body' })
+      form.append(survivor, el)
+
+      const fingerprint = computeFingerprint(el)
+      expect(fingerprint).toEqual({ kind: 'formIndex', value: 'composer:1', formId: 'composer', scopeKind: 'form' })
+
+      // el vanishes (mid-React-replacement); only the survivor with the
+      // SAME name attribute is left. A name-keyed match would wrongly
+      // resolve to it; the formIndex fingerprint never even tries.
+      el.remove()
+      expect(findFingerprintMatch(fingerprint)).toBeNull()
+
+      // The field comes back at the same POSITION (index 1) inside the
+      // form — the only identity this fingerprint ever trusted.
+      const rebuilt = textarea({ name: 'body' })
+      form.appendChild(rebuilt)
+      expect(findFingerprintMatch(fingerprint)).toBe(rebuilt)
+    })
+
+    it('ambiguous at capture with no form ancestor (document scope) also falls to formIndex', () => {
+      const survivor = textarea({ 'aria-label': 'Comment' })
+      const el = textarea({ 'aria-label': 'Comment' })
+      document.body.append(survivor, el)
+
+      expect(computeFingerprint(el)).toEqual(
+        { kind: 'formIndex', value: 'document:1', formId: 'document', scopeKind: 'document' },
+      )
+    })
+
+    // Defense in depth: findFingerprintMatch itself still refuses an
+    // ambiguous match if ever handed one directly — computeFingerprint
+    // above just no longer produces this shape in practice.
+    it('findFingerprintMatch still refuses a hand-fed ambiguous name fingerprint (rebind-time safety net)', () => {
+      const other = textarea({ name: 'body' })
+      const el = textarea({ name: 'body' })
+      document.body.append(other, el)
+
+      expect(
+        findFingerprintMatch({ kind: 'name', value: 'body', formId: 'document', scopeKind: 'document' }),
+      ).toBeNull()
+    })
+  })
+
+  describe('F2: a "form" fingerprint refuses (never falls back to document) when the form cannot be resolved', () => {
+    it('form present this poll -> normal scoped rebind', () => {
+      const formA = document.createElement('form')
+      formA.id = 'form-a'
+      document.body.appendChild(formA)
+      const el = textarea({ name: 'body' })
+      formA.appendChild(el)
+      const fingerprint = computeFingerprint(el)
+      expect(fingerprint.scopeKind).toBe('form')
+
+      el.remove()
+      const rebuilt = textarea({ name: 'body' })
+      formA.appendChild(rebuilt)
+      expect(findFingerprintMatch(fingerprint)).toBe(rebuilt)
+    })
+
+    // The headline bug: the field's own form is temporarily gone (mid
+    // React-replacement of a larger subtree) while a DIFFERENT, unique
+    // same-named textarea sits outside any form elsewhere in the document.
+    // A document-wide fallback would find and rebind to it; refusing is the
+    // only safe response — the original form may still come back.
+    it('form absent this poll, with a document-wide same-attribute match available elsewhere -> refuses (null), never rebinds to the other field', () => {
+      const form = document.createElement('form')
+      form.id = 'composer'
+      document.body.appendChild(form)
+      const el = textarea({ name: 'body' })
+      form.appendChild(el)
+      const fingerprint = computeFingerprint(el)
+
+      // The entire form (not just the field) is torn out.
+      form.remove()
+      // A DIFFERENT same-named textarea, outside any form, would be a
+      // "unique document-wide match" if searched that way.
+      const decoy = textarea({ name: 'body' })
+      document.body.appendChild(decoy)
+
+      expect(findFingerprintMatch(fingerprint)).toBeNull()
+    })
+
+    it('form replaced-and-returns: refuses while absent, then rebinds once the form (and field) are back', () => {
+      const form = document.createElement('form')
+      form.id = 'composer'
+      document.body.appendChild(form)
+      const el = textarea({ name: 'body' })
+      form.appendChild(el)
+      const fingerprint = computeFingerprint(el)
+
+      form.remove()
+      expect(findFingerprintMatch(fingerprint)).toBeNull()
+
+      // The host re-inserts a FRESH form with the same id, holding a fresh
+      // field with the same name — the common "whole composer subtree got
+      // replaced" case.
+      const newForm = document.createElement('form')
+      newForm.id = 'composer'
+      document.body.appendChild(newForm)
+      const rebuilt = textarea({ name: 'body' })
+      newForm.appendChild(rebuilt)
+
+      expect(findFingerprintMatch(fingerprint)).toBe(rebuilt)
+    })
+
+    it('formIndex kind also refuses rather than searching document when its own form is absent', () => {
+      const form = document.createElement('form')
+      form.id = 'composer'
+      document.body.appendChild(form)
+      const other = textarea()
+      const el = textarea()
+      form.append(other, el)
+      const fingerprint = computeFingerprint(el)
+      expect(fingerprint.kind).toBe('formIndex')
+
+      form.remove()
+      // Decoy textareas at document-wide indices, outside any form — a
+      // document-wide fallback would land on one of these.
+      document.body.appendChild(textarea())
+      document.body.appendChild(textarea())
+
+      expect(findFingerprintMatch(fingerprint)).toBeNull()
+    })
+
+    it('a "document" fingerprint (no form ancestor at capture) DOES search document-wide -- by design, not a bug', () => {
+      const el = textarea({ name: 'solo' })
+      document.body.appendChild(el)
+      const fingerprint = computeFingerprint(el)
+      expect(fingerprint.scopeKind).toBe('document')
+
+      el.remove()
+      const rebuilt = textarea({ name: 'solo' })
+      document.body.appendChild(rebuilt)
 
       expect(findFingerprintMatch(fingerprint)).toBe(rebuilt)
     })

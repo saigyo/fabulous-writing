@@ -404,6 +404,76 @@ describe('createAffordance: focus-visible style', () => {
 
     affordance.dispose()
   })
+
+  // Copilot round 11, F3: a single #6e56cf ring was identical to the
+  // 'busy' segment's own background, so it was invisible on exactly one of
+  // the five states it needs to work on. Now two inset layers — a white
+  // ring and a dark line right at the edge — pinned directly so a
+  // regression back to the old single-color ring is caught.
+  it('the focus ring is a two-layer pair (outline + box-shadow), not the old single #6e56cf outline', () => {
+    const affordance = createAffordance(() => {}, () => {})
+    affordance.showFor(el)
+
+    const style = affordance.host.shadowRoot!.querySelector('style')!
+    const block = style.textContent!.match(/button:focus-visible\s*\{([^}]*)\}/)![1]
+
+    expect(block).toMatch(/outline:\s*2px solid #fff;/)
+    expect(block).toMatch(/box-shadow:\s*inset[^;]+;/)
+    expect(block).not.toContain('#6e56cf')
+
+    affordance.dispose()
+  })
+})
+
+// Copilot round 11, F4: white 12px/600 text on #16a34a is ~3.3:1 — below
+// WCAG AA's 4.5:1 floor for text this small. #166534 (same green family) is
+// ~7.1:1, verified via the standard relative-luminance formula.
+describe('createAffordance: connected chip background meets AA contrast (F4, round 11)', () => {
+  it('the connected background is the darker, AA-passing green, not the old #16a34a', () => {
+    const affordance = createAffordance(() => {}, () => {})
+    affordance.showFor(el)
+
+    const style = affordance.host.shadowRoot!.querySelector('style')!
+    const block = style.textContent!.match(/\.pill\[data-state='connected'\] \.main\s*\{([^}]*)\}/)![1]
+
+    expect(block).toMatch(/background:\s*#166534;/)
+    expect(block).not.toContain('#16a34a')
+
+    affordance.dispose()
+  })
+})
+
+// Owner report, round 11 F6: the round-10 fix made the × structurally
+// absent while idle, but the CONNECTED pill still rendered it at rest
+// (width 0) — a flex item's `min-width: auto` default refuses to shrink
+// below its own content size unless overridden, so the × glyph leaked a
+// visible sliver on the pill's right edge even at width:0.
+describe('createAffordance: connected × segment has zero footprint at rest (F6, round 11)', () => {
+  it('the collapsed .disconnect rule zeroes both width and min-width and clips overflow', () => {
+    const affordance = createAffordance(() => {}, () => {})
+    affordance.showFor(el)
+
+    const style = affordance.host.shadowRoot!.querySelector('style')!
+    const block = style.textContent!.match(/\.disconnect\s*\{([^}]*)\}/)![1]
+
+    expect(block).toMatch(/width:\s*0;/)
+    expect(block).toMatch(/min-width:\s*0;/)
+    expect(block).toMatch(/overflow:\s*hidden;/)
+
+    affordance.dispose()
+  })
+
+  it('the hover/focus-within reveal rule still expands the collapsed segment to a real width', () => {
+    const affordance = createAffordance(() => {}, () => {})
+    affordance.showFor(el)
+
+    const style = affordance.host.shadowRoot!.querySelector('style')!
+    const block = style.textContent!.match(/:hover \.disconnect,[\s\S]*?\{([^}]*)\}/)![1]
+
+    expect(block).toMatch(/width:\s*20px;/)
+
+    affordance.dispose()
+  })
 })
 
 // Copilot round 2 (B43 C2), S5: the chip never repositioned while shown — a
