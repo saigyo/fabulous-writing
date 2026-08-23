@@ -4595,3 +4595,52 @@ bumped locally and deployed first (`fly deploy --ha=false`), config
 committed through this PR afterwards — deploy-then-commit, as agreed.
 Verified post-deploy: single machine, checks 1/1, `/api/health` 200,
 image digest reports 0.6.1.
+
+## 2026-08-23 — B43 C1: embed surface + bridge protocol (PR #138)
+Commits: `6d086b2`…`04e3245` (spec + plan + implementation + review rounds)
+
+First slice of the embeddable-clients program (#134): the service now serves
+its own login + selectors + findings sidebar at `/embed/`, designed to run
+inside an iframe owned by a host (C2's browser-extension side panel, later
+VS Code/JetBrains) and to speak a versioned `postMessage` bridge. The load-
+bearing design moves: a `DocumentPort` indirection so `controller`/`suggest`/
+`autosave`/`hydration`/`Sidebar` run against either CodeMirror or a new
+host-document shim (null-object default, `ApplyResult` discriminating
+ok/not-found/refused); the shim ports the `findingsField` semantics to a
+single-splice world (full-text diff, inclusive suffix bound, adjacency-drop
+parity with a documented rightmost-splice divergence) and owns two-way
+code-point↔UTF-16 conversion, fixing embed-side the astral desync the main
+app still has (#136); replacements are echo-confirmed with `expectedText`
+verification and a 2 s timeout; the bridge pins the first `hello`'s
+source+origin — parent-only, because `frame-ancestors` restricts framing but
+not WindowProxy access — and no token ever crosses it. Backend: `/embed*`
+serves `embed.html` under a config-driven `frame-ancestors` CSP (origin-parsed
+allowlist, bare `self` normalized, default `'none'`), all main-SPA HTML now
+carries `frame-ancestors 'none'`, and `CheckRequest` gained a validated
+`client` tag (persistence deferred with B41 → #135). A dev-only simulator page
+carries the reference `TextareaAdapter` (mirror-overlay marks, sweep-line
+segment partitioning, undo-preserving `execCommand` apply) that C2 lifts.
+
+Process was the full SDD cycle — twice-reviewed plan, 12 tasks with per-task
+reviews (three fix rounds: connect-time metrics, the sign-out affordance a
+partition-scoped session absolutely needs, a `$`-anchor regex bypass), a
+whole-branch Opus review, live e2e — followed by a review campaign worth
+recording: Copilot produced twelve COMMENTED rounds (33 findings, every
+suppressed comment triaged per house rule) without converging, so per past
+practice we stopped it and ran one exhaustive local Opus closing review. That
+found in one pass what the piecemeal rounds hadn't: `setRangeText` silently
+destroys the textarea undo stack (measured in Chromium — the spec's "undo
+survives" premise was false; now execCommand-first), the password-change
+re-login tearing down a live check through the embed activation path, and an
+opaque-origin pin that would throw on every outbound post. Its 28 actionable
+findings landed as one wave + re-review; a final composed-HEAD e2e pass
+(undo-after-apply via Cmd+Z, password change, language switch, logout →
+re-login republish, disconnect/reconnect, desync refusal) passed clean.
+
+Verification: frontend 898 tests + oxlint + `tsc -b` + build + the new
+`check:embed` bundle guard (embed chunk graph provably CodeMirror-free, now a
+CI step); backend 1606 passed zero warnings; CI green throughout. Deferred,
+tracked: #135 client-tag ledger column, #136 main-app astral fix, #137
+shim/store divergence family (two unreachable-in-C1 races), IPv6 ancestors +
+embed language persistence on #134's C2 checklist. Branch rebased onto main
+mid-flight to absorb PR #131; both gates re-run post-rebase before push.
