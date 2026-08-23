@@ -1068,16 +1068,24 @@ describe('createTextareaAdapter: transform-scale-aware overlay geometry sync', (
   // I1: a content-box field (the default, and the box model outside the
   // simulator's own `* { box-sizing: border-box }`) with padding/border
   // used to report a PHANTOM scale here even with NO ancestor transform at
-  // all — overlay.style.width/height held the field's CONTENT-box size
-  // (say, a computed height of 100px) while the overlay's own on-screen
-  // rect was its BORDER box (100 + 24px padding + 2px border = 126px),
-  // producing a bogus scale of 126/100 = 1.26 and under-applying every
-  // measured delta by 21%. offsetWidth/offsetHeight are always the
-  // border-box size regardless of box-sizing, so stubbing the overlay's
-  // offset to match its own on-screen rect exactly (as it always does with
-  // no ancestor transform) must land at scale 1 — the full, unscaled delta,
-  // not 79% of it.
+  // all. el.style.width/height (100x100, the field's own CONTENT-box size)
+  // is what MIRRORED_PROPS copies verbatim onto overlay.style.width/height
+  // — the OLD denominator. The overlay's actual on-screen rect (under no
+  // transform) equals its own BORDER box: 100 + 24px padding + 2px border =
+  // 126 per axis — stubbed both as the rect (stubRects) and as
+  // offsetWidth/Height (stubOverlayOffset), matching real layout exactly.
+  // OLD code: rawScale = 126 (rect) / 100 (style.width) = 1.26 — a bogus
+  // scale with NO transform anywhere, under-applying the measured delta by
+  // 21%, so top/left land at ~6.35px, not 8px. FIXED code: rawScale = 126
+  // (rect) / 126 (offsetWidth) = 1 — the full, unscaled 8px delta. This is
+  // the one case in this describe block where style.width/height and
+  // offsetWidth/Height deliberately DIVERGE — every other case here either
+  // leaves style.width/height unset (falls back to scale 1 either way) or
+  // sets them equal to the offset stub (I1's OWN "no padding/border" case
+  // above) precisely so it does NOT exercise this divergence.
   it('a content-box field with padding/border does not produce a phantom scale with no ancestor transform', () => {
+    el.style.width = '100px'
+    el.style.height = '100px'
     stubRects({ top: 108, left: 8 }, { top: 100, left: 0, width: 126, height: 126 })
     stubOverlayOffset(126, 126)
 
