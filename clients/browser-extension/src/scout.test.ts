@@ -275,10 +275,22 @@ describe('scout: pagehide/bfcache teardown (Copilot round 3, S6; I2 closing swee
     const newPort = lastConnectedPort()
     expect(newPort).not.toBe(port)
 
-    // A trailing disconnect of the OLD, already-nulled port must be a
-    // harmless no-op — tolerant of the port having been nulled out from
-    // under it.
+    // F3 (Copilot round 4, closing sweep): the OLD port's onDisconnect
+    // callback was captured against that specific port instance, so firing
+    // it now (simulating a queued disconnect that lands AFTER the restore
+    // already opened newPort) must be a no-op — not tear down the new
+    // session/port. Assert the survivors are untouched: no new connect, the
+    // chip still idle (not reset to some torn-down state), and a real click
+    // on the current field still reuses newPort rather than opening a third.
     port.onDisconnect.emit(port)
+    expect(browserMock.runtime.connect).toHaveBeenCalledTimes(2)
+    expect(freshHost!.shadowRoot!.querySelector('button')!.dataset.state).toBe('idle')
+
+    clickChip()
+    expect(browserMock.runtime.connect).toHaveBeenCalledTimes(2)
+    expect(lastConnectedPort()).toBe(newPort)
+    expect(chipButton().dataset.state).toBe('busy')
+
     newPort.onDisconnect.emit(newPort)
     el.remove()
   })

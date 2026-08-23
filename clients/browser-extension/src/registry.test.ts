@@ -240,31 +240,37 @@ describe('Registry — rule 5: embedRelay', () => {
     expect(effects[0]).toEqual({ kind: 'badge', tabId: TAB_A, text: '' })
   })
 
-  it('badge-cleared-after-disconnect: status with no connected field targets the last connected tabId', () => {
+  // Copilot round 4 (closing sweep), F1: badge/ctl-status effects fire only
+  // while the window has a LIVE field. The disconnect paths themselves
+  // (hostRelay's fieldDisconnected, fieldPortGone, fieldConnected's
+  // cross-tab replace branch — each pinned in its own describe block above)
+  // already emit the immediate badge clear; a trailing status for a
+  // now-fieldless window must not emit anything at all.
+  it('a fieldless status after disconnect emits no badge effect (F1 regression pin)', () => {
     const registry = new Registry()
     registry.fieldConnected(W, TAB_A, fieldConnected('f1'))
     registry.fieldPortGone(W, TAB_A)
     const effects = registry.embedRelay(W, status('idle', 0))
-    expect(effects).toEqual([{ kind: 'badge', tabId: TAB_A, text: '' }])
+    expect(effects).toEqual([])
   })
 
-  // M4 (closing sweep): the FIRST post-disconnect status still satisfies
-  // rule 5 above (the badge-clear a live embed's own final status
-  // delivers), but lastFieldTabId is a one-shot after that — a window that
-  // no longer has a live field must not keep re-writing TAB_A's badge on
-  // every further stray status. This matters most after a cross-window
-  // tab-move (fieldPortGone(oldWindow, tab), a fresh fieldConnected in the
-  // NEW window's own registry entry): a trailing status from the OLD
-  // window's now-amnesiac embed must not wipe the badge the tab's NEW
-  // window is actively painting.
-  it('does not repeat the badge write for a second post-disconnect status in the same window', () => {
+  it('field disconnects in window 1, tab reconnects in window 2: a late fieldless status in ' +
+    'window 1 emits no badge effect on the tab now owned by window 2 (F1 regression pin)', () => {
     const registry = new Registry()
+    const W2 = 2
     registry.fieldConnected(W, TAB_A, fieldConnected('f1'))
     registry.fieldPortGone(W, TAB_A)
-    registry.embedRelay(W, status('idle', 0))
-
-    const effects = registry.embedRelay(W, status('checking', 5))
-    expect(effects).toEqual([])
+    // The tab reconnects in a different window and gets a live finding count.
+    registry.fieldConnected(W2, TAB_A, fieldConnected('f1'))
+    const liveEffects = registry.embedRelay(W2, status('checking', 3))
+    expect(liveEffects).toEqual([
+      { kind: 'badge', tabId: TAB_A, text: '3' },
+      { kind: 'send', to: 'field', windowId: W2, tabId: TAB_A, message: { ctl: { kind: 'status', phase: 'checking', findingCount: 3, fieldId: 'f1' } } },
+    ])
+    // A late status delivered to the OLD window's now-fieldless entry must
+    // not wipe the badge window 2 just painted.
+    const staleEffects = registry.embedRelay(W, status('idle', 0))
+    expect(staleEffects).toEqual([])
   })
 
   it('routes non-status embed messages verbatim to the connected tab field port', () => {
