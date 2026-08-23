@@ -9,9 +9,14 @@
 // pins are covered here; the hover/focus delegation delay and the pagehide
 // teardown are exercised structurally by the build + the manual gesture
 // check (Task 7 step 5), not unit-tested.
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { browserMock, type MockPort } from './testing/browserMock'
 import './scout'
+
+// Must exceed scout.ts's own (private) HIDE_DELAY_MS — this file has no
+// access to that constant, so it advances generously past it instead of
+// mirroring the exact value.
+const PAST_HIDE_DELAY_MS = 1000
 
 function stubRect(el: HTMLElement): void {
   el.getBoundingClientRect = () => ({
@@ -31,9 +36,12 @@ function show(el: HTMLTextAreaElement): void {
   el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
 }
 
+function affordanceHost(): HTMLElement {
+  return document.documentElement.querySelector('[data-fw-affordance]') as HTMLElement
+}
+
 function chipButton(): HTMLButtonElement {
-  const host = document.documentElement.querySelector('[data-fw-affordance]') as HTMLElement
-  return host.shadowRoot!.querySelector('button')!
+  return affordanceHost().shadowRoot!.querySelector('button')!
 }
 
 function clickChip(): void {
@@ -121,5 +129,78 @@ describe('scout: ctl status', () => {
 
     port.onDisconnect.emit(port)
     el.remove()
+  })
+})
+
+describe('scout: hide-on-leave round trip (chip side)', () => {
+  it('field -> chip -> away from both hides the chip after the delay', () => {
+    vi.useFakeTimers()
+    try {
+      const el = eligibleField()
+      show(el)
+      const host = affordanceHost()
+      expect(host.style.display).not.toBe('none')
+
+      // Leaving the field toward the chip must not hide it.
+      el.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: host }))
+      vi.advanceTimersByTime(PAST_HIDE_DELAY_MS)
+      expect(host.style.display).not.toBe('none')
+
+      // Leaving the CHIP toward neither the field nor anywhere in
+      // particular must schedule the same delayed hide (the bug: this
+      // path previously scheduled nothing at all, leaving the chip stuck
+      // visible forever once hovered).
+      host.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }))
+      expect(host.style.display).not.toBe('none') // not yet — still within the delay
+      vi.advanceTimersByTime(PAST_HIDE_DELAY_MS)
+      expect(host.style.display).toBe('none')
+
+      const port = lastConnectedPort()
+      port.onDisconnect.emit(port)
+      el.remove()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('field -> chip -> back to the field keeps the chip shown', () => {
+    vi.useFakeTimers()
+    try {
+      const el = eligibleField()
+      show(el)
+      const host = affordanceHost()
+
+      el.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: host }))
+      host.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: el }))
+      vi.advanceTimersByTime(PAST_HIDE_DELAY_MS)
+
+      expect(host.style.display).not.toBe('none')
+
+      const port = lastConnectedPort()
+      port.onDisconnect.emit(port)
+      el.remove()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('scout: chip state is gated per shown field', () => {
+  it('shows idle for a different, unconnected field while another field\'s session is live', () => {
+    const elA = eligibleField()
+    show(elA)
+    const portA = lastConnectedPort()
+    clickChip()
+    portA.onMessage.emit({ ctl: { kind: 'status', phase: 'checking', findingCount: 1 } })
+    expect(chipButton().dataset.state).toBe('connected')
+
+    const elB = eligibleField()
+    show(elB)
+
+    expect(chipButton().dataset.state).toBe('idle')
+
+    portA.onDisconnect.emit(portA)
+    elA.remove()
+    elB.remove()
   })
 })

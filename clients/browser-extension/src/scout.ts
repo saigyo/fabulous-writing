@@ -174,33 +174,45 @@ function isChipHost(target: EventTarget | null): boolean {
   return target instanceof Node && target === affordance.host
 }
 
+// Shared by both event pairs below: entering the field OR the chip cancels
+// any pending hide (a hide scheduled while crossing the gap between them
+// must not fire while the pointer/focus is now sitting on either one).
+function handleEnter(target: EventTarget | null): void {
+  if (isChipHost(target)) {
+    cancelHide()
+    return
+  }
+  if (!isEligibleField(target)) return
+  cancelHide()
+  showAffordance(target)
+}
+
+// The round-trip half the field-only version was missing: leaving the
+// FIELD toward the chip must not schedule a hide (existing relatedTarget
+// check below), but leaving the CHIP is exactly as much a "the pointer/
+// focus might be gone for good" event as leaving the field is — it must
+// schedule the same delayed hide, unless it's headed right back at the
+// field currently shown (relatedTarget/new focus target === shownEl),
+// which keeps the chip visible instead.
+function handleLeave(target: EventTarget | null, relatedTarget: EventTarget | null): void {
+  if (isChipHost(target)) {
+    if (relatedTarget === shownEl) return
+    scheduleHide()
+    return
+  }
+  if (!isEligibleField(target)) return
+  if (isChipHost(relatedTarget)) return
+  scheduleHide()
+}
+
 // Delegation: document-level focusin/focusout + mouseover/mouseout — all
 // four BUBBLE (mouseenter/mouseleave do not and cannot be delegated this
 // way). No scanning, no detection observer: a Turbo-injected field is
 // noticed the moment it's interacted with, not before.
-document.addEventListener('focusin', (e) => {
-  if (!isEligibleField(e.target)) return
-  cancelHide()
-  showAffordance(e.target)
-})
-
-document.addEventListener('focusout', (e) => {
-  if (!isEligibleField(e.target)) return
-  if (isChipHost((e as FocusEvent).relatedTarget)) return
-  scheduleHide()
-})
-
-document.addEventListener('mouseover', (e) => {
-  if (!isEligibleField(e.target)) return
-  cancelHide()
-  showAffordance(e.target)
-})
-
-document.addEventListener('mouseout', (e) => {
-  if (!isEligibleField(e.target)) return
-  if (isChipHost((e as MouseEvent).relatedTarget)) return
-  scheduleHide()
-})
+document.addEventListener('focusin', (e) => handleEnter(e.target))
+document.addEventListener('focusout', (e) => handleLeave(e.target, (e as FocusEvent).relatedTarget))
+document.addEventListener('mouseover', (e) => handleEnter(e.target))
+document.addEventListener('mouseout', (e) => handleLeave(e.target, (e as MouseEvent).relatedTarget))
 
 window.addEventListener('pagehide', () => {
   session?.stop()
