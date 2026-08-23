@@ -193,8 +193,27 @@ export function createAffordance(onClick: (el: HTMLTextAreaElement) => void): Af
     const hostHasRealLayout =
       hostRect.top !== 0 || hostRect.left !== 0 || hostRect.width !== 0 || hostRect.height !== 0
     if (hostHasRealLayout) {
-      host.style.top = `${(parseFloat(host.style.top) || 0) + (rect.top - hostRect.top)}px`
-      host.style.left = `${(parseFloat(host.style.left) || 0) + (rect.right - hostRect.left)}px`
+      // Copilot round 6, F1: hostRect (getBoundingClientRect) is in
+      // VIEWPORT-space pixels, but host.style.top/left resolve against the
+      // host's CONTAINING-BLOCK-space (unscaled) coordinate system — same
+      // mismatch textareaAdapter.ts's syncOverlayGeometry documents and
+      // corrects for (see its own module comment for the full rationale).
+      // Under a transformed (scaled) ancestor those two spaces diverge, so
+      // applying the raw viewport-space delta unmodified over/undershoots —
+      // an error that compounds through the 1s drift interval above
+      // (oscillates for a scale in (1, 2), diverges outright above 2).
+      // Recover the effective scale the same way: compare the host's
+      // just-measured on-screen rect to its own UNTRANSFORMED layout border
+      // box — offsetWidth/offsetHeight, exactly what getBoundingClientRect
+      // scales — and divide the delta by it. NaN/zero (no real layout, e.g.
+      // under test, or a not-yet-laid-out host) falls back to a scale of 1,
+      // exactly the old, unscaled behavior.
+      const rawScaleX = hostRect.width / host.offsetWidth
+      const rawScaleY = hostRect.height / host.offsetHeight
+      const scaleX = Number.isFinite(rawScaleX) && rawScaleX !== 0 ? rawScaleX : 1
+      const scaleY = Number.isFinite(rawScaleY) && rawScaleY !== 0 ? rawScaleY : 1
+      host.style.top = `${(parseFloat(host.style.top) || 0) + (rect.top - hostRect.top) / scaleY}px`
+      host.style.left = `${(parseFloat(host.style.left) || 0) + (rect.right - hostRect.left) / scaleX}px`
     }
   }
 

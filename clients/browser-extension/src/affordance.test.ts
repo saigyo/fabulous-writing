@@ -276,6 +276,55 @@ describe('createAffordance: focus-visible style', () => {
 // detached from the field until the next showFor. Same pattern as
 // textareaAdapter.ts's own document-level scroll re-sync: rAF-throttled,
 // registered while shown, torn down in hide()/dispose().
+// Copilot round 6, F1: the same viewport-space vs containing-block-space
+// mismatch textareaAdapter.ts's syncOverlayGeometry corrects for (see its
+// own describe block, 'transform-scale-aware overlay geometry sync') also
+// applies to the chip host's own measured-delta reposition — under a scaled
+// ancestor the raw rect delta over/undershoots, which the 1s drift interval
+// above compounds into oscillation/divergence.
+describe('createAffordance: transform-scale-aware reposition (F1, round 6)', () => {
+  it('divides the measured delta by the effective scale under a scaled host ancestor, landing exactly in one adjust', () => {
+    const affordance = createAffordance(() => {})
+    // Naive target is (50, 300) (see stubRect(el, 50, 100, 300, 130) in
+    // beforeEach). Simulate the host's containing block being off by
+    // (10, 210) in TRUE (unscaled) pixels, reported doubled (viewport
+    // space) under a 2x-scaled ancestor: true delta (10, 210) * scale 2 =
+    // (20, 420) as measured. The host's own untransformed layout box
+    // (offsetWidth/offsetHeight) is stubbed to half its measured rect size,
+    // recovering a scale of 2.
+    Object.defineProperty(affordance.host, 'offsetWidth', { value: 100, configurable: true })
+    Object.defineProperty(affordance.host, 'offsetHeight', { value: 60, configurable: true })
+    affordance.host.getBoundingClientRect = () => (
+      { top: 20, left: -120, right: -120, bottom: 20, width: 200, height: 120, x: -120, y: 20, toJSON() { return {} } }
+    )
+    affordance.showFor(el)
+
+    // Naive target (50, 300); measured host rect (20, -120); raw delta
+    // (30, 420); recovered scale (200/100=2, 120/60=2); corrected delta
+    // (15, 210) — landing at (65, 510).
+    expect(affordance.host.style.top).toBe('65px')
+    expect(affordance.host.style.left).toBe('510px')
+
+    affordance.dispose()
+  })
+
+  it('unscaled behavior is unchanged: a zero offsetWidth/offsetHeight (no real layout, e.g. under test) falls back to a scale of 1', () => {
+    const affordance = createAffordance(() => {})
+    // Same as the existing containing-block-correction test above (no scale
+    // stub — happy-dom's default offsetWidth/offsetHeight is 0, so
+    // rawScale is NaN and falls back to 1).
+    affordance.host.getBoundingClientRect = () => (
+      { top: 40, left: 90, right: 90, bottom: 40, width: 0, height: 0, x: 90, y: 40, toJSON() { return {} } }
+    )
+    affordance.showFor(el)
+
+    expect(affordance.host.style.top).toBe('60px')
+    expect(affordance.host.style.left).toBe('510px')
+
+    affordance.dispose()
+  })
+})
+
 describe('createAffordance: repositions while shown on scroll/resize', () => {
   it('a document scroll event while shown repositions the chip, rAF-throttled to at most one pending sync', () => {
     const rafCallbacks: FrameRequestCallback[] = []

@@ -284,6 +284,22 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
   // comparing against the latest value this function actually wrote.
   let writtenBackgroundColor: string | null = null
   let writtenBackgroundImage: string | null = null
+  // Copilot round 6, F5: each background-image LONGHAND now tracks its own
+  // ownership independently of the image's — the old code gated the whole
+  // longhand loop on whether backgroundImage itself was still owned, then
+  // unconditionally overwrote every longhand to 'initial' regardless of
+  // whether that PARTICULAR longhand had since been changed by the host
+  // (its own re-render still touching only e.g. background-size, with the
+  // image itself untouched) — clobbering a legitimate host change the same
+  // "host wins permanently" guard already protects color/image with.
+  const writtenBackgroundLonghands: Record<(typeof BACKGROUND_IMAGE_LONGHANDS)[number], string | null> = {
+    backgroundSize: null,
+    backgroundPosition: null,
+    backgroundRepeat: null,
+    backgroundOrigin: null,
+    backgroundClip: null,
+    backgroundAttachment: null,
+  }
   // Copilot round 5, F1+F3+F4: syncBackground copies every one of these
   // properties (color, image, the 6 image-positioning longhands) through
   // the SAME recipe, uniformly, rather than three near-identical blocks
@@ -313,7 +329,17 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
     const backgroundColorOverrideActive =
       writtenBackgroundColor !== null && el.style.backgroundColor === writtenBackgroundColor
     if (writtenBackgroundColor === null || backgroundColorOverrideActive) {
-      if (backgroundColorOverrideActive) el.style.backgroundColor = ''
+      // Copilot round 6, F3: flip to the SAVED host inline value — the
+      // creation-time snapshot dispose() already keeps (savedBackgroundColor)
+      // — not to '' as before. A host whose field HAD an inline
+      // background-color before the adapter ever ran has no way for a bare
+      // '' to recover it: '' falls through the cascade to the STYLESHEET
+      // value instead, so the read below wrongly saw (and wrote to the
+      // overlay) the stylesheet color instead of the field's real one, on
+      // every tick after the very first. A host with NO original inline
+      // value behaves identically to before: savedBackgroundColor is itself
+      // '', so this flip is exactly the old unmask.
+      if (backgroundColorOverrideActive) el.style.backgroundColor = savedBackgroundColor
       const computedBackgroundColor = getComputedStyle(el).backgroundColor
       if (backgroundColorOverrideActive) el.style.backgroundColor = writtenBackgroundColor as string
       const computedBackgroundIsTransparent =
@@ -343,7 +369,9 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
     const backgroundImageOverrideActive =
       writtenBackgroundImage !== null && el.style.backgroundImage === writtenBackgroundImage
     if (writtenBackgroundImage === null || backgroundImageOverrideActive) {
-      if (backgroundImageOverrideActive) el.style.backgroundImage = ''
+      // F3, same fix applied to background-image: flip to the SAVED host
+      // inline value (savedBackgroundImage), not ''.
+      if (backgroundImageOverrideActive) el.style.backgroundImage = savedBackgroundImage
       const computedBackgroundImage = getComputedStyle(el).backgroundImage
       if (backgroundImageOverrideActive) el.style.backgroundImage = writtenBackgroundImage as string
       // happy-dom quirk parity with position/z-index above: an unset
@@ -365,17 +393,29 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
         // each property's own distinct initial value) since they have no
         // visible effect on the field now that its own image is gone.
         for (const prop of BACKGROUND_IMAGE_LONGHANDS) {
-          // F4: same unmask-before-read step as color/image above — a
-          // longhand's own inline value may still be this function's OWN
-          // prior 'initial' write (from an earlier tick, same image still
-          // present), which would otherwise mask the host's real
-          // underlying layout value (e.g. a changed background-size) on
-          // every subsequent read.
-          const longhandOverrideActive = el.style[prop] === 'initial'
-          if (longhandOverrideActive) el.style[prop] = ''
+          const longhandWritten = writtenBackgroundLonghands[prop]
+          const longhandOverrideActive = longhandWritten !== null && el.style[prop] === longhandWritten
+          // F5: only participate at all when the adapter still OWNS this
+          // longhand — never written before (longhandWritten === null), or
+          // its current inline value is still this function's own last
+          // write (longhandOverrideActive). A longhand the host changed
+          // mid-session (its current inline value is neither) must never be
+          // touched again, same per-property "host wins permanently" rule
+          // color/image already have via their own `written…` guard above —
+          // the old code gated this only on whether the IMAGE was still
+          // owned, so it kept clobbering a host-changed LONGHAND back to
+          // 'initial' every tick as long as the image itself was untouched.
+          if (longhandWritten !== null && !longhandOverrideActive) continue
+          // F3/F4: same unmask-before-read step as color/image above, now
+          // flipping to the SAVED host inline value (savedBackgroundLonghands)
+          // instead of '' — a host whose field HAD an inline value for this
+          // longhand before the adapter ran otherwise has it replaced by the
+          // stylesheet value on read, same bug as F3 for color/image.
+          if (longhandOverrideActive) el.style[prop] = savedBackgroundLonghands[prop]
           const computedLonghand = getComputedStyle(el)[prop]
-          if (longhandOverrideActive) el.style[prop] = 'initial'
+          if (longhandOverrideActive) el.style[prop] = longhandWritten as string
           overlay.style[prop] = computedLonghand
+          writtenBackgroundLonghands[prop] = 'initial'
           el.style[prop] = 'initial'
         }
       } else {
@@ -743,7 +783,15 @@ export function createTextareaAdapter(el: HTMLTextAreaElement): FieldAdapter {
         // same per-property guard shape — only where the CURRENT inline
         // value still equals the `initial` this adapter itself wrote.
         for (const prop of BACKGROUND_IMAGE_LONGHANDS) {
-          if (el.style[prop] === 'initial') el.style[prop] = savedBackgroundLonghands[prop]
+          // F5: restore only where the CURRENT inline value still equals
+          // what THIS adapter itself last wrote for THIS longhand — same
+          // per-property ownership check syncBackground's own loop now
+          // uses, so a longhand the host took over mid-session is left at
+          // the host's own value here too, not clobbered back to the
+          // pre-session snapshot.
+          if (writtenBackgroundLonghands[prop] !== null && el.style[prop] === writtenBackgroundLonghands[prop]) {
+            el.style[prop] = savedBackgroundLonghands[prop]
+          }
         }
       }
     },

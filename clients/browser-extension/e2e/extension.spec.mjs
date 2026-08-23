@@ -274,6 +274,15 @@ export default async function runSpec({
 
     // ---- Step 9: chip shows connected state ----
     await step('9. fixture: affordance chip shows the connected state', async () => {
+      // Copilot round 6, F2: every AUTHENTICATED phase (idle, fast-checking,
+      // llm-checking) maps to the SAME 'connected' chip state — asserting
+      // the chip alone can pass while a re-check triggered by step 8's apply
+      // is still in flight, which weakens this step's claim of verifying a
+      // completed re-check. The embed's own `.check-button` is disabled for
+      // exactly as long as checkPhase !== 'idle' (EmbedApp.tsx) — wait for
+      // it to re-enable (checkPhase back to idle) BEFORE asserting the chip,
+      // so the chip assertion below observes settled, re-checked state.
+      await embedFrame.locator('.check-button:not([disabled])').waitFor({ timeout: 15000 })
       await fixture.waitForFunction(
         () => document.querySelector('[data-fw-affordance]')?.shadowRoot
           ?.querySelector('button')?.dataset.state === 'connected',
