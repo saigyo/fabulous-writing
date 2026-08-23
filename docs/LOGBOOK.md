@@ -4737,3 +4737,33 @@ is pinned by unit tests — a reliable live staging was judged too contrived
 and said so rather than faked. Copilot round 2: approval recommended, zero
 code findings. Independent pre-PR review traced the privacy ordering against
 the real sources.
+
+## 2026-08-23 — Extension release artifacts: chrome-ext-v* workflow (#143, PR #145)
+Commits: `8028ad3`…`71514de`
+
+Testers no longer build from source: a new `chrome-extension-release.yml`
+turns every `chrome-ext-vX.Y.Z` tag into a GH release with a downloadable
+zip (download → unpack → Load unpacked). The tag prefix is deliberately
+client-specific — the owner's call, anticipating Safari/JetBrains clients
+with their own prefixes later — and never collides with the server's `v*`
+tags, so both release cycles share the single GH release channel cleanly.
+The workflow gates hard before publishing: tag-shape regex, a
+manifest-version assert (a tag that doesn't match `public/manifest.json`
+fails before anything builds), then the same lint/test/build steps as
+extension CI. The zip unpacks to a single versioned folder ready for
+chrome://extensions; the release ships explicit install notes (no
+`--generate-notes`, which would diff against the latest *server* tag) and
+`--latest=false` so server releases keep the repo's "latest" pointer. The
+pinned manifest key means every artifact install shares the allowlisted
+extension ID — zero server-side setup per tester. A new `version.test.ts`
+pins `package.json` to `manifest.json` (mutation-verified) so the pair
+can't drift; docs gained the install-from-release path plus the
+release-cutting recipe. Repo directory keeps its `browser-extension` name —
+tag prefix is the public identity, rename churn buys nothing.
+
+Verification: 231 extension tests, lint, build; workflow shell logic
+dry-run locally (zip layout, notes heredoc, four negative tag shapes all
+rejected). Copilot round 1: one real docs finding (extension-relative
+manifest path in the recipe), fixed; round 2: zero findings. First
+`chrome-ext-v0.1.0` tag to be cut from main post-merge — the workflow must
+exist at the tagged commit.
