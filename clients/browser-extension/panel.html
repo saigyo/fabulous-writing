@@ -2,7 +2,15 @@
 <html lang="en">
   <head><meta charset="utf-8" /><title>Fabulous Writing</title></head>
   <body>
-    <div id="root"></div>
+    <header>
+      <span>Fabulous Writing</span>
+      <button id="options" type="button">Options</button>
+    </header>
+    <p id="status">embed not responding</p>
+    <!-- No `sandbox` attribute: the spec's social-login note requires an
+         unsandboxed iframe so a popup-based OAuth flow can complete. src is
+         set by panel.ts once the configured server origin is known. -->
+    <iframe id="embed" title="Fabulous Writing embed"></iframe>
     <script type="module" src="/src/panel.ts"></script>
   </body>
 </html>
