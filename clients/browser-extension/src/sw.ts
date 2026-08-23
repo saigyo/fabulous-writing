@@ -54,6 +54,7 @@ import type { EmbedMessage, Envelope, HostMessage } from '../../../frontend/src/
 import { parsePortMessage, type PortMessage } from './messages'
 import { initPanelBehavior, openPanel, setBadge } from './panelHost'
 import { Registry, type Effect } from './registry'
+import { onServerUrlChanged } from './settings'
 
 type Port = Parameters<Parameters<typeof browser.runtime.onConnect.addListener>[0]>[0]
 
@@ -239,5 +240,15 @@ browser.runtime.onConnect.addListener((port) => {
     })
   }
 })
+
+// Issue #142: the extension's server URL changed (Options page). Every
+// window's connected field must hard-disconnect — the panel already reloads
+// itself on this same event (panel.ts's own onServerUrlChanged), but the SW's
+// registry state is a SEPARATE in-memory store that survives that reload, so
+// it needs its own subscription: without this, the content script keeps
+// painting the OLD server's markings, and the panel's re-derived readiness
+// would re-synthesize the kept field via panelReady — flowing that field's
+// text to the NEWLY configured server without an explicit user connect.
+onServerUrlChanged(() => execute(registry.serverChanged()))
 
 initPanelBehavior()

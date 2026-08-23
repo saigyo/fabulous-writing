@@ -214,6 +214,15 @@ Set **Server URL** to whichever server you're checking against:
 The panel reloads on save (its own `onServerUrlChanged` listener), so no
 manual extension reload is needed.
 
+Changing the server URL also hard-disconnects every connected field in every
+window (issue #142): the service worker's registry subscribes to the same
+storage change and, on it, sends every connected field's tab a `detach` and
+clears its badge, wiping its own field state. This is deliberate, not just
+cleanup — without it, a field left connected to the OLD server would have its
+text re-synthesized to the panel once it reconnects, flowing to whichever
+server is now configured without an explicit user action. Reconnect via the
+field's chip once you're ready to check against the new server.
+
 ### Toolbar-icon fallback
 
 `chrome.sidePanel.open()` requires an active user gesture; the affordance

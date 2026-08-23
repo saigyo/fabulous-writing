@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import type {
   Envelope, FieldConnectedMessage, FieldDisconnectedMessage, SelectFindingMessage, TextChangedMessage,
 } from '../../../frontend/src/embed/protocol'
+import { setServerUrl } from './settings'
 import { browserMock, createMockPort, type MockPort } from './testing/browserMock'
 import { chromeMock } from './testing/chromeMock'
 import './sw'
@@ -325,5 +326,38 @@ describe('sw.ts — F1 keepalive ping is dropped with no reply and no effect', (
 
     expect(panelPort.postMessage).not.toHaveBeenCalled()
     expect(fieldPort.postMessage).not.toHaveBeenCalled()
+  })
+})
+
+// Issue #142: a server-URL change must hard-disconnect every window's
+// connected field, executed through the SAME ports the rest of sw.ts uses.
+describe('sw.ts — server URL change hard-disconnects all sessions', () => {
+  it('sends detach + clears the badge on the connected field\'s port for every window with a ' +
+    'field; a window with no field gets nothing', async () => {
+    const W1 = 3001
+    const T1 = 3002
+    const W2 = 3003 // panel only, no connected field
+    const panel1 = connectPanel(W1)
+    const field1 = connectField(T1, W1)
+    field1.onMessage.emit({ relay: fieldConnected('f1') })
+    const panel2 = connectPanel(W2)
+    panel1.postMessage.mockClear()
+    panel2.postMessage.mockClear()
+    field1.postMessage.mockClear()
+    chromeMock.action.setBadgeText.mockClear()
+
+    await setServerUrl('https://other.example')
+
+    expect(field1.postMessage).toHaveBeenCalledExactlyOnceWith({ ctl: { kind: 'detach', fieldId: 'f1' } })
+    expect(chromeMock.action.setBadgeText).toHaveBeenCalledWith({ tabId: T1, text: '' })
+    // Nothing goes to either panel — serverChanged deliberately leaves
+    // panelReady untouched; the panel handles its own reload separately.
+    expect(panel1.postMessage).not.toHaveBeenCalled()
+    expect(panel2.postMessage).not.toHaveBeenCalled()
+
+    // The registry's field state is gone: subsequent field traffic from the
+    // (now-detached) port no longer relays to the panel.
+    field1.onMessage.emit({ relay: textChanged('f1', 'still stale?') })
+    expect(panel1.postMessage).not.toHaveBeenCalled()
   })
 })

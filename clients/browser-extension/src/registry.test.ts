@@ -351,3 +351,29 @@ describe('Registry — disconnectRequested', () => {
     expect(registry.disconnectRequested(999)).toEqual([])
   })
 })
+
+// Issue #142: changing the extension's server URL must hard-disconnect
+// every window's connected field — never keep state that could later flow a
+// field's text to a newly configured server without an explicit reconnect.
+describe('Registry — serverChanged', () => {
+  it('detaches and clears the badge for every window with a connected field; windows without ' +
+    'a field contribute nothing; all field state is wiped', () => {
+    const registry = new Registry()
+    const W2 = 2
+    registry.fieldConnected(W, TAB_A, fieldConnected('f1'))
+    registry.panelReady(W2, true) // window with no connected field
+    const effects = registry.serverChanged()
+    expect(effects).toEqual([
+      { kind: 'send', to: 'field', windowId: W, tabId: TAB_A, message: { ctl: { kind: 'detach', fieldId: 'f1' } } },
+      { kind: 'badge', tabId: TAB_A, text: '' },
+    ])
+    // field state is gone: subsequent traffic from the (now-stale) tab drops
+    expect(registry.textChanged(W, TAB_A, textChanged('f1', 'more'))).toEqual([])
+    expect(registry.embedRelay(W, selectFinding('f1', null))).toEqual([])
+  })
+
+  it('is a no-op when no window has a connected field', () => {
+    const registry = new Registry()
+    expect(registry.serverChanged()).toEqual([])
+  })
+})
