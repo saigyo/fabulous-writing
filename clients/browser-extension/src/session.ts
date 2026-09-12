@@ -14,9 +14,11 @@
 // already live before a scout ever notices it, so there is no separate
 // "ready but not yet connected" state to model here.
 import { createTextareaAdapter } from '../../../frontend/src/simulator/textareaAdapter'
+import { createContentEditableAdapter } from '../../../frontend/src/simulator/contentEditableAdapter'
 import { findingIdAt } from '../../../frontend/src/simulator/clickHitTest'
 import { PROTOCOL_VERSION } from '../../../frontend/src/embed/protocol'
-import type { EmbedMessage, Envelope, HostMessage, MarkingSpan } from '../../../frontend/src/embed/protocol'
+import type { EmbedMessage, Envelope, FieldAdapter, HostMessage, MarkingSpan } from '../../../frontend/src/embed/protocol'
+import { fieldKindOf, type EligibleField } from './detect'
 
 export interface Session {
   fieldId: string
@@ -28,7 +30,7 @@ export interface Session {
 }
 
 export function startSession(
-  el: HTMLTextAreaElement,
+  el: EligibleField,
   send: (msg: Envelope<HostMessage>) => void,
   // M2 (closing sweep): a session that detaches ITSELF (the MutationObserver
   // below noticing the field left the document) has no other way to tell
@@ -43,7 +45,14 @@ export function startSession(
   // fall back to a non-cryptographic id that's still unique enough for a
   // per-tab field session.
   const fieldId = `fw-${crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`
-  const adapter = createTextareaAdapter(el)
+  const fieldKind = fieldKindOf(el)
+  // Declared with the optional caret accessor so no cast is needed at the
+  // call site (plan review N4): the CE adapter provides it, the textarea
+  // adapter doesn't and never needs it.
+  const adapter: FieldAdapter & { caretOffset?(): number | null } =
+    el instanceof HTMLTextAreaElement
+      ? createTextareaAdapter(el)
+      : createContentEditableAdapter(el)
 
   let detached = false
   let currentFindings: MarkingSpan[] = []
@@ -63,7 +72,10 @@ export function startSession(
   // main.ts's own click handling exactly, including cycling the selection
   // outward via findingIdAt when the same spot is clicked again.
   function handleClick(): void {
-    const pos = el.selectionStart ?? 0
+    const pos = el instanceof HTMLTextAreaElement
+      ? el.selectionStart ?? 0
+      : adapter.caretOffset?.() ?? null
+    if (pos === null) return
     const hitId = findingIdAt(currentFindings, selectedId, pos)
     if (hitId === null) return
     selectedId = hitId
@@ -169,7 +181,7 @@ export function startSession(
       fieldId,
       text: adapter.extract(),
       capabilities: adapter.capabilities(),
-      meta: { url: location.href, fieldKind: 'textarea' },
+      meta: { url: location.href, fieldKind },
     },
   })
 
