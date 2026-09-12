@@ -146,6 +146,11 @@ export default async function runSpec({
     const fixture = await context.newPage()
     openPages.push(['fixture', fixture])
     const textarea = fixture.locator('#box')
+    // Task 9 (B43 C3): the contentEditable field, added below the textarea
+    // in fixture.html. Shares the SAME affordance host/chip as the textarea
+    // below (scout.ts's affordance is one module-scoped instance re-anchored
+    // to whichever field is shown) — no separate locators needed for it.
+    const cebox = fixture.locator('#cebox')
     const affordanceHost = fixture.locator('[data-fw-affordance]')
     // Live-test UX decision (B43 C2, PR #139): the chip is a split pill —
     // '.main' (glyph/count, never destructive) and '.disconnect' (the ×,
@@ -317,6 +322,84 @@ export default async function runSpec({
         .waitFor({ timeout: 10000 })
     })
 
+    // ---- Task 9 (B43 C3): contentEditable e2e flow — same shared
+    // affordance/panel/login session as steps 2-9 above, now driving #cebox
+    // instead of the textarea. Clicking the chip on a different field tears
+    // down the textarea's (already-disconnected, from step 10) session
+    // locally and starts a fresh one for #cebox (scout.ts's handleChipClick
+    // same-tab-replace path) — no separate login or panel setup needed.
+    //
+    // NO desync probe here (plan review SF10): the extension has no
+    // textChanged-suppression seam — a page.evaluate mutation would just
+    // trigger the CE adapter's own MutationObserver, re-sync, and let the
+    // apply legitimately succeed. The refuse paths are unit-tested in the
+    // frontend suite (contentEditableAdapter.test.ts) instead.
+    await step('CE1. fixture: focus/hover cebox, click affordance chip (connects CE field)', async () => {
+      await fixture.bringToFront()
+      await cebox.focus()
+      await cebox.hover()
+      await affordanceHost.waitFor({ state: 'visible' })
+      await chip.click()
+      await fixture.waitForFunction(
+        () => document.querySelector('[data-fw-affordance]')?.shadowRoot
+          ?.querySelector('button')?.dataset.state !== 'idle',
+        { timeout: 5000 },
+      )
+    })
+
+    await step('CE2. cebox: type "This is is a test." (locator.fill, works on contentEditable)', async () => {
+      await fixture.bringToFront()
+      await cebox.fill('This is is a test.')
+    })
+
+    await step('CE3. panel: finding renders; fixture: fw-error Highlight registered', async () => {
+      await embedFrame.locator('.finding-row').first().waitFor({ timeout: 20000 })
+      // A content script's Highlight registrations are visible to the main
+      // world's CSS.highlights in current Chromium and paint the manifest
+      // stylesheet's ::highlight rules — valid cross-world (plan review).
+      // 'This is is a test.' trips repeated-words.yml, whose `level: error`
+      // maps to the 'fw-error' highlight name (contentEditableAdapter.ts).
+      await fixture.waitForFunction(
+        () => Array.from(CSS.highlights.keys()).includes('fw-error'),
+        { timeout: 20000 },
+      )
+    })
+
+    await step('CE4. panel: click apply; fixture: cebox text updates to the replacement', async () => {
+      await embedFrame.locator('.finding-row').first().click()
+      const applyButton = embedFrame.locator('.suggestion-button').first()
+      await applyButton.waitFor({ timeout: 5000 })
+      await applyButton.click()
+
+      await fixture.waitForFunction(
+        () => document.querySelector('#cebox')?.textContent === 'This is a test.',
+        { timeout: 10000 },
+      )
+    })
+
+    await step('CE5. panel: re-check settles; fixture: fw-error Highlight clears (fresh textChanged-driven re-check)', async () => {
+      await embedFrame.locator('.check-button:not([disabled])').waitFor({ timeout: 15000 })
+      await fixture.waitForFunction(
+        () => !Array.from(CSS.highlights.keys()).includes('fw-error'),
+        { timeout: 10000 },
+      )
+    })
+
+    await step('CE6. undo (real Chromium execCommand undo stack): cebox text restored to pre-apply', async () => {
+      // applyReplacement restores focus to the previously-focused element
+      // (the panel's suggestion button, not #cebox) — click/focus #cebox
+      // first, or the undo keystroke has nothing editable to target.
+      await cebox.click()
+      // Plain Control+z silently does nothing on macOS — the platform's
+      // real undo shortcut is required to reach Chromium's native
+      // execCommand undo stack that applyReplacement's insertText pushed to.
+      await fixture.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z')
+      await fixture.waitForFunction(
+        () => document.querySelector('#cebox')?.textContent === 'This is is a test.',
+        { timeout: 10000 },
+      )
+    })
+
     // ---- Step 11: reconnect (fresh field session) so step 12 has a live,
     // marked-up connection to hard-disconnect ----
     await step('11. fixture: reconnect via chip, retype to get a fresh overlay mark', async () => {
@@ -376,7 +459,7 @@ export default async function runSpec({
       )
     })
 
-    console.log('  [spec] all 12 steps PASSED')
+    console.log('  [spec] all steps PASSED (12 textarea steps + CE1-6 contentEditable flow)')
   } catch (err) {
     failed = true
     for (const [name, page] of openPages) {
