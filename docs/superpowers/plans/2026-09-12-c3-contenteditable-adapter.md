@@ -19,7 +19,7 @@
   Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
   Claude-Session: https://claude.ai/code/session_01JXiCFTQQmJeJt3MB8qZdGA
   ```
-- **Gates:** frontend (from `frontend/`): `npm test`, `rtk proxy npm run lint`, `npm run build`, `npm run check:embed`. Extension (from `clients/browser-extension/`): `npm test`, `rtk proxy npx oxlint`, `npm run build`. All green before a task's final commit claims completion.
+- **Gates:** frontend (from `frontend/`): `npm test`, `rtk proxy npm run lint`, `npm run build`, `npm run check:embed`. Extension (from `clients/browser-extension/`): `npm test`, `rtk proxy npx oxlint`, `npm run build`. All green before a task's final commit claims completion — with ONE stated exception (plan review BL3): Tasks 5–7 widen types that `scout.ts`/`reacquire.ts` consume, so the extension `npm run build` (its `tsc --noEmit`) is EXPECTED red between Task 5 and Task 8 and those three tasks gate on `vitest run` + `oxlint` only; Task 8 restores and REQUIRES the full build gate.
 - **Mutation-verify every guard test:** delete/invert the guard, watch the test fail, restore by RE-EDITING the file (never `git checkout <file>`).
 - **Ports 5173 and 8000 are the owner's dev servers — never start, kill, or bind anything there.** The e2e runner uses 8100/8101 and aborts if occupied; respect that.
 - **Shell/cwd:** the rtk hook resets cwd between Bash calls — use absolute paths or `git -C /Users/markus/IdeaProjects/fabulous-writing …`; prefix npm/npx/uv commands with `rtk proxy` as shown in the gates above.
@@ -102,12 +102,24 @@ describe('buildSegmentMap', () => {
     expect(buildSegmentMap(rootWith('<div>a</div><div></div><div>b</div>')).text).toBe('a\nb')
   })
 
-  it('emits a newline per <br>, additive with block boundaries', () => {
+  it('emits a newline per inline <br>; a block-trailing <br> is boundary-only', () => {
     expect(buildSegmentMap(rootWith('a<br>b')).text).toBe('a\nb')
-    // a blank line the Chrome way: <div><br></div> renders one empty line
-    expect(buildSegmentMap(rootWith('<div>a</div><div><br></div><div>b</div>')).text).toBe('a\n\n\nb')
+    // Chrome's blank line (<div><br></div>, what Enter-Enter produces in a
+    // plain contentEditable) renders as ONE empty line: the block-trailing
+    // <br> flushes the pending boundary but adds no newline of its own
+    expect(buildSegmentMap(rootWith('<div>a</div><div><br></div><div>b</div>')).text).toBe('a\n\nb')
+    // trailing filler <br> inside a block contributes nothing extra
+    expect(buildSegmentMap(rootWith('<div>a<br></div><div>b</div>')).text).toBe('a\nb')
+    expect(buildSegmentMap(rootWith('a<br>')).text).toBe('a')
     // leading <br> is content: it renders a blank first line
     expect(buildSegmentMap(rootWith('<br>a')).text).toBe('\na')
+  })
+
+  it('skips whitespace-only text nodes at block boundaries, keeps inline spaces', () => {
+    // pretty-printed host markup (CMS composers, quoted replies)
+    expect(buildSegmentMap(rootWith('<div>\n  <p>a</p>\n  <p>b</p>\n</div>')).text).toBe('a\nb')
+    // a real inter-word space between inline elements is text
+    expect(buildSegmentMap(rootWith('<em>a</em> <em>b</em>')).text).toBe('a b')
   })
 
   it('skips script/style/noscript/template subtrees', () => {
@@ -221,8 +233,21 @@ export function buildSegmentMap(root: HTMLElement): SegmentMap {
   // '\n', however many boundaries queued up) only when more content
   // actually arrives, and only once any content exists at all — no leading
   // newline, no trailing newline, consecutive/empty blocks collapse to one
-  // separator. A <br> is content (it flushes a pending boundary first, then
-  // contributes its own '\n'), so explicit blank lines survive.
+  // separator.
+  //
+  // <br> semantics match what Chrome's contentEditable actually renders
+  // (plan review SF3): an INLINE <br> (content follows it inside its
+  // parent) is content — it flushes a pending boundary, then contributes
+  // its own '\n', so '<br>a' extracts '\na'. A BLOCK-TRAILING <br> (the
+  // last content-producing child of its parent — Chrome's Enter-Enter
+  // filler, `<div><br></div>`, and the trailing filler in `<div>a<br></div>`)
+  // is boundary-only: it flushes the pending boundary and then QUEUES one,
+  // adding no '\n' of its own — Chrome renders those as a single blank
+  // line / nothing, not two.
+  //
+  // Whitespace-only text nodes at block boundaries (pretty-printed host
+  // markup) are skipped (plan review SF4); a whitespace run between INLINE
+  // siblings is real text and kept.
   let pendingBreak = false
   function flushBreak(): void {
     if (pendingBreak) {
@@ -230,11 +255,31 @@ export function buildSegmentMap(root: HTMLElement): SegmentMap {
       pendingBreak = false
     }
   }
+  function isBlockElement(n: Node | null): boolean {
+    return n !== null && n.nodeType === Node.ELEMENT_NODE && BLOCK_TAGS.has((n as Element).tagName)
+  }
+  // True when no LATER sibling of `child` produces content: only
+  // whitespace-only text nodes and SKIP_TAGS elements may follow.
+  function isLastContentChild(child: Node): boolean {
+    for (let n = child.nextSibling; n; n = n.nextSibling) {
+      if (n.nodeType === Node.TEXT_NODE) {
+        if ((n as Text).data.trim().length > 0) return false
+        continue
+      }
+      if (n.nodeType === Node.ELEMENT_NODE && !SKIP_TAGS.has((n as Element).tagName)) return false
+    }
+    return true
+  }
   function walk(node: Node): void {
     for (const child of Array.from(node.childNodes)) {
       if (child.nodeType === Node.TEXT_NODE) {
         const t = child as Text
         if (t.data.length === 0) continue
+        // SF4: formatting whitespace between blocks is not text.
+        if (
+          t.data.trim().length === 0 &&
+          (pendingBreak || isBlockElement(t.previousSibling) || isBlockElement(t.nextSibling))
+        ) continue
         flushBreak()
         segments.push({ node: t, start: text.length })
         text += t.data
@@ -245,7 +290,8 @@ export function buildSegmentMap(root: HTMLElement): SegmentMap {
       if (SKIP_TAGS.has(tag)) continue
       if (tag === 'BR') {
         flushBreak()
-        text += '\n'
+        if (isLastContentChild(child)) pendingBreak = true // boundary-only (SF3)
+        else text += '\n'
         continue
       }
       const isBlock = BLOCK_TAGS.has(tag)
@@ -290,17 +336,19 @@ export function rangeFor(map: SegmentMap, from: number, to: number): Range | nul
   const start = resolvePoint(map, from, 'start')
   const end = resolvePoint(map, to, 'end')
   if (!start || !end) return null
-  const range = start.node.ownerDocument.createRange()
-  // A synthetic-only span snaps start past end; Range.setEnd would silently
-  // collapse to the end point, so compare first and refuse instead.
+  // A synthetic-only span snaps its start PAST its end (start bias forward,
+  // end bias backward); Range.setEnd would silently collapse to the end
+  // point, so compare first and refuse instead. This inverted check IS the
+  // synthetic-only refusal — passing it guarantees a non-collapsed range
+  // (same node implies end.offset > start.offset), so no further guard.
   const rel = start.node.compareDocumentPosition(end.node)
   const inverted = start.node === end.node
     ? end.offset <= start.offset
     : Boolean(rel & Node.DOCUMENT_POSITION_PRECEDING)
   if (inverted) return null
+  const range = start.node.ownerDocument.createRange()
   range.setStart(start.node, start.offset)
   range.setEnd(end.node, end.offset)
-  if (range.collapsed) return null
   return range
 }
 
@@ -348,7 +396,7 @@ Expected: PASS. If a happy-dom quirk breaks a case (e.g. `compareDocumentPositio
 
 - [ ] **Step 5: Mutation-verify one guard**
 
-Temporarily invert `if (range.collapsed) return null` to `if (false) return null` — the synthetic-only-span test must fail. Restore by re-editing. Then run the file's tests again: PASS.
+Temporarily change `if (inverted) return null` to `if (false) return null` — the synthetic-only-span test (`rangeFor(2, 3)` → null) must fail. Restore by re-editing. Then run the file's tests again: PASS.
 
 - [ ] **Step 6: Commit**
 
@@ -368,7 +416,7 @@ git -C /Users/markus/IdeaProjects/fabulous-writing commit -m "feat(simulator): s
 
 **Interfaces:**
 - Consumes (Task 1): `buildSegmentMap`, `rangeFor`, `offsetAt`, types `SegmentMap`.
-- Consumes (existing): `FieldAdapter`, `MarkingSpan` from `../embed/protocol` (READ-ONLY import — never edit that file); `SEVERITIES` from `../findings/severity`.
+- Consumes (existing): `FieldAdapter`, `MarkingSpan` from `../embed/protocol` (READ-ONLY import — never edit that file). (No `SEVERITIES` import — the severity list is spelled locally in `SEVERITY_PRIORITY`; an unused import is a lint error.)
 - Produces (Tasks 3–6 rely on these exact names):
   ```ts
   export interface HighlightSink {
@@ -432,6 +480,7 @@ Cases to cover (each an `it`, with `afterEach` disposing the adapter and emptyin
 10. **no notification when text is unchanged**: wrap an existing text node in a `<span>` (childList mutation, same extracted text) → highlights re-anchored but cb NOT fired.
 11. **dispose**: after `dispose()`, all five names cleared, a further DOM change fires no cb, a pending flash timer never fires (`vi.runAllTimers` after dispose → no `clear` call beyond dispose's own).
 12. **default sink null-path**: `createContentEditableAdapter(root, null)` — `setMarkings`/`flashFinding`/`setSelected` are safe no-ops (no throw).
+13. **defaultHighlightSink real path**: stub `globalThis.CSS = { highlights: new Map() }`-shaped registry and a `globalThis.Highlight` fake class (constructor captures ranges, instance carries `priority`) → `defaultHighlightSink()` non-null; `set` constructs a Highlight with the ranges, assigns `priority`, registers under the name; `clear` deletes it. Delete the stubs in `afterEach` so the accessor's undefined branch (the `mark: 'none'` gate) stays covered by the other cases.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -553,6 +602,14 @@ export function createContentEditableAdapter(
   // one microtask-coalesced sync. onChange only fires when the EXTRACTED
   // text actually changed — a markup-only rewrite (e.g. a span wrapped
   // around existing text) re-anchors highlights but sends no textChanged.
+  // The change baseline is `notifiedText`, NOT the map itself (plan review
+  // BL1): applyReplacement rebuilds `map` synchronously mid-apply, and a
+  // baseline derived from `map` at tick time would then see "no change" and
+  // swallow the very textChanged the replacement must produce. A model-
+  // driven editor re-rendering per keystroke re-runs this tick per
+  // keystroke (full map rebuild + range re-creation) — fine at composer
+  // size, unbounded by design; recorded as an accepted risk, not throttled.
+  let notifiedText = map.text
   let syncQueued = false
   function queueSync(): void {
     if (syncQueued || disposed) return
@@ -560,10 +617,12 @@ export function createContentEditableAdapter(
     queueMicrotask(() => {
       syncQueued = false
       if (disposed) return
-      const prevText = map.text
       map = buildSegmentMap(root)
       reapplyHighlights()
-      if (map.text !== prevText) changeCb?.()
+      if (map.text !== notifiedText) {
+        notifiedText = map.text
+        changeCb?.()
+      }
     })
   }
 
@@ -668,11 +727,15 @@ Cases:
 2. **refuses an expectedText mismatch** without mutating.
 3. **applies a same-node replacement via the fallback path** (happy-dom has no `execCommand` — the surgery branch IS the tested branch, exactly like the textarea adapter's own tests): `<div>The quikc fox</div>`, replace `[4,9) 'quikc'` → `'quick'`; expect `{ ok: true, text: 'The quick fox' }`, DOM textContent updated, and a bubbling `input` event was dispatched from the root (listen on `document`).
 4. **applies across an inline-markup boundary**: `a <strong>bd</strong> c`, replace `[2,4) 'bd'` → `'bold'` — ok:true, extract `'a bold c'`.
-5. **empty insert deletes**: replace `[2,4)` with `''` → ok:true (post-verify of an empty insert is the slice equality `'' === ''` — assert text shrank).
+5. **empty insert deletes**: replace `[2,4)` with `''` → ok:true, text shrank by 2 (the length-delta term of the post-verify is what validates a deletion — `''`'s slice check is vacuous).
 6. **post-verification failure returns ok:false with the real text**: install a `document` input listener that immediately rewrites the root's content to `'REWRITTEN'` (synchronously, framework-style), apply a replacement → `{ ok: false, text: 'REWRITTEN' }` — never a throw, never a lie.
-7. **refuses when the span resolves to no Range** (a from/to pair lying entirely on a synthetic newline).
+7. **refuses when the span resolves to no Range** (a from/to pair lying entirely on a synthetic newline, e.g. `[2,3)` in `<div>ab</div><div>cd</div>`) — refuses WITHOUT mutating: the DOM stays byte-identical (plan review BL2).
 8. **caretOffset**: stub `document.getSelection` (`vi.spyOn`) to return `{ rangeCount: 1, anchorNode, anchorOffset }`-shaped objects — a caret inside a mapped text node returns the flat offset; a caret outside `root` (anchorNode not contained) returns null; no selection → null.
-9. **replacement fires onChange** (via the input event → microtask sync) with the NEW text — the session/simulator sends textChanged after an apply, same as the textarea path.
+9. **replacement fires onChange** (via the input event → microtask sync) with the NEW text — the session/simulator sends textChanged after an apply, same as the textarea path. (This is the test that pins plan review BL1's `notifiedText` baseline.)
+10. **failed deletion is reported**: a `document` input listener restores the original text after an empty-insert deletion → `{ ok: false, text: <restored> }` — the length-delta term of the post-verify is the only thing that can catch this (SF2's mutation target).
+11. **cross-block surgery refuses before mutating** (plan review SF5): `<div>ab</div><div>cd</div>`, replace `[1,4) 'b\nc'` → in the surgery branch (happy-dom) the span contains a synthetic newline that `deleteContents` cannot remove — expect `{ ok: false, text: 'ab\ncd' }` and an UNCHANGED DOM.
+12. **degenerate no-op request**: `from === to` with `insert === ''` → `{ ok: true, text }` immediately, DOM untouched (plan review SF6 — `execCommand('delete')` on a collapsed selection would backspace a character the request never named).
+13. **insertion into an empty field refuses**: an empty CE root (`''`), `applyReplacement(0, 0, 'x', '')` → ok:false (no text node to anchor a collapsed range on — documented limitation N6; findings require text, so no real flow reaches this).
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -704,23 +767,53 @@ Replace the stubs:
       if (text.slice(from, to) !== expectedText) {
         return { ok: false, text }
       }
+      // Degenerate no-op: nothing to delete, nothing to insert. Returning
+      // early matters (plan review SF6) — execCommand('delete') on a
+      // COLLAPSED selection is a backspace: it would remove the character
+      // before the caret, a character this request never named.
+      if (from === to && insert === '') {
+        return { ok: true, text }
+      }
       const range = rangeFor(map, from, to)
-      // A zero-length insertion point (from === to) has no Range from
-      // rangeFor (it refuses empty spans) — build a collapsed one.
-      const target = range ?? (() => {
-        const point = resolvePoint(map, from, 'start') ?? resolvePoint(map, from, 'end')
-        if (!point) return null
-        const r = point.node.ownerDocument.createRange()
-        r.setStart(point.node, point.offset)
-        r.setEnd(point.node, point.offset)
-        return r
-      })()
+      // A zero-length insertion point (from === to) legitimately has no
+      // Range from rangeFor (it refuses empty spans) — build a collapsed
+      // one. Gate the fallback on EXACTLY that case (plan review BL2): for
+      // from < to, a null range means the span lies on synthetic newlines
+      // and MUST refuse — falling back would insert at a snapped position,
+      // mutating on a path reported as refused.
+      const target = range ?? (from === to
+        ? (() => {
+            const point = resolvePoint(map, from, 'start') ?? resolvePoint(map, from, 'end')
+            if (!point) return null // empty field: no text node to anchor on (N6)
+            const r = point.node.ownerDocument.createRange()
+            r.setStart(point.node, point.offset)
+            r.setEnd(point.node, point.offset)
+            return r
+          })()
+        : null)
       if (!target) return { ok: false, text }
+      // Plan review SF5: Range.deleteContents only TRIMS partially
+      // contained text nodes — it cannot remove a block boundary, so a
+      // cross-block span leaves its synthetic newline behind: mutation
+      // followed by ok:false, which the never-corrupt rule forbids. The
+      // surgery branch therefore refuses spans whose Range covers less
+      // text than [from, to) spans (i.e. synthetic newlines inside) —
+      // BEFORE any mutation. The execCommand branch stays unguarded:
+      // Chrome's real editing pipeline handles cross-block edits the way
+      // a user's typing-over-selection would, and post-verification is
+      // the arbiter there.
+      const canExecCommand = typeof document.execCommand === 'function'
+      if (!canExecCommand && target.toString().length !== to - from) {
+        return { ok: false, text }
+      }
 
       // M11 (textareaAdapter.ts): recover the REAL focused node through a
       // shadow root before moving focus, so the restore below lands back on
-      // e.g. the extension's affordance chip instead of <body>.
+      // e.g. the extension's affordance chip instead of <body>. Scroll
+      // position is saved/restored the same way the textarea adapter does —
+      // focus + selection changes can scroll an inner-scrolling editable.
       const prev = document.activeElement?.shadowRoot?.activeElement ?? document.activeElement
+      const { scrollTop, scrollLeft } = root
       root.focus({ preventScroll: true })
       const selection = document.getSelection()
       selection?.removeAllRanges()
@@ -728,15 +821,24 @@ Replace the stubs:
       // The real editing pipeline: native undo preserved, beforeinput/input
       // fire, framework editors see the edit through their own model.
       // 'insertText' with an empty string is not a deletion command —
-      // 'delete' is. happy-dom has no execCommand at all, so the typeof
-      // guard routes tests through the surgery fallback (which has no undo
-      // stack to preserve there anyway).
+      // 'delete' is (and it only runs for a non-collapsed range: from < to,
+      // per the early return above). happy-dom has no execCommand at all,
+      // so the typeof guard routes tests through the surgery fallback
+      // (which has no undo stack to preserve there anyway).
       const applied =
-        typeof document.execCommand === 'function' &&
+        canExecCommand &&
         (insert === ''
           ? document.execCommand('delete', false)
           : document.execCommand('insertText', false, insert))
       if (!applied) {
+        if (target.toString().length !== to - from) {
+          // execCommand existed but refused; same cross-block guard as
+          // above before falling back to surgery.
+          root.scrollTop = scrollTop
+          root.scrollLeft = scrollLeft
+          if (prev instanceof HTMLElement && prev !== root) prev.focus({ preventScroll: true })
+          return { ok: false, text }
+        }
         target.deleteContents()
         if (insert !== '') target.insertNode(document.createTextNode(insert))
         // Must bubble: frameworks delegate input listeners to the document
@@ -749,10 +851,14 @@ Replace the stubs:
       // embed re-syncs from the echo instead of desyncing — degrade
       // gracefully, never corrupt. (An ASYNC rewrite lands later as an
       // ordinary textChanged via the observer — same self-healing, one
-      // message later.)
+      // message later.) The slice term catches wrong content; the
+      // length-delta term is the ONLY check for an empty insert (a
+      // deletion the host restored — test case 10).
       map = buildSegmentMap(root)
       const ok = map.text.slice(from, from + insert.length) === insert
         && map.text.length === text.length - (to - from) + insert.length
+      root.scrollTop = scrollTop
+      root.scrollLeft = scrollLeft
       if (prev instanceof HTMLElement && prev !== root) prev.focus({ preventScroll: true })
       return { ok, text: map.text }
     },
@@ -766,6 +872,10 @@ Replace the stubs:
       if (!selection || selection.rangeCount === 0) return null
       const { anchorNode, anchorOffset } = selection
       if (!anchorNode || !root.contains(anchorNode)) return null
+      // Same synchronous rebuild as applyReplacement (N3): a click can land
+      // in the same task as a DOM edit whose sync is still queued, and the
+      // caret must be judged against the DOM it actually sits in.
+      map = buildSegmentMap(root)
       return offsetAt(map, anchorNode, anchorOffset)
     },
 ```
@@ -775,9 +885,12 @@ Replace the stubs:
 Run: `cd /Users/markus/IdeaProjects/fabulous-writing/frontend && rtk proxy npm test`
 Expected: PASS, all files.
 
-- [ ] **Step 5: Mutation-verify**
+- [ ] **Step 5: Mutation-verify (two targets, one per post-verify term)**
 
-Remove the length-delta term from the `ok` computation — the post-verification test (case 6) must still fail via the slice check OR, if it doesn't, the mutation-verify has proven the term redundant: then instead remove the whole post-verify (`const ok = true`) and confirm case 6 fails. Restore by re-editing; re-run: PASS.
+1. Remove the length-delta term from the `ok` computation — case 10 (restored deletion) must fail; case 6 still passes (its rewrite trips the slice term).
+2. Restore, then replace the whole `ok` expression with `true` — case 6 must fail.
+
+Restore by re-editing; re-run: PASS.
 
 - [ ] **Step 6: Commit**
 
@@ -815,9 +928,12 @@ git -C /Users/markus/IdeaProjects/fabulous-writing commit -m "feat(simulator): c
 </div>
 ```
 
-- [ ] **Step 2: CSS** — style `.sim-ce` like the textarea (border, padding, min-height, font), and add the `::highlight` rules (opaque palette, matching the simulator's existing `.fw-mark-*` colors; only color/background-color/text-decoration are valid here):
+- [ ] **Step 2: CSS** — style `.sim-ce` like the textarea (border, padding, min-height, font), and add the `::highlight` rules (severity fills match the simulator's opaque `.fw-mark-*` palette; selected/flash use alpha violet):
 
 ```css
+/* B43 C3: contentEditable markings. ::highlight() accepts only color /
+   background-color / text-decoration(-…) — .fw-mark-selected's outline has
+   no equivalent here, hence the underline. */
 ::highlight(fw-error) { background-color: #f8b4b4; }
 ::highlight(fw-warning) { background-color: #fde68a; }
 ::highlight(fw-suggestion) { background-color: #bfdbfe; }
@@ -848,7 +964,7 @@ let active: SimField | null = null
 - iframe `load` reset + Disconnect clear BOTH adapters' markings and null `active`.
 - `beforeunload` disposes both adapters.
 
-- [ ] **Step 4: Extend `main.test.ts`** to cover: connecting the CE field sends `fieldConnected` with `fieldKind: 'contenteditable'` and the CE text; connecting one field after the other clears the first's markings; a `findings` message for the inactive fieldId is ignored; applyReplacement routes to the active adapter. Follow the file's existing harness pattern (it already fakes the iframe/postMessage plumbing — read it first).
+- [ ] **Step 4: Extend `main.test.ts`.** FIRST (plan review SF7): `main.ts` resolves its elements at import time with non-null casts, and the test file's `setUpFixture()` recreates simulator.html's DOM — add `#field-ce` (a contentEditable div) and `#connect-ce` to `setUpFixture()` before anything else, or every EXISTING test in the file throws at import. Then cover: connecting the CE field sends `fieldConnected` with `fieldKind: 'contenteditable'` and the CE text; connecting one field after the other clears the first's markings; a `findings` message for the inactive fieldId is ignored; applyReplacement routes to the active adapter. Follow the file's existing harness pattern (it already fakes the iframe/postMessage plumbing — read it first).
 
 - [ ] **Step 5: Run gates**
 
@@ -884,6 +1000,10 @@ git -C /Users/markus/IdeaProjects/fabulous-writing commit -m "feat(simulator): s
   ```
 
 - [ ] **Step 1: Write the failing tests** (extend `detect.test.ts`, following its existing size/visibility stubbing pattern — read it first):
+
+> **Gate note (plan review BL3):** this task and Tasks 6–7 widen types that `scout.ts`/`reacquire.ts` still consume with the old `HTMLTextAreaElement` signatures, so the extension's `npm run build` (`tsc --noEmit`) is EXPECTED red until Task 8 widens those. Tasks 5–7 gate on `rtk proxy npx vitest run <file>` + `rtk proxy npx oxlint` only; a reviewer accepts them on that basis.
+
+Remember (plan review N8): happy-dom rects default to 0×0 — stub `getBoundingClientRect` on every element a case needs eligible (the host root in cases 2 and 4 included), the same way the file's existing tests do.
 
 1. an editing host (`contenteditable="true"` div, parent not editable, ≥ min size) is eligible; `fieldKindOf` → `'contenteditable'`.
 2. an INNER child of an editing host is NOT itself eligible, but `resolveEligibleField(innerSpan)` returns the host root.
@@ -986,14 +1106,18 @@ export function startSession(
   onDetached?: () => void,
 ): Session {
   const fieldKind = fieldKindOf(el)
-  const adapter = el instanceof HTMLTextAreaElement
-    ? createTextareaAdapter(el)
-    : createContentEditableAdapter(el)
+  // Declared with the optional caret accessor so no cast is needed at the
+  // call site (plan review N4): the CE adapter provides it, the textarea
+  // adapter doesn't and never needs it.
+  const adapter: FieldAdapter & { caretOffset?(): number | null } =
+    el instanceof HTMLTextAreaElement
+      ? createTextareaAdapter(el)
+      : createContentEditableAdapter(el)
   ...
   function handleClick(): void {
     const pos = el instanceof HTMLTextAreaElement
       ? el.selectionStart ?? 0
-      : (adapter as { caretOffset?(): number | null }).caretOffset?.() ?? null
+      : adapter.caretOffset?.() ?? null
     if (pos === null) return
     const hitId = findingIdAt(currentFindings, selectedId, pos)
     ...
@@ -1003,7 +1127,7 @@ export function startSession(
 ```
 Everything else (guards, detach/stop, MutationObserver-based self-detach — which works identically for a CE root leaving the document) stays verbatim.
 
-- [ ] **Step 4: Run to verify PASS** (`rtk proxy npx vitest run src/session.test.ts`), then the whole extension suite: `rtk proxy npm test`.
+- [ ] **Step 4: Run to verify PASS** (`rtk proxy npx vitest run src/session.test.ts`), then the whole extension suite: `rtk proxy npm test`, plus `rtk proxy npx oxlint`. (Build gate deferred to Task 8 — see Task 5's gate note.)
 
 - [ ] **Step 5: Commit**
 
@@ -1037,7 +1161,7 @@ git -C /Users/markus/IdeaProjects/fabulous-writing commit -m "feat(extension): c
 - [ ] **Step 3: Implement.** Precise changes:
 
 - `Fingerprint` gains `fieldKind: FieldKind`.
-- `textareaScope(root)` becomes `fieldScope(root, kind)`: querySelectorAll `'textarea'` or `'[contenteditable]'` by kind, filtered to `isEligibleField` **roots** (the CE selector also matches inner `contenteditable` attrs only on elements that carry the attribute — inner inheriting children don't carry it, and non-root carriers fail `isEligibleField`).
+- `textareaScope(root)` becomes `fieldScope(root, kind)` — and the index semantics must NOT change for textareas nor become size-dependent (plan review SF8: reacquire runs exactly when a mid-render replacement may still measure 0×0, so an eligibility/size filter would make capture-time and rebind-time indices disagree). Precisely: for `'textarea'`, the list stays EXACTLY today's `querySelectorAll('textarea')` in document order, unfiltered; for `'contenteditable'`, `querySelectorAll('[contenteditable]:not([contenteditable="false"])')` narrowed to editing ROOTS (parent not editable — a structural check, NOT `isEligibleField`, so no size filter). The final eligibility gate stays where it already is: on the resolved candidate in `findFingerprintMatch`.
 - attribute selectors generalize per kind: for `'textarea'` the selectors stay as-is; for `'contenteditable'` they become `[contenteditable][name="…"]` / `[contenteditable][aria-label="…"], [contenteditable][aria-labelledby="…"]`.
 - `uniqueEligibleMatch` filters with `isEligibleField` (already kind-agnostic after Task 5) — add a `kind` parameter and require `fieldKindOf(match) === kind`.
 - `computeFingerprint(el)`: `const fieldKind = fieldKindOf(el)` recorded in every return; the formIndex branch indexes within `fieldScope(form, fieldKind)`.
@@ -1100,6 +1224,20 @@ function handleLeave(target: EventTarget | null, relatedTarget: EventTarget | nu
 }
 ```
 - startup one-shot: `const startEl = resolveEligibleField(document.activeElement); if (startEl) showAffordance(startEl)`.
+- `showAffordance` gets an early return (plan review SF12): inside a rich field every inner-node `mouseover` now resolves to the same root, and `affordance.showFor` unconditionally re-inserts + repositions the chip host — continuous DOM churn where a textarea hovered once. Early-return when already showing this exact field AND the chip host is still in the DOM, keeping the re-insert as the torn-out-host recovery path:
+  ```ts
+  function showAffordance(el: EligibleField): void {
+    if (shownEl === el && affordance.host.isConnected) {
+      renderChip()
+      return
+    }
+    shownEl = el
+    affordance.showFor(el)
+    ensurePort()
+    renderChip()
+  }
+  ```
+  Add a test: two consecutive enters on inner nodes of the same shown host call `affordance.showFor` once (spy on it or count host re-insertions).
 
 - [ ] **Step 4: affordance.ts** — widen its handler/`showFor` parameter types from `HTMLTextAreaElement` to `EligibleField` (import from `./detect`); no logic change. If any test stub constructs textareas explicitly, leave them — the widening is source-compatible.
 
@@ -1120,7 +1258,7 @@ function handleLeave(target: EventTarget | null, relatedTarget: EventTarget | nu
 - [ ] **Step 6: Run all extension gates**
 
 Run: `cd /Users/markus/IdeaProjects/fabulous-writing/clients/browser-extension && rtk proxy npm test && rtk proxy npx oxlint && rtk proxy npm run build`
-Expected: green, zero lint findings.
+Expected: green, zero lint findings. This task RESTORES the full build gate deferred since Task 5 (`tsc --noEmit` inside `npm run build`) — a red build here is a Task 8 defect, not a deferral.
 
 - [ ] **Step 7: Mutation-verify** — remove the `withinShown(relatedTarget)` intra-field return; test 2 must fail; restore by re-editing.
 
@@ -1149,12 +1287,12 @@ git -C /Users/markus/IdeaProjects/fabulous-writing commit -m "feat(extension): c
      style="width: 480px; min-height: 120px; border: 1px solid #888; padding: 8px; font: 14px/1.4 sans-serif;"></div>
 ```
 
-- [ ] **Step 2: extension.spec.mjs** — read the existing textarea flow first and mirror it for `#cebox`: focus the div → affordance chip appears → chip click → panel/login (reuse the logged-in state the spec already establishes) → type text with a known finding (`page.type` into the div) → wait for findings → assert highlight registration via
+- [ ] **Step 2: extension.spec.mjs** — read the existing textarea flow first and mirror it for `#cebox`: focus the div → affordance chip appears → chip click → panel/login (reuse the logged-in state the spec already establishes) → enter text with a known finding (the spec's existing idiom — `locator.fill(...)` works on contentEditable; `page.type` is deprecated) → wait for findings → assert highlight registration via
 ```js
 const names = await page.evaluate(() => Array.from(CSS.highlights.keys()))
 // expect names to include 'fw-error' (or the severity the seeded finding carries)
 ```
-→ apply the first suggestion from the panel → assert the div's `textContent` contains the replacement → assert a fresh `textChanged`-driven re-check (findings update) → Ctrl+Z (`page.keyboard.press('Control+z')`) restores the pre-apply text (execCommand undo — REAL Chromium, this is the path unit tests cannot cover). Add a desync probe if the existing spec's pattern makes it cheap (mutate the div via `page.evaluate` between check and apply → expect the apply to be refused and the text NOT corrupted).
+(valid cross-world: the plan review measured that a content script's Highlight registrations are visible to the main world's `CSS.highlights` in current Chromium and paint the manifest stylesheet's `::highlight` rules) → apply the first suggestion from the panel → assert the div's `textContent` contains the replacement → assert a fresh `textChanged`-driven re-check (findings update) → undo restores the pre-apply text (execCommand undo — REAL Chromium, the one path unit tests cannot cover): click/focus `#cebox` first (applyReplacement restores focus to the previously focused element), then `page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z')` — plain Control+z silently does nothing on macOS. NO desync probe here (plan review SF10): the extension has no `textChanged`-suppression seam — a `page.evaluate` mutation triggers the adapter's observer → re-sync → the apply legitimately succeeds; the refuse paths are unit-tested in the frontend suite.
 
 - [ ] **Step 3: Build both packages, run e2e**
 
@@ -1178,14 +1316,16 @@ git -C /Users/markus/IdeaProjects/fabulous-writing commit -m "test(extension): c
 
 **Files:**
 - Modify: `docs/frontend-architecture.md` (the embedding/simulator/adapter section — find it via `rtk proxy grep -n "adapter\|simulator\|embed" docs/frontend-architecture.md`)
+- Modify: `docs/browser-extension.md` (plan review SF11 — it documents the eligibility rule, the adapter lift, the cross-package import paths, the reacquire fingerprint order, and the manual acceptance checklist; all five change in C3)
+- Modify: `clients/browser-extension/public/manifest.json` — the user-visible `description` still says "text boxes (textareas)"; extend it to cover contentEditable fields (description string only; NOTHING else in the manifest — the `key` is untouchable)
 
-- [ ] **Step 1:** Document, in the existing section's voice: the segmentMap module and its newline model, the contentEditable adapter (highlight sink, change coalescing, best-effort replacement with post-verification), the per-host `::highlight` stylesheet rule, and the extension's `EligibleField` generalization. A paragraph or two per item — match the surrounding density, no filler.
+- [ ] **Step 1:** Document, in the existing sections' voice: the segmentMap module and its newline model, the contentEditable adapter (highlight sink, change coalescing, best-effort replacement with post-verification), the per-host `::highlight` stylesheet rule, and the extension's `EligibleField` generalization. In `docs/browser-extension.md` also: update the eligibility rule text, the fingerprint order, the import-path list, add C3 rows to the manual acceptance checklist (incl. one cross-paragraph apply whose observed behavior is DOCUMENTED, not asserted — Chrome's insertText across a block boundary can rebalance blocks and legitimately echo `ok: false` + re-sync), and one sentence on the `fw-*` highlight-name namespace being document-global (a host page using the same names would interfere; accepted). A paragraph or two per item — match the surrounding density, no filler.
 - [ ] **Step 2:** Full sweep, both packages, from their directories: frontend `rtk proxy npm test && rtk proxy npm run lint && rtk proxy npm run build && rtk proxy npm run check:embed`; extension `rtk proxy npm test && rtk proxy npx oxlint && rtk proxy npm run build`. Confirm `git -C /Users/markus/IdeaProjects/fabulous-writing status` shows a clean tree except intended changes, and `git -C /Users/markus/IdeaProjects/fabulous-writing diff main -- frontend/src/embed` is EMPTY (exit criterion, verified mechanically).
 - [ ] **Step 3: Commit**
 
 ```bash
-git -C /Users/markus/IdeaProjects/fabulous-writing add docs/frontend-architecture.md
-git -C /Users/markus/IdeaProjects/fabulous-writing commit -m "docs(architecture): contentEditable adapter + segment map (B43 C3)"
+git -C /Users/markus/IdeaProjects/fabulous-writing add docs/frontend-architecture.md docs/browser-extension.md clients/browser-extension/public/manifest.json
+git -C /Users/markus/IdeaProjects/fabulous-writing commit -m "docs: contentEditable adapter + segment map, extension docs/description (B43 C3)"
 ```
 
 ---
@@ -1193,5 +1333,5 @@ git -C /Users/markus/IdeaProjects/fabulous-writing commit -m "docs(architecture)
 ## Out of plan (recorded, not tasks)
 
 - **PR + Copilot review + LOGBOOK:** after the plan completes, the branch goes up as a PR (finishing-a-development-branch flow); every Copilot thread gets replied to and resolved; the LOGBOOK entry lands as the LAST commit on the branch on the owner's cue; the owner merges (rebase-merge).
-- **Manual acceptance (owner's session):** plain-CE benchmark on a real site (e.g. Gmail compose) and the framework smoke test on a Lexical editor (e.g. Reddit's composer), results recorded on issue #134 — the spec's acceptance section. The implementing session cannot drive the owner's browser; do not fake this.
+- **Manual acceptance (owner's session):** plain-CE benchmark on a real site (e.g. Gmail compose), one cross-paragraph apply with the observed behavior documented (a legitimate `ok: false` + re-sync is expected when Chrome rebalances blocks — plan review risk 1), and the framework smoke test on a Lexical editor (e.g. Reddit's composer); results recorded on issue #134 — the spec's acceptance section. The implementing session cannot drive the owner's browser; do not fake this.
 - **Firefox/Safari (`::highlight` support ≥ FF 132 / Safari 17.2)** is C4/C5's concern.
