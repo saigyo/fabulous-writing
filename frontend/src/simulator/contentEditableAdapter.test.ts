@@ -544,6 +544,32 @@ describe('createContentEditableAdapter: applyReplacement post-verification failu
   })
 })
 
+// Copilot round 2, F1. The old post-verify checked only the inserted slice
+// and the total length — both survive a synchronous rewrite that changes a
+// DIFFERENT character than the one requested, so it used to report ok:true
+// for a wrong result. The full-text compare is the only check that catches
+// this.
+describe('createContentEditableAdapter: applyReplacement post-verification catches an out-of-range rewrite', () => {
+  it('reports ok:false with the real text when a rewrite changes a character outside [from, to), even though the requested insert landed correctly and the total length is preserved', () => {
+    const root = rootWith('<div>abc</div>')
+    const adapter = makeAdapter(root)
+    // Simulates a framework that applies the requested 'b' -> 'X' edit but
+    // ALSO rewrites 'c' -> 'Y' in the same synchronous re-render — the
+    // inserted slice ('X' at [1,2)) and the total length (3) both still
+    // match what the old checks looked for.
+    const rewrite = () => { root.textContent = 'aXY' }
+    document.addEventListener('input', rewrite)
+
+    try {
+      const result = adapter.applyReplacement(1, 2, 'X', 'b')
+
+      expect(result).toEqual({ ok: false, text: 'aXY' })
+    } finally {
+      document.removeEventListener('input', rewrite)
+    }
+  })
+})
+
 // Case 20 (brief case 7, plan review BL2). A span lying entirely on a
 // synthetic newline resolves to an inverted (or no) Range — refuse WITHOUT
 // mutating, rather than falling back to a snapped position.

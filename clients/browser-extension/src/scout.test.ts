@@ -426,6 +426,47 @@ describe('scout: showAffordance early-return avoids DOM churn for a still-shown 
   })
 })
 
+// Copilot round 2, F3: the old fast-path guard (shownEl === el &&
+// affordance.host.isConnected) missed that reposition() can self-hide the
+// chip (display:none) without ever clearing shownEl, and that the host
+// stays isConnected throughout since it lives as the field's own DOM
+// SIBLING — removing just the field leaves the host attached, hidden and
+// no longer anchored next to anything in particular. A later re-enter on
+// the SAME element reference (reinserted elsewhere) must not take the fast
+// path while the chip is still hidden/misanchored.
+describe('scout: showAffordance re-shows after reposition() self-hides a reinserted anchor (Copilot round 2, F3)', () => {
+  it('a reinserted-but-still-hidden anchor re-runs showFor on the next enter, restoring the chip', () => {
+    const el = eligibleField()
+    show(el)
+    const host = affordanceHost()
+    expect(host.style.display).not.toBe('none')
+    expect(el.nextElementSibling).toBe(host)
+
+    // Simulate what reposition()'s own isConnected guard does when the
+    // anchor is detached (affordance.ts's hideInternal): the chip goes
+    // display:none without scout ever being told — shownEl stays `el`
+    // throughout, and the host itself (a DOM SIBLING of the field, not a
+    // descendant) stays isConnected even though el is now gone.
+    host.style.display = 'none'
+    el.remove()
+
+    // The SAME element reappears elsewhere in the document, no longer
+    // adjacent to the (still hidden) host. The bug: shownEl === el and
+    // affordance.host.isConnected were both still true, so the old fast
+    // path skipped showFor entirely and left the chip hidden and
+    // misanchored.
+    document.body.appendChild(el)
+    el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+
+    expect(host.style.display).not.toBe('none')
+    expect(el.nextElementSibling).toBe(host)
+
+    const port = lastConnectedPort()
+    port.onDisconnect.emit(port)
+    el.remove()
+  })
+})
+
 // Copilot round 5, F5: the chip is now reachable by keyboard (Tab lands on
 // it right after the field, since affordance.ts's showFor inserts the host
 // as the field's own next sibling). handleEnter's isChipHost(target) check

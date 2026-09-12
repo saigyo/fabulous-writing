@@ -1,7 +1,7 @@
 # B43 C3: ContentEditable Adapter — Design
 
 **Date:** 2026-09-12
-**Status:** Approved concept, pre-implementation
+**Status:** Implemented (PR #157); manual acceptance on real sites pending (see Testing)
 **Parent:** docs/superpowers/specs/2026-08-22-b43-embeddable-clients-design.md (umbrella;
 this spec details slice C3, which that document defers to "its own spec on pickup")
 **Issue:** #134 (C3 checklist item)

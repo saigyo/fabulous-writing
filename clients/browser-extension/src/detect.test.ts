@@ -155,4 +155,19 @@ describe('fieldKindOf and resolveEligibleField for textarea', () => {
     stubRect(div, 200, 80)
     expect(resolveEligibleField(div)).toBeNull()
   })
+
+  // Copilot round 2, F2: mouseover/focusin can target an SVG descendant
+  // (an inline icon, a diagram) nested inside an eligible CE host — SVGElement
+  // is not an HTMLElement, so the walk used to bail out before it ever
+  // reached the host root.
+  it('resolveEligibleField climbs from an SVG descendant, through the <svg> itself, to the enclosing eligible CE host', () => {
+    const host = eligibleHost()
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+    svg.appendChild(circle)
+    host.appendChild(svg)
+
+    expect(resolveEligibleField(circle)).toBe(host)
+    expect(resolveEligibleField(svg)).toBe(host)
+  })
 })

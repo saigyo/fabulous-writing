@@ -253,12 +253,21 @@ export function createContentEditableAdapter(
       // embed re-syncs from the echo instead of desyncing — degrade
       // gracefully, never corrupt. (An ASYNC rewrite lands later as an
       // ordinary textChanged via the observer — same self-healing, one
-      // message later.) The slice term catches wrong content; the
-      // length-delta term is the ONLY check for an empty insert (a
-      // deletion the host restored — test case 10).
+      // message later.) Comparing the WHOLE extraction against the exact
+      // expected result is required, not just the inserted slice + total
+      // length (Copilot round 2, F1): a synchronous rewrite that changes a
+      // DIFFERENT character while preserving both of those (e.g. 'abc' ->
+      // replace 'b' with 'X' while the host also flips 'c' to 'Y') used to
+      // report ok:true for a wrong result. The full compare subsumes the
+      // old slice term AND the old length-delta term — the latter was the
+      // only check that caught an empty insert whose deletion the host
+      // restored (test case 10), and a whole-text compare catches that too.
+      // One accepted consequence (risk-1, unchanged): a cross-block
+      // execCommand apply that rebalances block structure changes the
+      // synthetic-newline layout even when the visible characters end up
+      // right, so the full compare reports ok:false there as well.
       map = buildSegmentMap(root)
-      const ok = map.text.slice(from, from + insert.length) === insert
-        && map.text.length === text.length - (to - from) + insert.length
+      const ok = map.text === text.slice(0, from) + insert + text.slice(to)
       root.scrollTop = scrollTop
       root.scrollLeft = scrollLeft
       if (prev instanceof HTMLElement && prev !== root) prev.focus({ preventScroll: true })

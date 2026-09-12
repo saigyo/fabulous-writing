@@ -49,7 +49,16 @@ export function isEligibleField(el: EventTarget | null): el is EligibleField {
  * keeps climbing past any inner root that isEligibleField itself rejects.
  */
 export function resolveEligibleField(target: EventTarget | null): EligibleField | null {
-  if (!(target instanceof HTMLElement)) return null
+  // Copilot round 2, F2: start from any Element, not just HTMLElement — a
+  // mouseover/focusin can target an SVG descendant nested inside an eligible
+  // CE host (an inline icon, a diagram) and SVGElement is not an
+  // HTMLElement, so the old HTMLElement-only guard returned null before the
+  // walk below ever got a chance to climb out of the SVG into the host.
+  // parentElement climbs from an SVGElement into its enclosing HTMLElement
+  // exactly like any other ancestor step; isEligibleField itself still
+  // restricts what can actually match to HTMLTextAreaElement/HTMLElement
+  // (see its own doc comment), so the return type is unchanged.
+  if (!(target instanceof Element)) return null
   // Typed as the wider Element (not HTMLElement) so the isEligibleField
   // type guard's non-match branch doesn't collapse to `never` — EligibleField
   // is HTMLTextAreaElement | HTMLElement, so narrowing an HTMLElement-typed
