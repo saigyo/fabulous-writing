@@ -397,3 +397,307 @@ describe('createContentEditableAdapter: defaultHighlightSink real path', () => {
     expect(defaultHighlightSink()).toBeNull()
   })
 })
+
+// Case 14 (Task 3, brief case 1). Mirrors textareaAdapter.ts's finding-6
+// ordering: the vector guard must run BEFORE the expectedText compare, since
+// slice() silently clamps/truncates — a crafted expectedText matching the
+// CLAMPED slice would otherwise sail through and mutate at the wrong
+// position instead of being refused.
+describe('createContentEditableAdapter: applyReplacement validates the vector before comparing expectedText', () => {
+  it('to beyond the text length: expectedText matches the clamped slice, but the guard still refuses', () => {
+    const root = rootWith('<div>The quikc fox</div>')
+    const adapter = makeAdapter(root)
+    const before = adapter.extract() // 'The quikc fox'
+    const beforeHtml = root.innerHTML
+    const clampedSlice = before.slice(4, 1000) // what a bare String.slice would return
+
+    const result = adapter.applyReplacement(4, 1000, 'X', clampedSlice)
+
+    expect(result).toEqual({ ok: false, text: before })
+    expect(root.innerHTML).toBe(beforeHtml)
+  })
+
+  it('inverted range (to < from): the coincidental empty slice must not pass as an empty expectedText', () => {
+    const root = rootWith('<div>The quikc fox</div>')
+    const adapter = makeAdapter(root)
+    const before = adapter.extract()
+    const beforeHtml = root.innerHTML
+
+    const result = adapter.applyReplacement(9, 4, 'X', '') // before.slice(9, 4) === ''
+
+    expect(result).toEqual({ ok: false, text: before })
+    expect(root.innerHTML).toBe(beforeHtml)
+  })
+
+  it('negative from: the coincidental empty slice must not pass as an empty expectedText', () => {
+    const root = rootWith('<div>The quikc fox</div>')
+    const adapter = makeAdapter(root)
+    const before = adapter.extract()
+    const beforeHtml = root.innerHTML
+
+    const result = adapter.applyReplacement(-5, 3, 'X', '') // before.slice(-5, 3) === ''
+
+    expect(result).toEqual({ ok: false, text: before })
+    expect(root.innerHTML).toBe(beforeHtml)
+  })
+
+  it('non-integer (NaN) from: slice() would silently truncate NaN to 0', () => {
+    const root = rootWith('<div>The quikc fox</div>')
+    const adapter = makeAdapter(root)
+    const before = adapter.extract()
+    const beforeHtml = root.innerHTML
+    const truncatedSlice = before.slice(0, 5) // what slice(NaN, 5) truncates to
+
+    const result = adapter.applyReplacement(NaN, 5, 'X', truncatedSlice)
+
+    expect(result).toEqual({ ok: false, text: before })
+    expect(root.innerHTML).toBe(beforeHtml)
+  })
+})
+
+// Case 15 (brief case 2).
+describe('createContentEditableAdapter: applyReplacement refuses an expectedText mismatch', () => {
+  it('leaves the DOM untouched when expectedText does not match the live slice', () => {
+    const root = rootWith('<div>The quikc fox</div>')
+    const adapter = makeAdapter(root)
+    const before = adapter.extract()
+    const beforeHtml = root.innerHTML
+
+    const result = adapter.applyReplacement(4, 9, 'quick', 'wrong-expectation')
+
+    expect(result).toEqual({ ok: false, text: before })
+    expect(root.innerHTML).toBe(beforeHtml)
+  })
+})
+
+// Case 16 (brief case 3). happy-dom has no execCommand, so this is the
+// surgery fallback branch — exactly like textareaAdapter.ts's own tests.
+describe('createContentEditableAdapter: applyReplacement same-node replacement via the surgery fallback', () => {
+  it('mutates the text node, reports ok:true with the new text, and dispatches a bubbling input event', () => {
+    const root = rootWith('<div>The quikc fox</div>')
+    const adapter = makeAdapter(root)
+    const docListener = vi.fn()
+    document.addEventListener('input', docListener)
+
+    try {
+      const result = adapter.applyReplacement(4, 9, 'quick', 'quikc')
+
+      expect(result).toEqual({ ok: true, text: 'The quick fox' })
+      expect(root.textContent).toBe('The quick fox')
+      expect(docListener).toHaveBeenCalledTimes(1)
+      const event = docListener.mock.calls[0][0] as Event
+      expect(event).toBeInstanceOf(InputEvent)
+      expect(event.bubbles).toBe(true)
+    } finally {
+      document.removeEventListener('input', docListener)
+    }
+  })
+})
+
+// Case 17 (brief case 4).
+describe('createContentEditableAdapter: applyReplacement across an inline-markup boundary', () => {
+  it('replaces text that lives inside an inline element without disturbing the surrounding text', () => {
+    const root = rootWith('a <strong>bd</strong> c')
+    const adapter = makeAdapter(root)
+
+    const result = adapter.applyReplacement(2, 4, 'bold', 'bd')
+
+    expect(result).toEqual({ ok: true, text: 'a bold c' })
+    expect(adapter.extract()).toBe('a bold c')
+  })
+})
+
+// Case 18 (brief case 5). The slice check in the post-verify is vacuous for
+// an empty insert (''.slice-equality always passes) — the length-delta term
+// is what actually validates a deletion (case 23/brief case 10 below proves
+// that on its own).
+describe('createContentEditableAdapter: applyReplacement with an empty insert deletes', () => {
+  it('shrinks the text by the deleted span length', () => {
+    const root = rootWith('<div>abcdefghij</div>')
+    const adapter = makeAdapter(root)
+    const before = adapter.extract() // length 10
+
+    const result = adapter.applyReplacement(2, 4, '', 'cd')
+
+    expect(result).toEqual({ ok: true, text: 'abefghij' })
+    expect(result.text.length).toBe(before.length - 2)
+  })
+})
+
+// Case 19 (brief case 6). A framework-style synchronous rewrite of the root
+// on its own input listener must be judged as the real post-edit DOM, never
+// a throw, never a lie.
+describe('createContentEditableAdapter: applyReplacement post-verification failure', () => {
+  it('reports ok:false with the REAL (rewritten) text when a document input listener rewrites the root', () => {
+    const root = rootWith('<div>The quikc fox</div>')
+    const adapter = makeAdapter(root)
+    const rewrite = () => { root.textContent = 'REWRITTEN' }
+    document.addEventListener('input', rewrite)
+
+    try {
+      const result = adapter.applyReplacement(4, 9, 'quick', 'quikc')
+
+      expect(result).toEqual({ ok: false, text: 'REWRITTEN' })
+    } finally {
+      document.removeEventListener('input', rewrite)
+    }
+  })
+})
+
+// Case 20 (brief case 7, plan review BL2). A span lying entirely on a
+// synthetic newline resolves to an inverted (or no) Range — refuse WITHOUT
+// mutating, rather than falling back to a snapped position.
+describe('createContentEditableAdapter: applyReplacement refuses a span with no resolvable Range', () => {
+  it('refuses a span lying entirely on the block-boundary newline, leaving the DOM byte-identical', () => {
+    const root = rootWith('<div>ab</div><div>cd</div>')
+    const adapter = makeAdapter(root)
+    const before = adapter.extract() // 'ab\ncd'
+    const beforeHtml = root.innerHTML
+
+    const result = adapter.applyReplacement(2, 3, 'X', '\n')
+
+    expect(result).toEqual({ ok: false, text: before })
+    expect(root.innerHTML).toBe(beforeHtml)
+  })
+})
+
+// Case 21 (brief case 8). document.getSelection is stubbed via vi.spyOn in
+// every case below; this file's vitest config sets neither restoreMocks nor
+// clearMocks, so an unrestored stub would leak into every later test in this
+// file (including applyReplacement's own document.getSelection() calls) —
+// restore it after each case here.
+describe('createContentEditableAdapter: caretOffset', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('returns the flat offset for a caret inside a mapped text node', () => {
+    const root = rootWith('<div>abcdefghij</div>')
+    const adapter = makeAdapter(root)
+    const textNode = root.querySelector('div')!.firstChild as Text
+
+    vi.spyOn(document, 'getSelection').mockReturnValue(
+      { rangeCount: 1, anchorNode: textNode, anchorOffset: 3 } as unknown as Selection,
+    )
+
+    expect(adapter.caretOffset()).toBe(3)
+  })
+
+  it('returns null when the anchor node is outside root', () => {
+    const root = rootWith('<div>abcdefghij</div>')
+    const adapter = makeAdapter(root)
+    const outside = document.createElement('div')
+    document.body.appendChild(outside)
+    const outsideText = document.createTextNode('xyz')
+    outside.appendChild(outsideText)
+
+    vi.spyOn(document, 'getSelection').mockReturnValue(
+      { rangeCount: 1, anchorNode: outsideText, anchorOffset: 1 } as unknown as Selection,
+    )
+
+    expect(adapter.caretOffset()).toBeNull()
+    outside.remove()
+  })
+
+  it('returns null when there is no selection', () => {
+    const root = rootWith('<div>abcdefghij</div>')
+    const adapter = makeAdapter(root)
+
+    vi.spyOn(document, 'getSelection').mockReturnValue(null)
+    expect(adapter.caretOffset()).toBeNull()
+
+    vi.spyOn(document, 'getSelection').mockReturnValue(
+      { rangeCount: 0, anchorNode: null, anchorOffset: 0 } as unknown as Selection,
+    )
+    expect(adapter.caretOffset()).toBeNull()
+  })
+})
+
+// Case 22 (brief case 9, plan review BL1). Pins the `notifiedText` baseline:
+// applyReplacement's own synchronous map rebuild must not make the
+// microtask-coalesced sync in queueSync() think nothing changed.
+describe('createContentEditableAdapter: applyReplacement fires onChange via the input-event microtask sync', () => {
+  it('calls onChange once, and extract() reflects the new text by then', async () => {
+    const root = rootWith('<div>The quikc fox</div>')
+    const adapter = makeAdapter(root)
+    const cb = vi.fn()
+    adapter.onChange(cb)
+
+    const result = adapter.applyReplacement(4, 9, 'quick', 'quikc')
+    expect(result).toEqual({ ok: true, text: 'The quick fox' })
+
+    await Promise.resolve()
+
+    expect(cb).toHaveBeenCalledTimes(1)
+    expect(adapter.extract()).toBe('The quick fox')
+  })
+})
+
+// Case 23 (brief case 10, mutation-verify target SF2). Only the length-delta
+// term of the post-verify can catch a host that restores the original text
+// after an empty-insert deletion — the slice term is vacuous for ''.
+describe('createContentEditableAdapter: applyReplacement reports a failed deletion', () => {
+  it('reports ok:false with the restored text when a document input listener undoes the deletion', () => {
+    const root = rootWith('<div>abcdefghij</div>')
+    const adapter = makeAdapter(root)
+    const original = adapter.extract()
+    const restore = () => { root.textContent = original }
+    document.addEventListener('input', restore)
+
+    try {
+      const result = adapter.applyReplacement(2, 4, '', 'cd')
+
+      expect(result).toEqual({ ok: false, text: original })
+    } finally {
+      document.removeEventListener('input', restore)
+    }
+  })
+})
+
+// Case 24 (brief case 11, plan review SF5). Range.deleteContents only trims
+// partially contained text nodes — it cannot remove a block boundary, so a
+// cross-block span must refuse BEFORE any mutation.
+describe('createContentEditableAdapter: applyReplacement refuses a cross-block span before mutating', () => {
+  it('refuses a span crossing the block boundary, leaving the DOM byte-identical', () => {
+    const root = rootWith('<div>ab</div><div>cd</div>')
+    const adapter = makeAdapter(root)
+    const before = adapter.extract() // 'ab\ncd'
+    const beforeHtml = root.innerHTML
+
+    const result = adapter.applyReplacement(1, 4, 'X', 'b\nc')
+
+    expect(result).toEqual({ ok: false, text: before })
+    expect(root.innerHTML).toBe(beforeHtml)
+  })
+})
+
+// Case 25 (brief case 12, plan review SF6). execCommand('delete') on a
+// COLLAPSED selection is a backspace — it would remove the character before
+// the caret, one the request never named — so a true no-op must return
+// early instead of ever building a selection at all.
+describe('createContentEditableAdapter: applyReplacement no-ops a degenerate request', () => {
+  it('returns ok:true immediately for from === to with an empty insert, without touching the DOM', () => {
+    const root = rootWith('<div>abcdefghij</div>')
+    const adapter = makeAdapter(root)
+    const before = adapter.extract()
+    const beforeHtml = root.innerHTML
+
+    const result = adapter.applyReplacement(3, 3, '', '')
+
+    expect(result).toEqual({ ok: true, text: before })
+    expect(root.innerHTML).toBe(beforeHtml)
+  })
+})
+
+// Case 26 (brief case 13, documented limitation N6). An empty field has no
+// text node to anchor a collapsed range on.
+describe('createContentEditableAdapter: applyReplacement into an empty field', () => {
+  it('refuses an insertion with no text node to anchor on', () => {
+    const root = rootWith('')
+    const adapter = makeAdapter(root)
+
+    const result = adapter.applyReplacement(0, 0, 'x', '')
+
+    expect(result).toEqual({ ok: false, text: '' })
+  })
+})
