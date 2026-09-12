@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isEligibleField, MIN_FIELD_HEIGHT, MIN_FIELD_WIDTH } from './detect'
+import { fieldKindOf, isEligibleField, MIN_FIELD_HEIGHT, MIN_FIELD_WIDTH, resolveEligibleField } from './detect'
 
 function stubRect(el: HTMLElement, width: number, height: number): void {
   el.getBoundingClientRect = () => ({
@@ -10,6 +10,14 @@ function stubRect(el: HTMLElement, width: number, height: number): void {
 
 function eligibleTextarea(): HTMLTextAreaElement {
   const el = document.createElement('textarea')
+  document.body.appendChild(el)
+  stubRect(el, MIN_FIELD_WIDTH + 80, MIN_FIELD_HEIGHT + 40)
+  return el
+}
+
+function eligibleHost(): HTMLDivElement {
+  const el = document.createElement('div')
+  el.contentEditable = 'true'
   document.body.appendChild(el)
   stubRect(el, MIN_FIELD_WIDTH + 80, MIN_FIELD_HEIGHT + 40)
   return el
@@ -71,5 +79,63 @@ describe('isEligibleField', () => {
     document.body.appendChild(div)
     stubRect(div, 200, 80)
     expect(isEligibleField(div)).toBe(false)
+  })
+})
+
+describe('contentEditable eligibility', () => {
+  it('accepts an editing host (contenteditable="true", parent not editable, ≥ min size); fieldKindOf → contenteditable', () => {
+    const host = eligibleHost()
+    expect(isEligibleField(host)).toBe(true)
+    expect(fieldKindOf(host)).toBe('contenteditable')
+  })
+
+  it('rejects an inner child of an editing host directly, but resolveEligibleField climbs to the host root', () => {
+    const host = eligibleHost()
+    const span = document.createElement('span')
+    span.textContent = 'inner'
+    host.appendChild(span)
+    expect(isEligibleField(span)).toBe(false)
+    expect(resolveEligibleField(span)).toBe(host)
+  })
+
+  it('rejects contenteditable="false"', () => {
+    const el = document.createElement('div')
+    el.contentEditable = 'false'
+    document.body.appendChild(el)
+    stubRect(el, MIN_FIELD_WIDTH + 80, MIN_FIELD_HEIGHT + 40)
+    expect(isEligibleField(el)).toBe(false)
+  })
+
+  it('rejects a nested editing host whose parent is also editable; resolveEligibleField climbs to the outermost editable ancestor', () => {
+    const outer = eligibleHost()
+    const inner = document.createElement('div')
+    inner.contentEditable = 'true'
+    outer.appendChild(inner)
+    stubRect(inner, MIN_FIELD_WIDTH + 80, MIN_FIELD_HEIGHT + 40)
+    expect(isEligibleField(inner)).toBe(false)
+    expect(resolveEligibleField(inner)).toBe(outer)
+  })
+
+  it('rejects a contenteditable host smaller than MIN_FIELD_WIDTH x MIN_FIELD_HEIGHT', () => {
+    const el = document.createElement('div')
+    el.contentEditable = 'true'
+    document.body.appendChild(el)
+    stubRect(el, 50, 20)
+    expect(isEligibleField(el)).toBe(false)
+  })
+})
+
+describe('fieldKindOf and resolveEligibleField for textarea', () => {
+  it('fieldKindOf(textarea) returns textarea; existing textarea eligibility unchanged', () => {
+    const el = eligibleTextarea()
+    expect(isEligibleField(el)).toBe(true)
+    expect(fieldKindOf(el)).toBe('textarea')
+  })
+
+  it('resolveEligibleField returns an eligible textarea as-is, and null for null/body', () => {
+    const el = eligibleTextarea()
+    expect(resolveEligibleField(el)).toBe(el)
+    expect(resolveEligibleField(null)).toBeNull()
+    expect(resolveEligibleField(document.body)).toBeNull()
   })
 })
