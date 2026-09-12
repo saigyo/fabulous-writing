@@ -73,10 +73,20 @@ Rebuilt on every change tick (below); never patched incrementally in v1.
 - One `Highlight` object per severity (registered as `fw-<severity>`), plus
   `fw-selected` and `fw-flash`; `Highlight.priority` orders selection/flash
   above severity colors.
-- A once-per-document injected `<style>` carries the `::highlight(fw-…)` rules —
-  paint-only properties (background-color, text-decoration), same palette as
-  the extension's MARKS_CSS. `::highlight()` styling only applies from real
-  stylesheets, hence the injection; it is idempotent (keyed element id).
+- The `::highlight(fw-…)` rules — paint-only properties (background-color,
+  text-decoration), same translucent palette as the overlay marks — ship
+  **per host stylesheet, never as a JS-injected `<style>`**: the extension
+  adds them to `public/marks.css` (the manifest's `content_scripts.css`
+  entry, which browser-injects immune to the host page's `style-src` CSP —
+  the exact lesson C2's Copilot round 7 F3 already recorded for the overlay
+  colors), and the simulator adds them to `simulator.css`. The adapter
+  itself registers Highlights only; it never touches stylesheets.
+
+  > **Amendment (during planning, 2026-09-12):** this paragraph originally
+  > prescribed a once-per-document injected `<style>`; that mechanism is
+  > exactly what marks.css's own header documents as silently failing on
+  > strict-CSP sites, so it was replaced by the per-host stylesheet rule
+  > above before implementation began.
 - `setMarkings(spans)` stores the spans and builds Ranges via the segment map
   with the same clamp/drop semantics as the textarea adapter's `render()`
   (clamp to text length, drop empty). Overlapping findings need no
@@ -136,7 +146,8 @@ failure:
 5. Restore focus and return `{ ok, text: extract() }`.
 
 `dispose()`: remove listeners/observer, clear the adapter's Highlight
-registrations (shared style element stays — it is inert without registrations).
+registrations (the per-host stylesheets stay — `::highlight()` rules are inert
+without registrations).
 
 ## Extension integration (no protocol changes)
 
