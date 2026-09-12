@@ -4767,3 +4767,52 @@ rejected). Copilot round 1: one real docs finding (extension-relative
 manifest path in the recipe), fixed; round 2: zero findings. First
 `chrome-ext-v0.1.0` tag to be cut from main post-merge — the workflow must
 exist at the tagged commit.
+
+## 2026-09-12 — B43 C3: contentEditable adapter (PR #157)
+Commits: `1b70d9c`…`087c3ff` (19 on the branch, plus this entry)
+
+The C3 slice — the capability model's proof: a `FieldAdapter` for
+contentEditable editing hosts with **zero protocol, embed, or backend
+changes** (mechanically verified: `git diff main -- frontend/src/embed
+backend` empty). Load-bearing design moves: a `segmentMap` module as the
+single text↔DOM authority (flat UTF-16 offsets ↔ text nodes; deterministic
+newline synthesis — pending block boundaries collapsed to one `\n`, a
+Chrome-faithful block-trailing-`<br>` rule that keeps `<div><br></div>`
+one blank line, whitespace-only nodes skipped at block boundaries); markings
+as CSS Custom Highlight API registrations behind an injectable
+`HighlightSink` (feature-gated `mark: 'native'|'none'`; no DOM mutation, so
+none of the textarea adapter's mirror/geometry machinery), with
+`::highlight()` rules shipped per host stylesheet (manifest-declared
+marks.css / simulator.css — the C2 CSP lesson, spec-amended before
+implementation); change detection as `input` + subtree MutationObserver
+coalesced to one microtask against a `notifiedText` baseline; replacement
+execCommand-first (native undo, frameworks see the edit) with Range-surgery
+fallback, exact-text cross-block guards refusing before mutation, and
+whole-text post-verification echoing `ok:false` with the real text so the
+embed re-syncs instead of desyncing. Extension generalization:
+`EligibleField` across detect/session/reacquire/scout/affordance —
+ancestor-walk field resolution (non-editable mention atoms and SVG entry
+paths included), kind-aware fingerprints with unchanged textarea index
+semantics and root-aware scope queries, containment-based enter/leave
+preserving C2's S1 lesson. Simulator gained a second CE demo field; the
+e2e drives the full loop in real Chromium including undo-after-apply.
+
+Process: spec → twice-reviewed plan (round 1 caught three blockers in the
+plan's own embedded code, incl. a change-baseline bug that would have
+swallowed every post-replacement `textChanged`, and measured the biggest
+architectural risk away — content-script Highlight registrations paint from
+the main world's `::highlight` rules in Chromium 151) → 10 SDD tasks, every
+task review clean on first pass → whole-branch final review (ready to
+merge; three doc minors fixed) → three Copilot rounds, twelve findings:
+eleven fixed (best catches: whole-text post-verify, the SVG entry path, the
+unslotted-chip class of bug avoided), one adjudicated false positive with an
+empirical probe and a pinned regression test.
+
+Verification: frontend 1021 tests, extension 260, all lint/build/
+check:embed gates and PR CI green throughout; e2e first-attempt pass.
+Manual acceptance (recorded on #134): Gmail compose full pass incl.
+cross-paragraph applies; Lexical playground documented mixed (partial apply
+on token-node spans is caught, re-synced and undo-recoverable → #159
+proposes auto-`execCommand('undo')` on post-verify failure); Reddit's
+slotted shreddit editors never render the sibling-inserted chip → #158
+(body-anchored affordance host). Next on #134: C4 Firefox port.
