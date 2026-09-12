@@ -697,6 +697,31 @@ describe('createContentEditableAdapter: applyReplacement refuses a cross-block s
   })
 })
 
+// Case 24b (Copilot round 3, F1/F2). The pre-round-3 guard compared only
+// `target.toString().length` against `to - from`, which a SKIP_TAGS subtree
+// (script/style/noscript/template) sitting inside the span can spoof: the
+// segment map's extraction skips it, but Range.toString() does not, so the
+// LENGTHS can coincide while the CONTENT differs. Map of
+// '<div>ab<style>Q</style></div><div>cd</div>' is 'ab\ncd'; replacing [1, 4)
+// targets extracted text 'b\nc' (length 3), but the Range from ('ab', 1) to
+// ('cd', 1) stringifies to 'b' + 'Q' + 'c' = 'bQc' — also length 3, so the
+// old length-only guard would have let this mutate. The exact-text compare
+// refuses it instead, leaving the DOM untouched.
+describe('createContentEditableAdapter: applyReplacement refuses a length-matching but content-spoofed cross-block span', () => {
+  it('refuses when a skipped <style> subtree inside the span keeps the length but changes the content', () => {
+    const root = rootWith('<div>ab<style>Q</style></div><div>cd</div>')
+    const adapter = makeAdapter(root)
+    const before = adapter.extract() // 'ab\ncd'
+    expect(before).toBe('ab\ncd')
+    const beforeHtml = root.innerHTML
+
+    const result = adapter.applyReplacement(1, 4, 'X', 'b\nc')
+
+    expect(result).toEqual({ ok: false, text: before })
+    expect(root.innerHTML).toBe(beforeHtml)
+  })
+})
+
 // Case 25 (brief case 12, plan review SF6). execCommand('delete') on a
 // COLLAPSED selection is a backspace — it would remove the character before
 // the caret, one the request never named — so a true no-op must return

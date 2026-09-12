@@ -692,6 +692,72 @@ describe('simulator main: contentEditable field (B43 C3)', () => {
     expect(document.querySelector('[data-finding-ids~="f1"]')).toBeNull()
   })
 
+  // Copilot round 3, F3: connectField() used to clear only the OTHER
+  // field's markings/selection before assigning `active`. Reconnecting the
+  // ALREADY-active field (or cycling back to it) left ITS own stale
+  // highlights registered — currentFindings was reset, but the adapter's
+  // own Highlight registrations weren't — until the next findings message
+  // landed. happy-dom has no native Highlight/CSS.highlights registry (see
+  // contentEditableAdapter.ts's defaultHighlightSink), so this test stubs a
+  // minimal one at the global level, installed BEFORE `await import
+  // ('./main')` since createContentEditableAdapter reads it at that
+  // module's import time.
+  it('reconnecting the CE field clears its own highlight registrations before any new findings (F3)', async () => {
+    const registry = new Map<string, unknown>()
+    class FakeHighlight { constructor(..._ranges: Range[]) {} priority = 0 }
+    // happy-dom's `CSS` global is getter-backed, re-instantiated on every
+    // access — assigning `.highlights` onto one read is invisible to the
+    // NEXT read (the adapter's own `g.CSS?.highlights`). Overriding the
+    // OWN property with a stable plain value (and saving the original
+    // descriptor to restore in `finally`) sidesteps that.
+    const savedCss = Object.getOwnPropertyDescriptor(globalThis, 'CSS')
+    const savedHighlight = Object.getOwnPropertyDescriptor(globalThis, 'Highlight')
+    Object.defineProperty(globalThis, 'Highlight', {
+      value: FakeHighlight, configurable: true, writable: true,
+    })
+    Object.defineProperty(globalThis, 'CSS', {
+      value: {
+        highlights: {
+          set: (name: string, h: unknown) => registry.set(name, h),
+          delete: (name: string) => registry.delete(name),
+        },
+      },
+      configurable: true,
+      writable: true,
+    })
+    try {
+      const iframeEl = document.getElementById('embed') as HTMLIFrameElement
+      vi.spyOn(iframeEl.contentWindow!, 'postMessage').mockImplementation(() => {})
+      await import('./main')
+      const ceConnectBtn = document.getElementById('connect-ce') as HTMLButtonElement
+
+      iframeEl.dispatchEvent(new Event('load'))
+      embedMessage(iframeEl, {
+        type: 'ready',
+        payload: { protocolVersion: PROTOCOL_VERSION, features: [] },
+      })
+      ceConnectBtn.click()
+      embedMessage(iframeEl, {
+        type: 'findings',
+        payload: {
+          fieldId: 'sim-field-ce',
+          findings: [{ id: 'f1', from: 0, to: 5, severity: 'warning', category: 'style' }],
+        },
+      })
+      expect(registry.has('fw-warning')).toBe(true)
+
+      // Reconnect the SAME field — before this fix, only the OTHER field
+      // was cleared, so fw-warning would still be registered here.
+      ceConnectBtn.click()
+
+      expect(registry.has('fw-warning')).toBe(false)
+    } finally {
+      if (savedHighlight) Object.defineProperty(globalThis, 'Highlight', savedHighlight)
+      else delete (globalThis as { Highlight?: unknown }).Highlight
+      if (savedCss) Object.defineProperty(globalThis, 'CSS', savedCss)
+    }
+  })
+
   it('a findings message for the inactive fieldId is ignored', async () => {
     const iframeEl = document.getElementById('embed') as HTMLIFrameElement
     vi.spyOn(iframeEl.contentWindow!, 'postMessage').mockImplementation(() => {})

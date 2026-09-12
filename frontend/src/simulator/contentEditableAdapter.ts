@@ -192,20 +192,27 @@ export function createContentEditableAdapter(
       // contained text nodes — it cannot remove a block boundary, so a
       // cross-block span leaves its synthetic newline behind: mutation
       // followed by ok:false, which the never-corrupt rule forbids. The
-      // surgery branch therefore refuses spans whose Range covers less
-      // text than [from, to) spans (i.e. synthetic newlines inside) —
-      // BEFORE any mutation. Deliberately over-broad in the safe direction
-      // (re-review item 3): a <br>-spanning span, which deleteContents
-      // WOULD handle (the <br> is fully contained), is refused too — its
-      // '\n' is also absent from Range.toString(); and a refusal taken
-      // after the selection was already moved leaves the caret at the
-      // span, which is accepted (refusals are rare and non-destructive).
-      // The execCommand branch stays unguarded:
+      // surgery branch therefore refuses spans whose Range covers different
+      // text than the [from, to) extraction (i.e. synthetic newlines
+      // inside) — BEFORE any mutation. Exact text compare (Copilot round 3,
+      // F1/F2), not just length: a length-only check misses a SKIP_TAGS
+      // subtree (script/style/noscript/template) sitting between `from` and
+      // `to` — the segment map's extraction skips it, but Range.toString()
+      // does not, so a length-only compare can coincidentally match while
+      // the content differs. Exact-text is strictly tighter than the old
+      // length check (equal strings imply equal length), so nothing the old
+      // guard refused becomes newly accepted here. Deliberately over-broad
+      // in the safe direction (re-review item 3): a <br>-spanning span,
+      // which deleteContents WOULD handle (the <br> is fully contained), is
+      // refused too — its '\n' is also absent from Range.toString(); and a
+      // refusal taken after the selection was already moved leaves the
+      // caret at the span, which is accepted (refusals are rare and
+      // non-destructive). The execCommand branch stays unguarded:
       // Chrome's real editing pipeline handles cross-block edits the way
       // a user's typing-over-selection would, and post-verification is
       // the arbiter there.
       const canExecCommand = typeof document.execCommand === 'function'
-      if (!canExecCommand && target.toString().length !== to - from) {
+      if (!canExecCommand && target.toString() !== text.slice(from, to)) {
         return { ok: false, text }
       }
 
@@ -233,9 +240,9 @@ export function createContentEditableAdapter(
           ? document.execCommand('delete', false)
           : document.execCommand('insertText', false, insert))
       if (!applied) {
-        if (target.toString().length !== to - from) {
-          // execCommand existed but refused; same cross-block guard as
-          // above before falling back to surgery.
+        if (target.toString() !== text.slice(from, to)) {
+          // execCommand existed but refused; same exact-text cross-block
+          // guard as above before falling back to surgery.
           root.scrollTop = scrollTop
           root.scrollLeft = scrollLeft
           if (prev instanceof HTMLElement && prev !== root) prev.focus({ preventScroll: true })
