@@ -128,6 +128,34 @@ body {
   outline-offset: 1px;
 }
 
+/* B43 C3: the contentEditable demo field — styled like the textarea (same
+   border/padding/min-height/font) but with no mirror overlay: markings paint
+   via the CSS Custom Highlight API (::highlight() rules below) directly on
+   the field's own text, no DOM mutation, no geometry syncing. */
+.sim-ce {
+  width: 100%;
+  height: 100%;
+  min-height: 4rem;
+  margin: 0;
+  padding: 0.75rem;
+  border: 1px solid #a1a1aa;
+  font-family: ui-monospace, monospace;
+  font-size: 1rem;
+  line-height: 1.5;
+  overflow: auto;
+  background: #fff;
+  color: #1c1c1f;
+}
+
+/* B43 C3: contentEditable markings. ::highlight() accepts only color /
+   background-color / text-decoration(-…) — .fw-mark-selected's outline has
+   no equivalent here, hence the underline. */
+::highlight(fw-error) { background-color: #f8b4b4; }
+::highlight(fw-warning) { background-color: #fde68a; }
+::highlight(fw-suggestion) { background-color: #bfdbfe; }
+::highlight(fw-selected) { background-color: #6e56cf40; text-decoration: underline; }
+::highlight(fw-flash) { background-color: #6e56cf80; }
+
 .sim-embed {
   background: #fff;
 }

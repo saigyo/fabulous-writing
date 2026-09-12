@@ -12,9 +12,11 @@ import { parseHostMessage, PROTOCOL_VERSION } from '../embed/protocol'
 function setUpFixture() {
   document.body.innerHTML = `
     <button id="connect" type="button">Connect</button>
+    <button id="connect-ce" type="button">Connect contentEditable</button>
     <button id="disconnect" type="button">Disconnect</button>
     <span id="sim-status">not connected</span>
     <textarea id="field">hello world</textarea>
+    <div id="field-ce" contenteditable="true">ce field text</div>
     <iframe id="embed"></iframe>
   `
 }
@@ -627,5 +629,127 @@ describe('simulator main: desync hook state machine (?desync=1)', () => {
       ([m]) => (m as { type?: string }).type === 'textChanged',
     )
     expect(textChangedCalls).toHaveLength(0)
+  })
+})
+
+// B43 C3, Task 4: the simulator now hosts a second, contentEditable demo
+// field alongside the textarea. The bridge protocol still only ever has one
+// connected field at a time — `active` in main.ts tracks which of the two.
+describe('simulator main: contentEditable field (B43 C3)', () => {
+  it('Connect contentEditable sends fieldConnected with fieldKind contenteditable and the CE text', async () => {
+    const iframeEl = document.getElementById('embed') as HTMLIFrameElement
+    const postMessage = vi
+      .spyOn(iframeEl.contentWindow!, 'postMessage')
+      .mockImplementation(() => {})
+    await import('./main')
+    const ceConnectBtn = document.getElementById('connect-ce') as HTMLButtonElement
+
+    iframeEl.dispatchEvent(new Event('load'))
+    embedMessage(iframeEl, {
+      type: 'ready',
+      payload: { protocolVersion: PROTOCOL_VERSION, features: [] },
+    })
+    postMessage.mockClear()
+    ceConnectBtn.click()
+
+    const [message] = postMessage.mock.calls[0]
+    expect(message).toMatchObject({
+      type: 'fieldConnected',
+      payload: {
+        fieldId: 'sim-field-ce',
+        text: 'ce field text',
+        meta: { fieldKind: 'contenteditable' },
+      },
+    })
+  })
+
+  it('connecting the CE field clears the previously-connected textarea field\'s markings', async () => {
+    const iframeEl = document.getElementById('embed') as HTMLIFrameElement
+    vi.spyOn(iframeEl.contentWindow!, 'postMessage').mockImplementation(() => {})
+    await import('./main')
+    const connectBtn = document.getElementById('connect') as HTMLButtonElement
+    const ceConnectBtn = document.getElementById('connect-ce') as HTMLButtonElement
+
+    iframeEl.dispatchEvent(new Event('load'))
+    embedMessage(iframeEl, {
+      type: 'ready',
+      payload: { protocolVersion: PROTOCOL_VERSION, features: [] },
+    })
+    connectBtn.click()
+    embedMessage(iframeEl, {
+      type: 'findings',
+      payload: {
+        fieldId: 'sim-field',
+        findings: [{ id: 'f1', from: 0, to: 5, severity: 'warning', category: 'style' }],
+      },
+    })
+    expect(document.querySelector('[data-finding-ids~="f1"]')).not.toBeNull()
+
+    // Connecting the OTHER field must clear the first's markings, same as a
+    // Disconnect would — only one field ever owns the bridge's connected
+    // slot, so the field losing it must not keep showing stale marks.
+    ceConnectBtn.click()
+    expect(document.querySelector('[data-finding-ids~="f1"]')).toBeNull()
+  })
+
+  it('a findings message for the inactive fieldId is ignored', async () => {
+    const iframeEl = document.getElementById('embed') as HTMLIFrameElement
+    vi.spyOn(iframeEl.contentWindow!, 'postMessage').mockImplementation(() => {})
+    await import('./main')
+    const connectBtn = document.getElementById('connect') as HTMLButtonElement
+
+    iframeEl.dispatchEvent(new Event('load'))
+    embedMessage(iframeEl, {
+      type: 'ready',
+      payload: { protocolVersion: PROTOCOL_VERSION, features: [] },
+    })
+    // The textarea is the active field — a findings message naming the
+    // OTHER (inactive) field's id must be dropped, not applied to whichever
+    // field happens to be connected.
+    connectBtn.click()
+    embedMessage(iframeEl, {
+      type: 'findings',
+      payload: {
+        fieldId: 'sim-field-ce',
+        findings: [{ id: 'f1', from: 0, to: 5, severity: 'warning', category: 'style' }],
+      },
+    })
+
+    expect(document.querySelector('[data-finding-ids~="f1"]')).toBeNull()
+  })
+
+  it('applyReplacement routes to the active (CE) adapter, leaving the textarea untouched', async () => {
+    const iframeEl = document.getElementById('embed') as HTMLIFrameElement
+    const postMessage = vi
+      .spyOn(iframeEl.contentWindow!, 'postMessage')
+      .mockImplementation(() => {})
+    await import('./main')
+    const ceConnectBtn = document.getElementById('connect-ce') as HTMLButtonElement
+    const ceEl = document.getElementById('field-ce') as HTMLElement
+    const fieldEl = document.getElementById('field') as HTMLTextAreaElement
+    const textareaBefore = fieldEl.value
+
+    iframeEl.dispatchEvent(new Event('load'))
+    embedMessage(iframeEl, {
+      type: 'ready',
+      payload: { protocolVersion: PROTOCOL_VERSION, features: [] },
+    })
+    ceConnectBtn.click()
+
+    postMessage.mockClear()
+    embedMessage(iframeEl, {
+      type: 'applyReplacement',
+      requestId: 'req-ce-1',
+      payload: { fieldId: 'sim-field-ce', from: 0, to: 2, insert: 'CE', expectedText: 'ce' },
+    })
+
+    expect(ceEl.textContent).toBe('CE field text')
+    expect(fieldEl.value).toBe(textareaBefore) // untouched — routed to the CE field only
+    const [message] = postMessage.mock.calls[0]
+    expect(message).toMatchObject({
+      type: 'replaceResult',
+      requestId: 'req-ce-1',
+      payload: { fieldId: 'sim-field-ce', ok: true, text: 'CE field text' },
+    })
   })
 })
