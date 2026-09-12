@@ -37,6 +37,28 @@ function eligibleField(): HTMLTextAreaElement {
   return el
 }
 
+// B43 C3: an eligible contentEditable editing host — contenteditable="true",
+// parent not editable, >= MIN_FIELD_WIDTH x MIN_FIELD_HEIGHT (via stubRect,
+// happy-dom rects default 0x0). See detect.test.ts's own eligibleHost() for
+// the identical shape.
+function eligibleCEHost(): HTMLElement {
+  const el = document.createElement('div')
+  el.contentEditable = 'true'
+  document.body.appendChild(el)
+  stubRect(el)
+  return el
+}
+
+// An inner node of a CE host — never itself eligible (isEligibleField), but
+// what a real mouseover/mouseout inside a rich field actually fires on;
+// resolveEligibleField climbs from it to the host root.
+function innerNode(host: HTMLElement): HTMLElement {
+  const span = document.createElement('span')
+  span.textContent = 'inner'
+  host.appendChild(span)
+  return span
+}
+
 function show(el: HTMLTextAreaElement): void {
   el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
 }
@@ -258,6 +280,149 @@ describe('scout: leave handling is identity-based (Copilot round 3, S1)', () => 
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+// B43 C3 Task 8: a CE field's mouseover/mouseout fires on whichever INNER
+// node the pointer actually touches, never on the editing-host root itself —
+// handleEnter must resolve up to the root, and handleLeave (containment via
+// withinShown, not identity) must treat any inner node as "inside the shown
+// field."
+describe('scout: contentEditable — enter via inner node anchors to the editing-host root (B43 C3)', () => {
+  it('mouseover on an inner node of an eligible CE host shows the affordance anchored to the root', () => {
+    const host = eligibleCEHost()
+    const inner = innerNode(host)
+
+    inner.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+
+    const affHost = affordanceHost()
+    expect(affHost).not.toBeNull()
+    // showFor is called with the RESOLVED ROOT, not the inner node — its
+    // insertAdjacentElement('afterend', ...) anchors the chip right after
+    // the host, not after `inner`.
+    expect(host.nextElementSibling).toBe(affHost)
+
+    const port = lastConnectedPort()
+    port.onDisconnect.emit(port)
+    host.remove()
+  })
+})
+
+describe('scout: contentEditable — intra-field moves between inner nodes do not hide (B43 C3)', () => {
+  it('mouseout target=innerA relatedTarget=innerB (same host) schedules no hide', () => {
+    vi.useFakeTimers()
+    try {
+      const host = eligibleCEHost()
+      const innerA = innerNode(host)
+      const innerB = innerNode(host)
+
+      innerA.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+      const affHost = affordanceHost()
+      expect(affHost.style.display).not.toBe('none')
+
+      innerA.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: innerB }))
+      vi.advanceTimersByTime(PAST_HIDE_DELAY_MS)
+
+      expect(affHost.style.display).not.toBe('none')
+
+      const port = lastConnectedPort()
+      port.onDisconnect.emit(port)
+      host.remove()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('mouseout target=inner relatedTarget=body (leaving the host entirely) schedules the hide', () => {
+    vi.useFakeTimers()
+    try {
+      const host = eligibleCEHost()
+      const inner = innerNode(host)
+
+      inner.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+      const affHost = affordanceHost()
+      expect(affHost.style.display).not.toBe('none')
+
+      inner.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }))
+      vi.advanceTimersByTime(PAST_HIDE_DELAY_MS)
+
+      expect(affHost.style.display).toBe('none')
+
+      const port = lastConnectedPort()
+      port.onDisconnect.emit(port)
+      host.remove()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('scout: contentEditable — S1 regression stays fixed under containment (B43 C3)', () => {
+  it('a leave event from an inner node of a DIFFERENT, never-shown CE host does not hide the current chip', () => {
+    vi.useFakeTimers()
+    try {
+      const shown = eligibleCEHost()
+      const other = eligibleCEHost()
+      const otherInner = innerNode(other)
+
+      shown.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+      const affHost = affordanceHost()
+      expect(affHost.style.display).not.toBe('none')
+
+      otherInner.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }))
+      vi.advanceTimersByTime(PAST_HIDE_DELAY_MS)
+
+      expect(affHost.style.display).not.toBe('none')
+
+      const port = lastConnectedPort()
+      port.onDisconnect.emit(port)
+      shown.remove()
+      other.remove()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('scout: chip-click on a contentEditable field starts a session (B43 C3)', () => {
+  it('fieldConnected carries meta.fieldKind "contenteditable"', () => {
+    const host = eligibleCEHost()
+    host.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    const port = lastConnectedPort()
+    clickChip()
+
+    const call = port.postMessage.mock.calls.find(
+      ([msg]) => (msg as { relay?: { type?: string } }).relay?.type === 'fieldConnected',
+    )
+    expect(
+      (call![0] as { relay: { payload: { meta: { fieldKind: string } } } }).relay.payload.meta.fieldKind,
+    ).toBe('contenteditable')
+
+    port.onDisconnect.emit(port)
+    host.remove()
+  })
+})
+
+// Plan review SF12: inside a rich field, every inner-node mouseover resolves
+// to the same root — without the early return, affordance.showFor would
+// unconditionally re-insert + reposition the chip host on every one of them,
+// continuous DOM churn where a textarea hovered once churns nothing.
+describe('scout: showAffordance early-return avoids DOM churn for a still-shown CE host (plan review SF12, B43 C3)', () => {
+  it('two consecutive enters on inner nodes of the same shown host re-insert the chip host only once', () => {
+    const host = eligibleCEHost()
+    const innerA = innerNode(host)
+    const innerB = innerNode(host)
+    const insertSpy = vi.spyOn(host, 'insertAdjacentElement')
+
+    innerA.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    expect(insertSpy).toHaveBeenCalledTimes(1)
+
+    innerB.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    expect(insertSpy).toHaveBeenCalledTimes(1) // early return: no re-insert
+
+    const port = lastConnectedPort()
+    port.onDisconnect.emit(port)
+    host.remove()
   })
 })
 
@@ -738,5 +903,58 @@ describe('scout: server-URL change (issue #142 round 2)', () => {
     expect(chipButton().dataset.state).toBe('idle')
     port.onDisconnect.emit(port)
     el.remove()
+  })
+})
+
+// B43 C3 Task 8, startup one-shot: `if (isEligibleField(document.activeElement))`
+// widened to `resolveEligibleField(...)` so an autofocused CE host (an
+// editing-host root, since an inner node is never itself eligible) is
+// already shown before any hover/focus event ever fires — same as an
+// autofocused textarea always was.
+//
+// This module-top-level check only ever runs once, at import time, so it
+// cannot be exercised through the shared scout module instance every other
+// test in this file relies on (this file's own header comment explains why
+// that instance is never reset). Deliberately isolated to a single test at
+// the very END of this file: document.activeElement is overridden (no real
+// .focus() call, so the pre-existing shared instance's own delegated
+// listeners are never triggered) and scout is re-imported fresh via
+// vi.resetModules() — the only way to observe an import-time effect. The
+// fresh instance layers a second set of document-level listeners on top of
+// the shared one for the remainder of the process, which is why this is the
+// last test that runs.
+describe('scout: startup one-shot for an autofocused CE host (B43 C3)', () => {
+  it('an autofocused CE host is already eligible at import time — the affordance shows anchored to it', async () => {
+    const host = document.createElement('div')
+    host.contentEditable = 'true'
+    document.body.appendChild(host)
+    stubRect(host)
+
+    const originalDescriptor = Object.getOwnPropertyDescriptor(document, 'activeElement')
+    Object.defineProperty(document, 'activeElement', { value: host, configurable: true })
+    try {
+      vi.resetModules()
+      await import('./scout')
+
+      // Identified positionally, not via a document-wide querySelector: the
+      // SHARED scout instance every other test in this file uses never
+      // disposes its own (single, reused) affordance host on a field's
+      // removal — only the field itself is removed — so a stale one from an
+      // earlier test can still be attached elsewhere in the document and
+      // would be matched first by a global '[data-fw-affordance]' query.
+      const affHost = host.nextElementSibling as HTMLElement | null
+      expect(affHost).not.toBeNull()
+      expect(affHost?.hasAttribute('data-fw-affordance')).toBe(true)
+
+      const port = lastConnectedPort()
+      port.onDisconnect.emit(port)
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(document, 'activeElement', originalDescriptor)
+      } else {
+        delete (document as { activeElement?: unknown }).activeElement
+      }
+      host.remove()
+    }
   })
 })
