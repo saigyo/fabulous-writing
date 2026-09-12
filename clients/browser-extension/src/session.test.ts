@@ -544,3 +544,148 @@ describe('startSession: Turbo-style auto-disconnect', () => {
     })
   })
 })
+
+// Task 6 (B43 C3): startSession takes an EligibleField now (Task 5's
+// fieldKindOf picks the adapter), so a contentEditable editing host runs the
+// exact same session logic through createContentEditableAdapter instead of
+// createTextareaAdapter. No sink is supplied here (happy-dom has neither
+// CSS.highlights nor Highlight), which is deliberate: it exercises the same
+// feature-gated `mark: 'none'` path contentEditableAdapter.test.ts's own
+// case 1 pins, proving startSession doesn't paper over the missing registry.
+describe('startSession: contentEditable field', () => {
+  let ceRoot: HTMLElement
+
+  beforeEach(() => {
+    ceRoot = document.createElement('div')
+    ceRoot.contentEditable = 'true'
+    ceRoot.textContent = 'The quikc brown fox'
+    document.body.appendChild(ceRoot)
+  })
+
+  afterEach(() => {
+    ceRoot.remove()
+  })
+
+  // Case 1
+  it('sends fieldConnected with fieldKind contenteditable and the CE adapter\'s capabilities', () => {
+    const send = vi.fn()
+    const session = startSession(ceRoot, send)
+
+    expect(lastSent(send)).toMatchObject({
+      fw: PROTOCOL_VERSION,
+      type: 'fieldConnected',
+      payload: {
+        fieldId: session.fieldId,
+        text: 'The quikc brown fox',
+        // happy-dom has no CSS.highlights registry — this is the feature
+        // gate, not a stand-in for 'native'.
+        capabilities: { mark: 'none', replace: 'best-effort' },
+        meta: { fieldKind: 'contenteditable' },
+      },
+    })
+
+    session.detach()
+  })
+
+  // Case 2
+  it('sends textChanged after a DOM edit + input event, once the microtask sync flushes', async () => {
+    const send = vi.fn()
+    const session = startSession(ceRoot, send)
+    send.mockClear()
+
+    ceRoot.textContent = 'The quick brown fox'
+    ceRoot.dispatchEvent(new Event('input', { bubbles: true }))
+    await Promise.resolve()
+
+    expect(lastSent(send)).toEqual({
+      fw: PROTOCOL_VERSION,
+      type: 'textChanged',
+      payload: { fieldId: session.fieldId, text: 'The quick brown fox' },
+    })
+
+    session.detach()
+  })
+
+  // Case 3
+  it('applyReplacement round-trips against the CE adapter: ok:true with the new text', () => {
+    const send = vi.fn()
+    const session = startSession(ceRoot, send)
+    send.mockClear()
+
+    session.handleEmbedMessage(embedMsg({
+      type: 'applyReplacement',
+      requestId: 'ce1',
+      payload: { fieldId: session.fieldId, from: 4, to: 9, insert: 'quick', expectedText: 'quikc' },
+    }))
+
+    expect(lastSent(send)).toEqual({
+      fw: PROTOCOL_VERSION,
+      type: 'replaceResult',
+      requestId: 'ce1',
+      payload: { fieldId: session.fieldId, ok: true, text: 'The quick brown fox' },
+    })
+
+    session.detach()
+  })
+
+  // Case 4
+  describe('click-to-select via adapter.caretOffset()', () => {
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('a caret inside the field maps to the covering finding and sends markingClicked', () => {
+      const send = vi.fn()
+      const session = startSession(ceRoot, send)
+      session.handleEmbedMessage(embedMsg({
+        type: 'findings',
+        payload: {
+          fieldId: session.fieldId,
+          findings: [{ id: 'f1', from: 4, to: 9, severity: 'warning', category: 'style' }],
+        },
+      }))
+      send.mockClear()
+
+      const textNode = ceRoot.firstChild as Text
+      vi.spyOn(document, 'getSelection').mockReturnValue(
+        { rangeCount: 1, anchorNode: textNode, anchorOffset: 6 } as unknown as Selection,
+      )
+      ceRoot.dispatchEvent(new Event('click', { bubbles: true }))
+
+      expect(lastSent(send)).toEqual({
+        fw: PROTOCOL_VERSION,
+        type: 'markingClicked',
+        payload: { fieldId: session.fieldId, id: 'f1' },
+      })
+
+      session.detach()
+    })
+
+    it('a caret outside the field sends nothing', () => {
+      const send = vi.fn()
+      const session = startSession(ceRoot, send)
+      session.handleEmbedMessage(embedMsg({
+        type: 'findings',
+        payload: {
+          fieldId: session.fieldId,
+          findings: [{ id: 'f1', from: 4, to: 9, severity: 'warning', category: 'style' }],
+        },
+      }))
+      send.mockClear()
+
+      const outside = document.createElement('div')
+      document.body.appendChild(outside)
+      const outsideText = document.createTextNode('xyz')
+      outside.appendChild(outsideText)
+      vi.spyOn(document, 'getSelection').mockReturnValue(
+        { rangeCount: 1, anchorNode: outsideText, anchorOffset: 1 } as unknown as Selection,
+      )
+      ceRoot.dispatchEvent(new Event('click', { bubbles: true }))
+
+      expect(send).not.toHaveBeenCalled()
+
+      outside.remove()
+      session.detach()
+    })
+  })
+})
