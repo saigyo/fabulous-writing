@@ -18,16 +18,20 @@ Three contexts, wired by a fourth Chromium-only piece:
   `MutationObserver` scanning the page — a Turbo-injected field is noticed the
   moment it's interacted with) and shows a shadow-DOM-isolated connect chip
   (`src/affordance.ts`) near an eligible field (`src/detect.ts`: a visible,
-  enabled, writable `<textarea>` at least 120×40px — `<input>` is out of scope
-  for v1, see below), anchored INSIDE the field's top-right corner (inset a
-  few px from both edges — a live-test finding found the chip straddling the
-  corner outward got half-covered by a host's own UI sitting snug against
-  the field, e.g. GitHub's markdown toolbar). Idle, clicking the chip starts
-  a **session** (`src/session.ts`), which owns one field's adapter (lifted
-  straight from the
-  C1 host simulator's reference implementation,
-  `frontend/src/simulator/textareaAdapter.ts`) and speaks the bridge protocol
-  over a lazily-opened `browser.runtime` port. The chip is a **split pill**
+  enabled, writable `<textarea>`, or (B43 C3) a contentEditable **editing-host
+  root** — the root of an editable region, its own parent not itself
+  editable — both gated at the same 120×40px minimum size; `<input>` is out
+  of scope for v1, see below), anchored INSIDE the field's top-right corner
+  (inset a few px from both edges — a live-test finding found the chip
+  straddling the corner outward got half-covered by a host's own UI sitting
+  snug against the field, e.g. GitHub's markdown toolbar). Idle, clicking the
+  chip starts a **session** (`src/session.ts`), which owns one field's
+  adapter — `createTextareaAdapter` or, as of C3, `createContentEditableAdapter`,
+  picked per field by `detect.ts`'s `fieldKindOf` — lifted straight from the
+  C1/C3 host simulator's reference implementations,
+  `frontend/src/simulator/{textareaAdapter,contentEditableAdapter}.ts`, and
+  speaks the bridge protocol over a lazily-opened `browser.runtime` port. The
+  chip is a **split pill**
   (live-test UX decision, B43 C2 PR #139): a plain click on the main
   (glyph/count) segment is never destructive — idle it connects, connected it
   re-opens/focuses the panel — only the separate **×** segment (revealed on
@@ -41,10 +45,19 @@ Three contexts, wired by a fourth Chromium-only piece:
   window that fingerprints the lost field (id, then name, then
   aria-label(ledby), then a form-relative index as a last resort, captured
   at session start) and probes the document for a same-fingerprint
-  replacement before giving up. A match starts a genuinely NEW session (new
-  `fieldId` — the embed re-extracts text and re-checks); the chip never
-  flickers to idle during the probe. A user-initiated disconnect (× or the
-  panel button) never triggers this — only the self-detach path does.
+  replacement before giving up. As of B43 C3 the fingerprint also carries the
+  field's `fieldKind` (`'textarea'` | `'contenteditable'`), captured at the
+  same time as everything else: a candidate that resolves by id/name/
+  aria/index but has swapped kind (a textarea rebuilt as a contentEditable
+  div, or vice versa) is refused, not treated as a same-shape rebuild it
+  isn't — the name/aria/formIndex searches themselves are scoped to the
+  fingerprint's own kind's element pool (`<textarea>` vs. `[contenteditable]`
+  editing roots), so a textarea fingerprint can never accidentally rebind to
+  a same-named contentEditable field or vice versa. A match starts a
+  genuinely NEW session (new `fieldId` — the embed re-extracts text and
+  re-checks); the chip never flickers to idle during the probe. A
+  user-initiated disconnect (× or the panel button) never triggers this —
+  only the self-detach path does.
 - **Service worker** — `src/sw.ts`. Wires real ports to a pure state machine,
   `src/registry.ts` (the **connection registry**): one connected field per
   browser window, bound to its tab, routed by port name (`'field'` from the
@@ -285,14 +298,18 @@ There's no `dev`/watch script; iterate with `npm run build` and Chrome's
 "Reload" button on the unpacked extension (`chrome://extensions`).
 
 **Shared source with `frontend/src`.** The extension does not duplicate the
-embed protocol or the reference field adapter — it imports them directly by
+embed protocol or the reference field adapters — it imports them directly by
 relative path from the sibling `frontend/` package (no publish/link step):
-`../../../frontend/src/embed/protocol` (the versioned bridge contract) and
+`../../../frontend/src/embed/protocol` (the versioned bridge contract),
 `../../../frontend/src/simulator/textareaAdapter`/`clickHitTest` (the
-`FieldAdapter` implementation and its click-hit-test helper). A protocol
-change that breaks the extension's usage fails `tsc --noEmit` here, not at
-runtime. See [frontend-architecture.md](frontend-architecture.md#embed-surface-b43-c1)
-for what each shared module does on the embed side of the same contract.
+textarea `FieldAdapter` implementation and its click-hit-test helper), and,
+as of B43 C3, `../../../frontend/src/simulator/contentEditableAdapter` (the
+contentEditable `FieldAdapter`, pulling in `simulator/segmentMap` transitively
+— see [frontend-architecture.md](frontend-architecture.md#embed-surface-b43-c1)'s
+"Text model: the segment map" section). A protocol change that breaks the
+extension's usage fails `tsc --noEmit` here, not at runtime. See
+[frontend-architecture.md](frontend-architecture.md#embed-surface-b43-c1) for
+what each shared module does on the embed side of the same contract.
 
 ## E2E
 
@@ -445,3 +462,54 @@ header widgets (`frontend/src/header/*`) were designed against.
 - [ ] Restart the browser; the login persists (the side panel's storage
       partition — `(chrome-extension://<id>, server origin)` — is stable
       across restarts, independent of whichever site is open)
+
+## Manual acceptance checklist — contentEditable (B43 C3)
+
+The spec's contentEditable acceptance benchmark, run on real sites rather than
+GitHub's own textareas above — any plain `contenteditable` field at least
+120×40px works for the first two items (e.g. Gmail compose); the third needs
+a Lexical-based editor specifically (e.g. Reddit's post/comment composer).
+Markings here are `::highlight(fw-*)` registrations, not a mirror overlay —
+there is no second `<div>` painted behind the field to check alignment on.
+The `fw-error`/`-warning`/`-suggestion`/`-selected`/`-flash` highlight names
+are **document-global** (the CSS Custom Highlight registry has no
+per-element scope) — a host page that happened to register its own highlight
+under one of the same names would interfere with ours; accepted, since only
+one field connects at a time and the collision needs a coincidental
+exact-name match.
+
+**Plain contentEditable field:**
+
+- [ ] Hover/focus the field; the connect chip appears anchored inside its
+      top-right corner, same as the textarea case above
+- [ ] Connect, type; a finding appears in the panel's sidebar and its
+      `::highlight` mark aligns with the flagged text
+- [ ] Apply a suggestion from the panel; the field's text updates and the
+      mark clears; **Cmd+Z** (Ctrl+Z) restores the pre-apply text through the
+      field's own undo stack (the replacement went through
+      `execCommand('insertText'/'delete', ...)`, same undo guarantee as the
+      textarea path)
+- [ ] In a field spanning multiple paragraphs (at least two `<div>`/`<p>`
+      blocks), confirm findings in each paragraph anchor and clear correctly
+
+**Cross-paragraph apply (document the observed behavior — do not assert
+one):**
+
+- [ ] Trigger a suggestion whose span crosses a paragraph/block boundary.
+      Two outcomes are both legitimate here, and which one happens is
+      Chrome's call, not this extension's: the edit applies cleanly (Chrome's
+      `insertText` handled the cross-block edit itself), or the panel shows
+      `ok: false` and the field re-syncs from the echoed text — Chrome's own
+      block-rebalancing on a cross-block `insertText` can produce text the
+      adapter's post-verification doesn't recognize as the expected result,
+      and its contract is to refuse and re-sync rather than guess. Record
+      which one actually happened; a `false` here is not, by itself, a bug.
+
+**Framework smoke test — Lexical:**
+
+- [ ] On a Lexical-based editor, connect a field and type. Confirm the
+      extension either works normally OR fails visibly and gracefully (the
+      chip stays idle, or the field disconnects) — it must NEVER leave the
+      field's text corrupted or out of sync with what's on screen. Lexical's
+      own model can rewrite the DOM out from under the adapter; what this
+      checks is the never-corrupt guarantee, not full feature support.

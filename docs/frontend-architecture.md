@@ -525,6 +525,105 @@ reach that branch from the UI, since the simulator's echo loop is otherwise sync
 `vite.config.ts` deliberately does **not** list `simulator.html` as a build input — it
 exists for `npm run dev` only, never ships in `dist/`.
 
+As of B43 C3, `main.ts` hosts a SECOND demo field, `sim-field-ce` — a plain
+`contentEditable` div driven by `contentEditableAdapter.ts` (below) — beside the
+original textarea, each with its own **Connect** button rather than one shared control:
+connecting one clears and disconnects the other first (the bridge's one-connected-field
+rule modeled locally), so the page exercises the same field-switch semantics a real host
+with two eligible fields would trigger. Both fields share the one iframe/bridge; only
+which adapter is currently wired to it changes.
+
+### Text model: the segment map
+
+`simulator/segmentMap.ts` is the one authority every contentEditable operation reads:
+text extraction, flat-offset→`Range` resolution (for markings and replacement), and
+DOM-caret→flat-offset mapping (for click-to-select) all walk or query the same
+`SegmentMap` (`{ text, segments }`, `segments` being text nodes tagged with their start
+offset in `text`), so none of them can disagree about what offset N means. The walk is
+deterministic and DOM-based — deliberately diverging from CSS-driven `innerText` (which
+depends on computed styles/layout) — because correctness needs the embed to check
+exactly the text this module extracts; findings offsets come back relative to that same
+text, not to visual fidelity. Offsets are UTF-16 code units (the protocol's normative
+unit), so plain `string.length` arithmetic is exactly right and astral characters need
+no special casing.
+
+Newlines are synthetic, not copied from the DOM: a block boundary (an element in
+`BLOCK_TAGS`, or an inline `<br>`) queues a *pending* break that only flushes as a single
+`\n` once more real content actually arrives, and only once some content already exists
+— no leading or trailing newline, and consecutive/empty blocks collapse to one
+separator. `<br>` semantics match what Chrome's contentEditable actually renders: an
+inline `<br>` (content follows it inside its parent) is content and contributes its own
+`\n` after flushing whatever was pending (`<br>a` extracts `\na`); a **block-trailing**
+`<br>` — the last content-producing child of its parent, covering both Chrome's
+Enter-Enter filler (`<div><br></div>`) and the trailing filler in `<div>a<br></div>` —
+is boundary-only: it flushes the pending break and queues a new one, adding no `\n` of
+its own, matching Chrome rendering those as a blank line rather than two. Whitespace-only
+text nodes sitting at a block boundary (pretty-printed host markup) are skipped; the same
+whitespace between two inline siblings is real text and kept.
+
+`resolvePoint` maps a flat offset back to a concrete `(Text node, in-node offset)`; an
+offset landing on a synthetic newline (which belongs to no node) snaps forward to the
+next text node for a range start and backward to the previous node's end for a range
+end, so a span that merely brushes a block boundary still selects exactly its visible
+characters. `rangeFor` builds on top of it and refuses (`null`) a span that resolves to
+an inverted or collapsed range — the case where both ends snap toward each other across
+a run of nothing but synthetic newlines. `offsetAt` is the inverse for a live DOM
+selection: exact for a caret inside a mapped text node, and resolved to the nearest
+following mapped position for a caret sitting between elements.
+
+### ContentEditable adapter
+
+`simulator/contentEditableAdapter.ts`'s `createContentEditableAdapter` is the reference
+`FieldAdapter` for contentEditable fields — same dual role as `textareaAdapter.ts`: the
+simulator's own CE demo field, and, as of this slice, the browser extension's real (and
+only) contentEditable adapter, imported directly (see "Browser extension package"
+below). It has no mirror overlay and no geometry syncing: markings are **CSS Custom
+Highlight API** registrations (`CSS.highlights.set('fw-error', new Highlight(...ranges),
+{ priority })`) reached through a small `HighlightSink` seam (`set`/`clear`) rather than
+called on the global directly, so a host without the API is a first-class case, not an
+exception path. `defaultHighlightSink()` feature-detects `Highlight`/`CSS.highlights`
+through structural typing (this project's TS lib config doesn't guarantee the real
+typings) and returns `null` when either is missing; `capabilities()` reports `mark:
+sink ? 'native' : 'none'` accordingly, and `replace` is always `'best-effort'` — a
+contentEditable field's replacement path can be refused (see below), unlike a textarea's
+guaranteed `setRangeText`. The `fw-error`/`-warning`/`-suggestion`/`-selected`/`-flash`
+highlight names are **document-global** — the CSS Custom Highlight registry has no
+per-element scoping, only ever one adapter may hold active markings in a document at a
+time, and the bridge's one-connected-field rule is what guarantees that in practice. The
+`::highlight(fw-*)` rules themselves ship per host stylesheet (never a JS-injected
+`<style>`, which a strict-CSP host silently rejects — the same C2 lesson `marks.css`
+already records for the extension).
+
+Both a real keystroke/paste (`input`) and a programmatic/framework rewrite (a
+`MutationObserver` on `childList`/`characterData`/`subtree`) funnel into one
+microtask-coalesced sync: `map` rebuilds, highlights re-anchor from the current spans
+against the fresh map (the only place `Range`s are ever created, so none can dangle
+across a DOM mutation), and `onChange` fires only when the *extracted text* actually
+changed — a markup-only rewrite re-anchors highlights but sends no `textChanged`. The
+change baseline is a separate `notifiedText`, not the map itself: `applyReplacement`
+rebuilds `map` synchronously mid-apply, and a baseline read off `map` at tick time would
+then see "no change" and swallow the very `textChanged` the replacement is supposed to
+produce.
+
+`applyReplacement` validates the vector and the `expectedText` compare exactly as
+`textareaAdapter.ts` does, then prefers `document.execCommand('insertText'/'delete', …)`
+over direct `Range` surgery — same reasoning as the textarea adapter: it's the real
+editing pipeline, so native undo survives and framework editors see the edit through
+their own model. The surgery fallback (used when `execCommand` doesn't exist, or exists
+but silently refuses) is where cross-block spans get refused rather than corrupted:
+`Range.deleteContents` only trims partially-contained text nodes, it cannot remove a
+block boundary, so a span crossing one would leave its synthetic newline behind — a
+mutation followed by `ok: false`, which the never-corrupt rule forbids. The surgery
+branch therefore checks the target `Range`'s own text length against the requested
+`[from, to)` span *before* mutating anything, and refuses if they don't match — the
+`execCommand` branch itself stays unguarded, because Chrome's real editing pipeline
+already handles a cross-block edit the way a user's typing-over-selection would, and
+post-verification is the arbiter there. That post-verification re-extracts the text
+after *any* successful path and checks it against the expected result; a mismatch —
+including a framework that synchronously rewrote the result from its own model — returns
+`ok: false` with the real post-edit text, so the embed re-syncs from the echo instead of
+desyncing. Degrade gracefully, never corrupt.
+
 ### Browser extension package (B43 C2)
 
 `clients/browser-extension/` (outside `frontend/`, but sharing its source tree) is the
@@ -553,13 +652,19 @@ extension package, not at runtime:
 - `simulator/clickHitTest.ts` — `findingIdAt`, the smallest-span-wins click hit test;
   `session.ts` uses it exactly as `simulator/main.ts` does to turn a real click's caret
   position into a `markingClicked` message.
+- `simulator/contentEditableAdapter.ts` (B43 C3) — `createContentEditableAdapter`, the
+  extension's real, only contentEditable `FieldAdapter`; `session.ts` picks it or
+  `createTextareaAdapter` per field by `detect.ts`'s `fieldKindOf`, same "reference
+  implementation doubles as the real thing" role as `textareaAdapter.ts`.
 
-Two further modules are shared only *transitively*, pulled in by the three above rather
+Two further modules are shared only *transitively*, pulled in by the ones above rather
 than imported directly by any extension file: `findings/severity.ts` (`SEVERITIES`,
-used by both `protocol.ts`'s validation and `textareaAdapter.ts`'s mark styling) and
+used by both `protocol.ts`'s validation and `textareaAdapter.ts`'s mark styling),
 `types.ts` (`Category`/`Severity`, the shared API vocabulary `protocol.ts` is typed
-against). Their presence in the extension's bundle is a consequence of depending on
-`protocol.ts`/`textareaAdapter.ts`, not a separate seam of its own.
+against), and, as of C3, `simulator/segmentMap.ts` (pulled in by
+`contentEditableAdapter.ts` — see "Text model: the segment map" above). Their presence
+in the extension's bundle is a consequence of depending on the modules that import them
+directly, not a separate seam of its own.
 
 ### Bundle guard
 
