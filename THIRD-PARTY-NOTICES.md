@@ -10314,7 +10314,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ````
 
-### @codemirror/state 6.7.1
+### @codemirror/state 6.7.4
 
 License: MIT
 
@@ -10342,7 +10342,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ````
 
-### @codemirror/view 6.43.9
+### @codemirror/view 6.43.11
 
 License: MIT
 
@@ -10702,7 +10702,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### eventsource-parser 4.0.0
+### eventsource-parser 4.1.0
 
 License: MIT
 
