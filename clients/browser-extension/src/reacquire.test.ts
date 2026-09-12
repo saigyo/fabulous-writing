@@ -15,6 +15,17 @@ function textarea(attrs: Record<string, string> = {}): HTMLTextAreaElement {
   return el
 }
 
+// An ELIGIBLE contentEditable editing host: contenteditable="true", ≥ min
+// rendered size (stubbed), parent not editable (a bare div appended directly
+// wherever the caller puts it satisfies that).
+function ceHost(attrs: Record<string, string> = {}): HTMLDivElement {
+  const el = document.createElement('div')
+  el.contentEditable = 'true'
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v)
+  stubRect(el)
+  return el
+}
+
 beforeEach(() => {
   document.body.innerHTML = ''
 })
@@ -22,20 +33,24 @@ beforeEach(() => {
 describe('computeFingerprint', () => {
   it('prefers a non-empty id over everything else', () => {
     const el = textarea({ id: 'box', name: 'n', 'aria-label': 'a' })
-    expect(computeFingerprint(el)).toEqual({ kind: 'id', value: 'box', formId: 'document', scopeKind: 'document' })
+    expect(computeFingerprint(el)).toEqual(
+      { kind: 'id', value: 'box', formId: 'document', scopeKind: 'document', fieldKind: 'textarea' },
+    )
   })
 
   it('falls back to name when there is no id', () => {
     const el = textarea({ name: 'n', 'aria-label': 'a' })
     document.body.appendChild(el)
-    expect(computeFingerprint(el)).toEqual({ kind: 'name', value: 'n', formId: 'document', scopeKind: 'document' })
+    expect(computeFingerprint(el)).toEqual(
+      { kind: 'name', value: 'n', formId: 'document', scopeKind: 'document', fieldKind: 'textarea' },
+    )
   })
 
   it('falls back to aria-label when there is no id/name', () => {
     const el = textarea({ 'aria-label': 'Comment body' })
     document.body.appendChild(el)
     expect(computeFingerprint(el)).toEqual(
-      { kind: 'aria', value: 'Comment body', formId: 'document', scopeKind: 'document' },
+      { kind: 'aria', value: 'Comment body', formId: 'document', scopeKind: 'document', fieldKind: 'textarea' },
     )
   })
 
@@ -43,7 +58,7 @@ describe('computeFingerprint', () => {
     const el = textarea({ 'aria-labelledby': 'label-id' })
     document.body.appendChild(el)
     expect(computeFingerprint(el)).toEqual(
-      { kind: 'aria', value: 'label-id', formId: 'document', scopeKind: 'document' },
+      { kind: 'aria', value: 'label-id', formId: 'document', scopeKind: 'document', fieldKind: 'textarea' },
     )
   })
 
@@ -56,7 +71,7 @@ describe('computeFingerprint', () => {
     form.append(other, el)
 
     expect(computeFingerprint(el)).toEqual(
-      { kind: 'formIndex', value: 'composer:1', formId: 'composer', scopeKind: 'form' },
+      { kind: 'formIndex', value: 'composer:1', formId: 'composer', scopeKind: 'form', fieldKind: 'textarea' },
     )
   })
 
@@ -66,7 +81,7 @@ describe('computeFingerprint', () => {
     document.body.append(other, el)
 
     expect(computeFingerprint(el)).toEqual(
-      { kind: 'formIndex', value: 'document:1', formId: 'document', scopeKind: 'document' },
+      { kind: 'formIndex', value: 'document:1', formId: 'document', scopeKind: 'document', fieldKind: 'textarea' },
     )
   })
 
@@ -79,7 +94,9 @@ describe('computeFingerprint', () => {
     const el = textarea({ name: 'body' })
     form.appendChild(el)
 
-    expect(computeFingerprint(el)).toEqual({ kind: 'name', value: 'body', formId: 'composer', scopeKind: 'form' })
+    expect(computeFingerprint(el)).toEqual(
+      { kind: 'name', value: 'body', formId: 'composer', scopeKind: 'form', fieldKind: 'textarea' },
+    )
   })
 })
 
@@ -87,20 +104,28 @@ describe('findFingerprintMatch', () => {
   it('matches by id', () => {
     const el = textarea({ id: 'box' })
     document.body.appendChild(el)
-    expect(findFingerprintMatch({ kind: 'id', value: 'box', formId: 'document', scopeKind: 'document' })).toBe(el)
+    expect(
+      findFingerprintMatch({ kind: 'id', value: 'box', formId: 'document', scopeKind: 'document', fieldKind: 'textarea' }),
+    ).toBe(el)
   })
 
   it('matches by name', () => {
     const el = textarea({ name: 'body' })
     document.body.appendChild(el)
-    expect(findFingerprintMatch({ kind: 'name', value: 'body', formId: 'document', scopeKind: 'document' })).toBe(el)
+    expect(
+      findFingerprintMatch(
+        { kind: 'name', value: 'body', formId: 'document', scopeKind: 'document', fieldKind: 'textarea' },
+      ),
+    ).toBe(el)
   })
 
   it('matches by aria-label', () => {
     const el = textarea({ 'aria-label': 'Comment body' })
     document.body.appendChild(el)
     expect(
-      findFingerprintMatch({ kind: 'aria', value: 'Comment body', formId: 'document', scopeKind: 'document' }),
+      findFingerprintMatch(
+        { kind: 'aria', value: 'Comment body', formId: 'document', scopeKind: 'document', fieldKind: 'textarea' },
+      ),
     ).toBe(el)
   })
 
@@ -113,12 +138,16 @@ describe('findFingerprintMatch', () => {
     form.append(other, el)
 
     expect(
-      findFingerprintMatch({ kind: 'formIndex', value: 'composer:1', formId: 'composer', scopeKind: 'form' }),
+      findFingerprintMatch(
+        { kind: 'formIndex', value: 'composer:1', formId: 'composer', scopeKind: 'form', fieldKind: 'textarea' },
+      ),
     ).toBe(el)
   })
 
   it('returns null when nothing matches', () => {
-    expect(findFingerprintMatch({ kind: 'id', value: 'nope', formId: 'document', scopeKind: 'document' })).toBeNull()
+    expect(
+      findFingerprintMatch({ kind: 'id', value: 'nope', formId: 'document', scopeKind: 'document', fieldKind: 'textarea' }),
+    ).toBeNull()
   })
 
   it('returns null for a match that exists but is not an eligible field (too small)', () => {
@@ -127,7 +156,7 @@ describe('findFingerprintMatch', () => {
     // No stubRect — happy-dom's default rect is 0x0, below MIN_FIELD_*.
     document.body.appendChild(el)
     expect(
-      findFingerprintMatch({ kind: 'id', value: 'tiny', formId: 'document', scopeKind: 'document' }),
+      findFingerprintMatch({ kind: 'id', value: 'tiny', formId: 'document', scopeKind: 'document', fieldKind: 'textarea' }),
     ).toBeNull()
   })
 
@@ -246,7 +275,9 @@ describe('Copilot round 11, F1+F2: capture-time ambiguity and explicit form/docu
       form.append(survivor, el)
 
       const fingerprint = computeFingerprint(el)
-      expect(fingerprint).toEqual({ kind: 'formIndex', value: 'composer:1', formId: 'composer', scopeKind: 'form' })
+      expect(fingerprint).toEqual(
+        { kind: 'formIndex', value: 'composer:1', formId: 'composer', scopeKind: 'form', fieldKind: 'textarea' },
+      )
 
       // el vanishes (mid-React-replacement); only the survivor with the
       // SAME name attribute is left. A name-keyed match would wrongly
@@ -267,7 +298,7 @@ describe('Copilot round 11, F1+F2: capture-time ambiguity and explicit form/docu
       document.body.append(survivor, el)
 
       expect(computeFingerprint(el)).toEqual(
-        { kind: 'formIndex', value: 'document:1', formId: 'document', scopeKind: 'document' },
+        { kind: 'formIndex', value: 'document:1', formId: 'document', scopeKind: 'document', fieldKind: 'textarea' },
       )
     })
 
@@ -280,7 +311,9 @@ describe('Copilot round 11, F1+F2: capture-time ambiguity and explicit form/docu
       document.body.append(other, el)
 
       expect(
-        findFingerprintMatch({ kind: 'name', value: 'body', formId: 'document', scopeKind: 'document' }),
+        findFingerprintMatch(
+          { kind: 'name', value: 'body', formId: 'document', scopeKind: 'document', fieldKind: 'textarea' },
+        ),
       ).toBeNull()
     })
   })
@@ -378,5 +411,124 @@ describe('Copilot round 11, F1+F2: capture-time ambiguity and explicit form/docu
 
       expect(findFingerprintMatch(fingerprint)).toBe(rebuilt)
     })
+  })
+})
+
+// B43 C3 Task 5 landed EligibleField/FieldKind/fieldKindOf/isEligibleField
+// with contentEditable support; this module now generalizes across BOTH
+// kinds. Fingerprint.fieldKind is captured alongside everything else at
+// computeFingerprint time, and findFingerprintMatch's final gate requires a
+// resolved candidate to still be that SAME kind — never widening a same-id/
+// name/aria/index match across a kind swap.
+describe('B43 C3 Task 7: kind-aware field reacquisition', () => {
+  it('1. a contentEditable host with an id fingerprints as "id" and rebinds to a re-created same-id CE replacement', () => {
+    const host = ceHost({ id: 'editor' })
+    document.body.appendChild(host)
+
+    const fingerprint = computeFingerprint(host)
+    expect(fingerprint).toEqual(
+      { kind: 'id', value: 'editor', formId: 'document', scopeKind: 'document', fieldKind: 'contenteditable' },
+    )
+
+    host.remove()
+    const rebuilt = ceHost({ id: 'editor' })
+    document.body.appendChild(rebuilt)
+
+    expect(findFingerprintMatch(fingerprint)).toBe(rebuilt)
+  })
+
+  it('2. a contentEditable host with a unique aria-label (no id) fingerprints as "aria" and rebinds; the aria selector is kind-scoped to [contenteditable], not <textarea>', () => {
+    const form = document.createElement('form')
+    form.id = 'composer'
+    document.body.appendChild(form)
+
+    // A textarea sharing the SAME aria-label value coexists in the same
+    // form. If the attribute branch queried "textarea[aria-label=...]"
+    // regardless of kind, this would still look unique (there's only one
+    // <textarea> with this label) — the real test is that the CE selector
+    // is [contenteditable][aria-label=...], which never sees this textarea.
+    const decoyTextarea = textarea({ 'aria-label': 'Notes' })
+    const host = ceHost({ 'aria-label': 'Notes' })
+    form.append(decoyTextarea, host)
+
+    const fingerprint = computeFingerprint(host)
+    expect(fingerprint).toEqual(
+      { kind: 'aria', value: 'Notes', formId: 'composer', scopeKind: 'form', fieldKind: 'contenteditable' },
+    )
+
+    host.remove()
+    const rebuilt = ceHost({ 'aria-label': 'Notes' })
+    form.appendChild(rebuilt)
+
+    expect(findFingerprintMatch(fingerprint)).toBe(rebuilt)
+  })
+
+  it('3. index fallback indexes anonymous CE hosts among SAME-KIND (contentEditable) fields only; a same-kind replacement at that index rebinds, but a TEXTAREA appearing there does not (kind mismatch -> null)', () => {
+    const form = document.createElement('form')
+    form.id = 'composer'
+    document.body.appendChild(form)
+
+    // A textarea interleaved with the two anonymous CE hosts proves the CE
+    // formIndex is computed among CE-kind fields ONLY, not raw DOM position:
+    // el is the second CE host, but the third child overall.
+    const interloperTextarea = textarea()
+    const other = ceHost()
+    const el = ceHost()
+    form.append(interloperTextarea, other, el)
+
+    const fingerprint = computeFingerprint(el)
+    expect(fingerprint).toEqual(
+      { kind: 'formIndex', value: 'composer:1', formId: 'composer', scopeKind: 'form', fieldKind: 'contenteditable' },
+    )
+
+    el.remove()
+
+    // A TEXTAREA rebuilt in el's place does not satisfy a CE-kind
+    // fingerprint: it carries no contenteditable attribute at all, so it
+    // never occupies the CE-only scope, and the match refuses.
+    const wrongKindReplacement = textarea()
+    form.appendChild(wrongKindReplacement)
+    expect(findFingerprintMatch(fingerprint)).toBeNull()
+
+    // The field comes back as the SAME kind at the same CE-only index.
+    wrongKindReplacement.remove()
+    const rebuilt = ceHost()
+    form.appendChild(rebuilt)
+    expect(findFingerprintMatch(fingerprint)).toBe(rebuilt)
+  })
+
+  it('4. the kind check is enforced even for id matches: same id, but the live element is now a different kind -> null', () => {
+    const host = ceHost({ id: 'box' })
+    document.body.appendChild(host)
+    const fingerprint = computeFingerprint(host)
+    expect(fingerprint.fieldKind).toBe('contenteditable')
+
+    host.remove()
+    // A fresh TEXTAREA re-created with the SAME id — an id match alone
+    // would find it (ids are unique document-wide), but its kind is wrong.
+    const replacement = textarea({ id: 'box' })
+    document.body.appendChild(replacement)
+
+    expect(findFingerprintMatch(fingerprint)).toBeNull()
+  })
+
+  it('5. existing textarea fingerprint behavior is unchanged: id/name/aria/formIndex capture and rebind exactly as before, now alongside an explicit fieldKind: "textarea"', () => {
+    const form = document.createElement('form')
+    form.id = 'composer'
+    document.body.appendChild(form)
+    const other = textarea()
+    const el = textarea({ id: 'box' })
+    form.append(other, el)
+
+    const fingerprint = computeFingerprint(el)
+    expect(fingerprint).toEqual(
+      { kind: 'id', value: 'box', formId: 'composer', scopeKind: 'form', fieldKind: 'textarea' },
+    )
+
+    el.remove()
+    const rebuilt = textarea({ id: 'box' })
+    form.appendChild(rebuilt)
+
+    expect(findFingerprintMatch(fingerprint)).toBe(rebuilt)
   })
 })

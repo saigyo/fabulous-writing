@@ -48,7 +48,7 @@
 //   try again next tick" and gives up only once REACQUIRE_GRACE_MS elapses,
 //   so refusing a single poll costs nothing when the form genuinely comes
 //   back.
-import { isEligibleField } from './detect'
+import { type EligibleField, type FieldKind, fieldKindOf, isEligibleField } from './detect'
 
 export type ScopeKind = 'form' | 'document'
 
@@ -65,6 +65,13 @@ export interface Fingerprint {
   // 'document' when it didn't. See the module comment above for what each
   // means to findFingerprintMatch.
   scopeKind: ScopeKind
+  // Captured at the SAME time as everything else above — the field's own
+  // kind (textarea vs contentEditable editing host). findFingerprintMatch's
+  // final gate requires the resolved candidate to still be this kind, so a
+  // same-id/name/aria/index match that has swapped kind (e.g. a textarea
+  // rebuilt as a contentEditable div, or vice versa) is refused, not treated
+  // as a same-shape rebuild it isn't.
+  fieldKind: FieldKind
 }
 
 function formIdentity(form: HTMLFormElement | null): string {
@@ -86,33 +93,56 @@ function resolveForm(formId: string): HTMLFormElement | null {
   return forms.find((f) => f.id === formId || f.getAttribute('name') === formId) ?? forms[Number(formId)] ?? null
 }
 
-function textareaScope(root: ParentNode | null): HTMLTextAreaElement[] {
-  return Array.from((root ?? document).querySelectorAll('textarea'))
+// The scope list for a given kind, in document order. For 'textarea' this
+// is EXACTLY today's unfiltered querySelectorAll('textarea') — no size or
+// eligibility filter, so a mid-render replacement that measures 0×0 for one
+// tick doesn't shift anyone's index (plan review SF8). For 'contenteditable'
+// it's every [contenteditable] EDITING ROOT (a structural check — parent not
+// editable, same test detect.ts's own isEligibleField uses — NOT
+// isEligibleField itself, so still no size filter).
+function fieldScope(root: ParentNode | null, kind: FieldKind): EligibleField[] {
+  const scopeRoot = root ?? document
+  if (kind === 'textarea') return Array.from(scopeRoot.querySelectorAll('textarea'))
+  return Array.from(scopeRoot.querySelectorAll('[contenteditable]:not([contenteditable="false"])'))
+    .filter((el): el is HTMLElement => el instanceof HTMLElement && !el.parentElement?.isContentEditable)
+}
+
+function nameSelector(kind: FieldKind, name: string): string {
+  const escaped = CSS.escape(name)
+  return kind === 'textarea' ? `textarea[name="${escaped}"]` : `[contenteditable][name="${escaped}"]`
+}
+
+function ariaSelector(kind: FieldKind, aria: string): string {
+  const escaped = CSS.escape(aria)
+  return kind === 'textarea'
+    ? `textarea[aria-label="${escaped}"], textarea[aria-labelledby="${escaped}"]`
+    : `[contenteditable][aria-label="${escaped}"], [contenteditable][aria-labelledby="${escaped}"]`
 }
 
 // Rebind-time uniqueness check: exactly one ELIGIBLE (isEligibleField —
-// scout.ts's own show/connect gate) match, or null. Used both as the
-// capture-time ambiguity test (isUniqueInScope below) and as the rebind-time
-// safety net in findFingerprintMatch itself — a fingerprint computeFingerprint
-// no longer produces in an ambiguous shape, but findFingerprintMatch still
-// refuses one if ever handed one directly.
-function uniqueEligibleMatch(matches: NodeListOf<Element> | Element[]): HTMLTextAreaElement | null {
-  const eligible = Array.from(matches).filter((el): el is HTMLTextAreaElement => isEligibleField(el))
+// scout.ts's own show/connect gate) match OF THE GIVEN KIND, or null. Used
+// both as the capture-time ambiguity test (isUniqueInScope below) and as the
+// rebind-time safety net in findFingerprintMatch itself — a fingerprint
+// computeFingerprint no longer produces in an ambiguous shape, but
+// findFingerprintMatch still refuses one if ever handed one directly.
+function uniqueEligibleMatch(matches: NodeListOf<Element> | Element[], kind: FieldKind): EligibleField | null {
+  const eligible = Array.from(matches).filter((el): el is EligibleField => isEligibleField(el) && fieldKindOf(el) === kind)
   return eligible.length === 1 ? eligible[0] : null
 }
 
 // F1: is this selector unique, right now, within scopeRoot? Backs
 // computeFingerprint's capture-time ambiguity decision — see the module
 // comment above.
-function isUniqueInScope(scopeRoot: ParentNode, selector: string): boolean {
-  return uniqueEligibleMatch(scopeRoot.querySelectorAll(selector)) !== null
+function isUniqueInScope(scopeRoot: ParentNode, selector: string, kind: FieldKind): boolean {
+  return uniqueEligibleMatch(scopeRoot.querySelectorAll(selector), kind) !== null
 }
 
-export function computeFingerprint(el: HTMLTextAreaElement): Fingerprint {
+export function computeFingerprint(el: EligibleField): Fingerprint {
+  const fieldKind = fieldKindOf(el)
   const form = el.closest('form')
   const formId = formIdentity(form)
   const scopeKind: ScopeKind = form ? 'form' : 'document'
-  if (el.id) return { kind: 'id', value: el.id, formId, scopeKind }
+  if (el.id) return { kind: 'id', value: el.id, formId, scopeKind, fieldKind }
 
   // F1: every attribute-based candidate below is checked for uniqueness in
   // its own scope BEFORE it's trusted as this fingerprint's identity — not
@@ -120,21 +150,17 @@ export function computeFingerprint(el: HTMLTextAreaElement): Fingerprint {
   const scopeRoot: ParentNode = form ?? document
 
   const name = el.getAttribute('name')
-  if (name && isUniqueInScope(scopeRoot, `textarea[name="${CSS.escape(name)}"]`)) {
-    return { kind: 'name', value: name, formId, scopeKind }
+  if (name && isUniqueInScope(scopeRoot, nameSelector(fieldKind, name), fieldKind)) {
+    return { kind: 'name', value: name, formId, scopeKind, fieldKind }
   }
 
   const aria = el.getAttribute('aria-label') ?? el.getAttribute('aria-labelledby')
-  if (aria) {
-    const ariaSelector =
-      `textarea[aria-label="${CSS.escape(aria)}"], textarea[aria-labelledby="${CSS.escape(aria)}"]`
-    if (isUniqueInScope(scopeRoot, ariaSelector)) {
-      return { kind: 'aria', value: aria, formId, scopeKind }
-    }
+  if (aria && isUniqueInScope(scopeRoot, ariaSelector(fieldKind, aria), fieldKind)) {
+    return { kind: 'aria', value: aria, formId, scopeKind, fieldKind }
   }
 
-  const scope = textareaScope(form)
-  return { kind: 'formIndex', value: `${formId}:${scope.indexOf(el)}`, formId, scopeKind }
+  const scope = fieldScope(form, fieldKind)
+  return { kind: 'formIndex', value: `${formId}:${scope.indexOf(el)}`, formId, scopeKind, fieldKind }
 }
 
 // F2: the root to search at REBIND time — document for a 'document'-scoped
@@ -152,8 +178,10 @@ function resolveMatchScope(fingerprint: Fingerprint): ParentNode | null {
 // currently unresolvable — see resolveMatchScope). Only ever returns an
 // eligible field (isEligibleField is scout.ts's own show/connect gate; a
 // fingerprint match too small/hidden to have EVER shown a chip is not a
-// field worth silently reconnecting to).
-export function findFingerprintMatch(fingerprint: Fingerprint): HTMLTextAreaElement | null {
+// field worth silently reconnecting to) OF THE FINGERPRINT'S OWN KIND — see
+// the Fingerprint.fieldKind doc comment above.
+export function findFingerprintMatch(fingerprint: Fingerprint): EligibleField | null {
+  const kind = fingerprint.fieldKind
   let candidate: Element | null = null
   switch (fingerprint.kind) {
     case 'id':
@@ -162,18 +190,13 @@ export function findFingerprintMatch(fingerprint: Fingerprint): HTMLTextAreaElem
     case 'name': {
       const scope = resolveMatchScope(fingerprint)
       if (!scope) return null
-      candidate = uniqueEligibleMatch(scope.querySelectorAll(`textarea[name="${CSS.escape(fingerprint.value)}"]`))
+      candidate = uniqueEligibleMatch(scope.querySelectorAll(nameSelector(kind, fingerprint.value)), kind)
       break
     }
     case 'aria': {
       const scope = resolveMatchScope(fingerprint)
       if (!scope) return null
-      candidate = uniqueEligibleMatch(
-        scope.querySelectorAll(
-          `textarea[aria-label="${CSS.escape(fingerprint.value)}"], `
-          + `textarea[aria-labelledby="${CSS.escape(fingerprint.value)}"]`,
-        ),
-      )
+      candidate = uniqueEligibleMatch(scope.querySelectorAll(ariaSelector(kind, fingerprint.value)), kind)
       break
     }
     case 'formIndex': {
@@ -181,10 +204,10 @@ export function findFingerprintMatch(fingerprint: Fingerprint): HTMLTextAreaElem
       const index = Number(fingerprint.value.slice(sep + 1))
       const scope = resolveMatchScope(fingerprint)
       if (!scope) return null
-      candidate = textareaScope(scope)[index] ?? null
+      candidate = fieldScope(scope, kind)[index] ?? null
       break
     }
   }
-  if (!isEligibleField(candidate)) return null
+  if (!isEligibleField(candidate) || fieldKindOf(candidate) !== fingerprint.fieldKind) return null
   return candidate
 }
