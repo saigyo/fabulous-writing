@@ -548,12 +548,13 @@ unit), so plain `string.length` arithmetic is exactly right and astral character
 no special casing.
 
 Newlines are synthetic, not copied from the DOM: a block boundary (an element in
-`BLOCK_TAGS`, or an inline `<br>`) queues a *pending* break that only flushes as a single
-`\n` once more real content actually arrives, and only once some content already exists
-— no leading or trailing newline, and consecutive/empty blocks collapse to one
-separator. `<br>` semantics match what Chrome's contentEditable actually renders: an
-inline `<br>` (content follows it inside its parent) is content and contributes its own
-`\n` after flushing whatever was pending (`<br>a` extracts `\na`); a **block-trailing**
+`BLOCK_TAGS`, or a **block-trailing** `<br>` — see below) queues a *pending* break that
+only flushes as a single `\n` once more real content actually arrives, and only once some
+content already exists — no leading or trailing newline, and consecutive/empty blocks
+collapse to one separator. `<br>` semantics match what Chrome's contentEditable actually
+renders: an **inline** `<br>` (content follows it inside its parent) is content, not a
+boundary — it emits its own `\n` immediately, after first flushing whatever break was
+already pending (`<br>a` extracts `\na`); a **block-trailing**
 `<br>` — the last content-producing child of its parent, covering both Chrome's
 Enter-Enter filler (`<div><br></div>`) and the trailing filler in `<div>a<br></div>` —
 is boundary-only: it flushes the pending break and queues a new one, adding no `\n` of

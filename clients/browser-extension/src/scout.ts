@@ -363,8 +363,27 @@ function handlePortDisconnect(disconnected: Port): void {
   renderChip()
 }
 
+// Copilot round 2, F3: isConnected alone is not "visible and correctly
+// anchored" — affordance.ts's own reposition() self-hides the chip
+// (display:none, via hideInternal) without ever clearing shownEl when its
+// anchor is detached, and the host itself stays isConnected throughout
+// (showFor inserts it as the field's own DOM SIBLING, so removing just the
+// field leaves the host in place, still attached). Two observables recover
+// what reposition() actually checked: the host's own display state (not
+// 'none' — set by showFor/hideInternal) and whether the host is still
+// anchored where showFor put it (the field's own next sibling). Both must
+// hold for the fast path; either one failing means either a detached anchor
+// was reinserted (still hidden) or the host moved away from the field
+// (reposition()'s "connected host that moved away" case) — the chip is
+// stale either way, so fall through to a full showFor to restore it.
+function chipVisibleAndAnchored(el: EligibleField): boolean {
+  return affordance.host.isConnected
+    && affordance.host.style.display !== 'none'
+    && el.nextElementSibling === affordance.host
+}
+
 function showAffordance(el: EligibleField): void {
-  if (shownEl === el && affordance.host.isConnected) {
+  if (shownEl === el && chipVisibleAndAnchored(el)) {
     // ensurePort() stays in BOTH paths (re-review item 1): after a port
     // death, handlePortDisconnect leaves shownEl set on purpose and the
     // next interaction's ensurePort() is the documented recovery route —
