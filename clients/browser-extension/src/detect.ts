@@ -14,12 +14,6 @@ export function fieldKindOf(el: EligibleField): FieldKind {
   return el instanceof HTMLTextAreaElement ? 'textarea' : 'contenteditable'
 }
 
-function editingRootOf(el: HTMLElement): HTMLElement {
-  let root = el
-  while (root.parentElement?.isContentEditable) root = root.parentElement
-  return root
-}
-
 function meetsSize(el: Element): boolean {
   const rect = el.getBoundingClientRect()
   return rect.width >= MIN_FIELD_WIDTH && rect.height >= MIN_FIELD_HEIGHT
@@ -43,12 +37,28 @@ export function isEligibleField(el: EventTarget | null): el is EligibleField {
   return false
 }
 
-/** Climb from an inner node of an editable region to its eligible root; identity for an already-eligible target; null otherwise. */
+/**
+ * Nearest ancestor-or-self of `target` for which isEligibleField is true, or
+ * null. A plain ancestor walk rather than a contentEditable-specific climb:
+ * isEligibleField itself already encodes the editing-root + size rules, so
+ * the walk works unchanged whether target is the eligible root itself, an
+ * editable inner node, or a non-editable island (a mention chip,
+ * contenteditable="false" link card) nested inside an eligible host — its
+ * ancestor chain still passes through that host's root. A nested editable
+ * root still resolves to the OUTERMOST eligible ancestor, since the walk
+ * keeps climbing past any inner root that isEligibleField itself rejects.
+ */
 export function resolveEligibleField(target: EventTarget | null): EligibleField | null {
-  if (isEligibleField(target)) return target
-  if (target instanceof HTMLElement && target.isContentEditable) {
-    const root = editingRootOf(target)
-    if (isEligibleField(root)) return root
+  if (!(target instanceof HTMLElement)) return null
+  // Typed as the wider Element (not HTMLElement) so the isEligibleField
+  // type guard's non-match branch doesn't collapse to `never` — EligibleField
+  // is HTMLTextAreaElement | HTMLElement, so narrowing an HTMLElement-typed
+  // variable against it excludes everything; Element has other subtypes
+  // (SVGElement, etc.) left over, which still carry parentElement.
+  let el: Element | null = target
+  while (el) {
+    if (isEligibleField(el)) return el
+    el = el.parentElement
   }
   return null
 }

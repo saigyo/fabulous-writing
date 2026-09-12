@@ -512,6 +512,57 @@ describe('B43 C3 Task 7: kind-aware field reacquisition', () => {
     expect(findFingerprintMatch(fingerprint)).toBeNull()
   })
 
+  // Copilot round 1 (PR #157): fieldScope used querySelectorAll, which only
+  // ever returns descendants — an editing host that IS the scope root (a
+  // contentEditable <form>, no wrapping element around it) never entered
+  // the index pool, and a name/aria match on the root itself could likewise
+  // be skipped.
+  it('6. a contentEditable <form> root (no id/name/aria) fingerprints as formIndex — the index pool includes the root itself — and rebinds to a re-created identical form-root host', () => {
+    const form = document.createElement('form')
+    form.contentEditable = 'true'
+    stubRect(form)
+    document.body.appendChild(form)
+
+    const fingerprint = computeFingerprint(form)
+    expect(fingerprint.kind).toBe('formIndex')
+    expect(fingerprint.fieldKind).toBe('contenteditable')
+    // formIndex's own index half must resolve to the root: with no other
+    // contentEditable candidate in scope, the form root is entry 0.
+    expect(fingerprint.value.endsWith(':0')).toBe(true)
+    expect(findFingerprintMatch(fingerprint)).toBe(form)
+
+    form.remove()
+    const rebuilt = document.createElement('form')
+    rebuilt.contentEditable = 'true'
+    stubRect(rebuilt)
+    document.body.appendChild(rebuilt)
+
+    expect(findFingerprintMatch(fingerprint)).toBe(rebuilt)
+  })
+
+  it('7. a contentEditable <form> root with a unique aria-label rebinds through the aria branch (the root itself must be a query candidate)', () => {
+    const form = document.createElement('form')
+    form.contentEditable = 'true'
+    form.setAttribute('aria-label', 'Composer')
+    stubRect(form)
+    document.body.appendChild(form)
+
+    const fingerprint = computeFingerprint(form)
+    expect(fingerprint.kind).toBe('aria')
+    expect(fingerprint.value).toBe('Composer')
+    expect(fingerprint.fieldKind).toBe('contenteditable')
+    expect(findFingerprintMatch(fingerprint)).toBe(form)
+
+    form.remove()
+    const rebuilt = document.createElement('form')
+    rebuilt.contentEditable = 'true'
+    rebuilt.setAttribute('aria-label', 'Composer')
+    stubRect(rebuilt)
+    document.body.appendChild(rebuilt)
+
+    expect(findFingerprintMatch(fingerprint)).toBe(rebuilt)
+  })
+
   it('5. existing textarea fingerprint behavior is unchanged: id/name/aria/formIndex capture and rebind exactly as before, now alongside an explicit fieldKind: "textarea"', () => {
     const form = document.createElement('form')
     form.id = 'composer'

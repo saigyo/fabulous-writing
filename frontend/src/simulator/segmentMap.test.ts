@@ -44,6 +44,16 @@ describe('buildSegmentMap', () => {
     expect(buildSegmentMap(rootWith('<br>a')).text).toBe('\na')
   })
 
+  it('an empty trailing element after <br> does not make the <br> inline (Copilot round 1, B43 C3)', () => {
+    // <span></span> is empty — it contributes no text, so the <br> is still
+    // the block's trailing filler (boundary-only), not inline.
+    expect(buildSegmentMap(rootWith('<div>a<br><span></span></div><div>b</div>')).text).toBe('a\nb')
+    // a LATER element that itself carries text keeps the <br> inline.
+    expect(buildSegmentMap(rootWith('<div>a<br><em>x</em></div>')).text).toBe('a\nx')
+    // SKIP_TAGS content after the <br> doesn't count as content either.
+    expect(buildSegmentMap(rootWith('a<br><script>1</script>')).text).toBe('a')
+  })
+
   it('skips whitespace-only text nodes at block boundaries, keeps inline spaces', () => {
     // pretty-printed host markup (CMS composers, quoted replies)
     expect(buildSegmentMap(rootWith('<div>\n  <p>a</p>\n  <p>b</p>\n</div>')).text).toBe('a\nb')

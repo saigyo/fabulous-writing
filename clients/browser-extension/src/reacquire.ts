@@ -93,23 +93,43 @@ function resolveForm(formId: string): HTMLFormElement | null {
   return forms.find((f) => f.id === formId || f.getAttribute('name') === formId) ?? forms[Number(formId)] ?? null
 }
 
-// The scope list for a given kind, in document order. For 'textarea' this
-// is EXACTLY today's unfiltered querySelectorAll('textarea') — no size or
-// eligibility filter, so a mid-render replacement that measures 0×0 for one
-// tick doesn't shift anyone's index (plan review SF8). For 'contenteditable'
-// it's every [contenteditable] EDITING ROOT (a structural check — parent not
-// editable, same test detect.ts's own isEligibleField uses — NOT
-// isEligibleField itself, so still no size filter). The attribute selector
-// over-approximates isContentEditable: an invalid value like
-// contenteditable="asdf" matches the selector but isContentEditable treats
-// it as inherit, so such elements can enter this pool. Harmless — capture
-// and rebind both call this same function with the same predicate, so their
-// indices always agree, and findFingerprintMatch's final isEligibleField +
-// kind gate refuses any non-editable candidate before it can bind.
+// Root-aware query: the scope root itself (when it's an Element matching
+// `selector`) followed by its `querySelectorAll(selector)` descendants, in
+// document order (a root always precedes its own descendants).
+// querySelectorAll alone only ever returns descendants, so an editing host
+// that IS the scope root — a contentEditable <form>, the common case for a
+// CE field with no wrapping element around it — would otherwise never enter
+// any candidate pool at all (capture OR rebind), and could never be found
+// again. `document` (the 'document'-scopeKind root) has no `matches`, hence
+// the instanceof guard.
+function queryWithRoot(scopeRoot: ParentNode, selector: string): Element[] {
+  const results: Element[] = scopeRoot instanceof Element && scopeRoot.matches(selector) ? [scopeRoot] : []
+  results.push(...Array.from(scopeRoot.querySelectorAll(selector)))
+  return results
+}
+
+// The scope list for a given kind, in document order (root-aware — see
+// queryWithRoot). For 'textarea' this is EXACTLY today's unfiltered
+// querySelectorAll('textarea') plus the root itself if it matches — no size
+// or eligibility filter, so a mid-render replacement that measures 0×0 for
+// one tick doesn't shift anyone's index (plan review SF8); in practice a
+// scope root is always a <form> or `document`, neither of which can ever
+// match 'textarea', so this is provably unchanged from before. For
+// 'contenteditable' it's every [contenteditable] EDITING ROOT, root
+// included (a structural check — parent not editable, same test detect.ts's
+// own isEligibleField uses — NOT isEligibleField itself, so still no size
+// filter; a form-root host qualifies too, since its parent is never
+// editable). The attribute selector over-approximates isContentEditable: an
+// invalid value like contenteditable="asdf" matches the selector but
+// isContentEditable treats it as inherit, so such elements can enter this
+// pool. Harmless — capture and rebind both call this same function with the
+// same predicate, so their indices always agree, and findFingerprintMatch's
+// final isEligibleField + kind gate refuses any non-editable candidate
+// before it can bind.
 function fieldScope(root: ParentNode | null, kind: FieldKind): EligibleField[] {
   const scopeRoot = root ?? document
-  if (kind === 'textarea') return Array.from(scopeRoot.querySelectorAll('textarea'))
-  return Array.from(scopeRoot.querySelectorAll('[contenteditable]:not([contenteditable="false"])'))
+  if (kind === 'textarea') return queryWithRoot(scopeRoot, 'textarea') as HTMLTextAreaElement[]
+  return queryWithRoot(scopeRoot, '[contenteditable]:not([contenteditable="false"])')
     .filter((el): el is HTMLElement => el instanceof HTMLElement && !el.parentElement?.isContentEditable)
 }
 
@@ -140,12 +160,17 @@ function uniqueEligibleMatch(matches: NodeListOf<Element> | Element[], kind: Fie
 // computeFingerprint's capture-time ambiguity decision — see the module
 // comment above.
 function isUniqueInScope(scopeRoot: ParentNode, selector: string, kind: FieldKind): boolean {
-  return uniqueEligibleMatch(scopeRoot.querySelectorAll(selector), kind) !== null
+  return uniqueEligibleMatch(queryWithRoot(scopeRoot, selector), kind) !== null
 }
 
 export function computeFingerprint(el: EligibleField): Fingerprint {
   const fieldKind = fieldKindOf(el)
-  const form = el.closest('form')
+  // el itself, when it IS the form (a contentEditable <form> editing host
+  // with no wrapping element) — closest('form') matching self is exactly
+  // el, but el is asked for explicitly rather than trusted from closest()
+  // itself, since it's the one identity every downstream root-aware lookup
+  // (fieldScope's queryWithRoot, formIdentity) needs to line up against.
+  const form = el instanceof HTMLFormElement ? el : el.closest('form')
   const formId = formIdentity(form)
   const scopeKind: ScopeKind = form ? 'form' : 'document'
   if (el.id) return { kind: 'id', value: el.id, formId, scopeKind, fieldKind }
@@ -196,13 +221,13 @@ export function findFingerprintMatch(fingerprint: Fingerprint): EligibleField | 
     case 'name': {
       const scope = resolveMatchScope(fingerprint)
       if (!scope) return null
-      candidate = uniqueEligibleMatch(scope.querySelectorAll(nameSelector(kind, fingerprint.value)), kind)
+      candidate = uniqueEligibleMatch(queryWithRoot(scope, nameSelector(kind, fingerprint.value)), kind)
       break
     }
     case 'aria': {
       const scope = resolveMatchScope(fingerprint)
       if (!scope) return null
-      candidate = uniqueEligibleMatch(scope.querySelectorAll(ariaSelector(kind, fingerprint.value)), kind)
+      candidate = uniqueEligibleMatch(queryWithRoot(scope, ariaSelector(kind, fingerprint.value)), kind)
       break
     }
     case 'formIndex': {

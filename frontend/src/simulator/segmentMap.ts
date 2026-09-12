@@ -56,15 +56,27 @@ export function buildSegmentMap(root: HTMLElement): SegmentMap {
   function isBlockElement(n: Node | null): boolean {
     return n !== null && n.nodeType === Node.ELEMENT_NODE && BLOCK_TAGS.has((n as Element).tagName)
   }
-  // True when no LATER sibling of `child` produces content: only
-  // whitespace-only text nodes and SKIP_TAGS elements may follow.
+  // True when `node` itself would contribute extracted text, using the SAME
+  // text/skip rules as the walk: a non-whitespace text node, a <br>, or a
+  // non-SKIP_TAGS element whose subtree (recursively, skipping SKIP_TAGS
+  // subtrees) contains one of those. A whitespace-only text node is never
+  // content here — that matches the walk's own treatment of a
+  // whitespace-only node at the trailing/block-boundary position this
+  // predicate judges.
+  function producesContent(node: Node): boolean {
+    if (node.nodeType === Node.TEXT_NODE) return (node as Text).data.trim().length > 0
+    if (node.nodeType !== Node.ELEMENT_NODE) return false
+    const tag = (node as Element).tagName
+    if (SKIP_TAGS.has(tag)) return false
+    if (tag === 'BR') return true
+    return Array.from(node.childNodes).some(producesContent)
+  }
+  // True when no LATER sibling of `child` produces content (see
+  // producesContent above) — only whitespace-only text, SKIP_TAGS elements,
+  // and elements whose own subtrees are empty of content may follow.
   function isLastContentChild(child: Node): boolean {
     for (let n = child.nextSibling; n; n = n.nextSibling) {
-      if (n.nodeType === Node.TEXT_NODE) {
-        if ((n as Text).data.trim().length > 0) return false
-        continue
-      }
-      if (n.nodeType === Node.ELEMENT_NODE && !SKIP_TAGS.has((n as Element).tagName)) return false
+      if (producesContent(n)) return false
     }
     return true
   }
