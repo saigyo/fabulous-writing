@@ -48,6 +48,18 @@ offset. Rules:
 
 - **Skipped subtrees:** `script`, `style`, `noscript`, `template`.
 - **Newline synthesis:** one `'\n'` per `<br>`, and one `'\n'` at each
+
+  > **Amendment (plan review, 2026-09-12):** not quite one per `<br>` — a
+  > *block-trailing* `<br>` (the last content-producing child of its parent:
+  > Chrome's Enter-Enter filler `<div><br></div>`, or the trailing filler in
+  > `<div>a<br></div>`) acts as a block boundary only, contributing no
+  > `'\n'` of its own. The literal rule doubled blank lines relative to what
+  > Chrome's contentEditable actually renders — `<div>a</div><div><br></div>
+  > <div>b</div>` must extract `'a\n\nb'` (three rendered lines), not
+  > `'a\n\n\nb'`. Inline `<br>`s (content follows within the parent) keep
+  > the one-newline rule. Additionally, whitespace-only text nodes at block
+  > boundaries (pretty-printed host markup) are skipped; whitespace between
+  > inline siblings is real text and kept.
   block-element boundary from a fixed tag set (`address`, `article`, `aside`,
   `blockquote`, `div`, `dd`, `dl`, `dt`, `fieldset`, `figcaption`, `figure`,
   `footer`, `form`, `h1`–`h6`, `header`, `hr`, `li`, `main`, `nav`, `ol`, `p`,

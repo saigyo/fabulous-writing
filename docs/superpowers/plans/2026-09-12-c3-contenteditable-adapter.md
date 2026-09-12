@@ -798,7 +798,13 @@ Replace the stubs:
       // followed by ok:false, which the never-corrupt rule forbids. The
       // surgery branch therefore refuses spans whose Range covers less
       // text than [from, to) spans (i.e. synthetic newlines inside) —
-      // BEFORE any mutation. The execCommand branch stays unguarded:
+      // BEFORE any mutation. Deliberately over-broad in the safe direction
+      // (re-review item 3): a <br>-spanning span, which deleteContents
+      // WOULD handle (the <br> is fully contained), is refused too — its
+      // '\n' is also absent from Range.toString(); and a refusal taken
+      // after the selection was already moved leaves the caret at the
+      // span, which is accepted (refusals are rare and non-destructive).
+      // The execCommand branch stays unguarded:
       // Chrome's real editing pipeline handles cross-block edits the way
       // a user's typing-over-selection would, and post-verification is
       // the arbiter there.
@@ -1228,6 +1234,11 @@ function handleLeave(target: EventTarget | null, relatedTarget: EventTarget | nu
   ```ts
   function showAffordance(el: EligibleField): void {
     if (shownEl === el && affordance.host.isConnected) {
+      // ensurePort() stays in BOTH paths (re-review item 1): after a port
+      // death, handlePortDisconnect leaves shownEl set on purpose and the
+      // next interaction's ensurePort() is the documented recovery route —
+      // the early return must not skip it.
+      ensurePort()
       renderChip()
       return
     }
