@@ -28,7 +28,7 @@ describe('isEligibleField', () => {
     expect(isEligibleField(eligibleTextarea())).toBe(true)
   })
 
-  it('rejects an <input type="text"> — v1 detection is textarea-only', () => {
+  it('rejects an <input type="text"> — no input-capable adapter exists yet', () => {
     const el = document.createElement('input')
     el.type = 'text'
     document.body.appendChild(el)
