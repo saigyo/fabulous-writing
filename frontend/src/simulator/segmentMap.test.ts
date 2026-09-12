@@ -128,4 +128,19 @@ describe('offsetAt', () => {
     // caret after the last child -> end of text
     expect(offsetAt(map, root, 2)).toBe(5)
   })
+
+  // Copilot round 3 pinned false positive: Copilot claimed the CONTAINED_BY
+  // check here is reversed, so a caret at (div, 0) before a nested wrapper
+  // falls through to map.text.length. Empirically disproven — per spec,
+  // `anchor.compareDocumentPosition(s.node)` for a segment INSIDE `anchor`
+  // sets DOCUMENT_POSITION_CONTAINED_BY *plus* DOCUMENT_POSITION_FOLLOWING
+  // (the FOLLOWING branch already in this condition fires), and
+  // DOCUMENT_POSITION_CONTAINS can never apply to a Text segment (text
+  // nodes contain nothing). This test pins the correct behavior so a future
+  // "fix" of the non-bug can't land unnoticed.
+  it('maps a caret at (div, 0) before a nested inline wrapper to its text, not the end (pinned false-positive, PR #157 round 3)', () => {
+    const root = rootWith('<strong>abc</strong>')
+    const map = buildSegmentMap(root)
+    expect(offsetAt(map, root, 0)).toBe(0)
+  })
 })

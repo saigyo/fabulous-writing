@@ -190,12 +190,19 @@ connectBtn.disabled = true
 ceConnectBtn.disabled = true
 
 // B43 C3: shared Connect logic for both fields. Connecting one field clears
-// the OTHER field's markings/selection first (only one field ever owns the
+// BOTH fields' markings/selection first (only one field ever owns the
 // bridge's connected slot) and resets the tracked findings — the newly
-// connected field has none of its own yet, and the old field's would
-// otherwise leak into e.g. the textarea's click-to-select hit test.
+// connected field has none of its own yet, and either field's stale marks
+// would otherwise leak into e.g. the textarea's click-to-select hit test.
+// Clearing the CONNECTING field too (Copilot round 3, F3) matters on a
+// reconnect: re-clicking Connect for the already-active field (or
+// disconnect/reconnect cycling back to it) used to leave its own stale
+// highlights painted — currentFindings was reset, but the adapter's own
+// markings/selection weren't — until the next findings message landed.
 function connectField(field: SimField, other: SimField): void {
   if (!ready) return
+  field.adapter.clearMarkings()
+  field.adapter.setSelected?.(null)
   other.adapter.clearMarkings()
   other.adapter.setSelected?.(null)
   active = field
