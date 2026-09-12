@@ -578,8 +578,8 @@ following mapped position for a caret sitting between elements.
 simulator's own CE demo field, and, as of this slice, the browser extension's real (and
 only) contentEditable adapter, imported directly (see "Browser extension package"
 below). It has no mirror overlay and no geometry syncing: markings are **CSS Custom
-Highlight API** registrations (`CSS.highlights.set('fw-error', new Highlight(...ranges),
-{ priority })`) reached through a small `HighlightSink` seam (`set`/`clear`) rather than
+Highlight API** registrations (`const highlight = new Highlight(...ranges); highlight.priority
+= priority; CSS.highlights.set('fw-error', highlight)`) reached through a small `HighlightSink` seam (`set`/`clear`) rather than
 called on the global directly, so a host without the API is a first-class case, not an
 exception path. `defaultHighlightSink()` feature-detects `Highlight`/`CSS.highlights`
 through structural typing (this project's TS lib config doesn't guarantee the real

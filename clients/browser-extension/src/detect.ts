@@ -1,11 +1,9 @@
-// Field eligibility (spec: B43, C2 browser extension, Task 7; C3 Task 5). v1
-// is textarea-only: the product spec's "designed for textarea/input" is
-// realized here only for <textarea> — an <input>-capable adapter doesn't
-// exist yet (session.ts is built directly on createTextareaAdapter), so an
-// <input> is deliberately kept ineligible until that adapter lands, rather
-// than detected now and silently unable to mark/replace anything.
-// textarea + contentEditable editing hosts; <input> still deliberately
-// ineligible.
+// Field eligibility (spec: B43, C2 browser extension, Task 7; C3 Task 5).
+// Eligibility covers <textarea> and contentEditable editing hosts (C3): the
+// product spec's "designed for textarea/input" is realized here for both
+// kinds. An <input>-capable adapter still doesn't exist, so <input> stays
+// deliberately ineligible until one lands, rather than detected now and
+// silently unable to mark/replace anything.
 export const MIN_FIELD_WIDTH = 120
 export const MIN_FIELD_HEIGHT = 40
 

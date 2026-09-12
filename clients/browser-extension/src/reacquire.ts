@@ -99,7 +99,13 @@ function resolveForm(formId: string): HTMLFormElement | null {
 // tick doesn't shift anyone's index (plan review SF8). For 'contenteditable'
 // it's every [contenteditable] EDITING ROOT (a structural check — parent not
 // editable, same test detect.ts's own isEligibleField uses — NOT
-// isEligibleField itself, so still no size filter).
+// isEligibleField itself, so still no size filter). The attribute selector
+// over-approximates isContentEditable: an invalid value like
+// contenteditable="asdf" matches the selector but isContentEditable treats
+// it as inherit, so such elements can enter this pool. Harmless — capture
+// and rebind both call this same function with the same predicate, so their
+// indices always agree, and findFingerprintMatch's final isEligibleField +
+// kind gate refuses any non-editable candidate before it can bind.
 function fieldScope(root: ParentNode | null, kind: FieldKind): EligibleField[] {
   const scopeRoot = root ?? document
   if (kind === 'textarea') return Array.from(scopeRoot.querySelectorAll('textarea'))
