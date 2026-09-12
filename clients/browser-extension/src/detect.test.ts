@@ -106,6 +106,16 @@ describe('contentEditable eligibility', () => {
     expect(isEligibleField(el)).toBe(false)
   })
 
+  it('resolveEligibleField climbs past a contenteditable="false" island (a mention chip, a link card) to the enclosing host root', () => {
+    const host = eligibleHost()
+    const island = document.createElement('span')
+    island.contentEditable = 'false'
+    island.textContent = '@mention'
+    host.appendChild(island)
+    expect(isEligibleField(island)).toBe(false)
+    expect(resolveEligibleField(island)).toBe(host)
+  })
+
   it('rejects a nested editing host whose parent is also editable; resolveEligibleField climbs to the outermost editable ancestor', () => {
     const outer = eligibleHost()
     const inner = document.createElement('div')
@@ -137,5 +147,12 @@ describe('fieldKindOf and resolveEligibleField for textarea', () => {
     expect(resolveEligibleField(el)).toBe(el)
     expect(resolveEligibleField(null)).toBeNull()
     expect(resolveEligibleField(document.body)).toBeNull()
+  })
+
+  it('resolveEligibleField returns null for a plain non-editable element with no editable ancestor', () => {
+    const div = document.createElement('div')
+    document.body.appendChild(div)
+    stubRect(div, 200, 80)
+    expect(resolveEligibleField(div)).toBeNull()
   })
 })
