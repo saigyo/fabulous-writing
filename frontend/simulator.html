@@ -14,7 +14,8 @@
     <div class="sim-layout">
       <div class="sim-host">
         <div class="sim-toolbar">
-          <button id="connect" type="button">Connect</button>
+          <button id="connect" type="button">Connect textarea</button>
+          <button id="connect-ce" type="button">Connect contentEditable</button>
           <button id="disconnect" type="button" disabled>Disconnect</button>
           <span id="sim-status" class="sim-status">not connected</span>
         </div>
@@ -22,6 +23,9 @@
           <textarea id="field" spellcheck="false"
             >The quikc brown fox could of jumped over the the lazy dog.</textarea
           >
+        </div>
+        <div class="sim-field-wrap sim-ce-wrap">
+          <div id="field-ce" class="sim-ce" contenteditable="true" spellcheck="false">The <strong>quikc</strong> brown fox could of jumped<br>over the the lazy dog.</div>
         </div>
       </div>
       <div class="sim-embed">
