@@ -13,12 +13,7 @@
 // at a time. The bridge protocol's one-connected-field rule guarantees that
 // — hosts only feed markings to the connected field's adapter.
 import type { FieldAdapter, MarkingSpan } from '../embed/protocol'
-// offsetAt is not imported here: Task 2 leaves caretOffset() as a stub (it
-// will need offsetAt once Task 3 implements it) — importing it now would be
-// an unused import, an error under this project's noUnusedLocals (tsc -b)
-// and a lint warning (oxlint), same category of deviation the brief already
-// flags for SEVERITIES above.
-import { buildSegmentMap, rangeFor, type SegmentMap } from './segmentMap'
+import { buildSegmentMap, offsetAt, rangeFor, resolvePoint, type SegmentMap } from './segmentMap'
 
 const FLASH_MS = 700 // same pulse duration as textareaAdapter.ts
 
@@ -148,9 +143,126 @@ export function createContentEditableAdapter(
     capabilities: () => ({ mark: sink ? 'native' : 'none', replace: 'best-effort' }),
     extract: () => map.text,
     onChange(cb) { changeCb = cb },
-    applyReplacement(_from, _to, _insert, _expectedText) {
-      // Task 3
-      return { ok: false, text: map.text }
+    applyReplacement(from, to, insert, expectedText) {
+      // A queued (not-yet-flushed) sync could leave `map` stale against the
+      // live DOM; a replacement must judge against reality, so rebuild
+      // synchronously first — cheap, and it makes the microtask queue
+      // irrelevant to correctness here.
+      map = buildSegmentMap(root)
+      const text = map.text
+      // Finding-6 ordering (textareaAdapter.ts): validate the vector BEFORE
+      // the expectedText compare — slice() silently clamps, so a crafted
+      // expectedText matching the CLAMPED slice would otherwise mutate at
+      // the wrong position instead of being refused.
+      if (
+        !Number.isInteger(from) || !Number.isInteger(to) ||
+        from < 0 || to < from || to > text.length
+      ) {
+        return { ok: false, text }
+      }
+      if (text.slice(from, to) !== expectedText) {
+        return { ok: false, text }
+      }
+      // Degenerate no-op: nothing to delete, nothing to insert. Returning
+      // early matters (plan review SF6) — execCommand('delete') on a
+      // COLLAPSED selection is a backspace: it would remove the character
+      // before the caret, a character this request never named.
+      if (from === to && insert === '') {
+        return { ok: true, text }
+      }
+      const range = rangeFor(map, from, to)
+      // A zero-length insertion point (from === to) legitimately has no
+      // Range from rangeFor (it refuses empty spans) — build a collapsed
+      // one. Gate the fallback on EXACTLY that case (plan review BL2): for
+      // from < to, a null range means the span lies on synthetic newlines
+      // and MUST refuse — falling back would insert at a snapped position,
+      // mutating on a path reported as refused.
+      const target = range ?? (from === to
+        ? (() => {
+            const point = resolvePoint(map, from, 'start') ?? resolvePoint(map, from, 'end')
+            if (!point) return null // empty field: no text node to anchor on (N6)
+            const r = point.node.ownerDocument.createRange()
+            r.setStart(point.node, point.offset)
+            r.setEnd(point.node, point.offset)
+            return r
+          })()
+        : null)
+      if (!target) return { ok: false, text }
+      // Plan review SF5: Range.deleteContents only TRIMS partially
+      // contained text nodes — it cannot remove a block boundary, so a
+      // cross-block span leaves its synthetic newline behind: mutation
+      // followed by ok:false, which the never-corrupt rule forbids. The
+      // surgery branch therefore refuses spans whose Range covers less
+      // text than [from, to) spans (i.e. synthetic newlines inside) —
+      // BEFORE any mutation. Deliberately over-broad in the safe direction
+      // (re-review item 3): a <br>-spanning span, which deleteContents
+      // WOULD handle (the <br> is fully contained), is refused too — its
+      // '\n' is also absent from Range.toString(); and a refusal taken
+      // after the selection was already moved leaves the caret at the
+      // span, which is accepted (refusals are rare and non-destructive).
+      // The execCommand branch stays unguarded:
+      // Chrome's real editing pipeline handles cross-block edits the way
+      // a user's typing-over-selection would, and post-verification is
+      // the arbiter there.
+      const canExecCommand = typeof document.execCommand === 'function'
+      if (!canExecCommand && target.toString().length !== to - from) {
+        return { ok: false, text }
+      }
+
+      // M11 (textareaAdapter.ts): recover the REAL focused node through a
+      // shadow root before moving focus, so the restore below lands back on
+      // e.g. the extension's affordance chip instead of <body>. Scroll
+      // position is saved/restored the same way the textarea adapter does —
+      // focus + selection changes can scroll an inner-scrolling editable.
+      const prev = document.activeElement?.shadowRoot?.activeElement ?? document.activeElement
+      const { scrollTop, scrollLeft } = root
+      root.focus({ preventScroll: true })
+      const selection = document.getSelection()
+      selection?.removeAllRanges()
+      selection?.addRange(target)
+      // The real editing pipeline: native undo preserved, beforeinput/input
+      // fire, framework editors see the edit through their own model.
+      // 'insertText' with an empty string is not a deletion command —
+      // 'delete' is (and it only runs for a non-collapsed range: from < to,
+      // per the early return above). happy-dom has no execCommand at all,
+      // so the typeof guard routes tests through the surgery fallback
+      // (which has no undo stack to preserve there anyway).
+      const applied =
+        canExecCommand &&
+        (insert === ''
+          ? document.execCommand('delete', false)
+          : document.execCommand('insertText', false, insert))
+      if (!applied) {
+        if (target.toString().length !== to - from) {
+          // execCommand existed but refused; same cross-block guard as
+          // above before falling back to surgery.
+          root.scrollTop = scrollTop
+          root.scrollLeft = scrollLeft
+          if (prev instanceof HTMLElement && prev !== root) prev.focus({ preventScroll: true })
+          return { ok: false, text }
+        }
+        target.deleteContents()
+        if (insert !== '') target.insertNode(document.createTextNode(insert))
+        // Must bubble: frameworks delegate input listeners to the document
+        // root (same reasoning as textareaAdapter.ts's fallback dispatch).
+        root.dispatchEvent(new InputEvent('input', { bubbles: true }))
+      }
+      // Post-verify against the REAL post-edit DOM: a framework that
+      // synchronously rewrote the result (its input handler re-rendering
+      // from its own model) yields ok:false with the real text, so the
+      // embed re-syncs from the echo instead of desyncing — degrade
+      // gracefully, never corrupt. (An ASYNC rewrite lands later as an
+      // ordinary textChanged via the observer — same self-healing, one
+      // message later.) The slice term catches wrong content; the
+      // length-delta term is the ONLY check for an empty insert (a
+      // deletion the host restored — test case 10).
+      map = buildSegmentMap(root)
+      const ok = map.text.slice(from, from + insert.length) === insert
+        && map.text.length === text.length - (to - from) + insert.length
+      root.scrollTop = scrollTop
+      root.scrollLeft = scrollLeft
+      if (prev instanceof HTMLElement && prev !== root) prev.focus({ preventScroll: true })
+      return { ok, text: map.text }
     },
     setMarkings(spans) {
       currentSpans = spans
@@ -189,8 +301,15 @@ export function createContentEditableAdapter(
       reapplyHighlights()
     },
     caretOffset() {
-      // Task 3
-      return null
+      const selection = document.getSelection()
+      if (!selection || selection.rangeCount === 0) return null
+      const { anchorNode, anchorOffset } = selection
+      if (!anchorNode || !root.contains(anchorNode)) return null
+      // Same synchronous rebuild as applyReplacement (N3): a click can land
+      // in the same task as a DOM edit whose sync is still queued, and the
+      // caret must be judged against the DOM it actually sits in.
+      map = buildSegmentMap(root)
+      return offsetAt(map, anchorNode, anchorOffset)
     },
     dispose() {
       disposed = true
