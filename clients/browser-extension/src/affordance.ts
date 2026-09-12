@@ -19,11 +19,13 @@
 // isTrusted guard below for the actual defense). Hover/focus lifecycle
 // (when to show/hide, the leave-delay) is DRIVEN BY scout.ts — this module
 // only renders what it's told.
+import type { EligibleField } from './detect'
+
 export type AffordanceState = 'idle' | 'connected' | 'signed-out' | 'busy' | 'error'
 
 export interface Affordance {
   /** Position near the field's top-right corner and reveal the chip. */
-  showFor(el: HTMLTextAreaElement): void
+  showFor(el: EligibleField): void
   hide(): void
   setState(state: AffordanceState): void
   setCount(findingCount: number): void
@@ -194,8 +196,8 @@ function ariaLabelFor(state: AffordanceState, count: number): string {
 }
 
 export function createAffordance(
-  onClick: (el: HTMLTextAreaElement) => void,
-  onDisconnect: (el: HTMLTextAreaElement) => void,
+  onClick: (el: EligibleField) => void,
+  onDisconnect: (el: EligibleField) => void,
 ): Affordance {
   const host = document.createElement('div')
   host.setAttribute('data-fw-affordance', '')
@@ -223,7 +225,7 @@ export function createAffordance(
 
   let state: AffordanceState = 'idle'
   let count = 0
-  let currentEl: HTMLTextAreaElement | null = null
+  let currentEl: EligibleField | null = null
   // Copilot round 2 (B43 C2), S5: while the chip is shown it must track its
   // anchor field's position — a page scroll (document-level, capture-phase,
   // same reasoning as textareaAdapter.ts's own document scroll listener: an

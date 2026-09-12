@@ -13,7 +13,7 @@
 import browser from 'webextension-polyfill'
 import type { EmbedMessage, Envelope, HostMessage } from '../../../frontend/src/embed/protocol'
 import { createAffordance, type Affordance, type AffordanceState } from './affordance'
-import { isEligibleField } from './detect'
+import { resolveEligibleField, type EligibleField } from './detect'
 import { parsePortMessage, type PortMessage } from './messages'
 import { computeFingerprint, findFingerprintMatch, type Fingerprint } from './reacquire'
 import { startSession, type Session } from './session'
@@ -39,7 +39,7 @@ const PING_INTERVAL_MS = 20_000
 
 let port: Port | null = null
 let session: Session | null = null
-let sessionEl: HTMLTextAreaElement | null = null
+let sessionEl: EligibleField | null = null
 let reacquireTimer: ReturnType<typeof setTimeout> | undefined
 let reacquirePoll: ReturnType<typeof setInterval> | undefined
 let pingTimer: ReturnType<typeof setInterval> | undefined
@@ -50,7 +50,7 @@ let pingTimer: ReturnType<typeof setInterval> | undefined
 // tab must show idle for THAT field, not borrow the connected field's look.
 let sessionState: Exclude<AffordanceState, 'idle'> = 'busy'
 let sessionCount = 0
-let shownEl: HTMLTextAreaElement | null = null
+let shownEl: EligibleField | null = null
 let hideTimer: ReturnType<typeof setTimeout> | undefined
 
 // I3 (closing sweep): sw.ts has postSafely and panel.ts has the toPort
@@ -174,7 +174,7 @@ function stopReacquire(): void {
 // reconnect. If something else is shown instead (the user moved on), this
 // leaves it alone — reconnecting the field must never yank the chip to a
 // field the user isn't looking at.
-function reconnect(el: HTMLTextAreaElement, oldEl: HTMLTextAreaElement): void {
+function reconnect(el: EligibleField, oldEl: EligibleField): void {
   const fingerprint = computeFingerprint(el)
   const wasShown = shownEl === oldEl
   session = startSession(el, send, () => {
@@ -198,7 +198,7 @@ function reconnect(el: HTMLTextAreaElement, oldEl: HTMLTextAreaElement): void {
 // replacement for REACQUIRE_GRACE_MS; sessionEl is deliberately LEFT
 // pointing at the now-detached element throughout (renderChip's identity
 // anchor — see its own comment), only session itself goes null.
-function beginReacquire(fingerprint: Fingerprint, oldEl: HTMLTextAreaElement): void {
+function beginReacquire(fingerprint: Fingerprint, oldEl: EligibleField): void {
   stopReacquire()
   reacquirePoll = setInterval(() => {
     const match = findFingerprintMatch(fingerprint)
@@ -234,7 +234,7 @@ function stopCurrentSession(): void {
 // an already-connected field — one accidental click away, no confirmation.
 // The chip is now a split pill (affordance.ts): this handler is the MAIN
 // segment only, and is NEVER destructive in any state.
-function handleChipClick(el: HTMLTextAreaElement): void {
+function handleChipClick(el: EligibleField): void {
   if (session && sessionEl === el) {
     // Already connected: re-send ctl openPanel to open/focus the panel
     // again (e.g. the user closed it) rather than disconnecting — that's
@@ -284,7 +284,7 @@ function handleChipClick(el: HTMLTextAreaElement): void {
 // session — a mid-reacquire click must be able to cancel the pending
 // attempt too, per stopCurrentSession's own comment). A stale callback (the
 // shown field's session already replaced underneath it) is still a no-op.
-function handleDisconnectClick(el: HTMLTextAreaElement): void {
+function handleDisconnectClick(el: EligibleField): void {
   if (sessionEl !== el) return
   stopCurrentSession()
 }
@@ -363,7 +363,16 @@ function handlePortDisconnect(disconnected: Port): void {
   renderChip()
 }
 
-function showAffordance(el: HTMLTextAreaElement): void {
+function showAffordance(el: EligibleField): void {
+  if (shownEl === el && affordance.host.isConnected) {
+    // ensurePort() stays in BOTH paths (re-review item 1): after a port
+    // death, handlePortDisconnect leaves shownEl set on purpose and the
+    // next interaction's ensurePort() is the documented recovery route —
+    // the early return must not skip it.
+    ensurePort()
+    renderChip()
+    return
+  }
   shownEl = el
   affordance.showFor(el)
   ensurePort()
@@ -404,9 +413,10 @@ function handleEnter(target: EventTarget | null): void {
     cancelHide()
     return
   }
-  if (!isEligibleField(target)) return
+  const field = resolveEligibleField(target)
+  if (!field) return
   cancelHide()
-  showAffordance(target)
+  showAffordance(field)
 }
 
 // The round-trip half the field-only version was missing: leaving the
@@ -430,14 +440,25 @@ function handleEnter(target: EventTarget | null): void {
 // could still reach isEligibleField and, worse, would be indistinguishable
 // from the shown field's own leave once eligibility no longer gated it —
 // identity against shownEl fixes both.
+//
+// C3 widening: a CE field's mouseout/focusout fires on whichever INNER node
+// the pointer/focus actually left, never on the editing-host root itself —
+// so `target === shownEl` alone drops every leave from inside a rich field.
+// withinShown below generalizes the S1 identity check to containment
+// (shownEl.contains(t), true for shownEl itself too) without reintroducing
+// an eligibility re-check on the leave path — the S1 lesson still holds.
+function withinShown(t: EventTarget | null): boolean {
+  return t instanceof Node && shownEl !== null && shownEl.contains(t) // contains(self) is true
+}
 function handleLeave(target: EventTarget | null, relatedTarget: EventTarget | null): void {
   if (isChipHost(target)) {
-    if (relatedTarget === shownEl) return
+    if (withinShown(relatedTarget)) return
     scheduleHide()
     return
   }
-  if (target !== shownEl) return
+  if (!withinShown(target)) return
   if (isChipHost(relatedTarget)) return
+  if (withinShown(relatedTarget)) return // intra-field move between inner nodes
   scheduleHide()
 }
 
@@ -530,6 +551,7 @@ window.addEventListener('pagehide', () => {
 
 // Startup one-shot: an autofocused composer is already eligible before any
 // interaction ever fires.
-if (isEligibleField(document.activeElement)) {
-  showAffordance(document.activeElement)
+const startEl = resolveEligibleField(document.activeElement)
+if (startEl) {
+  showAffordance(startEl)
 }

@@ -77,3 +77,13 @@
   outline: 2px solid rgba(110, 86, 207, 0.9);
   outline-offset: 1px;
 }
+
+/* B43 C3: contentEditable markings via the CSS Custom Highlight API. These
+ * names are registered only by this extension's ContentEditableAdapter
+ * (fw-* Highlight registry entries); the rules are inert otherwise. Only
+ * color / background-color / text-decoration are valid in ::highlight(). */
+::highlight(fw-error) { background-color: rgba(248, 180, 180, 0.35); }
+::highlight(fw-warning) { background-color: rgba(253, 230, 138, 0.35); }
+::highlight(fw-suggestion) { background-color: rgba(191, 219, 254, 0.35); }
+::highlight(fw-selected) { background-color: rgba(110, 86, 207, 0.25); text-decoration: underline solid rgba(110, 86, 207, 0.9); }
+::highlight(fw-flash) { background-color: rgba(110, 86, 207, 0.45); }
