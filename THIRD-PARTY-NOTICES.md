@@ -8638,7 +8638,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ````
 
-### starlette 1.3.1
+### starlette 1.7.0
 
 License: BSD-3-Clause
 
