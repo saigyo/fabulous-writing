@@ -381,7 +381,9 @@ would crash `bounded_pattern` at check time).
 
 NLP-backed patterns are compiled against a blank vocab at load time
 (`_validate_nlp_pattern`), so a typo in a pattern attribute fails at startup with a rule
-error instead of at check time.
+error instead of at check time. One blank vocab per language is shared across a load:
+`spacy.blank()` costs about 40 ms, and building one per rule made every `create_app()`
+take about 1.6 s with the shipped rule set.
 
 `token_pattern`'s `Matcher` is registered with `greedy="LONGEST"`
 (`checkers/rules/checks/token_pattern.py`), so a quantified pattern (e.g.

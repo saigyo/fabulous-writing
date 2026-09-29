@@ -133,12 +133,16 @@ def rule_requires_doc(spec: RuleSpec) -> bool:
     )
 
 
-def _validate_nlp_pattern(spec: RuleSpec, language: Language) -> None:
-    """Compile the pattern against a blank vocab so bad attributes fail at load."""
+def _validate_nlp_pattern(spec: RuleSpec, language: Language, vocabs: dict) -> None:
+    """Compile the pattern against a blank vocab so bad attributes fail at load.
+    One vocab per language is shared across a load: spacy.blank() costs ~40 ms
+    and runs on every create_app()."""
     import spacy
     from spacy.matcher import DependencyMatcher, Matcher
 
-    vocab = spacy.blank(language.value).vocab
+    if language not in vocabs:
+        vocabs[language] = spacy.blank(language.value).vocab
+    vocab = vocabs[language]
     if spec.extends == "consistency":
         matcher = Matcher(vocab, validate=True)
         for name, variant in (spec.variants or {}).items():
@@ -154,6 +158,7 @@ def load_rules(rules_dir: Path) -> tuple[list[LoadedRule], list[RuleError]]:
     rules: list[LoadedRule] = []
     errors: list[RuleError] = []
     languages = {lang.value for lang in Language}
+    vocabs: dict = {}
     for lang_dir in sorted(rules_dir.iterdir()) if rules_dir.is_dir() else []:
         if not lang_dir.is_dir() or lang_dir.name not in languages:
             continue
@@ -163,7 +168,7 @@ def load_rules(rules_dir: Path) -> tuple[list[LoadedRule], list[RuleError]]:
                 data = yaml.safe_load(path.read_text(encoding="utf-8"))
                 spec = RuleSpec.model_validate(data)
                 if spec.extends in NLP_CHECK_TYPES:
-                    _validate_nlp_pattern(spec, language)
+                    _validate_nlp_pattern(spec, language, vocabs)
             except Exception as exc:
                 errors.append(RuleError(file=str(path), error=str(exc)))
                 continue
