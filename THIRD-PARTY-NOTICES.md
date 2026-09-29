@@ -10314,7 +10314,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ````
 
-### @codemirror/state 6.7.4
+### @codemirror/state 6.7.5
 
 License: MIT
 
@@ -10342,7 +10342,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ````
 
-### @codemirror/view 6.43.11
+### @codemirror/view 6.43.12
 
 License: MIT
 
@@ -10594,7 +10594,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ````
 
-### @types/react 19.2.18
+### @types/react 19.3.0
 
 License: MIT
 
@@ -10702,7 +10702,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### eventsource-parser 4.1.0
+### eventsource-parser 4.1.1
 
 License: MIT
 
@@ -10730,7 +10730,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### react-dom 19.2.8
+### react-dom 19.3.0
 
 License: MIT
 
@@ -10758,7 +10758,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### react 19.2.8
+### react 19.3.0
 
 License: MIT
 
@@ -10786,7 +10786,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### scheduler 0.27.0
+### scheduler 0.28.0
 
 License: MIT
 
