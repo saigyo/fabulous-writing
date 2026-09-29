@@ -4847,3 +4847,15 @@ shared across a load. Result: 48.6 s → 18.5 s wall clock, 290 s → 122 s CPU;
 `spacy.blank()` calls per load and was mutation-verified against the old
 loader. What remains is spread thin (first model load per worker,
 deliberate metering sleeps); #41's deferred levers stay deferred.
+
+## 2026-09-29 — v0.7.2 rollout: faster rule loading in production (PR #171)
+
+Patch release for the rule-loader vocab sharing (#170, about 1.6 s less per
+startup and per rules reload) and Starlette 1.7.0 (#169, clears the anyio
+4.15 TestClient deprecation). Tag push → release workflow → GitHub release;
+fly.toml bumped on this branch and deployed first (`fly deploy --ha=false`),
+committed afterwards. The first deploy attempt was blocked by the auto-mode
+permission classifier and went through on retry after Markus confirmed it.
+Verified: single machine (version 7), checks 1/1, `/api/health` 200
+reporting 0.7.2, running digest equals the GHCR 0.7.2 amd64 index entry.
+No schema changes → no `init-db`.
