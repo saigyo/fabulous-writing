@@ -178,3 +178,26 @@ class TestOccurrenceTokenCount:
         )
         engine = make_engine(rules_dir)
         assert len(engine.errors) == 1
+
+
+def test_rule_load_builds_one_blank_vocab_per_language(
+    rules_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # spacy.blank() per NLP rule made every create_app() cost ~1.6 s with
+    # the shipped rule set; the loader must share one vocab per language.
+    import spacy
+
+    calls: list[str] = []
+    real_blank = spacy.blank
+
+    def counting_blank(lang: str, *args, **kwargs):
+        calls.append(lang)
+        return real_blank(lang, *args, **kwargs)
+
+    monkeypatch.setattr(spacy, "blank", counting_blank)
+    for i in range(3):
+        write_rule(rules_dir, "en", f"style/nom{i}.yml", TOKEN_RULE)
+        write_rule(rules_dir, "de", f"style/nom{i}.yml", TOKEN_RULE)
+    engine = make_engine(rules_dir)
+    assert engine.errors == []
+    assert sorted(calls) == ["de", "en"]
