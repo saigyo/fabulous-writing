@@ -4816,3 +4816,19 @@ on token-node spans is caught, re-synced and undo-recoverable → #159
 proposes auto-`execCommand('undo')` on post-verify failure); Reddit's
 slotted shreddit editors never render the sibling-inserted chip → #158
 (body-anchored affordance host). Next on #134: C4 Firefox port.
+
+## 2026-09-29 — v0.7.1 rollout: dependency and security updates deployed (PR #168)
+
+Patch release cut after the Dependabot round (#161, #162, #164, #165) and
+the manual PyJWT security bump (#167) merged: anyio 4.15.1 (closes the
+critical TLS host-name spoofing alert plus two others), PyJWT 2.15.1
+(malformed-JWK alert; floor raised to 2.14.0), anthropic 1.8.0, React
+19.3 — and the #157 contentEditable embed/extension work, first time in
+production. Tag push → release workflow (buildcache: 3 min), fly.toml
+bumped on this branch and deployed first (`fly deploy --ha=false`),
+committed afterwards — deploy-then-commit. Verified: single machine,
+checks 1/1, `/api/health` 200 reporting 0.7.1, running amd64 digest
+equals the GHCR 0.7.1 index entry. No schema changes → no `init-db`.
+Found on the way: anyio 4.15 deprecates `anyio.abc.BlockingPortal`, which
+Starlette's TestClient still references — test-only DeprecationWarnings
+that break the zero-warnings gate; runtime import is clean. Separate fix.
