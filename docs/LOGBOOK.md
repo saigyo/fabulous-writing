@@ -4832,3 +4832,18 @@ equals the GHCR 0.7.1 index entry. No schema changes → no `init-db`.
 Found on the way: anyio 4.15 deprecates `anyio.abc.BlockingPortal`, which
 Starlette's TestClient still references — test-only DeprecationWarnings
 that break the zero-warnings gate; runtime import is clean. Separate fix.
+
+## 2026-09-29 — Backend suite back under 20 s: shared blank vocab in the rule loader (PR #170)
+
+The suite had crept from ~28 s (#41's post-PR-#31 measurement) to 48.6 s.
+`--durations=0` aggregated by phase showed setup at 168 s of 310 s total
+test time, with `test_auth_supabase_api.py` alone at 117 s. cProfile of one
+supabase-app setup pointed at `load_rules` → `_validate_nlp_pattern`, which
+built a fresh `spacy.blank()` for every NLP rule — 36 rules, ~1.6 s per
+`create_app()`. It grew quietly as rules were added, and it also taxed server
+startup and rule reloads. Fix: one lazily built blank vocab per language,
+shared across a load. Result: 48.6 s → 18.5 s wall clock, 290 s → 122 s CPU;
+1618 passed, 175 skipped, zero warnings. New guard test counts
+`spacy.blank()` calls per load and was mutation-verified against the old
+loader. What remains is spread thin (first model load per worker,
+deliberate metering sleeps); #41's deferred levers stay deferred.
