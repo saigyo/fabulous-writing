@@ -60,8 +60,8 @@ MIN_MISTRAL_KEY_LENGTH = 20
 LANGUAGES = ("en", "de", "fr", "es", "it", "ja", "zh")
 COMMERCIAL_TIER_MODELS = {
     "claude": {
-        "quality": "claude-opus-5",
-        "balanced": "claude-sonnet-5",
+        "quality": "claude-opus-5-5",
+        "balanced": "claude-sonnet-5-5",
         "cheap": "claude-haiku-4-5",
     },
     "openai": {
@@ -346,7 +346,7 @@ def run_wizard(
             existing_providers.get("ollama_base_url", DEFAULT_OLLAMA_URL),
         )
         # Prefill only from entries that are actually Ollama entries — after
-        # a commercial run the table holds e.g. claude-opus-5, which must
+        # a commercial run the table holds e.g. claude-opus-5-5, which must
         # never be offered as an Ollama default (the picker would reject it
         # on every Enter, and the fallback path would silently accept it).
         existing_en = existing_config.get("routing", {}).get("languages", {}).get("en", {})

@@ -36,8 +36,8 @@ providers:
 routing:
   languages:
     en: &anthropic_european
-      quality: { provider: claude, model: "claude-opus-5" }
-      balanced: { provider: claude, model: "claude-sonnet-5" }
+      quality: { provider: claude, model: "claude-opus-5-5" }
+      balanced: { provider: claude, model: "claude-sonnet-5-5" }
       cheap: { provider: claude, model: "claude-haiku-4-5" }
       local: { provider: ollama, model: "mistral-nemo:12b-instruct-2407-q6_K" }
     de: *anthropic_european
@@ -45,8 +45,8 @@ routing:
     es: *anthropic_european
     it: *anthropic_european
     ja: &anthropic_cjk
-      quality: { provider: claude, model: "claude-opus-5" }
-      balanced: { provider: claude, model: "claude-sonnet-5" }
+      quality: { provider: claude, model: "claude-opus-5-5" }
+      balanced: { provider: claude, model: "claude-sonnet-5-5" }
       cheap: { provider: claude, model: "claude-haiku-4-5" }
       local: { provider: ollama, model: "qwen3:8b" }
     zh: *anthropic_cjk
