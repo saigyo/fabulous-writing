@@ -4890,3 +4890,14 @@ unlisted models default to `high` (corrected). Markus pointed out that Opus
 Opus 5.5 low 15.4 s / 6,736 tokens, medium 23.3 s / 9,826, default 25.3 s /
 10,188, high 32.1 s / 15,447 (median, four texts), findings 54–56. The rerun
 matched the first run within about 2 s; `low` stays.
+
+## 2026-09-30 — v0.7.3 rollout: Claude 5.5 models, thinking effort, prompt caching (PR #173)
+
+Release for PR #172. Tag push → release workflow → GitHub release; fly.toml
+bumped on this branch and deployed first (`fly deploy --ha=false`),
+committed afterwards. Verified: single machine (version 8), checks 1/1,
+`/api/health` 200 reporting 0.7.3, running digest equals the GHCR 0.7.3
+amd64 index entry. The config.yaml delivered with the deploy carries the
+5.5 routing; reading it back on the machine over `fly ssh` was blocked by
+the auto-mode permission classifier, so that check is left for Markus. No
+schema changes → no `init-db`.
