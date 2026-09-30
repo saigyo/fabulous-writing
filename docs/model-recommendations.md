@@ -33,7 +33,7 @@ pinning, or per request via the check API:
 | Provider  | Reaches | Model selection |
 |-----------|---------|-----------------|
 | `ollama`  | local [Ollama](https://ollama.com) | discovered live from the Ollama instance |
-| `claude`  | Claude API | discovered live from the Anthropic models API (default `providers.anthropic_model`, `claude-sonnet-5`) |
+| `claude`  | Claude API | discovered live from the Anthropic models API (default `providers.anthropic_model`, `claude-sonnet-5-5`) |
 | `openai`  | OpenAI — or any OpenAI-compatible endpoint via `providers.openai_base_url` | discovered live |
 | `mistral` | Mistral — or any OpenAI-compatible endpoint via `providers.mistral_base_url` | discovered live |
 | `bedrock` | AWS Bedrock (Claude et al.; EU regions available) | discovered live with `bedrock:List*` permissions, or pinned via `bedrock_models` |
@@ -107,12 +107,21 @@ API cost estimates for ZH/JA.
 | Model            | Input     | Output    | Note                             |
 |------------------|-----------|-----------|----------------------------------|
 | GPT-5.5          | $5.00     | $30.00    | Premium generalist               |
-| Claude Sonnet 5  | $3.00     | $15.00    | Strong on style / EU languages; the app's default `claude` model |
+| Claude Opus 5.5  | $4.00     | $20.00    | Quality tier on the Anthropic column (Sep 2026 pricing) |
+| Claude Sonnet 5.5| $2.00     | $10.00    | Strong on style / EU languages; the app's default `claude` model (Sep 2026 pricing) |
 | Mistral Large    | cheaper than GPT/Claude for EU languages | | EU deployment / self-hosting possible |
 | Qwen3.7 Max      | $1.25     | $3.75     | Proprietary flagship             |
 | Qwen3.6 Plus     | $0.50     | $3.00     | Price-performance for CJK        |
 | DeepSeek V4 Pro  | $0.435    | $0.87     | Best ZH↔EN quality               |
 | DeepSeek V4 Flash| $0.14     | $0.28     | Cheapest high-volume option      |
+
+Claude 5-family models think by default, and thinking is billed as output: on
+checks, output tokens dominate the cost. Measured 2026-09-30 (#132, four check
+runs each): Sonnet 5 → Sonnet 5.5 cut median check time from 30 s to 11 s and
+output tokens by half; Opus 5.5 at effort `low` ran 16 s vs. 27 s at its
+default, findings on par. The shipped default is `providers.anthropic_effort:
+{claude-opus-5-5: low}` (see backend-architecture.md, "Claude: thinking effort
+and prompt caching").
 
 For users who want a *single* provider with access to all models: OpenRouter
 offers OpenAI-compatible single-key access to many models (small markup, ideal for
@@ -214,8 +223,8 @@ decision table for both calls.
 
 - **Verify model slugs:** Check the exact API model names (e.g. `deepseek-v4-pro`,
   `qwen3.7-max`, `mistral-large-latest`, `gemini-flash`) against each provider's
-  current documentation — names change frequently. (`claude-sonnet-5` and
-  `claude-opus-4-8` are current Anthropic slugs.)
+  current documentation — names change frequently. (`claude-sonnet-5-5` and
+  `claude-opus-5-5` are current Anthropic slugs.)
 - **JA/ZH evaluation:** Benchmark against real app text samples before relying on
   the rankings; consider a specialized model for JA if needed. The per-request
   `llm_model` parameter of `/api/checks` makes A/B comparisons easy.
