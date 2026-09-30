@@ -4898,6 +4898,8 @@ bumped on this branch and deployed first (`fly deploy --ha=false`),
 committed afterwards. Verified: single machine (version 8), checks 1/1,
 `/api/health` 200 reporting 0.7.3, running digest equals the GHCR 0.7.3
 amd64 index entry. The config.yaml delivered with the deploy carries the
-5.5 routing; reading it back on the machine over `fly ssh` was blocked by
-the auto-mode permission classifier, so that check is left for Markus. No
-schema changes → no `init-db`.
+5.5 routing; reading it back over `fly ssh` was blocked by the auto-mode
+permission classifier, so Markus ran it: `claude-opus-5-5`,
+`claude-sonnet-5-5` and `claude-haiku-4-5` appear twice each (the European
+and CJK tier blocks; the other languages are YAML aliases). No schema
+changes → no `init-db`.
