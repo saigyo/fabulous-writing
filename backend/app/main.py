@@ -104,7 +104,11 @@ def make_provider_factory(settings: Settings):
         providers = settings.providers
         chosen = name or providers.default_provider
         if chosen == "claude":
-            return ClaudeProvider(model=model or providers.anthropic_model)
+            chosen_model = model or providers.anthropic_model
+            return ClaudeProvider(
+                model=chosen_model,
+                effort=providers.anthropic_effort.get(chosen_model),
+            )
         if chosen == "ollama":
             return OllamaProvider(
                 base_url=providers.ollama_base_url,

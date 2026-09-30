@@ -22,7 +22,7 @@ providers:
     assert settings.providers.ollama_model == "mistral"
     assert settings.providers.default_provider == "claude"
     # Unset keys keep their defaults.
-    assert settings.providers.anthropic_model == "claude-sonnet-5"
+    assert settings.providers.anthropic_model == "claude-sonnet-5-5"
 
 
 def test_load_settings_without_file_uses_defaults(tmp_path: Path) -> None:

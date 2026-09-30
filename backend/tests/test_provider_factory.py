@@ -54,3 +54,24 @@ def test_factory_extra_provider_without_key(
 def test_factory_unknown_provider_still_raises(settings: Settings) -> None:
     with pytest.raises(ValueError, match="Unknown LLM provider"):
         make_provider_factory(settings)("nonexistent")
+
+
+def test_factory_applies_the_configured_effort_for_the_model() -> None:
+    settings = Settings(
+        providers=ProviderSettings(anthropic_effort={"claude-opus-5-5": "low"})
+    )
+    factory = make_provider_factory(settings)
+    assert factory("claude", "claude-opus-5-5").effort == "low"
+    # Unlisted models run at their own default: no output_config is sent.
+    assert factory("claude", "claude-sonnet-5-5").effort is None
+
+
+def test_default_effort_map_pins_opus_5_5_low() -> None:
+    # #132 benchmark: low effort cut Opus 5.5 check latency and token use by
+    # ~40% with findings on par; Sonnet 5.5 gained too little to set one.
+    assert ProviderSettings().anthropic_effort == {"claude-opus-5-5": "low"}
+
+
+def test_unknown_effort_is_rejected() -> None:
+    with pytest.raises(ValueError, match="effort"):
+        ProviderSettings(anthropic_effort={"claude-opus-5-5": "minimal"})

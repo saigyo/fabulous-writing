@@ -13,6 +13,10 @@ class TokenUsage:
 
     input_tokens: int | None = None
     output_tokens: int | None = None
+    # Prompt-cache split of input_tokens (Claude only, #146); input_tokens
+    # stays the total so credits don't depend on cache luck.
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
 
 
 @dataclass(frozen=True)

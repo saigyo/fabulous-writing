@@ -102,7 +102,7 @@ MODEL_ALLOWLIST = LLMPolicy(
 RESOLUTION_TABLE = [
     # (id, policy, requested, expected)
     ("full-tier-passes", FULL_POLICY, RequestedLLM(tier="balanced"),
-     eff("balanced", "claude", "claude-sonnet-5", False)),
+     eff("balanced", "claude", "claude-sonnet-5-5", False)),
     ("full-direct-passes", FULL_POLICY, RequestedLLM(provider="ollama", model="llama3.1"),
      eff(None, "ollama", "llama3.1", False)),
     ("no-selection-uses-default-provider", FULL_POLICY, RequestedLLM(),
@@ -112,7 +112,7 @@ RESOLUTION_TABLE = [
      eff("cheap", "gemini", "models/gemini-flash-latest", True)),
     # §6.2 tier rule 3: nothing below → nearest allowed above wins.
     ("tier-walks-up", ALLOW_QUALITY_ONLY, RequestedLLM(tier="local"),
-     eff("quality", "claude", "claude-opus-4-8", True)),
+     eff("quality", "claude", "claude-opus-5-5", True)),
     ("tier-allowed-unchanged", ALLOW_CHEAP_LOCAL, RequestedLLM(tier="local"),
      eff("local", "ollama", "mistral-nemo:12b-instruct-2407-q6_K", False)),
     # §6.2 tier rule 4: direct-only policy — first provider, first allowlisted model.
@@ -142,7 +142,7 @@ RESOLUTION_TABLE = [
     ("direct-model-substituted", MODEL_ALLOWLIST, RequestedLLM(provider="ollama", model="llama3.1"),
      eff(None, "ollama", "qwen3:8b", True)),
     ("direct-no-model-uses-default", FULL_POLICY, RequestedLLM(provider="claude"),
-     eff(None, "claude", "claude-sonnet-5", False)),
+     eff(None, "claude", "claude-sonnet-5-5", False)),
     # §6.2 direct rule 3: provider not allowed → best allowed quality tier.
     ("direct-falls-to-best-tier", ALLOW_CHEAP_LOCAL, RequestedLLM(provider="claude", model="claude-opus-4-8"),
      eff("cheap", "gemini", "models/gemini-flash-latest", True)),
