@@ -4859,3 +4859,25 @@ permission classifier and went through on retry after Markus confirmed it.
 Verified: single machine (version 7), checks 1/1, `/api/health` 200
 reporting 0.7.2, running digest equals the GHCR 0.7.2 amd64 index entry.
 No schema changes → no `init-db`.
+
+## 2026-09-30 — Claude 5.5 models, per-model thinking effort, prompt caching (PR #172)
+
+Closes #132 and #146. The Anthropic tiers move to Sonnet 5.5 (balanced) and
+Opus 5.5 (quality) in production, the setup wizard and the code defaults;
+cheap stays on Haiku 4.5. A new benchmark script
+(`backend/scripts/effort-benchmark.py`) ran the real check over four EN/DE
+texts per model and effort: Sonnet 5 → Sonnet 5.5 cut the median check time
+from 30 s to 11 s and output tokens by half; Opus 5.5 at effort `low` took
+16 s vs. 27 s at its default, with findings on par. Effort barely mattered for
+Sonnet 5.5, so only Opus gets one: `providers.anthropic_effort` maps a
+model to an effort, default `{claude-opus-5-5: low}`, and the provider sends
+`output_config` only for listed models. The system prompt is now sent as a
+cached block. Verified live: the second check reads 908 of 932 input tokens
+from the cache. The saving is small (~$0.0017 per check) because rules and
+terminology never enter the prompt, contrary to #146's assumption.
+`input_tokens` stays the total, so credits are unaffected. Recording cache
+reads/writes in the usage ledger is deferred (needs columns plus a production
+`init-db`); noted in backend-architecture.md. The key for the benchmark
+first went into the chat by mistake; Markus replaced it before the run.
+Benchmark cost ≈ $1.50. Rollout needs a v0.7.3 image for the effort and
+caching code.
