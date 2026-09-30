@@ -481,16 +481,21 @@ The checker (`app/checkers/terminology.py`) produces two kinds of findings, both
 `LLMProvider` (`app/checkers/llm/provider.py`) is a small protocol: `name` plus
 `async generate(system, user, on_progress) -> GenerationResult`, where
 `GenerationResult` is `(text: str, usage: TokenUsage)` and `TokenUsage` is
-`(input_tokens: int | None, output_tokens: int | None)` — `None` means "the
-provider didn't report this," never 0, which is a real reported value. When
+`(input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)`, all
+`int | None` — `None` means "the provider didn't report this," never 0, which
+is a real reported value. The two cache fields are Claude-only (see [Claude:
+thinking effort and prompt caching](#claude-thinking-effort-and-prompt-caching)). When
 `on_progress` is passed, providers stream and report cumulative output tokens
 (that is what feeds the `llm_progress` SSE events and the UI's token
 counter); reported usage, when the provider supplies it, is preferred over
 that progress approximation everywhere it is available. Per-provider usage
 sources: `ollama` reads `prompt_eval_count`/`eval_count` off the final
 response; `claude` reads the Anthropic SDK's `usage.input_tokens`/
-`usage.output_tokens` (streamed responses combine the `message_start` input
-count with the final `message_delta`'s output count); `bedrock` reads
+`usage.output_tokens` plus the prompt-cache counts, and reports as
+`input_tokens` the *total* (uncached + cache read + cache written — the API's
+own `input_tokens` excludes the cached prefix), so credits and usage charts
+don't depend on whether a check hit the cache (streamed responses combine the
+`message_start` input counts with the final `message_delta`'s output count); `bedrock` reads
 `usage.inputTokens`/`usage.outputTokens` (streamed: taken from each
 metadata event's usage; the last reported value wins); `openai`/`mistral`
 (`openai_compat.py`) read
@@ -546,6 +551,38 @@ availability), not a model list, so it runs its own standalone status check
 Forcing a shared helper would either duplicate work or restructure discovery for no
 gain. The Ollama ping and the Bedrock credential check are both bounded by the same
 3 s timeout, so one unreachable provider cannot stall the response.
+
+### Claude: thinking effort and prompt caching
+
+Claude 5-family models think adaptively by default at effort `high`, and
+thinking tokens are billed as output. `providers.anthropic_effort` maps a
+Claude model id to an `output_config.effort` value (`low` … `max`); the
+provider factory looks up the chosen model, and `ClaudeProvider` sends
+`output_config` only when an effort is set, so unlisted models (including
+legacy Claude 3.x, which reject the parameter) run at their own default. The
+effort pairs with a model, not a tier, so it also applies when a user selects
+the model directly. The default map is `{claude-opus-5-5: low}`, set from the
+#132 benchmark (`backend/scripts/effort-benchmark.py`, 2026-09-30): Opus 5.5
+at `low` checked ~40 % faster with ~40 % fewer output tokens than at its
+default, findings on par; Sonnet 5.5 gained about a second, so it keeps its
+default. A config that sets the map replaces it whole.
+
+The system prompt is sent as one text block with
+`cache_control: {"type": "ephemeral"}` (#146): it is the stable prefix across
+checks (per language and profile instructions), and the text under review is
+the only per-check part, in the user message. The check prompt is ~910 tokens,
+above the 512-token minimum of the 5.5 models; shorter prompts (suggestions,
+naming, Haiku's 4096 minimum) are silently not cached. Verified live: the
+second check reads 908 of 932 input tokens from the cache. The saving is
+small (~$0.0017 per Sonnet 5.5 check) because rules and terminology run
+outside the LLM and never enter the prompt.
+
+**Deferred:** recording cache reads/writes in the usage ledger (`llm_usage`).
+`TokenUsage` already carries the split, but persisting it needs two new
+columns and, in production (`manage_schema: false`), an out-of-band
+`init-db` migration before the app boots again. Not worth it at the current
+prompt size; revisit if rules or terminology ever move into the prompt and
+caching becomes a real cost lever.
 
 ### Prompts
 
