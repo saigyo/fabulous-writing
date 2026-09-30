@@ -554,8 +554,9 @@ gain. The Ollama ping and the Bedrock credential check are both bounded by the s
 
 ### Claude: thinking effort and prompt caching
 
-Claude 5-family models think adaptively by default at effort `high`, and
-thinking tokens are billed as output. `providers.anthropic_effort` maps a
+Claude 5-family models think adaptively by default — at effort `high` on
+Sonnet 5, Opus 5 and Sonnet 5.5, at `medium` on Opus 5.5 — and thinking
+tokens are billed as output. `providers.anthropic_effort` maps a
 Claude model id to an `output_config.effort` value (`low` … `max`); the
 provider factory looks up the chosen model, and `ClaudeProvider` sends
 `output_config` only when an effort is set, so unlisted models (including
@@ -563,8 +564,9 @@ legacy Claude 3.x, which reject the parameter) run at their own default. The
 effort pairs with a model, not a tier, so it also applies when a user selects
 the model directly. The default map is `{claude-opus-5-5: low}`, set from the
 #132 benchmark (`backend/scripts/effort-benchmark.py`, 2026-09-30): Opus 5.5
-at `low` checked ~40 % faster with ~40 % fewer output tokens than at its
-default, findings on par; Sonnet 5.5 gained about a second, so it keeps its
+at `low` checked ~40 % faster with ~35 % fewer output tokens than at its
+default (`medium`), and in half the time with ~55 % fewer tokens than at
+`high`, findings on par; Sonnet 5.5 gained about a second, so it keeps its
 default. A config that sets the map replaces it whole (`{}` turns the Opus
 override off); the setup wizard never prompts for it and carries a hand-set
 map, empty included, across reruns.

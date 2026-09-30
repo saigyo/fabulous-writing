@@ -5,9 +5,9 @@ vetting) over the demo texts for each model/effort pair and prints one row
 per pair: median and max wall time, total output tokens (thinking
 included, billed as output), and total findings.
 
-Needs ANTHROPIC_API_KEY; costs real money (~32 calls with the defaults).
+Needs ANTHROPIC_API_KEY; costs real money (~36 calls with the defaults).
 
-Run:  uv run python scripts/effort-benchmark.py [--raw findings.json]
+Run:  uv run python scripts/effort-benchmark.py [--model M] [--raw findings.json]
 """
 
 import argparse
@@ -27,7 +27,8 @@ from app.core.models import Language  # noqa: E402
 
 DEMOS = BACKEND / "demos"
 
-# (model, effort); None = no output_config, i.e. the model default (high).
+# (model, effort); None = no output_config, i.e. the model's own default
+# (high on Sonnet 5 / Opus 5 / Sonnet 5.5, medium on Opus 5.5).
 CONFIGS = [
     ("claude-sonnet-5", None),
     ("claude-opus-5", None),
@@ -37,6 +38,7 @@ CONFIGS = [
     ("claude-opus-5-5", "low"),
     ("claude-opus-5-5", "medium"),
     ("claude-opus-5-5", None),
+    ("claude-opus-5-5", "high"),
 ]
 
 
@@ -78,7 +80,8 @@ async def _run(model: str, effort: str | None, name: str, language: Language, te
     return row
 
 
-async def main(raw: Path | None) -> None:
+async def main(raw: Path | None, model: str | None) -> None:
+    configs = [c for c in CONFIGS if model is None or c[0] == model]
     texts = _texts()
     gate = asyncio.Semaphore(4)
 
@@ -87,16 +90,16 @@ async def main(raw: Path | None) -> None:
             return await _run(*args)
 
     rows = await asyncio.gather(
-        *(guarded(m, e, n, lang, t) for m, e in CONFIGS for n, lang, t in texts)
+        *(guarded(m, e, n, lang, t) for m, e in configs for n, lang, t in texts)
     )
     print(f"{'model':<19}{'effort':<9}{'ok':>5}{'med s':>8}{'max s':>8}{'out tok':>9}{'findings':>10}")
-    for model, effort in CONFIGS:
-        mine = [r for r in rows if r["model"] == model and r["effort"] == (effort or "default")]
+    for name, effort in configs:
+        mine = [r for r in rows if r["model"] == name and r["effort"] == (effort or "default")]
         ok = [r for r in mine if r["ok"]]
         secs = [r["seconds"] for r in mine]
         tokens = [r["output_tokens"] for r in mine if r["output_tokens"] is not None]
         print(
-            f"{model:<19}{effort or 'default':<9}{len(ok):>3}/{len(mine)}"
+            f"{name:<19}{effort or 'default':<9}{len(ok):>3}/{len(mine)}"
             f"{statistics.median(secs):>8.1f}{max(secs):>8.1f}"
             f"{sum(tokens):>9}{sum(r['findings'] for r in ok):>10}"
         )
@@ -110,4 +113,6 @@ async def main(raw: Path | None) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--raw", type=Path, help="write per-run rows incl. findings as JSON")
-    asyncio.run(main(parser.parse_args().raw))
+    parser.add_argument("--model", help="run only this model's configs")
+    args = parser.parse_args()
+    asyncio.run(main(args.raw, args.model))
