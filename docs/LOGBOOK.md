@@ -4877,7 +4877,8 @@ from the cache. The saving is small (~$0.0017 per check) because rules and
 terminology never enter the prompt, contrary to #146's assumption.
 `input_tokens` stays the total, so credits are unaffected. Recording cache
 reads/writes in the usage ledger is deferred (needs columns plus a production
-`init-db`); noted in backend-architecture.md. The key for the benchmark
-first went into the chat by mistake; Markus replaced it before the run.
+`init-db`); noted in backend-architecture.md. The first attempt to hand over the
+benchmark key put its value into the chat transcript; rotating that key was
+recommended, and the benchmark read its key from a local file instead.
 Benchmark cost ≈ $1.50. Rollout needs a v0.7.3 image for the effort and
 caching code.
