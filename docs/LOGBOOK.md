@@ -4884,4 +4884,9 @@ Benchmark cost ≈ $1.50. Rollout needs a v0.7.3 image for the effort and
 caching code. Copilot review (requested): the setup wizard dropped a
 hand-set `anthropic_effort` map on rerun (fixed, with a regression test for
 a custom and an explicit empty map), and a config comment wrongly said
-unlisted models default to `high` (corrected).
+unlisted models default to `high` (corrected). Markus pointed out that Opus
+5.5's own default is `medium`, not `high`, so the "default" rows had measured
+`medium`; a rerun with an explicit `high` (the script gained `--model`):
+Opus 5.5 low 15.4 s / 6,736 tokens, medium 23.3 s / 9,826, default 25.3 s /
+10,188, high 32.1 s / 15,447 (median, four texts), findings 54–56. The rerun
+matched the first run within about 2 s; `low` stays.
