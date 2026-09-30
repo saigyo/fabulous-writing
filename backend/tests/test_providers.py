@@ -134,11 +134,27 @@ class TestClaudeProvider:
 
         assert result.text == "[]"
         assert stub.messages.kwargs["model"] == "claude-sonnet-5"
-        assert stub.messages.kwargs["system"] == "system prompt"
+        # #146: the system prompt is the stable prefix, marked for caching.
+        assert stub.messages.kwargs["system"] == [
+            {"type": "text", "text": "system prompt", "cache_control": {"type": "ephemeral"}}
+        ]
         assert stub.messages.kwargs["messages"] == [
             {"role": "user", "content": "user prompt"}
         ]
         assert result.usage == TokenUsage()
+
+    async def test_effort_is_sent_as_output_config(self) -> None:
+        stub = _StubAnthropicClient()
+        provider = ClaudeProvider(model="claude-sonnet-5-5", effort="low", client=stub)
+        await provider.generate("s", "u")
+        assert stub.messages.kwargs["output_config"] == {"effort": "low"}
+
+    async def test_no_effort_leaves_output_config_unset(self) -> None:
+        # Legacy models reject output_config; unset means "model default".
+        stub = _StubAnthropicClient()
+        provider = ClaudeProvider(model="claude-3-5-haiku-20241022", client=stub)
+        await provider.generate("s", "u")
+        assert "output_config" not in stub.messages.kwargs
 
     async def test_missing_api_key_raises_clear_error(
         self, monkeypatch: pytest.MonkeyPatch
@@ -171,6 +187,37 @@ class TestClaudeProvider:
         provider = ClaudeProvider(model="claude-sonnet-5", client=Client())
         result = await provider.generate("s", "u")
         assert result.usage == TokenUsage(input_tokens=55, output_tokens=9)
+
+    async def test_input_tokens_include_cached_prefix(self) -> None:
+        # With caching, the API's input_tokens counts only the uncached tail;
+        # our input_tokens stays the total so credits don't shift (#146).
+        class Usage:
+            input_tokens = 40
+            output_tokens = 9
+            cache_creation_input_tokens = 0
+            cache_read_input_tokens = 900
+
+        class Block:
+            type = "text"
+            text = "[]"
+
+        class Response:
+            content = [Block()]
+            usage = Usage()
+
+        class Messages:
+            async def create(self, **kwargs: Any) -> Any:
+                return Response()
+
+        class Client:
+            messages = Messages()
+
+        provider = ClaudeProvider(model="claude-sonnet-5-5", client=Client())
+        result = await provider.generate("s", "u")
+        assert result.usage == TokenUsage(
+            input_tokens=940, output_tokens=9,
+            cache_read_tokens=900, cache_write_tokens=0,
+        )
 
     async def test_generate_requests_headroom_for_thinking(self) -> None:
         # Sonnet 5 / Opus 5 run adaptive thinking by default and thinking
@@ -297,6 +344,8 @@ class _StubStreamingMessages:
 
                 usage = Usage()
                 usage.input_tokens = input_tokens
+                usage.cache_creation_input_tokens = 900
+                usage.cache_read_input_tokens = 0
 
                 class Message:
                     pass
@@ -338,7 +387,10 @@ class TestClaudeStreaming:
 
         provider = ClaudeProvider(model="claude-sonnet-5", client=Client())
         result = await provider.generate("s", "u", on_progress=lambda n: None)
-        assert result.usage == TokenUsage(input_tokens=44, output_tokens=12)
+        assert result.usage == TokenUsage(
+            input_tokens=944, output_tokens=12,
+            cache_read_tokens=0, cache_write_tokens=900,
+        )
 
     async def test_streaming_truncation_raises_with_usage(self) -> None:
         class Messages:

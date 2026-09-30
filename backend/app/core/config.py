@@ -48,10 +48,20 @@ class ExtraProviderSettings(BaseModel):
     exclude_model_fragments: list[str] = Field(default_factory=list)
 
 
+# Values of the Claude API's output_config.effort (thinking depth).
+Effort = Literal["low", "medium", "high", "xhigh", "max"]
+
+
 class ProviderSettings(BaseModel):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1"
-    anthropic_model: str = "claude-sonnet-5"
+    anthropic_model: str = "claude-sonnet-5-5"
+    # Thinking effort per Claude model; unlisted models run at their own
+    # default (high). Opus 5.5 at low: ~40% faster checks and fewer tokens
+    # with findings on par (#132 benchmark, scripts/effort-benchmark.py).
+    anthropic_effort: dict[str, Effort] = Field(
+        default_factory=lambda: {"claude-opus-5-5": "low"}
+    )
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-5-mini"
     mistral_base_url: str = "https://api.mistral.ai/v1"
@@ -111,7 +121,7 @@ def _default_routing_languages() -> dict[str, dict[str, RoutingEntry]]:
 
     def european(balanced: RoutingEntry) -> dict[str, RoutingEntry]:
         return {
-            "quality": entry("claude", "claude-opus-4-8"),
+            "quality": entry("claude", "claude-opus-5-5"),
             "balanced": balanced,
             "cheap": entry("gemini", "models/gemini-flash-latest"),
             "local": entry("ollama", "mistral-nemo:12b-instruct-2407-q6_K"),
@@ -126,7 +136,7 @@ def _default_routing_languages() -> dict[str, dict[str, RoutingEntry]]:
         }
 
     return {
-        "en": european(entry("claude", "claude-sonnet-5")),
+        "en": european(entry("claude", "claude-sonnet-5-5")),
         "de": european(entry("mistral", "mistral-large-latest")),
         "fr": european(entry("mistral", "mistral-large-latest")),
         "es": european(entry("mistral", "mistral-large-latest")),

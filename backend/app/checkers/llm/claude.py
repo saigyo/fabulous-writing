@@ -1,3 +1,4 @@
+from dataclasses import replace
 from typing import Any
 
 from .provider import (
@@ -33,9 +34,17 @@ def _usage_of(source: Any) -> TokenUsage:
     """Read input/output token counts off an SDK usage object, tolerating
     absence — missing telemetry is never an error."""
     usage = getattr(source, "usage", None)
+    uncached = getattr(usage, "input_tokens", None)
+    read = getattr(usage, "cache_read_input_tokens", None)
+    written = getattr(usage, "cache_creation_input_tokens", None)
+    # The API's input_tokens excludes the cached prefix (read or written);
+    # report the total, with the split alongside.
+    total = None if uncached is None else uncached + (read or 0) + (written or 0)
     return TokenUsage(
-        input_tokens=getattr(usage, "input_tokens", None),
+        input_tokens=total,
         output_tokens=getattr(usage, "output_tokens", None),
+        cache_read_tokens=read,
+        cache_write_tokens=written,
     )
 
 
@@ -56,8 +65,16 @@ class ClaudeProvider:
 
     name = "claude"
 
-    def __init__(self, model: str = "claude-sonnet-5", client: Any | None = None) -> None:
+    def __init__(
+        self,
+        model: str = "claude-sonnet-5-5",
+        effort: str | None = None,
+        client: Any | None = None,
+    ) -> None:
         self.model = model
+        # None sends no output_config: the model's default applies, and
+        # legacy models that reject the parameter keep working.
+        self.effort = effort
         self._client = client
 
     def _get_client(self) -> Any:
@@ -81,9 +98,16 @@ class ClaudeProvider:
         kwargs: dict[str, Any] = dict(
             model=self.model,
             max_tokens=max_tokens,
-            system=system,
+            # The system prompt is the stable prefix across checks; the text
+            # under review goes last. Prompts below the model's minimum
+            # (512 tokens on the 5.5 models) are silently not cached.
+            system=[
+                {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
+            ],
             messages=[{"role": "user", "content": user}],
         )
+        if self.effort is not None:
+            kwargs["output_config"] = {"effort": self.effort}
         if on_progress is not None:
             return await self._generate_streaming(kwargs, on_progress)
         response = await self._get_client().messages.create(**kwargs)
@@ -104,7 +128,7 @@ class ClaudeProvider:
         self, kwargs: dict[str, Any], on_progress: ProgressCallback
     ) -> GenerationResult:
         parts: list[str] = []
-        input_tokens: int | None = None
+        start_usage = TokenUsage()
         output_tokens: int | None = None
         stop_reason: str | None = None
         stream = await self._get_client().messages.create(**kwargs, stream=True)
@@ -112,7 +136,7 @@ class ClaudeProvider:
             if event.type == "content_block_delta" and event.delta.type == "text_delta":
                 parts.append(event.delta.text)
             elif event.type == "message_start":
-                input_tokens = _usage_of(event.message).input_tokens
+                start_usage = _usage_of(event.message)
             elif event.type == "message_delta":
                 # Cumulative; the last one is the final count.
                 output_tokens = event.usage.output_tokens
@@ -120,7 +144,7 @@ class ClaudeProvider:
                 stop_reason = getattr(
                     getattr(event, "delta", None), "stop_reason", None
                 ) or stop_reason
-        usage = TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens)
+        usage = replace(start_usage, output_tokens=output_tokens)
         if stop_reason == "max_tokens":
             raise _truncated(len("".join(parts)), usage, kwargs["max_tokens"])
         return GenerationResult(text="".join(parts), usage=usage)

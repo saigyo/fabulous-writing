@@ -66,7 +66,7 @@ def test_lists_all_providers_with_availability(
     assert providers["ollama"]["default_model"]
     # No API keys in the environment.
     assert providers["claude"]["available"] is False
-    assert providers["claude"]["default_model"] == "claude-sonnet-5"
+    assert providers["claude"]["default_model"] == "claude-sonnet-5-5"
     assert providers["openai"]["available"] is False
     assert providers["openai"]["default_model"] == "gpt-5-mini"
     assert providers["mistral"]["available"] is False
@@ -107,7 +107,7 @@ def test_claude_discovery_failure_falls_back_to_default(
     providers = {p["name"]: p for p in client.get("/api/providers").json()}
     # Key is set but discovery failed — still usable with the default.
     assert providers["claude"]["available"] is True
-    assert providers["claude"]["models"] == ["claude-sonnet-5"]
+    assert providers["claude"]["models"] == ["claude-sonnet-5-5"]
 
 
 def test_openai_and_mistral_available_with_keys(

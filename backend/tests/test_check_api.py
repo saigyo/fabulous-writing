@@ -417,7 +417,7 @@ class TestEffectiveLlm:
                 "effective": {
                     "tier": "balanced",
                     "provider": "claude",
-                    "model": "claude-sonnet-5",
+                    "model": "claude-sonnet-5-5",
                 },
                 "degraded": False,
                 "skipped": None,
@@ -434,7 +434,7 @@ class TestEffectiveLlm:
 
             final = client.get(f"/api/checks/{check_id}", headers=headers).json()
             assert final["effective_llm"] == expected
-        assert factory.calls == [("claude", "claude-sonnet-5")]
+        assert factory.calls == [("claude", "claude-sonnet-5-5")]
 
     def test_routing_to_unconfigured_provider_is_skipped_not_500(
         self, tmp_path: Path
