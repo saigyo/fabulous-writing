@@ -586,8 +586,8 @@ class TestRoutingTable:
         from app.setup_wizard import build_routing_table
 
         per_language = {
-            "quality": {"provider": "claude", "model": "claude-opus-5"},
-            "balanced": {"provider": "claude", "model": "claude-sonnet-5"},
+            "quality": {"provider": "claude", "model": "claude-opus-5-5"},
+            "balanced": {"provider": "claude", "model": "claude-sonnet-5-5"},
             "cheap": {"provider": "claude", "model": "claude-haiku-4-5"},
             "local": {"provider": "ollama", "model": "llama3.1"},
         }
@@ -637,7 +637,7 @@ class TestRoutingTable:
 
         table = build_routing_table("claude")
         table["en"]["quality"]["model"] = "mutated"
-        assert table["de"]["quality"]["model"] == "claude-opus-5"
+        assert table["de"]["quality"]["model"] == "claude-opus-5-5"
 
     def test_local_default_matches_settings_default(self):
         from app.core.config import ProviderSettings

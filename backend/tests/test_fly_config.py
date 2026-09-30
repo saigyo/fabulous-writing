@@ -23,8 +23,8 @@ FLY_TOML_PATH = FLY_DIR / "fly.toml"
 LANGUAGES = ("en", "de", "fr", "es", "it", "ja", "zh")
 # The wizard's Anthropic column (setup_wizard.py COMMERCIAL_TIER_MODELS).
 CLAUDE_TIERS = {
-    "quality": "claude-opus-5",
-    "balanced": "claude-sonnet-5",
+    "quality": "claude-opus-5-5",
+    "balanced": "claude-sonnet-5-5",
     "cheap": "claude-haiku-4-5",
 }
 # Secret NAMES are allowed anywhere (the standing rule bans VALUES, not
