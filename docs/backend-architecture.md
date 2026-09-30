@@ -565,7 +565,9 @@ the model directly. The default map is `{claude-opus-5-5: low}`, set from the
 #132 benchmark (`backend/scripts/effort-benchmark.py`, 2026-09-30): Opus 5.5
 at `low` checked ~40 % faster with ~40 % fewer output tokens than at its
 default, findings on par; Sonnet 5.5 gained about a second, so it keeps its
-default. A config that sets the map replaces it whole.
+default. A config that sets the map replaces it whole (`{}` turns the Opus
+override off); the setup wizard never prompts for it and carries a hand-set
+map, empty included, across reruns.
 
 The system prompt is sent as one text block with
 `cache_control: {"type": "ephemeral"}` (#146): it is the stable prefix across

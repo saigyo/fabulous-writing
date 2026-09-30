@@ -56,8 +56,8 @@ class ProviderSettings(BaseModel):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1"
     anthropic_model: str = "claude-sonnet-5-5"
-    # Thinking effort per Claude model; unlisted models run at their own
-    # default (high). Opus 5.5 at low: ~40% faster checks and fewer tokens
+    # Thinking effort per Claude model; unlisted models get no effort
+    # parameter and keep their own default behavior. Opus 5.5 at low: ~40% faster checks and fewer tokens
     # with findings on par (#132 benchmark, scripts/effort-benchmark.py).
     anthropic_effort: dict[str, Effort] = Field(
         default_factory=lambda: {"claude-opus-5-5": "low"}

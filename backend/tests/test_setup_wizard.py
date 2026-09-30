@@ -353,6 +353,33 @@ class TestReRun:
         data = yaml_module.safe_load(config_path.read_text(encoding="utf-8"))
         assert data["embed"]["allowed_ancestors"] == []
 
+    # PR #172 review: providers is rebuilt from the template too, so a
+    # hand-set effort map (including `{}`, which turns the built-in Opus
+    # override off) must survive a rerun rather than fall back to the default.
+    @pytest.mark.parametrize(
+        "effort", [{"claude-sonnet-5-5": "medium"}, {}], ids=["custom", "explicit-empty"]
+    )
+    def test_rerun_preserves_anthropic_effort(self, tmp_path, template, effort):
+        import yaml as yaml_module
+
+        config_dir = self.first_run(tmp_path, template)
+        config_path = config_dir / "config.yaml"
+        data = yaml_module.safe_load(config_path.read_text(encoding="utf-8"))
+        data["providers"]["anthropic_effort"] = effort
+        config_path.write_text(yaml_module.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+        rc = run_wizard(
+            config_dir,
+            template,
+            input_fn=scripted(["", "", "", "", "n"]),
+            getpass_fn=scripted([""]),
+            fetch_models=fetch_fail,
+        )
+
+        assert rc == 0
+        data = yaml_module.safe_load(config_path.read_text(encoding="utf-8"))
+        assert data["providers"]["anthropic_effort"] == effort
+
     def test_config_only_rerun_prefills_provider(self, tmp_path, template, capsys):
         # fabulous.env deleted, config.yaml survives (B21 #78 item 4):
         # still a re-run — provider/model prefills come from the config.
