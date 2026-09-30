@@ -118,8 +118,8 @@ API cost estimates for ZH/JA.
 Claude 5-family models think by default, and thinking is billed as output: on
 checks, output tokens dominate the cost. Measured 2026-09-30 (#132, four check
 runs each): Sonnet 5 → Sonnet 5.5 cut median check time from 30 s to 11 s and
-output tokens by half; Opus 5.5 at effort `low` ran 16 s vs. 27 s at its
-default, findings on par. The shipped default is `providers.anthropic_effort:
+output tokens by half; Opus 5.5 at effort `low` ran 16 s vs. 25 s at its
+default (`medium`) and 32 s at `high`, findings on par. The shipped default is `providers.anthropic_effort:
 {claude-opus-5-5: low}` (see backend-architecture.md, "Claude: thinking effort
 and prompt caching").
 
