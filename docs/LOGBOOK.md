@@ -4881,4 +4881,7 @@ reads/writes in the usage ledger is deferred (needs columns plus a production
 benchmark key put its value into the chat transcript; rotating that key was
 recommended, and the benchmark read its key from a local file instead.
 Benchmark cost ≈ $1.50. Rollout needs a v0.7.3 image for the effort and
-caching code.
+caching code. Copilot review (requested): the setup wizard dropped a
+hand-set `anthropic_effort` map on rerun (fixed, with a regression test for
+a custom and an explicit empty map), and a config comment wrongly said
+unlisted models default to `high` (corrected).
