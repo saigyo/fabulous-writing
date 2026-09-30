@@ -432,6 +432,10 @@ def run_wizard(
         providers_section["ollama_base_url"] = (
             existing_providers.get("ollama_base_url") or DEFAULT_OLLAMA_URL
         )
+    # Never prompted for, so carry a hand-set effort map across reruns;
+    # `is not None` keeps an explicit {} (built-in Opus override turned off).
+    if existing_providers.get("anthropic_effort") is not None:
+        providers_section["anthropic_effort"] = existing_providers["anthropic_effort"]
 
     config_data["routing"] = {
         "languages": build_routing_table(
