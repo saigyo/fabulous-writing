@@ -7,7 +7,8 @@
 // Text conventions: `code` renders as code, **text** as bold, and a
 // string starting with "- " becomes a bullet. Paths in `files` are
 // repo-relative and link to GitHub; `docs` entries are
-// "<doc>#<anchor>" keys resolved through DOCS below.
+// "<doc>#<anchor>" keys resolved through DOCS below. `purpose` (near
+// the end) gives each node a plain-language explanation of what it is for.
 //
 // Facts were taken from docs/backend-architecture.md,
 // docs/frontend-architecture.md, docs/browser-extension.md,
@@ -1516,6 +1517,133 @@ window.ATLAS = (function () {
       "Press / to search, 0 to fit the whole map, Esc to close panels.",
     ],
   };
+
+  // Plain-language "what is this for" text, shown first in each detail
+  // panel before the technical description. Keep it free of code names.
+  const purpose = {
+    // Web app
+    "w-login": "Fabulous Writing is only usable by people with an account, so the app starts at a sign-in screen. This part decides what the browser shows before and after signing in, and keeps the session alive while the person works, so they are not asked to sign in again every hour.",
+    "w-store": "Many parts of the screen need the same information at the same time: who is signed in, which language is being checked, which findings exist, which one is selected. The app store is the single place that holds this, so the editor, the sidebar and the header always agree with each other.",
+    "w-prefs": "Some things should survive closing the browser tab: being signed in, the person's interface language and layout choices, and any edits that had not reached the server yet. These are kept in the browser's own storage on the user's computer.",
+    "w-api": "Everything the browser asks the server, it asks through this one module. Keeping all network calls in one place means sign-in credentials are attached consistently and an expired session is handled the same way everywhere.",
+    "w-header": "The bar at the top of the editor is where the writer says how the text should be checked: in which language, with which checking profile, against which terminology lists, and with which level of AI (from thorough and slower to fast and cheap). Every check uses these settings.",
+    "w-policy": "Different accounts can be allowed different things, for example access to the most capable AI model or the right to create their own profiles. This part reads what the current account may do and greys out or hides the rest, so people don't pick options that would be refused.",
+    "w-routing": "Writers choose an AI quality level (such as 'balanced') rather than a specific model. Before a check is sent, this part looks up which concrete AI model the server uses for that level and language, and notices early if that model is currently unavailable.",
+    "w-i18n": "The interface itself is available in seven languages, so a German writer can use German menus and messages. This is separate from the language of the text being checked.",
+    "w-editor": "This is where the writing happens: a text editor in which problems are highlighted as colored underlines. Its special job is to keep those highlights on the right words while the writer keeps typing, without waiting for a new check.",
+    "w-scheduler": "Writers should not have to press a button to get feedback. The scheduler waits for a short pause in typing and then starts a check automatically: a quick one after a second, and, if enabled, the slower AI check after a few seconds.",
+    "w-controller": "This is the conductor of a single check from the browser's side. It collects the text and settings, sends them to the server, shows the quick results immediately, and then waits for the AI results to arrive, making sure results for outdated text are thrown away.",
+    "w-suggest": "Not every problem comes with a ready-made fix. When the writer asks for one, this part asks the AI for a replacement for that one passage, or for a rewritten sentence, and remembers the answer so it doesn't have to ask twice.",
+    "w-sidebar": "The panel next to the editor lists every problem found in the text, grouped and filterable. Selecting one shows an explanation and the available fixes, so the writer can work through the issues one by one.",
+    "w-score": "The score gives the writer one number from 0 to 100 for how good the text is right now. Half of it counts mistakes relative to the text's length, the other half comes from the AI's judgement of style qualities such as flow and clarity.",
+    "w-equiv": "Each new check produces a fresh list of problems. This part recognises which problems are still the same ones as before, so the panel the writer has open stays open and already-fetched suggestions are not lost on every re-check.",
+    "w-docport": "The checking logic should not care where the text lives. In the web app it lives in the built-in editor; in the browser extension it lives in a text box on some other website. This interface lets the same checking code work with both.",
+    "w-docs": "Writers keep several documents and can sort them into folders. This sidebar lists them, most recently edited first, and is where documents are created, opened, renamed, moved and deleted.",
+    "w-autosave": "Writers should never lose work, and never have to remember to save. Every change is first kept safely in the browser and then saved to the server shortly after typing stops, retrying automatically if the network fails.",
+    "w-hydration": "When a document is opened, its text, its last findings and its settings must all be restored together. This part does that, and also sorts out the rare case where the browser and the server disagree about a document's latest version, without losing anyone's edits.",
+    "w-folderdefaults": "A folder can carry presets, for example 'everything in this folder is German marketing copy'. New documents created in that folder then start with those settings instead of whatever the header happened to show.",
+    "w-rulesview": "This page shows every built-in writing rule for a language, with examples of what each one flags. It is also where a writer turns rules or groups of rules on or off for the current profile.",
+    "w-termview": "Organisations often have preferred words (a product name spelled a certain way, a term to avoid). This page is where those word lists are maintained, grouped into domains such as 'Product docs'.",
+    "w-profilesview": "A profile is a reusable checking preset, for example 'Marketing' or 'Technical documentation'. This page is where profiles are created and edited: which rules apply, which word lists, which AI level, and any extra instructions for the AI.",
+    "w-adminview": "Administrators need a way to manage who can use the app. This page lists all accounts and lets an admin invite people, change what plan they are on, give or remove admin rights, deactivate accounts and reset passwords.",
+    "w-activity": "This page shows how much the AI features have been used over time, as charts of runs, tokens and credits. Everyone sees their own usage; admins can also see everyone's.",
+    "w-account": "The menu behind the user's name: change password, see usage, see which version is running, and sign out.",
+    "w-reset": "When someone forgets their password, or is invited and has never had one, they get an email with a link. These screens let them ask for that email and then choose a new password.",
+
+    // Embed & extension
+    "e-embedapp": "The full web app is too big to sit next to someone else's text box. The embed is a slimmed-down version of Fabulous Writing (settings and the list of findings, but no editor) designed to be shown inside another page, for example in the browser's side panel.",
+    "e-bridge": "The embed and the page that hosts it run in separate, isolated parts of the browser and can only talk by passing messages. The bridge is the embed's end of that conversation and makes sure it only listens to the one host it connected to.",
+    "e-hostdoc": "In the embed, the text belongs to another page, not to Fabulous Writing. This part keeps an up-to-date copy of that text, keeps findings in the right place as the person types there, and asks the host page to make replacements rather than making them itself.",
+    "e-protocol": "Two separately built programs (the embed and, for example, the browser extension) need to agree exactly on what messages they exchange. This is that written agreement, shared as code by both sides so they cannot drift apart.",
+    "x-scout": "When the browser extension is installed, this small script runs on every web page and looks for text boxes worth checking. When the writer clicks into one, it shows a small button that connects the box to Fabulous Writing.",
+    "x-session": "Once a text box is connected, something has to read its text, draw highlights over the problem words, and insert fixes when the writer accepts one. The session does this for exactly one connected box at a time.",
+    "x-sw": "The extension's parts (the script in the web page and the side panel) cannot talk directly. The service worker is the extension's switchboard: it knows which text box is connected in which browser window and passes messages between them.",
+    "x-panel": "This is the browser side panel the writer sees: it shows the Fabulous Writing embed page from the server and passes messages between it and the rest of the extension.",
+    "x-detect": "Not every input on a web page is worth checking. This part decides which ones are real writing areas (large enough, editable, visible) so the connect button only appears where it makes sense.",
+    "x-reacquire": "Some websites, GitHub among them, quietly replace their text box with a new copy, for example when the writer clicks elsewhere. This part notices that and reconnects to the new box, so the writer doesn't have to connect again.",
+    "x-options": "The extension needs to know which Fabulous Writing server to use. The options page is where that address is set.",
+    "sim": "A test page for developers that pretends to be a host website with a text box. It made it possible to build and test the embed before the real browser extension existed.",
+
+    // Backend
+    "b-middleware": "Before any request reaches the actual application, a few general checks apply to all of them, such as rejecting uploads that are far too large. Middleware is that common first layer.",
+    "b-spa": "The same server that answers API requests also delivers the web app itself to the browser. Serving both from one address keeps setup simple and avoids cross-site restrictions; it also controls which websites may show Fabulous Writing inside a frame.",
+    "b-health": "A very simple address that answers 'I'm running, version X'. Hosting platforms use it to check that the server is alive, and the login page uses it to learn which sign-in features exist.",
+    "b-config": "One server program has to fit many setups: a developer's laptop, a self-hosted container, the hosted demo. Settings decide which database, which login system, which AI providers and which usage limits apply; secrets such as API keys are kept out of these files.",
+    "b-authapi": "These are the server's sign-in services: logging in, finding out who the current user is, changing a password, and (in the hosted setup) renewing sessions, logging out and resetting forgotten passwords.",
+    "b-deps": "Every request except a handful of public ones must come from a signed-in user. This piece checks the user's credentials on each request and looks up their account, so the rest of the server always knows exactly who is asking.",
+    "b-verifier": "A sign-in token is a signed pass the browser shows with every request. The verifiers check that a pass is genuine, still valid and of the right kind before the server trusts it.",
+    "b-gateway": "In the hosted setup, passwords and sessions are managed by an outside service, Supabase. The gateway is the single place in the server that talks to it.",
+    "b-throttle": "To stop someone from guessing passwords by trying thousands of them, repeated failed sign-ins for the same account and address are slowed down. A similar guard prevents two admins from creating the same user at the same moment.",
+    "b-adminapi": "The server side of the admin page: listing accounts, creating or inviting users, changing their plan or permissions, and resetting passwords, all restricted to administrators and recorded in an audit log.",
+    "b-sessions": "When an account is deactivated or a password changes, any device still signed in with the old credentials must lose access. This explains how the server makes old sign-ins stop working.",
+    "b-ownership": "Each person's documents, folders, profiles and word lists are private to them. The built-in examples are shared with everyone but can only be changed by admins. This describes those rules.",
+    "b-checksapi": "This is the server's main service: it receives a text with its checking settings and returns the problems found. The quick checks answer right away; the AI's results follow as a live stream.",
+    "b-jobs": "An AI check can take many seconds. The job manager keeps track of each running check and its results so far, so the browser can follow the progress and still get everything if its connection hiccups.",
+    "b-rules": "A large part of the checking needs no AI at all: over a hundred hand-written rules, per language, catch things like overly long sentences, filler words or inconsistent forms of address. They are fast, predictable and free to run.",
+    "b-nlp": "Some rules need to understand grammar, for example which word is a verb. The NLP registry provides language-analysis models for each language and loads them only when that language is first checked.",
+    "b-term": "This checker compares the text against the selected word lists and flags forbidden variants or wrong spellings of preferred terms, offering the correct term as a one-click fix.",
+    "b-dedup": "Different checkers sometimes spot the same problem. This step removes repeats so the writer sees each issue once, preferring the more precise version from the rules.",
+    "b-llmchecker": "This is where the AI review happens: it writes the instructions for the AI, sends the text, and turns the AI's answer into findings and a quality scorecard.",
+    "b-anchor": "AI models are helpful but not perfectly reliable: they misquote text and sometimes suggest misspelled fixes. This safety layer checks every AI finding against the actual text and every suggested fix for basic sanity, and drops what doesn't hold up.",
+    "b-suggestapi": "The service behind the 'Suggest fix' and 'Rewrite sentence' buttons: it asks the AI for alternatives for one problem and returns only those that pass the safety checks.",
+    "b-gate": "Every use of the AI costs money and may be restricted by the user's plan. The gate is the single checkpoint every AI request must pass: it checks the text size, the user's permissions and remaining budget before any AI is called.",
+    "b-policy": "Accounts can be on different plans. The policy decides, for each account, which AI quality levels, providers and features it may use, and picks the closest allowed option when a request asks for more.",
+    "b-usage": "To enforce budgets and show usage, every AI run is recorded with its cost in credits. This ledger is what makes per-hour, per-day, per-week and per-month limits possible.",
+    "b-factory": "The app can work with several AI companies' models. The factory is the one place that knows how to set up a connection to each of them.",
+    "b-claude": "Claude, from Anthropic, is the AI used in the hosted version. This is the connection to it, tuned for speed and cost.",
+    "b-httpchat": "Alternatives to Claude: commercial services such as OpenAI and Mistral, or Ollama for running models on your own machine. They share one implementation because they speak a similar language.",
+    "b-bedrock": "An alternative way to use AI models through Amazon's cloud, for organisations that already use AWS.",
+    "b-docsapi": "The server side of documents: storing, loading, saving and deleting them, while making sure two saves from different moments can't silently overwrite each other.",
+    "b-naming": "Untitled documents are hard to tell apart in the list. Once a document has some text, the server asks a fast, cheap AI model for a short title and names it automatically.",
+    "b-foldersapi": "The server side of folders: creating, renaming and deleting them, and storing each folder's presets for new documents.",
+    "b-profilesapi": "The server side of checking profiles: listing, creating, editing, deleting and resetting them, respecting which ones are shared built-ins and which are private.",
+    "b-termapi": "The server side of the word lists: creating and editing domains and the terms inside them.",
+    "b-rulesapi": "Gives the browser the list of all available rules, with their descriptions and examples, so the rules page can show them.",
+    "b-catalogapi": "Tells the browser which languages, AI providers, models and quality levels are available right now, so the header can offer only options that actually work.",
+    "b-activityapi": "Provides the numbers behind the activity charts, summarised per day from the usage ledger.",
+    "b-bootstrap": "When the server starts, everything has to be set up in the right order and checked for mistakes in the configuration. If something essential is missing, the server refuses to start rather than run in an unsafe state.",
+    "b-seeds": "A brand-new installation should not start empty. On first start the server creates ready-to-use examples: a standard profile and a few example profiles for every language, and an example word list.",
+    "b-manage": "Sometimes an administrator must act without the web interface, for example when the only admin forgot their password, or when the database structure must be updated. This command-line tool covers those cases.",
+    "b-wizard": "People who run Fabulous Writing on their own computer or server should not have to write configuration files by hand. The wizard asks a few questions and writes the configuration for them.",
+
+    // Data
+    "d-seam": "The app can store its data in a simple file (SQLite, ideal for one person) or in a full database server (Postgres, used in production). This layer lets the rest of the server work the same way with either.",
+    "d-rulesfs": "The writing rules are ordinary text files, one per rule, organised by language and category. Adding or changing a rule means editing a file, not code.",
+    "d-users": "The list of accounts with their plan and permissions, plus a log of every administrative change made to them.",
+    "d-documents": "Where each document's text is stored, together with its settings and the findings from its last check, so reopening a document shows its problems immediately.",
+    "d-folders": "Where folders and their presets are stored.",
+    "d-profiles": "Where checking profiles are stored, both the shared built-ins and each user's own.",
+    "d-terms": "Where the word lists and their terms are stored.",
+    "d-usage": "The record of every AI run: who, when, which model, how many tokens and credits, and whether it succeeded. Budgets and the activity charts are calculated from it.",
+    "d-models": "The language-analysis models and spelling dictionaries the checkers rely on. They are large files that ship inside the server's container image.",
+    "d-memory": "Some short-lived information lives only in the running server program's memory, such as checks in progress and failed sign-in counters. That is simple and fast, but it is the reason the hosted version runs on exactly one machine.",
+
+    // Third parties
+    "t-anthropic": "The company whose AI models (Claude) do the AI part of the checking in the hosted version. Each check sends the text there and is paid per use.",
+    "t-openai": "Other AI providers the app can use instead of Claude, if a self-hosted installation prefers them.",
+    "t-bedrock": "Amazon's service for using AI models, an option for organisations that already work in AWS.",
+    "t-ollama": "Free software for running AI models on your own computer, without sending text to an outside company. Used for the 'local' quality level.",
+    "t-supaauth": "An outside service that manages accounts, passwords and sign-in sessions for the hosted version, and sends the invitation and password-reset emails.",
+    "t-supadb": "The hosted database where all production data (accounts, documents, profiles, usage) is stored.",
+    "t-ses": "Amazon's email-sending service. Supabase uses it to actually deliver invitation and password-reset emails to people's inboxes.",
+    "t-hostsite": "The websites where people write and where the browser extension can help, for example comment boxes on GitHub.",
+
+    // Delivery
+    "g-devloop": "How a developer runs and tests the whole app on their own computer before changes go anywhere else.",
+    "g-repo": "The place where the source code lives and where every change is proposed, reviewed and accepted.",
+    "g-ci": "Automated checks that run whenever a change is proposed: they build the app and run the test suites, so broken changes are caught before they are accepted.",
+    "g-release": "Turns an accepted version of the code into an installable package. Marking a version with a number starts it automatically.",
+    "g-ghcr": "GitHub's storage for the packaged server, from which the hosting platform and self-hosters download it.",
+    "g-fly": "The rented server, at the hosting company fly.io, that runs the hosted version of Fabulous Writing.",
+    "g-flyproxy": "The front door of the hosted server: it handles secure HTTPS connections from the internet and keeps checking that the server is healthy.",
+    "g-e2e": "A complete copy of the hosted login service running on a developer's computer, used to test sign-in, invitations and password resets end to end without touching production.",
+    "g-extrelease": "Packages the browser extension so testers can install it, independently of server releases.",
+    "g-image": "The packaged server: a container that holds the web app, the server program, the rules and the language models in one unit that runs the same everywhere.",
+    "g-initdb": "When a new version needs changes to the database structure, an administrator applies them before the new version goes live.",
+    "g-secrets": "The hosting configuration: which version runs, the non-secret settings, and the passwords and keys, which are stored separately and never in the code.",
+    "g-selfhost": "The way to run Fabulous Writing on your own computer or server with one command, instead of using the hosted version.",
+  };
+  for (const n of nodes) n.purpose = purpose[n.id];
 
   return { REPO, DOCS, zones, nodes, edges, flows, tour };
 })();

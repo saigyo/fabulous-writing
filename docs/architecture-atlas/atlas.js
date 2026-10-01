@@ -564,10 +564,12 @@
     if (state.flow) {
       drawerBody.prepend(chip(`← Back to “${state.flow.title}”`, () => { state.view = "flow"; renderFlow(); markSelection(); setHash(); focusStep(); }, "back"));
     }
-    drawerBody.append(rich(el("p", "lead"), n.summary));
+    if (n.purpose) drawerBody.append(rich(el("p", "lead"), n.purpose));
+    const how = section("How it works");
+    how.append(rich(el("p", "summary"), n.summary));
     const body = el("div", "prose");
     blocks(body, n.body || []);
-    drawerBody.append(body);
+    how.append(body);
 
     const steps = stepsByNode.get(id) || [];
     if (steps.length) {
