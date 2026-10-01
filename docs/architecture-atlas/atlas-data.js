@@ -1,0 +1,1521 @@
+// Content of the Fabulous Writing architecture atlas.
+//
+// Everything the map shows lives here: zones, components (nodes), the
+// structural connections between them (edges) and the step-by-step
+// processes (flows). The engine in atlas.js only renders this data.
+//
+// Text conventions: `code` renders as code, **text** as bold, and a
+// string starting with "- " becomes a bullet. Paths in `files` are
+// repo-relative and link to GitHub; `docs` entries are
+// "<doc>#<anchor>" keys resolved through DOCS below.
+//
+// Facts were taken from docs/backend-architecture.md,
+// docs/frontend-architecture.md, docs/browser-extension.md,
+// docs/fly-deployment.md and the code on 2026-10-01 (v0.7.3).
+
+window.ATLAS = (function () {
+  const REPO = "https://github.com/saigyo/fabulous-writing";
+
+  const DOCS = {
+    backend: { title: "Backend architecture", path: "docs/backend-architecture.md" },
+    frontend: { title: "Frontend architecture", path: "docs/frontend-architecture.md" },
+    extension: { title: "Browser extension", path: "docs/browser-extension.md" },
+    fly: { title: "Deploying to fly.io", path: "docs/fly-deployment.md" },
+    supabase: { title: "Supabase auth setup", path: "docs/supabase-auth-setup.md" },
+    postgres: { title: "Running on Postgres", path: "docs/postgres-setup.md" },
+    scoring: { title: "Scoring spec", path: "docs/scoring.md" },
+    models: { title: "Model recommendations", path: "docs/model-recommendations.md" },
+    readme: { title: "README", path: "README.md" },
+  };
+
+  // Zone hues map to CSS tokens (--z-<hue>) in index.html.
+  const zones = [
+    {
+      id: "web", hue: "client", x: 40, y: 80, w: 1160, h: 1140,
+      title: "Web app",
+      sub: "React 19 single-page app · Vite · zustand · CodeMirror 6",
+      about: "What the writer sees in the browser: the editor, the findings sidebar, document management and the management views. The same build is served by the backend, so in production every API call is same-origin.",
+    },
+    {
+      id: "embed", hue: "client", x: 40, y: 1280, w: 1160, h: 520,
+      title: "Embed & browser extension",
+      sub: "/embed iframe · postMessage bridge · Chromium MV3 extension",
+      about: "A second, CodeMirror-free entry of the frontend (/embed) that checks text living in someone else's page, plus the browser extension that connects text fields on arbitrary sites to it.",
+    },
+    {
+      id: "backend", hue: "server", x: 1340, y: 80, w: 1360, h: 1720,
+      title: "Backend",
+      sub: "Python 3.13 · FastAPI · one uvicorn process",
+      about: "Turns text into findings and owns all persistent state. Deterministic checkers (rules, terminology) run inline; the LLM runs as a background task and streams its results. Everything is wired by the app factory create_app().",
+      bands: [
+        { y: 146, label: "Edge" },
+        { y: 306, label: "Accounts & access" },
+        { y: 606, label: "Checking" },
+        { y: 1046, label: "LLM providers" },
+        { y: 1206, label: "Resource APIs" },
+        { y: 1506, label: "Operations" },
+      ],
+    },
+    {
+      id: "data", hue: "data", x: 2800, y: 80, w: 760, h: 820,
+      title: "Data & state",
+      sub: "SQLite or Postgres · rule files · models · process memory",
+      about: "Where state lives: the relational database behind one seam (SQLite locally, hosted Postgres in production), the rule catalog and NLP models on disk, and the process-local state that ties the backend to a single machine.",
+    },
+    {
+      id: "ext", hue: "external", x: 2800, y: 960, w: 760, h: 840,
+      title: "Third-party services",
+      sub: "LLM APIs · Supabase · email · host web pages",
+      about: "Everything the app talks to but does not run: LLM providers, Supabase Auth and Postgres, the SMTP relay that delivers auth emails, and the third-party pages the browser extension works on.",
+    },
+    {
+      id: "delivery", hue: "delivery", x: 40, y: 1900, w: 3520, h: 420,
+      title: "Delivery & infrastructure",
+      sub: "GitHub · CI · release images · fly.io · self-hosting",
+      about: "How code becomes a running service: branches and PRs on GitHub, CI gates, tag-triggered releases to GHCR, and the always-on fly.io machine. The same image also runs self-hosted with a setup wizard.",
+    },
+  ];
+
+  // Column/row grid helpers keep the layout readable.
+  const WX = [80, 360, 640, 920];            // web + embed columns (w 240)
+  const BX = [1380, 1710, 2040, 2370];       // backend columns (w 290)
+  const DX = [2840, 3200];                   // data + external columns (w 320)
+  const GX = (i) => 80 + i * 490;            // delivery columns (w 420)
+
+  const nodes = [
+    // ───────────────────────── Web app ─────────────────────────
+    {
+      id: "w-login", zone: "web", x: WX[0], y: 170, kind: "UI", title: "Login gate & session",
+      summary: "Nothing renders until the session is known; then login, restore, refresh and logout.",
+      body: [
+        "`LoginGate` renders nothing while `authStatus` is `unknown`, the login form while `anonymous`, and the app only once `authenticated`. A reset or invite link in the URL fragment takes precedence over all of these.",
+        "`session.ts` owns the verbs: `login()`, `logout()`, `expireSession()`, `restoreSession()` and, in hosted mode, the refresh engine that renews the access token 2 minutes before it expires.",
+        "Two generation counters protect against late responses: the auth counter (bumped on every session change) and the document counter (bumped on logout/expiry only, so a same-user re-login keeps in-flight document work).",
+        "A first anonymous visit makes exactly one API call: `GET /api/health`, which reports the version and whether password reset and invites are available.",
+      ],
+      files: ["frontend/src/auth/LoginGate.tsx", "frontend/src/auth/LoginForm.tsx", "frontend/src/auth/session.ts"],
+      docs: ["frontend#authentication"],
+    },
+    {
+      id: "w-store", zone: "web", x: WX[1], y: 170, kind: "State", title: "App store (zustand)",
+      summary: "One store holds auth, checking context, results, per-finding caches and the active view.",
+      body: [
+        "- **Auth:** `token`, `refreshToken`, `tokenExpiresAt`, `user` (re-fetched from `/api/auth/me` on every load, never cached), `authStatus`.",
+        "- **Checking context:** language, domains, tier or pinned provider/model, auto-check flag, profiles, selected profile.",
+        "- **Results & UI:** tracked findings mirrored from the editor, selection, filters, check phase, LLM progress, scorecard, `activeView`.",
+        "- **Per-finding caches:** fetched suggestions, rewrites, held-back candidates and advice, re-keyed when findings get new ids on a re-check.",
+        "There is no router: six views (editor, rules, terminology, profiles, admin, activity) are switched by `activeView`. The editor is hidden, not unmounted, so findings and in-flight LLM results survive a view switch.",
+      ],
+      files: ["frontend/src/state/store.ts"],
+      docs: ["frontend#state-management"],
+    },
+    {
+      id: "w-prefs", zone: "web", x: WX[2], y: 170, kind: "Storage", title: "Browser localStorage",
+      summary: "The session token, one preference blob per user, and the unsaved-document buffer.",
+      body: [
+        "- `fabulous-writing-token`: the bearer token, read once at store creation.",
+        "- `fabulous-writing-settings:<user id>`: seven preference fields (UI locale, language, remembered profile per language, current document, collapse states). They survive logout so a returning user finds things as they left them.",
+        "- `fabulous-writing-doc-buffer`: a write-through snapshot of the open document, used to replay unsaved edits after a crash, reload or network failure.",
+        "A write subscriber persists preferences only while a user is signed in. Every code path that resets or loads preferences clears `user` first, so one account's values can never land in another account's blob.",
+      ],
+      files: ["frontend/src/state/prefsStorage.ts", "frontend/src/state/prefsPersistence.ts", "frontend/src/documents/buffer.ts"],
+      docs: ["frontend#state-management"],
+    },
+    {
+      id: "w-api", zone: "web", x: WX[3], y: 170, kind: "Module", title: "API client",
+      summary: "The only module that talks to the network: typed fetch wrappers plus a fetch-based SSE reader.",
+      body: [
+        "Every request carries `Authorization: Bearer <token>`, built in one place (`authHeader()`) from the token current at fetch time.",
+        "A 401 from any call ends the session, but only if the token that caused it is still the current one; a late reply from an old session cannot log out its successor.",
+        "The check stream uses `fetch()` + `ReadableStream` instead of `EventSource`, because `EventSource` cannot send an `Authorization` header and would silently reconnect a finished stream.",
+        "In production the build sets `VITE_API_URL` to an empty string, so all requests are relative and same-origin. In development it points at `http://localhost:8000`.",
+      ],
+      files: ["frontend/src/api/client.ts", "frontend/src/types.ts"],
+      docs: ["frontend#api-client"],
+    },
+    {
+      id: "w-header", zone: "web", x: WX[0], y: 310, kind: "UI", title: "Header & selectors",
+      summary: "Language, profile, terminology domains and the LLM tier: everything a check request is built from.",
+      body: [
+        "`ProfileSelector` picks a checking profile per language and shows a dirty marker when the header differs from the stored profile (computed, never stored).",
+        "`LlmSelector` offers the four quality tiers (`quality`, `balanced`, `cheap`, `local`) with the resolved model as a caption, and an Advanced panel to pin a provider and model directly.",
+        "`DomainMultiSelect` chooses the terminology domains. The auto-check toggle decides whether the LLM runs after a 5 s typing pause.",
+        "The header's data fetching lives in `useHeaderData`, so the embed entry reuses it without the rest of the app.",
+      ],
+      files: ["frontend/src/header/ProfileSelector.tsx", "frontend/src/header/LlmSelector.tsx", "frontend/src/header/DomainMultiSelect.tsx", "frontend/src/header/useHeaderData.ts"],
+      docs: ["frontend#profiles-in-the-frontend"],
+    },
+    {
+      id: "w-policy", zone: "web", x: WX[1], y: 310, kind: "Module", title: "Policy gating",
+      summary: "Hides or disables what the signed-in user's tier does not allow. Display only; the server enforces.",
+      body: [
+        "Five pure functions over `/api/auth/me`'s `policy`: `tierAllowed`, `providerAllowed`, `modelAllowed`, `hasFeature`, `llmDisabled`.",
+        "Options outside the plan stay visible but disabled with a 'not in plan' suffix. A user with no LLM access at all does not see the LLM selector or the auto-check toggle.",
+        "Feature flags (`custom_profiles`, `custom_domains`) hide only the create buttons; existing items stay editable.",
+        "The quota indicator in the header shows the tightest credit window as a percentage; the server never sends absolute credit numbers.",
+      ],
+      files: ["frontend/src/auth/policy.ts", "frontend/src/checking/skipNotice.ts"],
+      docs: ["frontend#tiers-and-policy-gating", "frontend#llm-usage-metering"],
+    },
+    {
+      id: "w-routing", zone: "web", x: WX[2], y: 310, kind: "Module", title: "Model resolution",
+      summary: "Turns the header's tier or pin into a concrete provider and model before a check is sent.",
+      body: [
+        "Tier mode looks the language up in the routing table from `GET /api/routing`. A missing or unavailable entry is an explicit failure: the LLM part is skipped and rules and terminology still run.",
+        "Pinned mode uses the chosen provider and model, falling back to the provider's default model.",
+        "This is an availability check only. Whether the user may use that tier is decided by the server, which may degrade the request; an off-plan tier is therefore sent anyway so the server can pick the nearest allowed one.",
+      ],
+      files: ["frontend/src/checking/routing.ts", "frontend/src/checking/model.ts"],
+      docs: ["frontend#the-checking-lifecycle"],
+    },
+    {
+      id: "w-i18n", zone: "web", x: WX[3], y: 310, kind: "Module", title: "Internationalization",
+      summary: "Seven UI locales (en, de, fr, es, it, ja, zh), independent of the seven checked languages.",
+      body: [
+        "The locale is the user's choice or the browser preference. Components call `useMessages()`, other code `currentMessages()`.",
+        "A test asserts that every catalog has the same keys, so a missing translation fails CI.",
+        "German, French, Spanish and Italian address the user informally (Du, tu, tú); `register.test.ts` pins this.",
+      ],
+      files: ["frontend/src/i18n/index.ts", "frontend/src/i18n/en.ts", "frontend/src/i18n/LocaleSwitcher.tsx"],
+      docs: ["frontend#internationalization"],
+    },
+    {
+      id: "w-editor", zone: "web", x: WX[0], y: 450, kind: "UI", title: "Editor (CodeMirror 6)",
+      summary: "The text editor, and the source of truth for where findings are while the writer keeps typing.",
+      body: [
+        "Findings live inside the editor as a CodeMirror `StateField` (`findingsField`). Every edit maps their positions through the change; a finding whose text was edited, or whose span collapsed, is dropped.",
+        "Results merge per source: a fast check replaces rule and terminology findings, the LLM result replaces only LLM findings. Rule highlights therefore never flicker during an LLM round-trip.",
+        "Highlights are derived decorations of the same field. Clicking selects the smallest finding under the cursor; repeated clicks cycle outward through stacked findings.",
+        "Dark mode needs its own CodeMirror theme compartment, because CodeMirror does not follow `color-scheme`.",
+      ],
+      files: ["frontend/src/editor/Editor.tsx", "frontend/src/editor/findings.ts", "frontend/src/editor/editorRef.ts", "frontend/src/editor/theme.ts"],
+      docs: ["frontend#the-editor-and-finding-positions"],
+    },
+    {
+      id: "w-scheduler", zone: "web", x: WX[1], y: 450, kind: "Module", title: "Check scheduler",
+      summary: "Typing-pause debounce: a fast check after 1 s, the full LLM check after 5 s.",
+      body: [
+        "- 1 s after the last keystroke: rules and terminology only.",
+        "- 5 s after the last keystroke: the full check including the LLM, if auto-check is on.",
+        "- The Check button runs the full check immediately.",
+        "A pure debounce factory, fully unit-tested; the delays are wired in `Editor.tsx`.",
+      ],
+      files: ["frontend/src/checking/scheduler.ts"],
+      docs: ["frontend#the-checking-lifecycle"],
+    },
+    {
+      id: "w-controller", zone: "web", x: WX[2], y: 450, kind: "Module", title: "Check controller",
+      summary: "runCheck(): builds the request, applies fast findings at once, then follows the LLM stream.",
+      body: [
+        "Snapshots the text and resolves the active profile into `domain_ids`, `rule_config` and `llm_instructions`, plus the LLM selection.",
+        "Three guards keep results consistent: **staleness** (discard results if the text changed meanwhile), **supersede** (only the latest check's events count) and **cross-document cancellation** (switching documents cancels the stream).",
+        "After an admitted LLM run it refreshes `/api/auth/me` twice: at admission (estimate) and at `done` (settled cost), so the quota indicator stays accurate.",
+        "A 429 shows 'Server busy, please retry shortly' and never touches the session.",
+      ],
+      files: ["frontend/src/checking/controller.ts", "frontend/src/checking/status.ts", "frontend/src/checking/clientTag.ts"],
+      docs: ["frontend#the-checking-lifecycle"],
+    },
+    {
+      id: "w-suggest", zone: "web", x: WX[3], y: 450, kind: "Module", title: "Suggestions & rewrites",
+      summary: "On-demand LLM fixes for one finding: drop-in replacements or whole-sentence rewrites.",
+      body: [
+        "Uses the finding's current tracked span, not the offsets from the original check. Only one LLM action runs at a time.",
+        "Results, errors, held-back candidates and advice are cached per finding and survive re-checks through finding equivalence.",
+        "When vetting rejected every candidate, `vetMessage.ts` turns that into an honest 'no reliable suggestion' message instead of an empty list.",
+      ],
+      files: ["frontend/src/checking/suggest.ts", "frontend/src/checking/vetMessage.ts"],
+      docs: ["frontend#the-checking-lifecycle"],
+    },
+    {
+      id: "w-sidebar", zone: "web", x: WX[0], y: 590, kind: "UI", title: "Findings sidebar",
+      summary: "Counters, filters, findings grouped by category, and the detail card with fixes.",
+      body: [
+        "Severity and source chips are independent filters. Findings are grouped by category; clicking a row selects the finding in the editor.",
+        "The detail card shows built-in suggestions first, then LLM-fetched ones, rewrite options and advice notes (guidance that cannot be applied as a replacement, shown without a button).",
+        "If all candidates were vetoed, a 'Show N held-back suggestions' button reveals the rejected ones with the reason (unknown words, or rules they would still trigger).",
+        "Also shows LLM degradation and skip notes (degraded tier, not in plan, quota exhausted, text too long) and the character-count warnings.",
+      ],
+      files: ["frontend/src/sidebar/Sidebar.tsx", "frontend/src/sidebar/findingList.ts", "frontend/src/findings/suggestions.ts"],
+      docs: ["frontend#finding-identity-across-checks"],
+    },
+    {
+      id: "w-score", zone: "web", x: WX[1], y: 590, kind: "Module", title: "Quality score",
+      summary: "A 0–100 score from the findings (mechanics) and the LLM scorecard (craft).",
+      body: [
+        "**Mechanics:** points = 5 per error + 2 per warning + 0.5 per suggestion; density = points per 100 words; mechanics = round(100 · e^(−density/15)).",
+        "**Craft:** the LLM rates consistency, flow, clarity, vividness, tone and structure from 1 to 5; craft = (mean − 1) / 4 × 100.",
+        "**Overall** = 0.5 · mechanics + 0.5 · craft, or mechanics alone without a scorecard. Texts under 40 words get no score.",
+        "Applying a fix re-scores instantly on the client. Editing after a scorecard arrived marks it stale. `docs/scoring.md` is the normative spec; golden tests pin its worked examples.",
+      ],
+      files: ["frontend/src/scoring/score.ts", "frontend/src/sidebar/Score.tsx"],
+      docs: ["scoring#", "frontend#state-management"],
+    },
+    {
+      id: "w-equiv", zone: "web", x: WX[2], y: 590, kind: "Module", title: "Finding identity",
+      summary: "Decides when a finding from a new check is 'the same' as one from the previous check.",
+      body: [
+        "Same category, same rule id, same span text and overlapping position; the nearest match wins and the mapping is one-to-one.",
+        "This keeps the open detail card open across re-checks and carries fetched suggestions, rewrites and held-back candidates over to the new finding ids.",
+      ],
+      files: ["frontend/src/findings/equivalence.ts"],
+      docs: ["frontend#finding-identity-across-checks"],
+    },
+    {
+      id: "w-docport", zone: "web", x: WX[3], y: 590, kind: "Interface", title: "Document port",
+      summary: "The seam between the checking layer and whatever holds the text: CodeMirror or a host page.",
+      body: [
+        "`DocumentPort` offers `getText`, `setDocument`, `mergeFindings`, `selectFinding`, `applySuggestion`, `applyRewrite` and a few more. The controller, suggestions, autosave and sidebar call the port, never CodeMirror directly.",
+        "Two implementations: `editorPort.ts` (CodeMirror, main app) and `hostDoc.ts` (embed, text owned by the host page). Applying returns `ok`, `not-found` or `refused` (the host declined).",
+        "This seam is what lets the embed entry ship without CodeMirror; a CI step checks the embed bundle for it.",
+      ],
+      files: ["frontend/src/checking/documentPort.ts", "frontend/src/editor/editorPort.ts"],
+      docs: ["frontend#the-document-port"],
+    },
+    {
+      id: "w-docs", zone: "web", x: WX[0], y: 730, kind: "UI", title: "Document sidebar",
+      summary: "The list of documents and folders: create, open, rename, move, delete.",
+      body: [
+        "Documents are ordered by when the writer last edited them (`edited_at`), exactly as the server orders them. A background check-and-save does not reorder the list.",
+        "Folders are collapsible groups with their own menu: new document here, folder defaults, rename, delete. Deleting a folder keeps its documents.",
+        "Each document's menu has 'Move to folder'. A duplicate folder name keeps the input open with a conflict border.",
+        "There is always exactly one open document; deleting the last one creates a fresh one.",
+      ],
+      files: ["frontend/src/documents/DocumentSidebar.tsx", "frontend/src/documents/documents.ts", "frontend/src/documents/grouping.ts", "frontend/src/documents/list.ts"],
+      docs: ["frontend#documents"],
+    },
+    {
+      id: "w-autosave", zone: "web", x: WX[1], y: 730, kind: "Module", title: "Autosave & buffer",
+      summary: "Buffers every change locally, saves after 1.5 s, retries with backoff, never loses an edit.",
+      body: [
+        "`noteChange()` writes a snapshot (text, findings, scorecard, settings) to the localStorage buffer synchronously, then saves after a 1.5 s pause.",
+        "Saves are coalesced (one request in flight) and skipped when nothing changed, which removed a reload-duplication bug.",
+        "Failures retry from 2 s up to 30 s. A 409 or 404 goes to recovery instead of retrying blindly.",
+        "After a successful save of an untitled document with at least 20 words, it asks the server to auto-title it once.",
+      ],
+      files: ["frontend/src/documents/autosave.ts", "frontend/src/documents/buffer.ts", "frontend/src/documents/settings.ts"],
+      docs: ["frontend#the-write-through-buffer-and-autosave-engine"],
+    },
+    {
+      id: "w-hydration", zone: "web", x: WX[2], y: 730, kind: "Module", title: "Hydration & recovery",
+      summary: "Loads a document into editor and header in one step, and resolves save conflicts.",
+      body: [
+        "`hydrateFromDocument` first cancels any in-flight check, then replaces text and findings in one CodeMirror transaction and copies the document's settings into the header.",
+        "Startup replays a dirty buffer from the last session, fetches the lists, and opens the remembered document.",
+        "`recoverSnapshot` handles 409/404: if the server already has the buffered text, it was the client's own write that landed late; otherwise the buffered text is saved as a '(recovered)' copy.",
+        "An unsaved snapshot of a document the user switched away from gets one direct replay attempt before it is overwritten.",
+      ],
+      files: ["frontend/src/documents/hydration.ts", "frontend/src/documents/profileApply.ts"],
+      docs: ["frontend#document-lifecycle-and-self-write-aware-recovery"],
+    },
+    {
+      id: "w-folderdefaults", zone: "web", x: WX[3], y: 730, kind: "UI", title: "Folder defaults dialog",
+      summary: "Seven optional defaults applied to documents created inside a folder.",
+      body: [
+        "Language, profile, domains, LLM provider/model/tier (as one unit) and the auto-check flag.",
+        "A profile default requires a language default; changing the language resets the profile choice. 'Take from current document' copies the live header state.",
+        "When a document is created in the folder, `applyFolderDefaults` overlays the defaults on the create payload; the server stores the result like any other create.",
+      ],
+      files: ["frontend/src/documents/FolderDefaultsDialog.tsx", "frontend/src/documents/folders.ts"],
+      docs: ["frontend#per-folder-defaults"],
+    },
+    {
+      id: "w-rulesview", zone: "web", x: WX[0], y: 870, kind: "View", title: "Rules view",
+      summary: "The rule catalog per language, with per-profile switches. Doubles as rule documentation.",
+      body: [
+        "General rules grouped by category, then one section per use-case pack (marketing, technical docs, blog) with its own switch.",
+        "Each rule card shows 'Flags …' / 'Doesn't flag …' examples from the rule file.",
+        "Activation mirrors the backend predicate client-side: a rule is on when its category (and pack) is on, inverted by a per-rule exception.",
+      ],
+      files: ["frontend/src/rules/RulesView.tsx", "frontend/src/rules/catalog.ts", "frontend/src/profiles/profile.ts"],
+      docs: ["frontend#profiles-in-the-frontend"],
+    },
+    {
+      id: "w-termview", zone: "web", x: WX[1], y: 870, kind: "View", title: "Terminology view",
+      summary: "Manage terminology domains and their terms; built-in domains are read-only for non-admins.",
+      body: [
+        "A term has a preferred form, forbidden variants, a definition, a language and a case-sensitivity flag. Terms are edited in place.",
+        "Built-in (global) domains carry a 'Built-in' badge; only admins can change them. Creating domains or terms can be gated by the user's tier (`custom_domains`).",
+      ],
+      files: ["frontend/src/terminology/TerminologyView.tsx", "frontend/src/terminology/termTable.ts"],
+      docs: ["frontend#is_global-affordances-and-the-domains-fetch-guard|Built-in items and ownership"],
+    },
+    {
+      id: "w-profilesview", zone: "web", x: WX[2], y: 870, kind: "View", title: "Profiles view",
+      summary: "Profile cards: name, domains, example text, LLM instructions, tier or pinned model, packs.",
+      body: [
+        "Fields save on blur. A resolved caption shows which model a check with this profile would use.",
+        "Pack chips toggle use-case rule packs for the profile; the available packs are discovered from the rule catalog per language.",
+        "Built-in profiles are read-only for non-admins (controls disabled and saves guarded). Creating profiles can be gated by tier (`custom_profiles`).",
+      ],
+      files: ["frontend/src/profiles/ProfilesView.tsx", "frontend/src/profiles/profile.ts"],
+      docs: ["frontend#profiles-in-the-frontend"],
+    },
+    {
+      id: "w-adminview", zone: "web", x: WX[3], y: 870, kind: "View", title: "Admin view",
+      summary: "User list for admins: create or invite, change tier, admin and active flags, reset passwords.",
+      body: [
+        "Rendered only for admins, so non-admins never issue `/api/admin/*` requests.",
+        "Without a password, creating a user sends a Supabase invitation (hosted mode). Rows can resend an invitation.",
+        "Admins cannot demote or deactivate themselves, and can only promote others when `allow_additional_admins` is on.",
+        "Links to the all-users activity view.",
+      ],
+      files: ["frontend/src/admin/AdminView.tsx"],
+      docs: ["frontend#admin-view-m6"],
+    },
+    {
+      id: "w-activity", zone: "web", x: WX[0], y: 1010, kind: "View", title: "Activity view",
+      summary: "Daily charts of LLM runs, tokens and credits over 30, 90 or 365 days.",
+      body: [
+        "Every user sees their own activity. Admins can switch to all users, with a sortable per-user table, and drill into one user.",
+        "Charts are plain SVG stacked bars with a legend and an accessible data table for each panel.",
+      ],
+      files: ["frontend/src/activity/ActivityView.tsx", "frontend/src/activity/StackedBarChart.tsx"],
+      docs: ["frontend#activity-view-b40-124"],
+    },
+    {
+      id: "w-account", zone: "web", x: WX[1], y: 1010, kind: "UI", title: "Account menu",
+      summary: "Signed-in email, change password, activity, About, sign out.",
+      body: [
+        "Change password opens a dialog; after success the app silently signs the same user back in, because the change revoked the old token.",
+        "About shows the version and the database backend. Development builds show a 'dev · <backend>' badge under the wordmark.",
+      ],
+      files: ["frontend/src/auth/AccountMenu.tsx", "frontend/src/ui/Dialog.tsx"],
+      docs: ["frontend#dialogs-b3"],
+    },
+    {
+      id: "w-reset", zone: "web", x: WX[2], y: 1010, kind: "UI", title: "Reset & invite forms",
+      summary: "Forgot-password request and the form that sets a password from an emailed link.",
+      body: [
+        "The emailed link carries `#token_hash=…&type=recovery|invite` in the URL fragment, which never reaches server logs. The gate reads it once and strips it from the URL.",
+        "If saving the new password fails after the link was used, the server returns a retry token, and the form resubmits with it instead of needing a new email.",
+        "Success returns to the sign-in form; there is no automatic login.",
+      ],
+      files: ["frontend/src/auth/ResetPasswordForm.tsx", "frontend/src/auth/ForgotPasswordForm.tsx", "frontend/src/auth/weakPassword.ts"],
+      docs: ["frontend#the-resetinvite-gate-flow-b14|The reset/invite flow"],
+    },
+
+    // ─────────────────── Embed & browser extension ───────────────────
+    {
+      id: "e-embedapp", zone: "embed", x: WX[0], y: 1360, kind: "Entry", title: "Embed app (/embed)",
+      summary: "A narrow page with login, header selectors and the findings sidebar, but no editor.",
+      body: [
+        "A second Vite entry (`embed.html`). It reuses the header, selectors and `Sidebar` over the host-document shim instead of CodeMirror.",
+        "It runs the same check pipeline and API calls as the web app, tagged with the client kind the host announced (for example `browser-extension`).",
+        "Its session lives in the iframe's storage partition, so its own account menu is the only sign-out inside it.",
+        "The backend sends it with `Content-Security-Policy: frame-ancestors` built from `embed.allowed_ancestors`; the main app is never frameable.",
+      ],
+      files: ["frontend/src/embed/main.tsx", "frontend/src/embed/EmbedApp.tsx", "frontend/embed.html"],
+      docs: ["frontend#the-embed-entry"],
+    },
+    {
+      id: "e-bridge", zone: "embed", x: WX[1], y: 1360, kind: "Module", title: "Bridge",
+      summary: "The embed's single postMessage listener: pins the host and routes its messages.",
+      body: [
+        "Waits for the first valid `hello`, then pins that message's window and origin; messages from anywhere else are ignored.",
+        "Streams a `status` message (idle, checking, llm-running, error, signed-out, finding count) to the host whenever it changes.",
+        "Works standalone: until a host connects, all outbound messages are no-ops.",
+      ],
+      files: ["frontend/src/embed/bridge.ts", "frontend/src/embed/embedRef.ts"],
+      docs: ["frontend#bridge-protocol"],
+    },
+    {
+      id: "e-hostdoc", zone: "embed", x: WX[2], y: 1360, kind: "Module", title: "Host document shim",
+      summary: "DocumentPort over text owned by the host page; tracks findings through host edits.",
+      body: [
+        "Each full-text snapshot from the host is reduced to one splice (common prefix and suffix); findings before it stay, findings after it shift, overlapping ones are dropped. Same semantics as CodeMirror's mapping.",
+        "Replacement requests send the expected text along and wait up to 2 s for the host's `replaceResult`; no answer counts as refused.",
+        "Converts offsets between the backend's code points and the protocol's UTF-16 units.",
+      ],
+      files: ["frontend/src/embed/hostDoc.ts", "frontend/src/embed/offsets.ts"],
+      docs: ["frontend#the-host-document-shim"],
+    },
+    {
+      id: "e-protocol", zone: "embed", x: WX[3], y: 1360, kind: "Contract", title: "Bridge protocol v1",
+      summary: "Versioned message contract shared by the embed and every host, including FieldAdapter.",
+      body: [
+        "Host → embed: `hello`, `fieldConnected` (with capabilities), `textChanged`, `replaceResult`, `markingClicked`, `fieldDisconnected`.",
+        "Embed → host: `ready`, `status`, `findings` (markings), `applyReplacement`, `selectFinding` (the host then flashes the marking through its adapter).",
+        "Every message is wrapped in an envelope with `fw: 1`; malformed or foreign messages are dropped silently.",
+        "Both sides import the same TypeScript module, so a breaking change fails compilation in the extension.",
+      ],
+      files: ["frontend/src/embed/protocol.ts"],
+      docs: ["frontend#bridge-protocol"],
+    },
+    {
+      id: "x-scout", zone: "embed", x: WX[0], y: 1500, kind: "Extension", title: "Content script (scout)",
+      summary: "Runs in every page; shows a connect chip on eligible text fields.",
+      body: [
+        "Listens to focus and mouse events at the document level, so fields injected later are noticed when the user interacts with them.",
+        "The chip is a split pill in the field's top-right corner, isolated in a shadow DOM: the main part connects or reopens the panel, the × part disconnects.",
+        "Built as one IIFE without dynamic imports, because a content script's `import()` is subject to the host page's CSP.",
+      ],
+      files: ["clients/browser-extension/src/scout.ts", "clients/browser-extension/src/affordance.ts"],
+      docs: ["extension#architecture"],
+    },
+    {
+      id: "x-session", zone: "embed", x: WX[1], y: 1500, kind: "Extension", title: "Field session & adapters",
+      summary: "Owns one connected field: extracts text, draws markings, applies replacements.",
+      body: [
+        "Picks the textarea adapter (a mirror overlay behind the field paints highlights) or the contentEditable adapter (CSS Custom Highlight API) per field.",
+        "The adapters are the same modules as the dev host simulator's reference implementations, imported directly from `frontend/src/simulator/`.",
+        "Replacements go through `document.execCommand('insertText')`, the same path as typing, so the field's undo history survives. The result is re-verified; if the page rewrote it, the session reports failure instead of corrupting text.",
+      ],
+      files: ["clients/browser-extension/src/session.ts", "frontend/src/simulator/textareaAdapter.ts", "frontend/src/simulator/contentEditableAdapter.ts", "frontend/src/simulator/segmentMap.ts"],
+      docs: ["extension#architecture", "frontend#contenteditable-adapter"],
+    },
+    {
+      id: "x-sw", zone: "embed", x: WX[2], y: 1500, kind: "Extension", title: "Service worker registry",
+      summary: "Routes messages between field and panel: one connected field per browser window.",
+      body: [
+        "`registry.ts` is a pure state machine that returns effects (send to panel, field or badge); `sw.ts` executes them against live ports. That keeps routing rules unit-testable.",
+        "Connecting a field in another tab replaces the old connection and detaches it.",
+        "While a session is live, the scout and the panel ping every 20 s so Chrome does not suspend the worker and lose the in-memory registry.",
+      ],
+      files: ["clients/browser-extension/src/sw.ts", "clients/browser-extension/src/registry.ts", "clients/browser-extension/src/messages.ts"],
+      docs: ["extension#architecture"],
+    },
+    {
+      id: "x-panel", zone: "embed", x: WX[3], y: 1500, kind: "Extension", title: "Side panel relay",
+      summary: "The Chrome side panel: an iframe of the server's /embed page plus a message relay.",
+      body: [
+        "Relays protocol envelopes between the runtime port and the iframe without translating them.",
+        "Retries the `hello` handshake every 250 ms, up to 30 times, to survive a slow server start.",
+        "`panelHost.ts` is the only Chromium-specific file (side panel, toolbar badge); a Firefox port swaps just this file.",
+      ],
+      files: ["clients/browser-extension/src/panel.ts", "clients/browser-extension/src/relay.ts", "clients/browser-extension/src/panelHost.ts"],
+      docs: ["extension#architecture"],
+    },
+    {
+      id: "x-detect", zone: "embed", x: WX[0], y: 1640, kind: "Extension", title: "Field detection",
+      summary: "Which fields qualify: visible, enabled, writable textareas and contentEditable roots ≥ 120×40 px.",
+      body: [
+        "A contentEditable field qualifies only at its editing-host root (its parent is not editable). Plain `<input>` fields are out of scope for now.",
+      ],
+      files: ["clients/browser-extension/src/detect.ts"],
+      docs: ["extension#architecture"],
+    },
+    {
+      id: "x-reacquire", zone: "embed", x: WX[1], y: 1640, kind: "Extension", title: "Field re-acquisition",
+      summary: "Survives pages that replace the field's DOM node, as GitHub's composer does on blur.",
+      body: [
+        "Fingerprints the field at session start (id, name, aria label, form index, field kind). When the node disappears, it probes for a matching replacement for about 2 s and starts a new session on it.",
+        "A user-initiated disconnect never triggers this.",
+      ],
+      files: ["clients/browser-extension/src/reacquire.ts"],
+      docs: ["extension#architecture"],
+    },
+    {
+      id: "x-options", zone: "embed", x: WX[2], y: 1640, kind: "Extension", title: "Options page",
+      summary: "Sets the server URL the side panel loads /embed from.",
+      body: [
+        "The extension ID is pinned by a public `key` in the manifest. That ID is what the server's `embed.allowed_ancestors` allowlists; a CI test recomputes it and checks the fly config.",
+      ],
+      files: ["clients/browser-extension/src/options.ts", "clients/browser-extension/src/settings.ts"],
+      docs: ["extension#options-page-server-url|Options page", "extension#the-pinned-id"],
+    },
+    {
+      id: "sim", zone: "embed", x: WX[3], y: 1640, kind: "Dev tool", title: "Host simulator",
+      summary: "Dev-only page that plays the host role around an /embed iframe. Never shipped.",
+      body: [
+        "Hosts a textarea and a contentEditable demo field, each with its own Connect button, and exercises the full bridge protocol by hand.",
+        "Its adapters became the browser extension's real adapters.",
+      ],
+      files: ["frontend/src/simulator/main.ts", "frontend/simulator.html"],
+      docs: ["frontend#host-simulator-dev-only"],
+    },
+
+    // ───────────────────────── Backend ─────────────────────────
+    {
+      id: "b-middleware", zone: "backend", x: BX[0], y: 170, kind: "Middleware", title: "ASGI middleware",
+      summary: "CORS from config, and a byte budget that answers oversized bodies with 413.",
+      body: [
+        "`RequestSizeLimitMiddleware` is pure ASGI so it does not buffer the SSE stream. Budget = max(5 MiB, 4 × `max_document_chars` + 1 MiB), checked from `Content-Length` or counted while reading chunks.",
+        "CORS is added last, which makes it outermost, so even a 413 carries CORS headers. Origins come from `cors.origins`; production serves everything from one origin and allows none.",
+      ],
+      files: ["backend/app/api/request_size.py", "backend/app/main.py"],
+      docs: ["backend#the-byte-budget-middleware-appapirequest_sizepy|The byte-budget middleware"],
+    },
+    {
+      id: "b-spa", zone: "backend", x: BX[1], y: 170, kind: "Serving", title: "SPA & embed serving",
+      summary: "Serves the built frontend from the same origin, with frame-ancestors CSP.",
+      body: [
+        "When `frontend.dist_dir` is set, a catch-all serves files from a map built once at startup (no request path ever touches the filesystem) and falls back to `index.html`. Paths under `api` stay JSON 404s.",
+        "`/embed` gets `frame-ancestors` from `embed.allowed_ancestors` (default `'none'`); every other page gets `frame-ancestors 'none'`.",
+        "Registered after all API routers, so API routes always win.",
+      ],
+      files: ["backend/app/main.py"],
+      docs: ["backend#container-deployment-b17"],
+    },
+    {
+      id: "b-health", zone: "backend", x: BX[2], y: 170, kind: "Endpoint", title: "Health",
+      summary: "GET /api/health: public liveness, app version and auth feature flags.",
+      body: [
+        "Public, like login and the hosted-mode refresh and reset routes. Reports `version` from `FW_APP_VERSION`, set from the release tag at image build.",
+        "`auth_features` tells the login page whether password reset and invitations exist (hosted mode only).",
+        "fly.io polls it every 30 s as the machine's health check.",
+      ],
+      files: ["backend/app/main.py"],
+      docs: ["backend#api-surface"],
+    },
+    {
+      id: "b-config", zone: "backend", x: BX[3], y: 170, kind: "Config", title: "Settings & config",
+      summary: "One validated pydantic Settings object from YAML. Secrets only from the environment.",
+      body: [
+        "Config file resolution: an explicit file (tests), then `FW_CONFIG_FILE`, then `backend/config.yaml`; defaults otherwise.",
+        "Covers database backend, auth mode, providers and default models, the tier routing table per language, user tiers with LLM policy and credit budgets, credit pricing, CORS, embed allowlist, `environment` (API docs only in dev).",
+        "Every policy model forbids unknown keys, so a typo fails startup instead of silently granting access.",
+        "Keys come from the environment only: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `MISTRAL_API_KEY`, `FW_DATABASE_URL`, `FW_SUPABASE_*`, `FW_ADMIN_*`, `FW_AUTH_SECRET`.",
+      ],
+      files: ["backend/app/core/config.py", "backend/config.example.yaml"],
+      docs: ["backend#configuration"],
+    },
+    {
+      id: "b-authapi", zone: "backend", x: BX[0], y: 330, kind: "Router", title: "Auth API",
+      summary: "/api/auth: login, me, password, and in hosted mode refresh, logout, reset-request, reset-confirm.",
+      body: [
+        "Login and password change dispatch on `auth.mode`: local mode checks bcrypt (in a thread pool) and issues an HS256 token valid for 24 h; Supabase mode does a password grant against GoTrue and returns access token, refresh token and expiry.",
+        "Every rejected login is the same `401 Invalid email or password`, whether the email is unknown, the password wrong or the account inactive. Only a Supabase outage differs (503).",
+        "`/me` returns identity, LLM policy, feature flags, credit-window usage in percent, limits and the database backend.",
+        "Refresh, logout and the two reset routes exist only in Supabase mode and 404 otherwise.",
+      ],
+      files: ["backend/app/api/auth.py"],
+      docs: ["backend#appapiauthpy--login-me-password-change-and-supabase-mode-refreshlogoutreset|Auth routes"],
+    },
+    {
+      id: "b-deps", zone: "backend", x: BX[1], y: 330, kind: "Dependency", title: "Request identity",
+      summary: "get_current_user: verify the bearer token and re-read the user row on every request.",
+      body: [
+        "Attached to whole routers at inclusion, so a new router added to the protected list is authenticated automatically. A test walks the real route tree and allows only an explicit list without auth: health, login, and the hosted-mode refresh, reset-request and reset-confirm.",
+        "Re-reading the user row each time is what makes deactivation and removing admin rights take effect immediately.",
+        "All failures collapse to the same 401. `require_admin` adds 403 for the admin router.",
+      ],
+      files: ["backend/app/api/deps.py", "backend/app/main.py"],
+      docs: ["backend#appapidepspy--per-request-identity|Per-request identity", "backend#enforcement-router-level-auth"],
+    },
+    {
+      id: "b-verifier", zone: "backend", x: BX[2], y: 330, kind: "Security", title: "Token verifiers",
+      summary: "Local HS256 tokens or Supabase JWTs; both return the local users.id.",
+      body: [
+        "**Local:** HS256 only, requires `exp`, `iss`, `aud`, `iat` and an `epoch` claim; secret `FW_AUTH_SECRET` (at least 32 characters).",
+        "**Supabase:** verified locally against the project's JWKS (fetched lazily, cached 600 s), ES256/RS256 only, audience `authenticated`. Anonymous sessions, other roles and sessions not created by password or email OTP (`amr` claim) are rejected.",
+        "`resolve_supabase_user` maps a Supabase subject to a local row: linked `external_id` first, then adopt by email, then create on first login (invited users).",
+      ],
+      files: ["backend/app/core/auth.py", "backend/app/core/supabase_auth.py"],
+      docs: ["backend#appcoresupabase_authpy--the-supabase-verifier|The Supabase verifier", "backend#appcoreauthpy--secrets-passwords-tokens|Secrets, passwords, tokens"],
+    },
+    {
+      id: "b-gateway", zone: "backend", x: BX[3], y: 330, kind: "Client", title: "Supabase gateway",
+      summary: "The only code that calls Supabase Auth (GoTrue) over the network.",
+      body: [
+        "User operations (sign in, refresh, send reset email, verify link) use the **publishable** key; admin operations (sign out, change password, create, invite, look up) use the **secret** key.",
+        "Each call builds its own short-lived HTTP client, because the startup bootstrap runs on a different event loop than the server.",
+        "Errors map to two types: auth errors (401/422 to the caller) and unavailability (503).",
+      ],
+      files: ["backend/app/services/supabase_gateway.py"],
+      docs: ["backend#appservicessupabase_gatewaypy--the-supabase-gateway|The Supabase gateway"],
+    },
+    {
+      id: "b-throttle", zone: "backend", x: BX[0], y: 470, kind: "Security", title: "Throttles & email locks",
+      summary: "Brute-force backoff per (email, IP), and per-email locks for admin user creation.",
+      body: [
+        "`LoginThrottle`: exponential backoff after 5 failures per (email, client IP), in both auth modes. A separate, stricter instance guards reset requests (3 attempts, 60 s to 900 s).",
+        "The client IP is the real one only because uvicorn trusts forwarded headers from fly's private ranges (`FW_TRUSTED_PROXIES`).",
+        "`EmailLocks` serializes concurrent admin create/invite/resend calls for the same email.",
+        "All of this is process memory, one reason the deployment must run exactly one process.",
+      ],
+      files: ["backend/app/api/auth.py", "backend/app/core/email_locks.py"],
+      docs: ["backend#appapiauthpy--login-me-password-change-and-supabase-mode-refreshlogoutreset|Auth routes"],
+    },
+    {
+      id: "b-adminapi", zone: "backend", x: BX[1], y: 470, kind: "Router", title: "Admin API",
+      summary: "/api/admin: list, create or invite, patch users; list tiers; resend invitations.",
+      body: [
+        "Guarded by `require_admin` on the router.",
+        "Create without password (Supabase mode) sends an invitation and links the new identity by `external_id`. Create with password creates the identity directly.",
+        "PATCH changes tier (validated against configured tiers), admin and active flags, display name or password. An admin cannot remove their own admin rights or deactivate themselves (409); promoting others is refused while `allow_additional_admins` is off (403).",
+        "Every changed field is written to `admin_audit`.",
+      ],
+      files: ["backend/app/api/admin.py"],
+      docs: ["backend#admin-invites-appapiadminpy-supabase-mode|Admin invites"],
+    },
+    {
+      id: "b-sessions", zone: "backend", x: BX[2], y: 470, kind: "Concept", title: "Session revocation",
+      summary: "How tokens stop working without a blocklist: token epoch and password timestamp.",
+      body: [
+        "**Deactivation / de-admin:** immediate, because the user row is re-read on every request.",
+        "**Local mode password change:** bumps `token_epoch`; tokens with another epoch are rejected exactly.",
+        "**Supabase mode password change:** backdates `password_changed_at` by 60 s (clock-skew allowance) and rejects tokens issued earlier; Supabase's global sign-out kills refresh tokens. A token from the last 60 s lives until its 1 h expiry but cannot be renewed.",
+      ],
+      files: ["backend/app/api/deps.py", "backend/app/services/users.py"],
+      docs: ["backend#revocation-and-eviction-across-auth-modes"],
+    },
+    {
+      id: "b-ownership", zone: "backend", x: BX[3], y: 470, kind: "Concept", title: "Ownership rules",
+      summary: "Every row belongs to someone; built-ins are global and admin-only to change.",
+      body: [
+        "Documents, folders and check jobs are private: a foreign id returns 404, never 403, so ids reveal nothing.",
+        "Profiles and terminology domains can also be global (`owner_id` NULL): seeded built-ins visible to everyone, changeable only by admins (403 'Only admins can change built-in items').",
+        "Users always create private rows, even admins; only seeders create global ones.",
+      ],
+      files: ["backend/app/services/ownership.py"],
+      docs: ["backend#ownership"],
+    },
+    {
+      id: "b-checksapi", zone: "backend", x: BX[0], y: 630, kind: "Router", title: "Checks API",
+      summary: "POST /api/checks runs rules and terminology inline, the LLM in the background; results stream via SSE.",
+      body: [
+        "The request carries text, language, domain ids, rule config, LLM selection and instructions; the API never reads profiles, the client resolves them.",
+        "Responds 202 with the fast findings. `GET /api/checks/{id}/events` streams `checker_result`, `llm_progress` (every 25 tokens), `effective_llm`, `scorecard`, `checker_error` and `done`.",
+        "Texts above `max_document_chars` get 413.",
+      ],
+      files: ["backend/app/api/checks.py"],
+      docs: ["backend#the-check-flow"],
+    },
+    {
+      id: "b-jobs", zone: "backend", x: BX[1], y: 630, kind: "Service", title: "Job manager",
+      summary: "In-memory check jobs: an append-only event list each, the last 100 kept, scoped to their creator.",
+      body: [
+        "A late or reconnecting stream replays all past events, then waits for new ones.",
+        "Jobs are ephemeral by design: after a restart the client re-checks rather than resumes.",
+        "Another user's job id behaves exactly like a missing one.",
+      ],
+      files: ["backend/app/services/jobs.py"],
+      docs: ["backend#the-check-flow"],
+    },
+    {
+      id: "b-rules", zone: "backend", x: BX[2], y: 630, kind: "Checker", title: "Rule engine",
+      summary: "141 YAML rules in 7 languages, run by the project's own Vale-inspired engine.",
+      body: [
+        "A rule's path is its identity: `rules/en/style/weasel-words.yml` is `style.weasel-words` for English.",
+        "Seven check types: `existence`, `substitution`, `occurrence`, `repetition`, `token_pattern` and `dependency` (spaCy), and `consistency` (document-wide style variants, e.g. Japanese desu/masu).",
+        "Profiles filter rules: a general rule is active when its category is on XOR it is listed as an exception; pack rules additionally need their pack enabled.",
+        "Every rule ships bad/good examples, and a test runs the whole catalog against them. Invalid files are reported, never fatal; `POST /api/rules/reload` reloads at runtime.",
+      ],
+      files: ["backend/app/checkers/rules/engine.py", "backend/app/checkers/rules/loader.py", "backend/rules/README.md"],
+      docs: ["backend#the-rule-engine"],
+    },
+    {
+      id: "b-nlp", zone: "backend", x: BX[3], y: 630, kind: "Service", title: "NLP registry",
+      summary: "Lazily loads one spaCy pipeline per language (GiNZA for Japanese), thread-safely.",
+      body: [
+        "Missing models degrade instead of failing: NLP rules are skipped and listed as `skipped_rules` so the UI can say so.",
+        "Model loading dominates startup time on a fresh machine (about 30 s measured on fly).",
+      ],
+      files: ["backend/app/nlp/registry.py"],
+      docs: ["backend#the-nlp-registry"],
+    },
+    {
+      id: "b-term", zone: "backend", x: BX[0], y: 770, kind: "Checker", title: "Terminology checker",
+      summary: "Flags forbidden variants and wrong casing of preferred terms, per selected domain.",
+      body: [
+        "Latin-script languages use word-boundary regexes; Japanese and Chinese use spaCy's PhraseMatcher (substring search without a tokenizer).",
+        "Case-sensitive terms also flag wrong casing, except a capital at a sentence start.",
+        "Findings are errors with the preferred term as a one-click suggestion. Duplicates across domains are removed (first domain wins).",
+      ],
+      files: ["backend/app/checkers/terminology.py"],
+      docs: ["backend#terminology"],
+    },
+    {
+      id: "b-dedup", zone: "backend", x: BX[1], y: 770, kind: "Module", title: "Cross-checker dedup",
+      summary: "Drops findings that repeat a diagnosis another checker already made.",
+      body: [
+        "A candidate is a duplicate if it overlaps an existing finding of the same category, or covers substantially the same span in any category.",
+        "Used across terminology domains and for LLM findings against the fast ones: deterministic findings win because their spans and fixes are more precise.",
+      ],
+      files: ["backend/app/checkers/pipeline.py"],
+      docs: ["backend#the-check-flow"],
+    },
+    {
+      id: "b-llmchecker", zone: "backend", x: BX[2], y: 770, kind: "Checker", title: "LLM checker & prompts",
+      summary: "Builds the per-language prompt, calls the provider, parses findings and the scorecard.",
+      body: [
+        "Three prompt pairs: full check, span suggestion, sentence rewrite. All demand the flagged quote verbatim. Profile instructions are appended as style guidance after the output contract.",
+        "The full check asks for `{findings: [...], scorecard: {...}}`. A bare array still yields findings; an invalid scorecard is discarded whole; unparseable output is a recorded failure, not an empty success.",
+        "The system prompt is the stable part and is sent with prompt caching; the text under review goes into the user message.",
+      ],
+      files: ["backend/app/checkers/llm/checker.py", "backend/app/checkers/llm/prompts.py"],
+      docs: ["backend#prompts", "backend#parsing-anchoring-vetting--the-deterministic-gate"],
+    },
+    {
+      id: "b-anchor", zone: "backend", x: BX[3], y: 770, kind: "Gate", title: "Anchoring & vetting",
+      summary: "The deterministic gate that makes LLM output trustworthy.",
+      body: [
+        "**Anchor:** each quote is located in the text (exact, whitespace-tolerant, then fuzzy ≥ 0.8), disambiguated by context. Findings that cannot be anchored are dropped.",
+        "**Split advice:** a 'suggestion' fully wrapped in parentheses is reclassified as advice.",
+        "**Vet:** fixes must pass sanity filters (length ratio 0.25–4, no JSON debris) and a spell gate (pyspellchecker plus optional Hunspell). A bad fix drops only the fix, never the finding.",
+        "On-demand suggestions are additionally re-checked against the rules; spelling and rule rejects are kept as revealable 'held-back' candidates.",
+      ],
+      files: ["backend/app/checkers/llm/anchoring.py", "backend/app/checkers/llm/vetting.py"],
+      docs: ["backend#parsing-anchoring-vetting--the-deterministic-gate"],
+    },
+    {
+      id: "b-suggestapi", zone: "backend", x: BX[0], y: 910, kind: "Router", title: "Suggestions API",
+      summary: "POST /api/suggestions: on-demand fixes for one span, or rewrites of whole sentences.",
+      body: [
+        "Scope `span` returns drop-in replacements; scope `sentence` expands to whole sentences and asks for rewrites.",
+        "Synchronous: one provider call, then advice split, vetting and rule re-check. Returns suggestions, advice, held-back candidates and a skip code if the LLM did not run.",
+        "Stores nothing, so there is nothing for another user to address by id.",
+      ],
+      files: ["backend/app/api/suggestions.py"],
+      docs: ["backend#parsing-anchoring-vetting--the-deterministic-gate"],
+    },
+    {
+      id: "b-gate", zone: "backend", x: BX[1], y: 910, kind: "Gate", title: "LLM gate",
+      summary: "The single path from a request to an LLM provider, with policy and metering. Fixed order.",
+      body: [
+        "1. Unknown direct provider → 422.",
+        "2. Text longer than the tier's `max_llm_document_chars` → skip `document_too_large`.",
+        "3. Resolve the selection against the user's policy → maybe degraded, or skip `llm_unavailable`.",
+        "4. Construct the provider → a provider this server has not configured is also `llm_unavailable`.",
+        "5. Reserve a ledger row → exhausted window is a skip (`quota_exhausted`), too many concurrent runs is a 429 with `Retry-After`.",
+        "Checks, suggestions and auto-titling all go through it; a run that cannot start never consumes quota. The ledger row is settled in a `finally`.",
+      ],
+      files: ["backend/app/api/llm_gate.py"],
+      docs: ["backend#the-single-gate-appapillm_gatepy|The single gate", "backend#the-gates-m5-order-appapillm_gatepy|The gate order"],
+    },
+    {
+      id: "b-policy", zone: "backend", x: BX[2], y: 910, kind: "Module", title: "Tiers & policy",
+      summary: "Maps a user's tier to allowed quality tiers, providers, models, features and limits.",
+      body: [
+        "Two vocabularies: quality tiers (`quality`, `balanced`, `cheap`, `local`) say what a check runs with; user tiers (configured under `tiers:`, e.g. basic, premium) say what an account may select.",
+        "If the requested tier is not allowed, the nearest allowed tier is used, cheaper first. Degradation is always reported to the client.",
+        "Admins and deployments without a `tiers:` block are unrestricted. An unknown tier name gets no LLM access (fail closed).",
+      ],
+      files: ["backend/app/core/permissions.py"],
+      docs: ["backend#tiers-and-llm-policy"],
+    },
+    {
+      id: "b-usage", zone: "backend", x: BX[3], y: 910, kind: "Service", title: "Usage ledger & credits",
+      summary: "One ledger row per LLM run; credit budgets per hour, day, week and month.",
+      body: [
+        "Reservation is one transaction: mark stale runs abandoned, insert the new row first, then check each credit window and the per-user and server-wide concurrency. On Postgres an advisory lock replaces SQLite's single-writer guarantee.",
+        "Credits = source weight × model factor × (input tokens + output weight × output tokens), estimated from the text length at admission and settled to actual tokens at the end. Auto-titling is free by default.",
+        "Failed runs record a stage (`request`, `provider`, `response`) and metadata, never document text.",
+      ],
+      files: ["backend/app/services/usage.py", "backend/app/services/credits.py"],
+      docs: ["backend#llm-usage-metering"],
+    },
+    {
+      id: "b-factory", zone: "backend", x: BX[0], y: 1070, kind: "Factory", title: "Provider factory",
+      summary: "The only place that constructs LLM providers; reads API keys from the environment.",
+      body: [
+        "Built-ins: `ollama`, `claude`, `openai`, `mistral`, `bedrock`, plus OpenAI-compatible extras from config (e.g. DeepSeek) with a `<NAME>_API_KEY` variable.",
+        "Pairs each Claude model with its configured thinking effort (`providers.anthropic_effort`, default Opus 5.5 → low).",
+        "`GET /api/providers` reports availability and discovers models live; `GET /api/routing` reports per-tier availability.",
+      ],
+      files: ["backend/app/main.py", "backend/app/checkers/llm/provider.py"],
+      docs: ["backend#providers"],
+    },
+    {
+      id: "b-claude", zone: "backend", x: BX[1], y: 1070, kind: "Provider", title: "Claude provider",
+      summary: "Anthropic SDK client: streaming, thinking effort, prompt caching, token usage.",
+      body: [
+        "Production routes all remote tiers to Claude: quality → Opus 5.5 (effort low), balanced → Sonnet 5.5, cheap → Haiku 4.5.",
+        "Output is capped at 16,384 tokens because thinking counts against it; hitting the cap raises a truncation error instead of returning cut-off JSON.",
+        "Reports total input tokens including cached ones, plus cache reads and writes.",
+      ],
+      files: ["backend/app/checkers/llm/claude.py"],
+      docs: ["backend#claude-thinking-effort-and-prompt-caching", "models#"],
+    },
+    {
+      id: "b-httpchat", zone: "backend", x: BX[2], y: 1070, kind: "Provider", title: "HTTP chat providers",
+      summary: "Ollama, OpenAI, Mistral and compatible endpoints on one shared HTTP skeleton.",
+      body: [
+        "`HttpChatProvider` owns streaming and progress; subclasses supply the client, path and response parsing.",
+        "Ollama is the `local` tier. On fly it reports unavailable, because there is no Ollama there.",
+      ],
+      files: ["backend/app/checkers/llm/_http_chat.py", "backend/app/checkers/llm/ollama.py", "backend/app/checkers/llm/openai_compat.py"],
+      docs: ["backend#providers"],
+    },
+    {
+      id: "b-bedrock", zone: "backend", x: BX[3], y: 1070, kind: "Provider", title: "Bedrock provider",
+      summary: "AWS Bedrock via boto3 and the standard AWS credential chain.",
+      body: [
+        "Models are discovered from foundation models and inference profiles unless pinned in config. Not used by the hosted demo.",
+      ],
+      files: ["backend/app/checkers/llm/bedrock.py"],
+      docs: ["backend#providers"],
+    },
+    {
+      id: "b-docsapi", zone: "backend", x: BX[0], y: 1230, kind: "Router", title: "Documents API",
+      summary: "Owner-scoped documents with optimistic locking, folder moves and auto-titling.",
+      body: [
+        "`PUT` requires the current `revision`; a mismatch is 409 with the server's revision. Text, findings and scorecard are always written together.",
+        "Three timestamps: `edited_at` (text or name changed; drives ordering), `checked_at` (check state written), `updated_at` (any write).",
+        "Moving a document and auto-renaming it never bump the revision, so they cannot break an in-flight autosave.",
+      ],
+      files: ["backend/app/api/documents.py", "backend/app/services/documents.py"],
+      docs: ["backend#documents"],
+    },
+    {
+      id: "b-naming", zone: "backend", x: BX[1], y: 1230, kind: "Service", title: "Auto-titling",
+      summary: "Gives an untitled document a short title from the cheap LLM tier.",
+      body: [
+        "Only for documents still named by fallback. Goes through the LLM gate with the `cheap` tier; a provider failure or a skipped LLM silently falls back to the first six words (at most 40 characters).",
+        "Titles are cleaned (one line, quotes and trailing punctuation removed, at most 80 characters).",
+      ],
+      files: ["backend/app/services/naming.py", "backend/app/api/documents.py"],
+      docs: ["backend#documents"],
+    },
+    {
+      id: "b-foldersapi", zone: "backend", x: BX[2], y: 1230, kind: "Router", title: "Folders API",
+      summary: "Owner-scoped folders, unique names per owner, lossless delete, per-folder defaults.",
+      body: [
+        "Deleting a folder moves its documents to ungrouped in the same transaction.",
+        "`PUT /api/folders/{id}/defaults` replaces all seven defaults and validates them (a profile default needs a matching language default).",
+        "Dangling profile or domain references are pruned from responses, never from the database.",
+      ],
+      files: ["backend/app/api/folders.py", "backend/app/services/folders.py"],
+      docs: ["backend#folders"],
+    },
+    {
+      id: "b-profilesapi", zone: "backend", x: BX[3], y: 1230, kind: "Router", title: "Profiles API",
+      summary: "Checking-profile CRUD and reset; global built-ins plus private profiles.",
+      body: [
+        "A profile bundles category toggles, rule exceptions, enabled packs, domains, a tier or pinned model, LLM instructions and example text.",
+        "Standard cannot be renamed or deleted, and only Standard can be reset to seed defaults (409). Non-admins get 403 on any built-in first.",
+        "Responses drop rule ids and domain ids that no longer exist.",
+      ],
+      files: ["backend/app/api/profiles.py", "backend/app/services/profiles.py"],
+      docs: ["backend#checking-profiles"],
+    },
+    {
+      id: "b-termapi", zone: "backend", x: BX[0], y: 1370, kind: "Router", title: "Terminology API",
+      summary: "Domain and term CRUD under /api/domains and /api/terms.",
+      body: [
+        "Terms inherit visibility from their domain. Deleting a domain also removes it from every profile.",
+        "Creating domains or terms can be restricted per tier (`custom_domains`).",
+      ],
+      files: ["backend/app/api/terminology.py", "backend/app/services/terminology.py"],
+      docs: ["backend#terminology"],
+    },
+    {
+      id: "b-rulesapi", zone: "backend", x: BX[1], y: 1370, kind: "Router", title: "Rules API",
+      summary: "GET /api/rules: the catalog with packs, examples and load errors; POST reload.",
+      body: [
+        "The pack list is discovered from the rule files, so a new pack needs no code change.",
+      ],
+      files: ["backend/app/api/rules.py"],
+      docs: ["backend#the-rule-engine"],
+    },
+    {
+      id: "b-catalogapi", zone: "backend", x: BX[2], y: 1370, kind: "Router", title: "Providers, routing, languages",
+      summary: "What the header needs: providers and models, tier routing, languages and NLP status.",
+      body: [
+        "`/api/providers` discovers models live (5 s timeout each) and marks which providers the user may pin.",
+        "`/api/routing` returns the tier table for each language with availability (API key present, Ollama reachable) and whether the user's plan allows each tier.",
+        "`/api/languages` lists languages and whether their spaCy model is installed.",
+      ],
+      files: ["backend/app/api/providers.py", "backend/app/api/routing.py", "backend/app/api/languages.py"],
+      docs: ["backend#providers"],
+    },
+    {
+      id: "b-activityapi", zone: "backend", x: BX[3], y: 1370, kind: "Router", title: "Activity API",
+      summary: "/api/usage/activity: daily runs, tokens and credits from the ledger.",
+      body: [
+        "Own series for everyone; `/all` and `/{user_id}` for admins. The `/all` response reads both projections from one database snapshot.",
+      ],
+      files: ["backend/app/api/usage_activity.py"],
+      docs: ["backend#activity-aggregation-b40"],
+    },
+    {
+      id: "b-bootstrap", zone: "backend", x: BX[0], y: 1530, kind: "Startup", title: "App factory & startup",
+      summary: "create_app() builds every long-lived object, migrates, seeds and fails closed on bad config.",
+      body: [
+        "Order: middleware → database → terminology store → rule engine, job manager, NLP registry, provider factory → document, folder, profile and usage stores → auth wiring (including the user store) → first admin → ledger sweep → seeds → routers.",
+        "Hosted mode refuses to start if the Supabase project enables any sign-in method other than email.",
+        "The first admin comes from `FW_ADMIN_EMAIL`/`FW_ADMIN_PASSWORD`, only while the users table is empty; there is no bootstrap endpoint.",
+        "Ledger rows still marked `started` from a previous process are marked abandoned.",
+      ],
+      files: ["backend/app/main.py", "backend/app/services/seed_admin.py"],
+      docs: ["backend#startup-bootstrap", "backend#application-assembly"],
+    },
+    {
+      id: "b-seeds", zone: "backend", x: BX[1], y: 1530, kind: "Startup", title: "Seed content",
+      summary: "Global built-ins: a Standard profile per language, example profiles, an example domain.",
+      body: [
+        "Each language gets Standard plus Marketing, Technical Documentation and Blog examples, with example texts from `backend/demos/`.",
+        "Seeding runs once per language; deleted examples stay deleted across restarts.",
+      ],
+      files: ["backend/app/services/seed_profiles.py", "backend/app/services/seed.py"],
+      docs: ["backend#checking-profiles"],
+    },
+    {
+      id: "b-manage", zone: "backend", x: BX[2], y: 1530, kind: "CLI", title: "Operator CLI",
+      summary: "python -m app.manage: user recovery, schema init and SQLite → Postgres import.",
+      body: [
+        "`list-users`, `set-password`, `make-admin`, `revoke-admin`, `deactivate`, `activate`. Passwords are prompted, never passed as arguments. Every change is audited with no actor.",
+        "`init-db` creates or migrates the schema under an admin DSN; production runs with `manage_schema: false`, so this is how schema changes reach it.",
+        "`import-to-postgres` copies a SQLite database into Postgres in one verified transaction.",
+      ],
+      files: ["backend/app/manage.py", "backend/app/manage_import.py", "backend/app/schema.py"],
+      docs: ["backend#appmanagepy--operator-cli|Operator CLI"],
+    },
+    {
+      id: "b-wizard", zone: "backend", x: BX[3], y: 1530, kind: "CLI", title: "Setup wizard",
+      summary: "Interactive first-run setup for the self-hosted container: config.yaml plus fabulous.env.",
+      body: [
+        "Asks for a provider and key, then generates the complete routing table for all seven languages; secrets go to `fabulous.env` with mode 0600.",
+        "Each run regenerates both files completely. Two hand-set keys survive: the embed allowlist and the Claude effort map.",
+      ],
+      files: ["backend/app/setup_wizard.py", "docker/config.container.yaml"],
+      docs: ["backend#container-deployment-b17"],
+    },
+
+    // ───────────────────────── Data ─────────────────────────
+    {
+      id: "d-seam", zone: "data", x: DX[0], y: 170, kind: "Seam", title: "Database seam",
+      summary: "One contract, two engines: SQLite (default) and Postgres (production). Stores never know which.",
+      body: [
+        "Stores write SQL with `?` placeholders; the Postgres implementation rewrites them and maps unique violations to one shared error.",
+        "Postgres: the DSN comes only from `FW_DATABASE_URL`; a fixed pool of 1–5 connections; one forced connection at boot so a wrong DSN fails loudly.",
+        "With `manage_schema: false` the app only verifies tables and columns; DDL runs out of band via `init-db` under an admin role. The runtime role `fabwriting_app` can only read and write data.",
+      ],
+      files: ["backend/app/services/db/__init__.py", "backend/app/services/db/sqlite.py", "backend/app/services/db/postgres.py"],
+      docs: ["backend#documents", "postgres#"],
+    },
+    {
+      id: "d-rulesfs", zone: "data", x: DX[1], y: 170, kind: "Files", title: "Rule catalog files",
+      summary: "rules/<language>/<category>/<name>.yml, shipped in the image.",
+      body: [
+        "141 rules: en 29, de 25, ja 22, fr 17, es 17, it 17, zh 14. Categories: clarity, grammar, style and (some languages) vividness.",
+        "Rules may belong to a pack (`marketing`, `techdocs`, `blog`); packed rules only run when a profile enables the pack.",
+      ],
+      files: ["backend/rules/README.md"],
+      docs: ["backend#the-rule-engine"],
+    },
+    {
+      id: "d-users", zone: "data", x: DX[0], y: 310, kind: "Table", title: "users · admin_audit",
+      summary: "Accounts with tier, admin and active flags, token epoch; one audit row per changed field.",
+      body: [
+        "`users`: email (case-insensitive unique), `external_id` (Supabase subject), display name, password hash (local mode only), tier, `is_admin`, `is_active`, `token_epoch`, `password_changed_at`.",
+        "`admin_audit`: actor, target, field, old and new value. A NULL actor marks a change made with the operator CLI.",
+      ],
+      files: ["backend/app/services/users.py"],
+      docs: ["backend#users-and-the-audit-trail"],
+    },
+    {
+      id: "d-documents", zone: "data", x: DX[1], y: 310, kind: "Table", title: "documents",
+      summary: "Text, check-state snapshot and per-document settings; revision-guarded.",
+      body: [
+        "Columns include `owner_id`, `name` and `name_source`, `text`, `language`, `profile_id`, `domain_ids`, LLM settings, `last_findings`, `scorecard`, `revision`, `folder_id` and the timestamps `created_at`, `edited_at`, `checked_at`, `updated_at`.",
+        "Reloading a document restores its findings without re-checking.",
+      ],
+      files: ["backend/app/services/documents.py"],
+      docs: ["backend#documents"],
+    },
+    {
+      id: "d-folders", zone: "data", x: DX[0], y: 450, kind: "Table", title: "folders",
+      summary: "Named buckets per owner with seven nullable default columns.",
+      body: ["A unique index on (owner, lower(name)). No foreign key from documents: deleting a folder detaches its documents explicitly."],
+      files: ["backend/app/services/folders.py"],
+      docs: ["backend#folders"],
+    },
+    {
+      id: "d-profiles", zone: "data", x: DX[1], y: 450, kind: "Table", title: "profiles · seed markers",
+      summary: "Checking profiles (global or private) and a marker per seeded language.",
+      body: ["List-valued columns are JSON: `categories_off`, `rule_exceptions`, `packs_on`, `domain_ids`. Partial unique indexes keep names unique per owner and among globals."],
+      files: ["backend/app/services/profiles.py"],
+      docs: ["backend#checking-profiles"],
+    },
+    {
+      id: "d-terms", zone: "data", x: DX[0], y: 590, kind: "Table", title: "domains · terms",
+      summary: "Terminology domains (global or private) and their terms.",
+      body: ["Terms have no owner of their own; deleting a domain cascades to its terms."],
+      files: ["backend/app/services/terminology.py"],
+      docs: ["backend#terminology"],
+    },
+    {
+      id: "d-usage", zone: "data", x: DX[1], y: 590, kind: "Table", title: "llm_usage",
+      summary: "The ledger: one row per LLM run with status, selection, tokens and credits.",
+      body: [
+        "Status: started, completed, failed, cancelled, abandoned. Requested and effective tier/provider/model, text length, input/output tokens, credits, source (check, suggestion, name), failure stage and detail.",
+        "Indexed for per-day sums, the in-flight count and the credit windows. Cache read/write counts are not recorded yet (deferred).",
+      ],
+      files: ["backend/app/services/usage.py"],
+      docs: ["backend#the-llm_usage-ledger-appservicesusagepy|The llm_usage ledger"],
+    },
+    {
+      id: "d-models", zone: "data", x: DX[0], y: 730, kind: "Files", title: "NLP models & dictionaries",
+      summary: "spaCy pipelines, GiNZA for Japanese, Hunspell dictionaries for the spell gate.",
+      body: ["Installed into the image from the lockfile's `models` group; the largest image layer, ordered so code changes do not rebuild it."],
+      files: ["backend/scripts/install-dictionaries.sh", "backend/scripts/install-models.sh"],
+      docs: ["backend#container-deployment-b17"],
+    },
+    {
+      id: "d-memory", zone: "data", x: DX[1], y: 730, kind: "Memory", title: "Process memory",
+      summary: "Check jobs, login and reset throttles, email locks: state that lives in the one process.",
+      body: [
+        "This is why the deployment runs exactly one machine with one worker (`fly deploy --ha=false`): a second process would have its own throttles and would mark the first one's running ledger rows abandoned at startup.",
+        "Scaling out would first need shared replacements for these mechanisms.",
+      ],
+      files: ["backend/app/services/jobs.py", "backend/app/core/email_locks.py"],
+      docs: ["fly#2-first-deploy|First deploy"],
+    },
+
+    // ───────────────────────── Third parties ─────────────────────────
+    {
+      id: "t-anthropic", zone: "ext", x: DX[0], y: 1050, kind: "LLM API", title: "Anthropic Claude API",
+      summary: "The production LLM: Opus 5.5, Sonnet 5.5 and Haiku 4.5 via the Messages API.",
+      body: [
+        "Key: `ANTHROPIC_API_KEY` (a fly secret in production).",
+        "Pricing per million input/output tokens: Opus 5.5 $4/$20, Sonnet 5.5 $2/$10, Haiku 4.5 $1/$5. The check system prompt (~910 tokens) is cached across checks on the 5.5 models; Haiku needs at least 4096 tokens to cache, so the cheap tier is not cached.",
+      ],
+      files: ["backend/app/checkers/llm/claude.py"],
+      docs: ["models#"],
+    },
+    {
+      id: "t-openai", zone: "ext", x: DX[1], y: 1050, kind: "LLM API", title: "OpenAI · Mistral · compatible",
+      summary: "Optional providers speaking the OpenAI chat-completions dialect.",
+      body: ["Enabled by their API key in the environment; extra compatible endpoints (DeepSeek, Qwen, OpenRouter) are added in config."],
+      files: ["backend/app/checkers/llm/openai_compat.py"],
+      docs: ["backend#providers"],
+    },
+    {
+      id: "t-bedrock", zone: "ext", x: DX[0], y: 1190, kind: "LLM API", title: "AWS Bedrock",
+      summary: "Optional provider through the AWS credential chain.",
+      body: ["Not used by the hosted demo."],
+      files: ["backend/app/checkers/llm/bedrock.py"],
+      docs: ["backend#providers"],
+    },
+    {
+      id: "t-ollama", zone: "ext", x: DX[1], y: 1190, kind: "Local LLM", title: "Ollama",
+      summary: "Local models for the `local` tier, e.g. on the host of a self-hosted container.",
+      body: ["Reached at `host.docker.internal` from the container. Absent on fly, so the local tier reports unavailable there."],
+      files: ["backend/app/checkers/llm/ollama.py"],
+      docs: ["readme#"],
+    },
+    {
+      id: "t-supaauth", zone: "ext", x: DX[0], y: 1330, kind: "Auth", title: "Supabase Auth (GoTrue)",
+      summary: "Hosted identity: passwords, sessions, refresh tokens, invitations, reset emails, JWKS.",
+      body: [
+        "Configured for email only, invitation-only signup, asymmetric JWT signing keys, and email templates that link back to the app with a URL fragment.",
+        "The backend verifies access tokens itself against the published JWKS; Supabase is not consulted per request.",
+      ],
+      files: ["docs/supabase-auth-setup.md"],
+      docs: ["supabase#"],
+    },
+    {
+      id: "t-supadb", zone: "ext", x: DX[1], y: 1330, kind: "Database", title: "Supabase Postgres",
+      summary: "The production database, reached through Supavisor as the least-privilege role.",
+      body: [
+        "The app connects as `fabwriting_app.<project ref>`, a role that can only read and write data in `public`. The admin DSN is used only from an operator's machine for `init-db`.",
+        "Role and grants are defined in `supabase/migrations/`.",
+      ],
+      files: ["supabase/migrations/20260817090000_create_app_role.sql", "supabase/migrations/20260817090100_app_role_grants.sql"],
+      docs: ["postgres#least-privilege-application-role"],
+    },
+    {
+      id: "t-ses", zone: "ext", x: DX[0], y: 1470, kind: "Email", title: "AWS SES (SMTP)",
+      summary: "Delivers Supabase's invitation and password-reset emails.",
+      body: [
+        "Configured as custom SMTP in Supabase. In SES sandbox mode only verified recipients receive mail; with Mail Manager SMTP a failed send is silent on the Supabase side.",
+      ],
+      files: ["docs/supabase-auth-setup.md"],
+      docs: ["supabase#8-auth--email-smtp|Email (SMTP)"],
+    },
+    {
+      id: "t-hostsite", zone: "ext", x: DX[1], y: 1470, kind: "Web pages", title: "Host web pages",
+      summary: "Any site with a text field, for example GitHub issue and PR comment boxes.",
+      body: ["The extension's acceptance benchmark is GitHub's composer, which replaces its textarea on blur (hence field re-acquisition)."],
+      files: ["docs/browser-extension.md"],
+      docs: ["extension#manual-acceptance-checklist--github|GitHub acceptance checklist"],
+    },
+
+    // ───────────────────────── Delivery ─────────────────────────
+    {
+      id: "g-devloop", zone: "delivery", x: GX(0), y: 1990, kind: "Local", title: "Local development",
+      summary: "Vite dev server on :5173 and uvicorn on :8000, SQLite file, optional local Supabase stack.",
+      body: [
+        "Backend gate: `uv run pytest` (parallel, zero warnings). Frontend gate: tests, lint, build and the embed bundle check. Extension gate: tests, lint, build.",
+        "The offline Supabase e2e suite boots the real app as a subprocess against `supabase start` (API, database, auth, Mailpit).",
+      ],
+      files: ["scripts/e2e-supabase.sh", "backend/tests_e2e"],
+      docs: ["backend#testing"],
+    },
+    {
+      id: "g-repo", zone: "delivery", x: GX(1), y: 1990, kind: "GitHub", title: "Repository & pull requests",
+      summary: "saigyo/fabulous-writing. Main accepts no direct pushes; every change is a PR, rebase-merged.",
+      body: ["Each PR ends with a LOGBOOK entry referencing its number. Architecture docs are updated alongside non-trivial changes."],
+      files: ["docs/LOGBOOK.md"],
+      docs: ["readme#"],
+    },
+    {
+      id: "g-ci", zone: "delivery", x: GX(2), y: 1990, kind: "GitHub Actions", title: "CI workflows",
+      summary: "Backend (SQLite + Postgres), frontend, extension and Docker checks, each run when its paths change.",
+      body: [
+        "- `backend.yml`: pytest with coverage, also against a Postgres service container.",
+        "- `frontend.yml`: lint, tests, build, embed bundle guard.",
+        "- `extension.yml`: lint, tests, build.",
+        "- `docker.yml`: image build and a third-party license notice drift check.",
+        "- `e2e-supabase.yml`: manual dispatch.",
+        "Each workflow is path-filtered, so a docs-only change runs none of them. Coverage badges are published to the orphan `badges` branch.",
+      ],
+      files: [".github/workflows/backend.yml", ".github/workflows/frontend.yml", ".github/workflows/extension.yml", ".github/workflows/docker.yml"],
+      docs: ["backend#testing"],
+    },
+    {
+      id: "g-release", zone: "delivery", x: GX(3), y: 1990, kind: "GitHub Actions", title: "Release workflow",
+      summary: "Pushing a vX.Y.Z tag builds the image for amd64 and arm64 and creates a GitHub release.",
+      body: ["The tag is the single source of the version string: it becomes `APP_VERSION`, then `FW_APP_VERSION`, then `/api/health`'s `version`."],
+      files: [".github/workflows/release.yml"],
+      docs: ["backend#container-deployment-b17"],
+    },
+    {
+      id: "g-ghcr", zone: "delivery", x: GX(4), y: 1990, kind: "Registry", title: "GHCR image",
+      summary: "ghcr.io/saigyo/fabulous-writing:<version>, public, multi-arch.",
+      body: ["fly pulls it without registry credentials. After a deploy, the running digest is compared with the registry's amd64 entry."],
+      files: ["Dockerfile"],
+      docs: ["fly#"],
+    },
+    {
+      id: "g-fly", zone: "delivery", x: GX(5), y: 1990, kind: "fly.io", title: "fly.io machine",
+      summary: "One always-on shared-cpu-2x machine (2 GB) in Frankfurt, deployed with --ha=false.",
+      body: [
+        "Always on since 2026-08-22: scale-to-zero was woken constantly by internet scans and paid a ~32 s model-loading cold start per wake. Cost about $11–12 per month.",
+        "Exactly one machine, because throttles, jobs and locks live in process memory.",
+      ],
+      files: ["deploy/fly/fly.toml"],
+      docs: ["fly#4-operational-notes|Operational notes"],
+    },
+    {
+      id: "g-flyproxy", zone: "delivery", x: GX(6), y: 1990, kind: "fly.io", title: "fly-proxy & health check",
+      summary: "TLS termination, HTTPS redirect, health check on /api/health every 30 s (60 s grace).",
+      body: ["Requests reach the app only through fly-proxy, so trusting forwarded headers from fly's private ranges (`fdaa::/16`, `172.16.0.0/12`) gives the login throttle real client IPs without allowing spoofing."],
+      files: ["deploy/fly/fly.toml"],
+      docs: ["fly#4-operational-notes|Operational notes"],
+    },
+    {
+      id: "g-e2e", zone: "delivery", x: GX(0), y: 2160, kind: "Local", title: "Local Supabase stack",
+      summary: "A supabase start stack (API, Postgres, GoTrue, Mailpit) for the e2e suite and Postgres tests.",
+      body: ["Started and stopped only with `supabase start`/`stop`. Test runs use per-run identities and throwaway schemas."],
+      files: ["supabase/config.toml", "scripts/e2e-supabase.sh"],
+      docs: ["backend#offline-supabase-e2e-suite-b27"],
+    },
+    {
+      id: "g-extrelease", zone: "delivery", x: GX(2), y: 2160, kind: "GitHub Actions", title: "Extension release",
+      summary: "A chrome-ext-vX.Y.Z tag builds the extension and attaches a zip to a GitHub release.",
+      body: ["Separate tag prefix, so server and extension releases never trigger each other. Testers install the unpacked zip."],
+      files: [".github/workflows/chrome-extension-release.yml", "clients/browser-extension/public/manifest.json"],
+      docs: ["extension#from-a-release-recommended-for-testers"],
+    },
+    {
+      id: "g-image", zone: "delivery", x: GX(3), y: 2160, kind: "Container", title: "Container image",
+      summary: "Built frontend plus backend in one image; entrypoint starts one uvicorn process.",
+      body: [
+        "Layers ordered by change frequency: OS packages, Hunspell dictionaries, Python dependencies, spaCy/GiNZA models, then app code.",
+        "The entrypoint loads an optional env file (real environment wins) and enables proxy headers only when `FW_TRUSTED_PROXIES` is set.",
+      ],
+      files: ["Dockerfile", "docker/entrypoint.sh"],
+      docs: ["backend#container-deployment-b17"],
+    },
+    {
+      id: "g-initdb", zone: "delivery", x: GX(4), y: 2160, kind: "Operation", title: "Schema migration",
+      summary: "init-db under the admin DSN, run from an operator machine before a schema-changing deploy.",
+      body: ["Changes are additive, so the old release keeps serving while the schema moves ahead. The admin DSN is never a fly secret."],
+      files: ["backend/app/manage.py"],
+      docs: ["fly#3-updating|Updating"],
+    },
+    {
+      id: "g-secrets", zone: "delivery", x: GX(5), y: 2160, kind: "fly.io", title: "fly config & secrets",
+      summary: "fly.toml pins the image; config.yaml is delivered as a file; secrets via fly secrets.",
+      body: [
+        "Secrets (names only): `FW_DATABASE_URL`, `FW_SUPABASE_SECRET_KEY`, `FW_SUPABASE_PUBLISHABLE_KEY`, `FW_ADMIN_EMAIL`, `FW_ADMIN_PASSWORD`, `ANTHROPIC_API_KEY`.",
+        "The non-secret `deploy/fly/config.yaml` sets Postgres with `manage_schema: false`, Supabase auth, the Claude routing table and the extension allowlist. A test guards both files.",
+      ],
+      files: ["deploy/fly/fly.toml", "deploy/fly/config.yaml", "backend/tests/test_fly_config.py"],
+      docs: ["fly#2-first-deploy|First deploy"],
+    },
+    {
+      id: "g-selfhost", zone: "delivery", x: GX(6), y: 2160, kind: "Container", title: "Self-hosted container",
+      summary: "fabulous.sh serve: pull the image and run it with /config and /data volumes.",
+      body: ["Checks the host port first, pulls the image (falls back to the cached one offline), and runs the setup wizard on first use. SQLite by default."],
+      files: ["fabulous.sh"],
+      docs: ["readme#"],
+    },
+  ];
+
+  // Structural connections, drawn faintly at all times.
+  const edges = [
+    ["w-api", "b-middleware", "HTTPS · JSON · SSE"],
+    ["w-login", "w-api"], ["w-controller", "w-api"], ["w-suggest", "w-api"], ["w-autosave", "w-api"],
+    ["w-store", "w-prefs"], ["w-editor", "w-scheduler"], ["w-scheduler", "w-controller"],
+    ["w-controller", "w-docport"], ["w-docport", "w-editor"], ["w-sidebar", "w-suggest"],
+    ["w-autosave", "w-prefs"], ["w-docs", "w-hydration"], ["w-hydration", "w-editor"],
+    ["e-embedapp", "w-controller", "same check pipeline"], ["e-bridge", "e-hostdoc"], ["e-hostdoc", "w-docport"],
+    ["x-scout", "x-session"], ["x-session", "x-sw", "runtime port"], ["x-sw", "x-panel", "runtime port"],
+    ["x-panel", "e-bridge", "postMessage"], ["x-scout", "t-hostsite"],
+    ["b-middleware", "b-deps"], ["b-deps", "b-verifier"], ["b-authapi", "b-gateway"], ["b-gateway", "t-supaauth", "GoTrue"],
+    ["b-verifier", "t-supaauth", "JWKS"], ["b-checksapi", "b-jobs"], ["b-checksapi", "b-rules"], ["b-rules", "b-nlp"],
+    ["b-checksapi", "b-term"], ["b-checksapi", "b-gate"], ["b-suggestapi", "b-gate"], ["b-naming", "b-gate"],
+    ["b-gate", "b-policy"], ["b-gate", "b-usage"], ["b-gate", "b-factory"], ["b-factory", "b-claude"],
+    ["b-factory", "b-httpchat"], ["b-factory", "b-bedrock"], ["b-llmchecker", "b-anchor"],
+    ["b-claude", "t-anthropic", "Messages API"], ["b-httpchat", "t-openai"], ["b-httpchat", "t-ollama"], ["b-bedrock", "t-bedrock"],
+    ["b-usage", "d-usage"], ["d-seam", "t-supadb", "Supavisor"], ["b-docsapi", "d-documents"], ["b-foldersapi", "d-folders"],
+    ["b-profilesapi", "d-profiles"], ["b-termapi", "d-terms"], ["b-adminapi", "d-users"], ["b-rules", "d-rulesfs"],
+    ["b-nlp", "d-models"], ["b-jobs", "d-memory"], ["t-supaauth", "t-ses", "SMTP"],
+    ["g-repo", "g-ci"], ["g-ci", "g-release"], ["g-release", "g-ghcr"], ["g-ghcr", "g-fly"], ["g-fly", "g-flyproxy"],
+    ["g-ghcr", "g-selfhost"], ["g-secrets", "g-fly"], ["g-release", "g-extrelease"],
+  ];
+
+  // Processes. Each step focuses one node; `from` draws the arrow that
+  // brings the process there.
+  const flows = [
+    // ── Accounts & access ──
+    {
+      id: "signin", group: "Accounts & access", title: "Signing in",
+      intro: "How a writer gets from the login form to a working session in production (Supabase mode). In local mode, steps 6 to 9 become a bcrypt check against the users table and a locally signed token.",
+      steps: [
+        { n: "w-login", t: "The gate shows the login form", d: "On page load `restoreSession()` finds no token, so `authStatus` becomes `anonymous` and `LoginGate` renders `LoginForm`. The only API call so far is `GET /api/health`, which tells the form whether 'Forgot your password?' exists." },
+        { n: "w-api", from: "w-login", t: "POST /api/auth/login", d: "`login()` sends email and password through the API client. Like health, refresh and the reset routes, it needs no bearer token." },
+        { n: "b-middleware", from: "w-api", t: "Through the middleware", d: "The request passes the byte-budget check. In production the frontend and API share one origin, so CORS plays no role." },
+        { n: "b-authapi", from: "b-middleware", t: "The auth router", d: "`POST /api/auth/login` dispatches on `auth.mode`. Production runs `supabase`; local mode is the default for development and self-hosting." },
+        { n: "b-throttle", from: "b-authapi", t: "Throttle check", d: "The login throttle looks up the (email, client IP) pair. After 5 failures, further attempts are blocked with growing delays, in both auth modes." },
+        { n: "b-gateway", from: "b-authapi", t: "Password grant at Supabase", d: "The gateway signs in with the publishable key. (Local mode instead checks the bcrypt hash in a thread pool and issues its own HS256 token valid for 24 h.)" },
+        { n: "t-supaauth", from: "b-gateway", t: "GoTrue verifies the password", d: "Supabase checks the credential and returns an access token (1 h), a refresh token and the expiry." },
+        { n: "b-verifier", from: "b-gateway", t: "Verify the new token like any other", d: "The fresh access token goes through the same verifier every request uses: JWKS signature (ES256/RS256), issuer and audience, not anonymous, role `authenticated`, session method password or OTP." },
+        { n: "d-users", from: "b-verifier", t: "Map to the local user", d: "`resolve_supabase_user` finds the local row by `external_id`, adopts a pre-existing row by email, or creates one for an invited user's first login. An inactive account gets the same 401 as a wrong password." },
+        { n: "w-store", from: "b-authapi", t: "Store the session", d: "The response carries token, refresh token and expiry. The store saves them, loads this user's preference blob, and arms a timer to refresh 2 minutes before expiry." },
+        { n: "b-deps", from: "w-api", t: "Every later request", d: "`GET /api/auth/me` and all other calls carry the bearer token. `get_current_user` verifies it and re-reads the user row each time; `/me` returns the policy, quota percentages and limits the UI gates on." },
+      ],
+    },
+    {
+      id: "session", group: "Accounts & access", title: "Staying signed in & signing out",
+      intro: "Session restore on reload, silent token refresh, logout and password change.",
+      steps: [
+        { n: "w-login", t: "Restore on reload", d: "With a stored token, `restoreSession()` calls `GET /api/auth/me` once. 401 ends the session with a notice; a network error keeps the token and shows a retry card instead." },
+        { n: "w-store", from: "w-login", t: "Refresh timer fires", d: "Two minutes before `tokenExpiresAt` the refresh engine runs. Concurrent callers share one in-flight refresh. Local mode has no refresh token and simply signs in again after 24 h." },
+        { n: "b-authapi", from: "w-api", t: "POST /api/auth/refresh", d: "Supabase mode only. Deliberately not throttled: refresh tokens are random 256-bit values and GoTrue rate-limits on its side." },
+        { n: "t-supaauth", from: "b-gateway", t: "Supabase rotates the refresh token", d: "The new token triple replaces the old one and the timer is re-armed. 401 ends the session; other failures retry every 60 s." },
+        { n: "w-account", t: "Sign out", d: "Logout revokes the Supabase session (scope local), cancels any running check, invalidates pending document writes and resets the in-memory state. Preference blobs stay in localStorage." },
+        { n: "b-sessions", from: "w-account", t: "Change password", d: "The server re-checks the current password, updates it at Supabase, backdates `password_changed_at` by 60 s (which rejects older access tokens) and signs out all sessions globally. The app then signs the same user back in silently." },
+      ],
+    },
+    {
+      id: "reset", group: "Accounts & access", title: "Invitations & password reset",
+      intro: "Both arrive as an email link and end in the same two-leg confirm endpoint. Supabase mode only.",
+      steps: [
+        { n: "b-adminapi", from: "w-adminview", t: "An admin invites a user", d: "Creating a user without a password calls `gateway.invite_user` under a per-email lock and links the new Supabase identity to a local row by `external_id`." },
+        { n: "w-reset", t: "Or: someone requests a reset", d: "`ForgotPasswordForm` posts the email to `/api/auth/reset-request` and always shows the same 'check your email' message." },
+        { n: "b-throttle", from: "w-reset", t: "Reset throttle, uniform timing", d: "A stricter throttle (3 attempts) applies. Inactive accounts are skipped silently, and the email is sent as a background task so the response time does not reveal whether the address exists." },
+        { n: "t-ses", from: "t-supaauth", t: "Email via SES", d: "Supabase sends the email through custom SMTP. The link points to the app with `#token_hash=…&type=recovery` (or `invite`) in the fragment, which browsers never send to servers." },
+        { n: "w-reset", from: "t-ses", t: "The link opens the form", d: "`LoginGate` reads the fragment once, strips it from the URL and shows `ResetPasswordForm`, even if a session is already active." },
+        { n: "b-authapi", from: "w-reset", t: "Link leg of reset-confirm", d: "`verify_token_hash` burns the one-time link at Supabase and returns a session for the account. An inactive local account is refused here, before any password change." },
+        { n: "t-supaauth", from: "b-gateway", t: "Set the password, or hand back a retry token", d: "If the new password is weak or breached (422) or Supabase is briefly unavailable (503), the response carries a `retry_token`. The form resubmits with it; only a session minted by this email flow is accepted there." },
+        { n: "b-sessions", from: "b-authapi", t: "Finish: revoke and return to sign-in", d: "On success `password_changed_at` is backdated and all refresh tokens are revoked. The session is then verified like any token, which links the local row for an invited user. The form returns to the sign-in page; there is no automatic login with the pre-change session." },
+      ],
+    },
+    {
+      id: "admin", group: "Accounts & access", title: "Managing users",
+      intro: "What an admin can do, and the guards around it.",
+      steps: [
+        { n: "w-adminview", t: "Open the admin view", d: "Only rendered for admins. It loads the user list and the configured tier names." },
+        { n: "b-adminapi", from: "w-adminview", t: "Admin-only router", d: "`require_admin` guards every route. Non-admins get 403." },
+        { n: "b-gateway", from: "b-adminapi", t: "Create or invite at Supabase", d: "With a password the identity is created directly; without one an invitation is sent. A per-email lock prevents two concurrent requests from interleaving." },
+        { n: "d-users", from: "b-adminapi", t: "Local row and audit", d: "The local row stores the tier (validated against the configured tiers), flags and `external_id`. Every changed field writes an `admin_audit` row with the acting admin." },
+        { n: "b-adminapi", t: "Change tier, flags or password", d: "PATCH changes one field at a time. The server refuses an admin removing their own admin rights or deactivating themselves (409), and promotions while `allow_additional_admins` is off (403)." },
+        { n: "b-sessions", from: "b-adminapi", t: "Effects are immediate", d: "Deactivation and de-admin apply on the user's next request because the row is re-read every time. A password reset revokes the user's sessions at Supabase." },
+        { n: "b-manage", from: "d-users", t: "Recovery without the web UI", d: "With shell access, `python -m app.manage` lists users, sets passwords, grants or revokes admin and (de)activates accounts. These changes are audited without an actor." },
+      ],
+    },
+    // ── Writing & checking ──
+    {
+      id: "fastcheck", group: "Writing & checking", title: "Fast check: rules & terminology",
+      intro: "What happens one second after the writer stops typing.",
+      steps: [
+        { n: "w-editor", t: "The writer types", d: "Every change maps existing finding positions through the edit; findings whose text was edited disappear immediately." },
+        { n: "w-scheduler", from: "w-editor", t: "1 s pause", d: "The scheduler fires a fast check (rules and terminology only). After 5 s, a full check follows if auto-check is on." },
+        { n: "w-controller", from: "w-scheduler", t: "Build the request", d: "The controller snapshots the text and turns the selected profile and header into `domain_ids`, `rule_config` (categories off, exceptions, packs) and `llm_instructions`." },
+        { n: "b-checksapi", from: "w-controller", t: "POST /api/checks", d: "Authenticated like every request. A text above the size cap is refused with 413. A job owned by the caller is created." },
+        { n: "b-nlp", from: "b-checksapi", t: "Analyze the text", d: "The language's spaCy pipeline parses the text. If the model is missing, NLP-based rules are skipped and reported." },
+        { n: "b-rules", from: "b-nlp", t: "Run the rules", d: "The engine runs every active rule for the language: patterns, substitutions, sentence lengths, repetitions, syntax patterns and document-wide consistency." },
+        { n: "b-term", from: "b-checksapi", t: "Check terminology", d: "For each selected domain, forbidden variants and wrong casing of preferred terms are flagged; duplicates across domains are removed." },
+        { n: "w-editor", from: "b-checksapi", t: "Show the findings", d: "The 202 response already contains these findings. If the text has not changed since the snapshot, they replace the previous rule and terminology findings; highlights, sidebar and score update." },
+      ],
+    },
+    {
+      id: "llmcheck", group: "Writing & checking", title: "LLM check & streaming",
+      intro: "The full check: the LLM runs in the background and its results stream to the browser.",
+      steps: [
+        { n: "w-controller", t: "Full check requested", d: "After a 5 s pause (auto-check) or on the Check button, the request includes the LLM with the tier or pinned model." },
+        { n: "b-checksapi", from: "w-controller", t: "Inline work, then 202", d: "Within the POST, rules and terminology run and the LLM gate (next steps) admits or skips the LLM. Only then is the provider call started as a background task and the 202 returned with the fast findings and `effective_llm`. The client opens `GET /api/checks/{id}/events` with its bearer token." },
+        { n: "b-gate", from: "b-checksapi", t: "Through the LLM gate", d: "Size cap, policy resolution, provider construction and reservation, always in this order, still inside the POST. A skip is reported in `effective_llm` and the fast findings stand; an unknown provider (422) or too many parallel runs (429) fail the POST itself." },
+        { n: "b-policy", from: "b-gate", t: "Resolve the tier", d: "If the user's plan does not allow the requested tier, the nearest allowed one is used and the result is marked degraded, which the sidebar shows." },
+        { n: "d-usage", from: "b-usage", t: "Reserve credits", d: "One transaction inserts a `started` ledger row and checks hour/day/week/month budgets and concurrency. An exhausted window skips the LLM; too many parallel runs return 429." },
+        { n: "b-factory", from: "b-gate", t: "Construct the provider", d: "For the balanced tier in English this is `ClaudeProvider(claude-sonnet-5-5)`; Opus 5.5 would get effort `low`." },
+        { n: "b-llmchecker", from: "b-factory", t: "Build the prompt", d: "Per-language instructions plus profile guidance, asking for findings with verbatim quotes and a six-dimension scorecard. The system part is marked for prompt caching." },
+        { n: "t-anthropic", from: "b-claude", t: "Claude generates", d: "Streaming response; every 25 output tokens an `llm_progress` event updates the token counter in the status line." },
+        { n: "b-anchor", from: "b-llmchecker", t: "Parse, anchor, vet", d: "Each quote must be found in the text or the finding is dropped. Parenthesized pseudo-fixes become advice; remaining fixes pass sanity and spelling checks." },
+        { n: "b-dedup", from: "b-anchor", t: "Remove repeats", d: "LLM findings that repeat a rule or terminology finding are dropped; the deterministic ones are kept." },
+        { n: "b-jobs", from: "b-dedup", t: "Events, settlement, done", d: "`checker_result` with the LLM findings, then the `scorecard`. The ledger row is settled to actual tokens before `done` is emitted." },
+        { n: "w-controller", from: "b-jobs", t: "Apply in the browser", d: "Only the latest check's events count. LLM findings replace previous LLM findings, the scorecard feeds the craft score, and `/me` is refreshed so the quota indicator shows the settled cost." },
+      ],
+    },
+    {
+      id: "suggest", group: "Writing & checking", title: "Suggestions & rewrites",
+      intro: "Asking the LLM for a fix for one finding, and how bad fixes are kept away.",
+      steps: [
+        { n: "w-sidebar", t: "Open a finding", d: "The detail card shows built-in suggestions (rules and terminology bring their own) and offers 'Suggest fix' and 'Rewrite sentence'." },
+        { n: "w-suggest", from: "w-sidebar", t: "Request with the current span", d: "Uses the finding's position as it is now, after any typing. One LLM action at a time; results are cached per finding." },
+        { n: "b-suggestapi", from: "w-suggest", t: "POST /api/suggestions", d: "`span` asks for drop-in replacements; `sentence` widens to whole sentences and asks for rewrites." },
+        { n: "b-gate", from: "b-suggestapi", t: "Same gate, synchronous", d: "Policy, size cap and reservation apply exactly as for checks; a skip comes back inline with its code." },
+        { n: "t-anthropic", from: "b-claude", t: "One LLM call", d: "The provider returns a JSON array of candidates." },
+        { n: "b-anchor", from: "b-suggestapi", t: "Vet and re-check", d: "Advice is split off. Each candidate passes sanity and spelling checks, then is spliced into the text and rejected if it adds rule findings or does not fix the rule it targets. Spelling and rule rejects are kept as held-back." },
+        { n: "w-sidebar", from: "b-suggestapi", t: "Show the result", d: "Accepted suggestions become buttons. If all were rejected, the card says so honestly and offers 'Show N held-back suggestions' with the reasons. Advice appears as notes without a button." },
+      ],
+    },
+    {
+      id: "apply", group: "Writing & checking", title: "Applying a fix",
+      intro: "From a click on a suggestion to the saved, re-checked text.",
+      steps: [
+        { n: "w-sidebar", t: "Click a suggestion", d: "Every suggestion is a drop-in replacement for exactly the finding's span." },
+        { n: "w-docport", from: "w-sidebar", t: "Apply through the document port", d: "In the web app the port edits CodeMirror; in the embed it asks the host page and waits for confirmation." },
+        { n: "w-editor", from: "w-docport", t: "One editor transaction", d: "The current tracked span is replaced. A rewrite is located by its sentence text, not by stale offsets. If the target is gone, nothing happens." },
+        { n: "w-score", from: "w-editor", t: "Instant re-score", d: "The fixed finding disappears with its span; the mechanics score is recomputed on the client. An existing scorecard is marked stale." },
+        { n: "w-autosave", from: "w-editor", t: "Buffered and saved", d: "The change is written to the local buffer at once and saved to the server after 1.5 s." },
+        { n: "w-equiv", from: "w-scheduler", t: "Re-check keeps context", d: "One second later a fast check runs. Finding equivalence carries the open detail card and cached suggestions over to the new findings." },
+      ],
+    },
+    // ── Content & configuration ──
+    {
+      id: "docs", group: "Content & configuration", title: "Saving documents",
+      intro: "Autosave with a local safety net, optimistic locking and conflict recovery.",
+      steps: [
+        { n: "w-autosave", t: "Snapshot on every change", d: "Text, findings, scorecard and header settings form one snapshot, marked dirty." },
+        { n: "w-prefs", from: "w-autosave", t: "Local buffer first", d: "The snapshot is written to localStorage synchronously, so a crash or closed tab loses nothing." },
+        { n: "b-docsapi", from: "w-autosave", t: "PUT with revision", d: "After 1.5 s without changes, the save is sent with the revision the client last saw. Identical content is not sent at all." },
+        { n: "d-documents", from: "b-docsapi", t: "Conditional update", d: "`WHERE id = ? AND revision = ?` bumps the revision. `edited_at` moves only if text or name changed; a check-only save moves `checked_at` instead." },
+        { n: "w-docs", from: "b-docsapi", t: "Sidebar order from the server", d: "The response's timestamps are merged into the list, which is re-sorted exactly like the server sorts it. A background save does not reorder documents." },
+        { n: "w-hydration", from: "b-docsapi", t: "409 or 404: recover", d: "The client fetches the server version. If it already has the buffered text, the conflict was the client's own late write. Otherwise the buffered text is saved as a '(recovered)' copy." },
+        { n: "b-naming", from: "w-autosave", t: "Auto-title", d: "Once an untitled document has 20 words, the server asks the cheap tier for a title (free of credits by default) and renames it without touching the revision." },
+      ],
+    },
+    {
+      id: "folders", group: "Content & configuration", title: "Folders & folder defaults",
+      intro: "Grouping documents, and presets for new documents in a folder.",
+      steps: [
+        { n: "w-docs", t: "Organize in the sidebar", d: "Create, rename, collapse and delete folders; move documents with their menu. Moving never goes through autosave." },
+        { n: "b-foldersapi", from: "w-docs", t: "Folders API", d: "Names are unique per owner, case-insensitively (409 otherwise). Deleting detaches documents in the same transaction." },
+        { n: "d-folders", from: "b-foldersapi", t: "Stored per owner", d: "Folders are private to their owner; another user's folder id is a 404." },
+        { n: "w-folderdefaults", from: "w-docs", t: "Set folder defaults", d: "Language, profile, domains, LLM setting and auto-check. A profile needs a language; 'Take from current document' copies the header." },
+        { n: "b-foldersapi", from: "w-folderdefaults", t: "Validate and store", d: "Full replace of all seven fields, validated server-side. Later, defaults that point to deleted profiles or domains are pruned from responses only." },
+        { n: "b-docsapi", from: "w-docs", t: "New document here", d: "The client overlays the folder's defaults on the create payload and posts it with `folder_id`." },
+        { n: "w-hydration", from: "b-docsapi", t: "Open with the defaults", d: "The new document is hydrated, so the header immediately shows the folder's language, profile and LLM setting." },
+      ],
+    },
+    {
+      id: "profiles", group: "Content & configuration", title: "Checking profiles & rules",
+      intro: "Profiles bundle how a text is checked: rules, packs, terminology and LLM settings.",
+      steps: [
+        { n: "w-header", t: "Pick a profile", d: "Profiles are listed per language; the last one used per language is remembered, Standard otherwise." },
+        { n: "b-profilesapi", from: "w-header", t: "List profiles", d: "Built-in global profiles plus the user's own. Stale rule and domain ids are pruned from the response." },
+        { n: "d-profiles", from: "b-profilesapi", t: "Stored settings", d: "Category toggles, exceptions, packs, domains, tier or pinned model, instructions, example text." },
+        { n: "w-header", from: "b-profilesapi", t: "Apply to the header", d: "Selecting a profile copies its domains and LLM setting into the header. Changing the header afterwards shows the profile as dirty, with save and reset." },
+        { n: "w-profilesview", t: "Edit profiles", d: "Cards for all fields, pack chips and the tier buttons. Non-admins see built-ins read-only; creating profiles can depend on the tier." },
+        { n: "w-rulesview", from: "w-profilesview", t: "Choose rules", d: "Category switches, pack sections and per-rule switches write to the selected profile. Each rule shows its examples." },
+        { n: "b-rulesapi", from: "w-rulesview", t: "The rule catalog", d: "`GET /api/rules` lists the rules with category, pack and examples, plus any files that failed validation." },
+        { n: "w-controller", from: "w-header", t: "At check time", d: "The profile becomes the request's `rule_config` and `llm_instructions`. The backend never reads the profiles table during a check." },
+      ],
+    },
+    {
+      id: "terminology", group: "Content & configuration", title: "Terminology",
+      intro: "From a term list to findings with one-click fixes.",
+      steps: [
+        { n: "w-termview", t: "Maintain domains and terms", d: "Each term has a preferred form, forbidden variants, a definition and a case-sensitivity flag." },
+        { n: "b-termapi", from: "w-termview", t: "Terminology API", d: "Creating may require the `custom_domains` feature. Built-in domains can only be changed by admins." },
+        { n: "d-terms", from: "b-termapi", t: "Stored", d: "Domains are global or private; terms follow their domain." },
+        { n: "w-header", t: "Select domains", d: "The domain picker (or the profile) decides which domains a check uses; the selection is saved with the document." },
+        { n: "b-term", from: "b-checksapi", t: "Check", d: "Forbidden variants are matched on word boundaries (or tokens in Japanese and Chinese); wrong casing of case-sensitive terms is flagged too." },
+        { n: "w-sidebar", from: "b-term", t: "Findings with fixes", d: "Terminology findings are errors with the preferred term as the suggestion." },
+      ],
+    },
+    {
+      id: "metering", group: "Content & configuration", title: "Tiers, quotas & credits",
+      intro: "How access to LLM features is limited and measured.",
+      steps: [
+        { n: "b-config", t: "Configure tiers", d: "Each user tier lists allowed quality tiers, providers, models, features and limits (max text length for the LLM, parallel runs, credit budgets per hour/day/week/month). Without a `tiers:` block everything is unrestricted." },
+        { n: "d-users", from: "b-adminapi", t: "Assign a tier", d: "An admin sets each user's tier in the admin view. Admins themselves are unrestricted." },
+        { n: "w-policy", from: "b-authapi", t: "The UI learns the policy", d: "`/api/auth/me` returns the policy, feature list, limits and the used percentage of each credit window. The header disables what is not in the plan and shows the tightest window." },
+        { n: "b-gate", from: "b-checksapi", t: "The server enforces", d: "Whatever the client sends, the gate resolves the policy and reserves credits before any provider call." },
+        { n: "b-usage", from: "b-gate", t: "Credits", d: "Estimated from the text length at admission and settled to the provider's token counts at the end, weighted by model factor, output weight and source." },
+        { n: "b-activityapi", from: "d-usage", t: "Activity", d: "Daily runs, tokens and credits are aggregated from the ledger." },
+        { n: "w-activity", from: "b-activityapi", t: "Charts", d: "Each user sees their own history; admins see all users and can drill in." },
+      ],
+    },
+    {
+      id: "extension", group: "Writing & checking", title: "Checking text on other sites",
+      intro: "The browser extension connects a text field on any page to the server's /embed surface.",
+      steps: [
+        { n: "t-hostsite", t: "A field on a web page", d: "For example a GitHub comment box. The writer focuses it." },
+        { n: "x-scout", from: "t-hostsite", t: "The chip appears", d: "The content script recognizes an eligible field and shows the connect chip in its corner." },
+        { n: "x-session", from: "x-scout", t: "Connect", d: "A click starts a session with the matching adapter, which extracts the text and watches for changes." },
+        { n: "x-sw", from: "x-session", t: "Route", d: "The service worker binds the field to its window and forwards messages to the side panel. Heartbeats keep it alive during the session." },
+        { n: "x-panel", from: "x-sw", t: "Side panel", d: "The panel loads the server's `/embed` in an iframe and relays the protocol messages unchanged." },
+        { n: "e-bridge", from: "x-panel", t: "Handshake", d: "The embed accepts the first valid `hello` and pins its sender. The server allows the extension to frame `/embed` via `frame-ancestors`." },
+        { n: "e-hostdoc", from: "e-bridge", t: "Text arrives", d: "`fieldConnected` and `textChanged` update the shim's copy of the text and keep existing findings in place." },
+        { n: "b-checksapi", from: "e-embedapp", t: "Same checks as the web app", d: "The embed runs the same controller and API calls, tagged as `browser-extension`, inside its own signed-in session." },
+        { n: "x-session", from: "e-bridge", t: "Markings on the page", d: "Findings come back as markings: a mirror overlay for textareas, CSS highlights for contentEditable. Clicking one selects the finding in the panel." },
+        { n: "x-session", from: "e-hostdoc", t: "Apply a fix", d: "`applyReplacement` carries the expected text. The adapter inserts via `execCommand` so undo works, verifies the result and reports success or refusal within 2 s." },
+      ],
+    },
+    // ── Platform & delivery ──
+    {
+      id: "startup", group: "Platform & delivery", title: "Server startup",
+      intro: "What create_app() does before the first request is served.",
+      steps: [
+        { n: "b-config", t: "Load settings", d: "Read the YAML named by `FW_CONFIG_FILE` (on fly `/fly/config.yaml`) and validate it; unknown keys fail startup." },
+        { n: "d-seam", from: "b-bootstrap", t: "Open the database", d: "Postgres with the DSN from `FW_DATABASE_URL`: a pool of 1–5 connections, one opened immediately so a wrong DSN fails now." },
+        { n: "t-supadb", from: "d-seam", t: "Verify the schema", d: "Each store's constructor checks its tables. Production runs `manage_schema: false`: the app only verifies that tables and columns exist and refers to `init-db` if not. It cannot run DDL." },
+        { n: "b-rules", from: "b-bootstrap", t: "Build the checking machinery", d: "The rule engine loads and validates all 141 rule files. The job manager, NLP registry (models load later, on first use) and provider factory are created alongside." },
+        { n: "b-bootstrap", from: "b-config", t: "Wire auth", d: "Supabase mode: require the URL and both keys, build the gateway, refuse to start if the project allows any sign-in method other than email, then create the user store and the verifier." },
+        { n: "d-users", from: "b-bootstrap", t: "First admin and ledger sweep", d: "If the users table is empty, the admin from `FW_ADMIN_EMAIL`/`FW_ADMIN_PASSWORD` is created. Ledger rows still marked `started` by a previous process are marked abandoned." },
+        { n: "b-seeds", from: "b-bootstrap", t: "Seed built-ins", d: "Example terminology domain and per-language profiles, once." },
+        { n: "b-spa", from: "b-bootstrap", t: "Mount the frontend", d: "The routers are included, then the built assets are indexed and the catch-all with its CSP headers is registered last." },
+        { n: "g-flyproxy", from: "b-health", t: "Healthy", d: "`/api/health` answers and fly routes traffic. spaCy models load on first use per language; that load dominates a cold start." },
+      ],
+    },
+    {
+      id: "release", group: "Platform & delivery", title: "Release & deploy",
+      intro: "From a merged pull request to the new version running on fly.io.",
+      steps: [
+        { n: "g-repo", t: "Merge", d: "A branch with a pull request, green CI, and a LOGBOOK entry as the last commit; the owner rebase-merges." },
+        { n: "g-ci", from: "g-repo", t: "CI on main", d: "The workflows whose paths changed run again on main and publish coverage badges." },
+        { n: "g-release", from: "g-ci", t: "Tag vX.Y.Z", d: "Pushing a version tag builds the image for amd64 and arm64 with the tag as its version and creates the GitHub release." },
+        { n: "g-ghcr", from: "g-release", t: "Image published", d: "`ghcr.io/saigyo/fabulous-writing:X.Y.Z` is public." },
+        { n: "g-initdb", from: "g-ghcr", t: "Migrate first, if needed", d: "A schema-changing release runs `init-db` under the admin DSN before deploying. Changes are additive, so the old version keeps working." },
+        { n: "g-secrets", from: "g-initdb", t: "Bump the image tag", d: "A one-line change in `deploy/fly/fly.toml`, committed on a deploy branch with its own PR." },
+        { n: "g-fly", from: "g-secrets", t: "fly deploy --ha=false", d: "Replaces the single machine with one running the new image. `--ha=false` is mandatory; the default would create two machines." },
+        { n: "g-flyproxy", from: "g-fly", t: "Verify", d: "Health check passes, `/api/health` reports the new version, and the running image digest matches the registry." },
+      ],
+    },
+    {
+      id: "selfhost", group: "Platform & delivery", title: "Self-hosting",
+      intro: "Running the same image on your own machine with the setup wizard.",
+      steps: [
+        { n: "g-selfhost", t: "fabulous.sh serve", d: "Checks that the port is free, pulls the image and starts the container with `/config` and `/data` volumes." },
+        { n: "b-wizard", from: "g-selfhost", t: "Setup wizard", d: "On first run it asks for a provider and key and writes `config.yaml` and `fabulous.env` (mode 0600), including the routing table for all languages." },
+        { n: "g-image", from: "b-wizard", t: "Entrypoint", d: "Loads the env file without overriding real environment variables and starts one uvicorn process." },
+        { n: "d-seam", from: "g-image", t: "SQLite by default", d: "The database is a file on the `/data` volume; schema and migrations run automatically at startup." },
+        { n: "t-ollama", from: "b-httpchat", t: "Optional local models", d: "The local tier uses Ollama on the host via `host.docker.internal`." },
+      ],
+    },
+  ];
+
+  const tour = {
+    title: "Fabulous Writing at a glance",
+    paragraphs: [
+      "Fabulous Writing checks writing in seven languages and reports **findings**: issues with an exact text span, an explanation and, where possible, a one-click fix.",
+      "Three checkers produce them. A **rule engine** (141 YAML rules) and a **terminology checker** run in milliseconds. An **LLM** (Claude in production) finds subtler issues and rates the text; its output only counts after deterministic anchoring and vetting.",
+      "The **web app** is a React single-page app around a CodeMirror editor. The **backend** is one FastAPI process that also serves the frontend. Production runs on one **fly.io** machine with **Supabase** for authentication and Postgres.",
+      "An **embed surface** and a **browser extension** bring the same checks to text fields on other websites.",
+    ],
+    howto: [
+      "Drag to pan, scroll or pinch to zoom. Zoom in to see more detail on each component.",
+      "Click a component to read what it does, its key files and the processes it takes part in.",
+      "Pick a process on the left to walk through it step by step with ← and →.",
+      "Press / to search, 0 to fit the whole map, Esc to close panels.",
+    ],
+  };
+
+  return { REPO, DOCS, zones, nodes, edges, flows, tour };
+})();
