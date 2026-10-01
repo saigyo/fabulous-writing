@@ -4903,3 +4903,28 @@ permission classifier, so Markus ran it: `claude-opus-5-5`,
 `claude-sonnet-5-5` and `claude-haiku-4-5` appear twice each (the European
 and CJK tier blocks; the other languages are YAML aliases). No schema
 changes → no `init-db`.
+
+## 2026-10-01 — Interactive architecture atlas (PR #174)
+
+`docs/architecture-atlas/`: a zoomable canvas of the whole system, made at
+Markus's request as interactive documentation of the app, its surroundings and
+its infrastructure. Plain HTML/JS with no build step. Content is in
+`atlas-data.js`: 110 components, 17 step-by-step processes and 168
+connections. `atlas.js` renders it. Written from the architecture docs and
+the code; a separate agent then fact-checked it against the code and found 13
+errors, all fixed. Examples: five endpoints are public, not two; the LLM gate
+runs inside `POST /api/checks` before the 202 is returned; there is no
+last-admin guard, only the self-demotion 409.
+
+Two rounds of feedback from Markus. First, the detail panels opened with
+technical details, so each card now starts with a plain-language
+"what it's for" paragraph. Second, the arrows had been hand-picked and left
+most views unconnected. They are now derived from imports and API calls:
+frontend components point at the backend router they call, and the app store
+and i18n get none. Raw backend imports are not a usable signal for this,
+because the app factory imports every router; backend arrows were curated
+using them as evidence. Hovering a card highlights its arrows.
+
+Verified in headless Chromium: light, dark and 390 px phone width, no page
+errors, clicking, zooming, searching, deep links and process stepping all
+work. Iteration continues in a follow-up session.
