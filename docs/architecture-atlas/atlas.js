@@ -174,6 +174,7 @@
   edgeSvg.append(structural, flowLayer);
   const edgeLabels = $("#edge-labels");
   const edgeEls = [];
+  const labelEls = [];
   for (const [from, to, label] of A.edges) {
     const g = edgeGeometry(nodeById.get(from), nodeById.get(to));
     const p = svg("path", { d: g.d, class: "edge", "marker-end": "url(#arrow)" });
@@ -183,6 +184,9 @@
     edgeEls.push(p);
     if (label) {
       const l = el("span", "edge-label", label);
+      l.dataset.from = from;
+      l.dataset.to = to;
+      labelEls.push(l);
       l.style.left = g.mx + "px";
       l.style.top = g.my + "px";
       edgeLabels.append(l);
@@ -333,6 +337,23 @@
     const zone = target.closest(".zone-head");
     if (zone) { selectZone(zone.dataset.zone); return; }
   }
+  // Hovering a card highlights its arrows (pointer devices only).
+  world.addEventListener("pointerover", (e) => {
+    const n = e.target.closest(".node");
+    if (n && e.pointerType === "mouse") highlightEdges(n.dataset.node, "hovered");
+  });
+  world.addEventListener("pointerout", (e) => {
+    const n = e.target.closest(".node");
+    if (n && !n.contains(e.relatedTarget)) highlightEdges(null, "hovered");
+  });
+  const focusIds = { related: null, hovered: null };
+  function highlightEdges(id, cls) {
+    focusIds[cls] = id;
+    viewport.classList.toggle("has-focus", !!(focusIds.related || focusIds.hovered));
+    for (const p of edgeEls) p.classList.toggle(cls, !!id && (p.dataset.from === id || p.dataset.to === id));
+    for (const l of labelEls) l.classList.toggle(cls, !!id && (l.dataset.from === id || l.dataset.to === id));
+  }
+
   // Keyboard activation of nodes and zone heads (pointer clicks go through clickTarget).
   world.addEventListener("keydown", (e) => {
     if (e.key !== "Enter" && e.key !== " ") return;
@@ -384,10 +405,7 @@
 
   function markSelection() {
     for (const [id, b] of nodeEls) b.classList.toggle("selected", state.view === "node" && state.node === id);
-    for (const p of edgeEls) {
-      const hit = state.view === "node" && (p.dataset.from === state.node || p.dataset.to === state.node);
-      p.classList.toggle("related", hit);
-    }
+    highlightEdges(state.view === "node" ? state.node : null, "related");
   }
 
   function selectNode(id, { focus = true } = {}) {

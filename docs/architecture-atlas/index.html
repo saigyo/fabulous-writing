@@ -181,16 +181,19 @@ code { font-family: var(--mono); font-size: 0.86em; background: var(--panel-2); 
 .edge {
   fill: none; stroke: var(--edge);
   stroke-width: calc(1.2px * var(--inv));
-  opacity: 0.55;
-  transition: opacity 0.25s ease;
+  opacity: 0.38;
+  transition: opacity 0.2s ease;
 }
-.edge.related { stroke: var(--ink-2); opacity: 1; stroke-width: calc(1.8px * var(--inv)); }
+.edge.related, .edge.hovered { stroke: var(--ink-2); opacity: 1; stroke-width: calc(1.8px * var(--inv)); }
+.has-focus .edge:not(.related):not(.hovered) { opacity: 0.14; }
 .edge-label {
   position: absolute; transform: translate(-50%, -50%);
   font-family: var(--mono); font-size: 11px; color: var(--ink-2);
   background: var(--ground); padding: 0 5px; border-radius: 4px; white-space: nowrap;
 }
 [data-lod="far"] .edge-label, [data-lod="mid"] .edge-label { display: none; }
+.has-focus .edge-label:not(.related):not(.hovered) { display: none; }
+[data-lod="mid"] .edge-label.related, [data-lod="mid"] .edge-label.hovered { display: block; }
 
 /* Process mode */
 .flow-active .node:not(.in-flow) { opacity: 0.22; }

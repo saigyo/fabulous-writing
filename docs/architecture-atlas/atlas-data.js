@@ -105,6 +105,7 @@ window.ATLAS = (function () {
         "- **Checking context:** language, domains, tier or pinned provider/model, auto-check flag, profiles, selected profile.",
         "- **Results & UI:** tracked findings mirrored from the editor, selection, filters, check phase, LLM progress, scorecard, `activeView`.",
         "- **Per-finding caches:** fetched suggestions, rewrites, held-back candidates and advice, re-keyed when findings get new ids on a re-check.",
+        "Nearly every frontend module reads or writes the store, so the map draws no arrows to it; they would point from almost everywhere.",
         "There is no router: six views (editor, rules, terminology, profiles, admin, activity) are switched by `activeView`. The editor is hidden, not unmounted, so findings and in-flight LLM results survive a view switch.",
       ],
       files: ["frontend/src/state/store.ts"],
@@ -126,6 +127,7 @@ window.ATLAS = (function () {
       id: "w-api", zone: "web", x: WX[3], y: 170, kind: "Module", title: "API client",
       summary: "The only module that talks to the network: typed fetch wrappers plus a fetch-based SSE reader.",
       body: [
+        "The map draws frontend components pointing straight at the backend router they call. All of those calls go through this module.",
         "Every request carries `Authorization: Bearer <token>`, built in one place (`authHeader()`) from the token current at fetch time.",
         "A 401 from any call ends the session, but only if the token that caused it is still the current one; a late reply from an old session cannot log out its successor.",
         "The check stream uses `fetch()` + `ReadableStream` instead of `EventSource`, because `EventSource` cannot send an `Authorization` header and would silently reconnect a finished stream.",
@@ -174,6 +176,7 @@ window.ATLAS = (function () {
       summary: "Seven UI locales (en, de, fr, es, it, ja, zh), independent of the seven checked languages.",
       body: [
         "The locale is the user's choice or the browser preference. Components call `useMessages()`, other code `currentMessages()`.",
+        "Every component with visible text uses it, so the map draws no arrows to it.",
         "A test asserts that every catalog has the same keys, so a missing translation fails CI.",
         "German, French, Spanish and Italian address the user informally (Du, tu, tú); `register.test.ts` pins this.",
       ],
@@ -1236,27 +1239,79 @@ window.ATLAS = (function () {
     },
   ];
 
-  // Structural connections, drawn faintly at all times.
+  // Structural connections: an arrow points from the component that calls
+  // or uses something to the component it depends on. Derived from the
+  // code's imports and API calls (2026-10-01), with two conventions:
+  // frontend components point straight at the backend router they call
+  // (every such call passes through the API client, drawn once), and the
+  // app store gets no arrows because nearly every frontend module reads it.
   const edges = [
-    ["w-api", "b-middleware", "HTTPS · JSON · SSE"],
-    ["w-login", "w-api"], ["w-controller", "w-api"], ["w-suggest", "w-api"], ["w-autosave", "w-api"],
-    ["w-store", "w-prefs"], ["w-editor", "w-scheduler"], ["w-scheduler", "w-controller"],
-    ["w-controller", "w-docport"], ["w-docport", "w-editor"], ["w-sidebar", "w-suggest"],
-    ["w-autosave", "w-prefs"], ["w-docs", "w-hydration"], ["w-hydration", "w-editor"],
-    ["e-embedapp", "w-controller", "same check pipeline"], ["e-bridge", "e-hostdoc"], ["e-hostdoc", "w-docport"],
-    ["x-scout", "x-session"], ["x-session", "x-sw", "runtime port"], ["x-sw", "x-panel", "runtime port"],
-    ["x-panel", "e-bridge", "postMessage"], ["x-scout", "t-hostsite"],
-    ["b-middleware", "b-deps"], ["b-deps", "b-verifier"], ["b-authapi", "b-gateway"], ["b-gateway", "t-supaauth", "GoTrue"],
-    ["b-verifier", "t-supaauth", "JWKS"], ["b-checksapi", "b-jobs"], ["b-checksapi", "b-rules"], ["b-rules", "b-nlp"],
-    ["b-checksapi", "b-term"], ["b-checksapi", "b-gate"], ["b-suggestapi", "b-gate"], ["b-naming", "b-gate"],
-    ["b-gate", "b-policy"], ["b-gate", "b-usage"], ["b-gate", "b-factory"], ["b-factory", "b-claude"],
-    ["b-factory", "b-httpchat"], ["b-factory", "b-bedrock"], ["b-llmchecker", "b-anchor"],
+    // Web app, internal
+    ["w-login", "w-reset", "renders"], ["w-login", "w-prefs"], ["w-login", "w-docs", "starts document load"],
+    ["w-account", "w-login", "logout, re-login"],
+    ["w-header", "w-policy"], ["w-header", "w-routing"], ["w-header", "w-hydration", "profile apply"],
+    ["w-editor", "w-scheduler"], ["w-editor", "w-autosave"], ["w-editor", "w-equiv"], ["w-editor", "w-score"],
+    ["w-scheduler", "w-controller"],
+    ["w-controller", "w-docport"], ["w-controller", "w-routing"], ["w-controller", "w-policy"], ["w-controller", "w-autosave", "save results"],
+    ["w-suggest", "w-docport"], ["w-suggest", "w-routing"], ["w-suggest", "w-policy"],
+    ["w-sidebar", "w-suggest"], ["w-sidebar", "w-docport", "apply fix"], ["w-sidebar", "w-score"], ["w-sidebar", "w-policy"],
+    ["w-docport", "w-editor"],
+    ["w-docs", "w-hydration"], ["w-docs", "w-autosave"], ["w-docs", "w-folderdefaults"],
+    ["w-hydration", "w-docport"], ["w-hydration", "w-controller", "cancel check"], ["w-hydration", "w-autosave"],
+    ["w-autosave", "w-prefs", "buffer"], ["w-autosave", "w-docport"],
+    ["w-folderdefaults", "w-policy"],
+    ["w-profilesview", "w-routing"], ["w-profilesview", "w-policy"], ["w-termview", "w-policy"],
+    // Web app → backend routers (through the API client)
+    ["w-api", "b-middleware", "all API calls · HTTPS"],
+    ["w-login", "b-authapi"], ["w-login", "b-health"], ["w-reset", "b-authapi"], ["w-account", "b-authapi"],
+    ["w-header", "b-profilesapi"], ["w-header", "b-catalogapi"], ["w-header", "b-termapi"],
+    ["w-controller", "b-checksapi", "check + SSE"], ["w-suggest", "b-suggestapi"],
+    ["w-autosave", "b-docsapi"], ["w-hydration", "b-docsapi"], ["w-docs", "b-docsapi"], ["w-docs", "b-foldersapi"],
+    ["w-folderdefaults", "b-foldersapi"], ["w-folderdefaults", "b-profilesapi"],
+    ["w-rulesview", "b-rulesapi"], ["w-rulesview", "b-profilesapi", "save switches"],
+    ["w-termview", "b-termapi"], ["w-profilesview", "b-profilesapi"], ["w-profilesview", "b-rulesapi", "packs"],
+    ["w-adminview", "b-adminapi"], ["w-activity", "b-activityapi"],
+    // Embed & extension
+    ["e-embedapp", "e-bridge"], ["e-embedapp", "e-hostdoc"], ["e-embedapp", "w-header", "reuses"], ["e-embedapp", "w-sidebar", "reuses"],
+    ["e-embedapp", "w-controller", "same check pipeline"], ["e-embedapp", "w-login", "reuses"],
+    ["e-bridge", "e-hostdoc"], ["e-bridge", "e-protocol"], ["e-hostdoc", "e-protocol"], ["e-hostdoc", "w-docport", "implements"],
+    ["x-scout", "x-detect"], ["x-scout", "x-reacquire"], ["x-scout", "x-session"], ["x-reacquire", "x-detect"],
+    ["x-session", "x-sw", "runtime port"], ["x-session", "e-protocol"], ["x-sw", "x-panel", "runtime port"],
+    ["x-panel", "x-options", "server URL"], ["x-panel", "e-bridge", "postMessage"], ["sim", "x-session", "same adapters"], ["sim", "e-protocol"],
+    ["x-session", "t-hostsite", "reads & edits field"],
+    // Backend: request path and auth
+    ["b-middleware", "b-deps"], ["b-middleware", "b-spa", "non-API paths"],
+    ["b-deps", "b-verifier"], ["b-deps", "b-sessions"], ["b-deps", "d-users", "re-read user"],
+    ["b-authapi", "b-throttle"], ["b-authapi", "b-gateway"], ["b-authapi", "b-verifier"], ["b-authapi", "b-sessions"],
+    ["b-authapi", "b-policy", "/me policy"], ["b-authapi", "b-usage", "/me usage"],
+    ["b-verifier", "d-users", "resolve user"], ["b-verifier", "t-supaauth", "JWKS"], ["b-gateway", "t-supaauth", "GoTrue"],
+    ["b-adminapi", "b-gateway"], ["b-adminapi", "b-throttle", "email locks"], ["b-adminapi", "d-users"], ["b-adminapi", "b-sessions"],
+    ["b-throttle", "d-memory"],
+    // Backend: checking
+    ["b-checksapi", "b-jobs"], ["b-checksapi", "b-rules"], ["b-checksapi", "b-term"], ["b-checksapi", "b-dedup"],
+    ["b-checksapi", "b-gate"], ["b-checksapi", "b-llmchecker", "background task"],
+    ["b-rules", "b-nlp"], ["b-rules", "d-rulesfs"], ["b-term", "b-nlp"], ["b-term", "d-terms"],
+    ["b-llmchecker", "b-anchor"], ["b-anchor", "d-models", "dictionaries"], ["b-nlp", "d-models"], ["b-jobs", "d-memory"],
+    ["b-suggestapi", "b-gate"], ["b-suggestapi", "b-llmchecker", "prompts"], ["b-suggestapi", "b-anchor"], ["b-suggestapi", "b-rules", "re-check"],
+    ["b-gate", "b-policy"], ["b-gate", "b-usage"], ["b-gate", "b-factory"], ["b-policy", "b-config", "tiers"], ["b-usage", "d-usage"],
+    ["b-factory", "b-claude"], ["b-factory", "b-httpchat"], ["b-factory", "b-bedrock"],
     ["b-claude", "t-anthropic", "Messages API"], ["b-httpchat", "t-openai"], ["b-httpchat", "t-ollama"], ["b-bedrock", "t-bedrock"],
-    ["b-usage", "d-usage"], ["d-seam", "t-supadb", "Supavisor"], ["b-docsapi", "d-documents"], ["b-foldersapi", "d-folders"],
-    ["b-profilesapi", "d-profiles"], ["b-termapi", "d-terms"], ["b-adminapi", "d-users"], ["b-rules", "d-rulesfs"],
-    ["b-nlp", "d-models"], ["b-jobs", "d-memory"], ["t-supaauth", "t-ses", "SMTP"],
-    ["g-repo", "g-ci"], ["g-ci", "g-release"], ["g-release", "g-ghcr"], ["g-ghcr", "g-fly"], ["g-fly", "g-flyproxy"],
-    ["g-ghcr", "g-selfhost"], ["g-secrets", "g-fly"], ["g-release", "g-extrelease"],
+    // Backend: resources
+    ["b-docsapi", "d-documents"], ["b-docsapi", "b-naming"], ["b-naming", "b-gate", "cheap tier"],
+    ["b-foldersapi", "d-folders"], ["b-profilesapi", "d-profiles"], ["b-profilesapi", "b-ownership"],
+    ["b-termapi", "d-terms"], ["b-termapi", "b-ownership"], ["b-rulesapi", "b-rules"],
+    ["b-catalogapi", "b-factory", "model discovery"], ["b-catalogapi", "b-policy", "allowed flags"], ["b-catalogapi", "b-nlp", "model status"],
+    ["b-activityapi", "d-usage"],
+    // Backend: operations
+    ["b-bootstrap", "b-config"], ["b-bootstrap", "d-seam"], ["b-bootstrap", "b-seeds"], ["b-bootstrap", "d-users", "first admin"],
+    ["b-seeds", "d-profiles"], ["b-seeds", "d-terms"], ["b-manage", "d-seam"], ["b-manage", "d-users"], ["b-wizard", "b-config", "writes"],
+    // Data & services
+    ["d-seam", "t-supadb", "Supavisor"], ["t-supaauth", "t-ses", "SMTP"],
+    // Delivery
+    ["g-devloop", "g-repo"], ["g-devloop", "g-e2e"], ["g-repo", "g-ci"], ["g-ci", "g-release", "tag on green main"],
+    ["g-release", "g-image", "builds"], ["g-image", "g-ghcr", "pushed"], ["g-ghcr", "g-fly"], ["g-ghcr", "g-selfhost"],
+    ["g-repo", "g-extrelease", "chrome-ext tag"], ["g-secrets", "g-fly"], ["g-initdb", "t-supadb", "admin DSN"],
+    ["g-fly", "g-flyproxy"], ["g-flyproxy", "b-middleware", "HTTPS traffic"], ["g-selfhost", "b-wizard", "first run"],
   ];
 
   // Processes. Each step focuses one node; `from` draws the arrow that
@@ -1513,6 +1568,7 @@ window.ATLAS = (function () {
     howto: [
       "Drag to pan, scroll or pinch to zoom. Zoom in to see more detail on each component.",
       "Click a component to read what it does, its key files and the processes it takes part in.",
+      "Arrows point from the component that calls or uses something to the one it depends on. Hover or click a component to highlight its arrows.",
       "Pick a process on the left to walk through it step by step with ← and →.",
       "Press / to search, 0 to fit the whole map, Esc to close panels.",
     ],
