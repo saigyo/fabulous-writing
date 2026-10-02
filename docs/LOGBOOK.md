@@ -4927,4 +4927,12 @@ using them as evidence. Hovering a card highlights its arrows.
 
 Verified in headless Chromium: light, dark and 390 px phone width, no page
 errors, clicking, zooming, searching, deep links and process stepping all
-work. Iteration continues in a follow-up session.
+work.
+
+Follow-up (2026-10-02), from Markus's review: the web app area is now grouped
+into labelled bands like the backend (session & app shell, check settings,
+writing & checking, documents, management views). Long arrows made it hard to
+see which cards connect, so selecting or hovering a card now outlines its
+connected cards in a dedicated link color and fades the rest. Zoomed in, the
+cards are tagged "uses it" or "used by it", and the detail panel splits its
+connections into "Uses" and "Used by".
