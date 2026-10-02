@@ -27,12 +27,13 @@
       stepsByNode.get(s.n).push({ flow: f, idx });
     });
   }
-  const neighbors = new Map();
+  // Directed connections: uses.get(a) = what a depends on; usedBy.get(b) = who depends on b.
+  const uses = new Map(), usedBy = new Map();
   for (const [a, b] of A.edges) {
-    for (const [x, y] of [[a, b], [b, a]]) {
-      if (!neighbors.has(x)) neighbors.set(x, new Set());
-      neighbors.get(x).add(y);
-    }
+    if (!uses.has(a)) uses.set(a, new Set());
+    if (!usedBy.has(b)) usedBy.set(b, new Set());
+    uses.get(a).add(b);
+    usedBy.get(b).add(a);
   }
 
   const WORLD = (() => {
@@ -135,8 +136,7 @@
     b.dataset.node = n.id;
     b.style.cssText = `left:${n.x}px;top:${n.y}px;width:${n.w}px;height:${n.h}px;--hue:var(--z-${z.hue})`;
     b.append(el("span", "node-kind", n.kind), el("span", "node-title", n.title), el("span", "node-summary", n.summary));
-    const badge = el("span", "node-steps");
-    b.append(badge);
+    b.append(el("span", "node-steps"), el("span", "node-link"));
     world.append(b);
     nodeEls.set(n.id, b);
   }
@@ -337,21 +337,32 @@
     const zone = target.closest(".zone-head");
     if (zone) { selectZone(zone.dataset.zone); return; }
   }
-  // Hovering a card highlights its arrows (pointer devices only).
+  // Focus: the hovered card, else the selected one. Its arrows and the
+  // cards at their other ends are highlighted; everything else fades.
+  const focus = { hovered: null, selected: null };
   world.addEventListener("pointerover", (e) => {
     const n = e.target.closest(".node");
-    if (n && e.pointerType === "mouse") highlightEdges(n.dataset.node, "hovered");
+    if (n && e.pointerType === "mouse") setFocus("hovered", n.dataset.node);
   });
   world.addEventListener("pointerout", (e) => {
     const n = e.target.closest(".node");
-    if (n && !n.contains(e.relatedTarget)) highlightEdges(null, "hovered");
+    if (n && !n.contains(e.relatedTarget)) setFocus("hovered", null);
   });
-  const focusIds = { related: null, hovered: null };
-  function highlightEdges(id, cls) {
-    focusIds[cls] = id;
-    viewport.classList.toggle("has-focus", !!(focusIds.related || focusIds.hovered));
-    for (const p of edgeEls) p.classList.toggle(cls, !!id && (p.dataset.from === id || p.dataset.to === id));
-    for (const l of labelEls) l.classList.toggle(cls, !!id && (l.dataset.from === id || l.dataset.to === id));
+  function setFocus(kind, id) {
+    focus[kind] = id;
+    const f = focus.hovered || focus.selected;
+    viewport.classList.toggle("has-focus", !!f);
+    const out = (f && uses.get(f)) || new Set();
+    const inc = (f && usedBy.get(f)) || new Set();
+    for (const [nid, b] of nodeEls) {
+      const isOut = out.has(nid), isIn = inc.has(nid);
+      b.classList.toggle("focus-self", nid === f);
+      b.classList.toggle("linked", isOut || isIn);
+      b.querySelector(".node-link").textContent = isOut && isIn ? "both ways" : isOut ? "used by it" : isIn ? "uses it" : "";
+    }
+    const touches = (x) => !!f && (x.dataset.from === f || x.dataset.to === f);
+    for (const p of edgeEls) p.classList.toggle("related", touches(p));
+    for (const l of labelEls) l.classList.toggle("related", touches(l));
   }
 
   // Keyboard activation of nodes and zone heads (pointer clicks go through clickTarget).
@@ -405,7 +416,7 @@
 
   function markSelection() {
     for (const [id, b] of nodeEls) b.classList.toggle("selected", state.view === "node" && state.node === id);
-    highlightEdges(state.view === "node" ? state.node : null, "related");
+    setFocus("selected", state.view === "node" ? state.node : null);
   }
 
   function selectNode(id, { focus = true } = {}) {
@@ -604,11 +615,11 @@
       }
       s.append(list);
     }
-    const nb = neighbors.get(id);
-    if (nb && nb.size) {
-      const s = section("Connected to");
+    for (const [title, set] of [["Uses", uses.get(id)], ["Used by", usedBy.get(id)]]) {
+      if (!set || !set.size) continue;
+      const s = section(title);
       const list = el("div", "chips");
-      for (const other of nb) {
+      for (const other of set) {
         const o = nodeById.get(other);
         const c = chip(o.title, () => selectNode(other));
         c.style.setProperty("--hue", `var(--z-${zoneById.get(o.zone).hue})`);

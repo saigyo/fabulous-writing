@@ -32,13 +32,20 @@ window.ATLAS = (function () {
   // Zone hues map to CSS tokens (--z-<hue>) in index.html.
   const zones = [
     {
-      id: "web", hue: "client", x: 40, y: 80, w: 1160, h: 1140,
+      id: "web", hue: "client", x: 40, y: 80, w: 1160, h: 1320,
       title: "Web app",
       sub: "React 19 single-page app · Vite · zustand · CodeMirror 6",
       about: "What the writer sees in the browser: the editor, the findings sidebar, document management and the management views. The same build is served by the backend, so in production every API call is same-origin.",
+      bands: [
+        { y: 146, label: "Session & app shell" },
+        { y: 452, label: "Check settings" },
+        { y: 612, label: "Writing & checking" },
+        { y: 918, label: "Documents" },
+        { y: 1078, label: "Management views" },
+      ],
     },
     {
-      id: "embed", hue: "client", x: 40, y: 1280, w: 1160, h: 520,
+      id: "embed", hue: "client", x: 40, y: 1460, w: 1160, h: 520,
       title: "Embed & browser extension",
       sub: "/embed iframe · postMessage bridge · Chromium MV3 extension",
       about: "A second, CodeMirror-free entry of the frontend (/embed) that checks text living in someone else's page, plus the browser extension that connects text fields on arbitrary sites to it.",
@@ -70,7 +77,7 @@ window.ATLAS = (function () {
       about: "Everything the app talks to but does not run: LLM providers, Supabase Auth and Postgres, the SMTP relay that delivers auth emails, and the third-party pages the browser extension works on.",
     },
     {
-      id: "delivery", hue: "delivery", x: 40, y: 1900, w: 3520, h: 420,
+      id: "delivery", hue: "delivery", x: 40, y: 2080, w: 3520, h: 420,
       title: "Delivery & infrastructure",
       sub: "GitHub · CI · release images · fly.io · self-hosting",
       about: "How code becomes a running service: branches and PRs on GitHub, CI gates, tag-triggered releases to GHCR, and the always-on fly.io machine. The same image also runs self-hosted with a setup wizard.",
@@ -98,7 +105,7 @@ window.ATLAS = (function () {
       docs: ["frontend#authentication"],
     },
     {
-      id: "w-store", zone: "web", x: WX[1], y: 170, kind: "State", title: "App store (zustand)",
+      id: "w-store", zone: "web", x: WX[0], y: 310, kind: "State", title: "App store (zustand)",
       summary: "One store holds auth, checking context, results, per-finding caches and the active view.",
       body: [
         "- **Auth:** `token`, `refreshToken`, `tokenExpiresAt`, `user` (re-fetched from `/api/auth/me` on every load, never cached), `authStatus`.",
@@ -112,7 +119,7 @@ window.ATLAS = (function () {
       docs: ["frontend#state-management"],
     },
     {
-      id: "w-prefs", zone: "web", x: WX[2], y: 170, kind: "Storage", title: "Browser localStorage",
+      id: "w-prefs", zone: "web", x: WX[1], y: 310, kind: "Storage", title: "Browser localStorage",
       summary: "The session token, one preference blob per user, and the unsaved-document buffer.",
       body: [
         "- `fabulous-writing-token`: the bearer token, read once at store creation.",
@@ -137,7 +144,7 @@ window.ATLAS = (function () {
       docs: ["frontend#api-client"],
     },
     {
-      id: "w-header", zone: "web", x: WX[0], y: 310, kind: "UI", title: "Header & selectors",
+      id: "w-header", zone: "web", x: WX[0], y: 476, kind: "UI", title: "Header & selectors",
       summary: "Language, profile, terminology domains and the LLM tier: everything a check request is built from.",
       body: [
         "`ProfileSelector` picks a checking profile per language and shows a dirty marker when the header differs from the stored profile (computed, never stored).",
@@ -149,7 +156,7 @@ window.ATLAS = (function () {
       docs: ["frontend#profiles-in-the-frontend"],
     },
     {
-      id: "w-policy", zone: "web", x: WX[1], y: 310, kind: "Module", title: "Policy gating",
+      id: "w-policy", zone: "web", x: WX[1], y: 476, kind: "Module", title: "Policy gating",
       summary: "Hides or disables what the signed-in user's tier does not allow. Display only; the server enforces.",
       body: [
         "Five pure functions over `/api/auth/me`'s `policy`: `tierAllowed`, `providerAllowed`, `modelAllowed`, `hasFeature`, `llmDisabled`.",
@@ -161,7 +168,7 @@ window.ATLAS = (function () {
       docs: ["frontend#tiers-and-policy-gating", "frontend#llm-usage-metering"],
     },
     {
-      id: "w-routing", zone: "web", x: WX[2], y: 310, kind: "Module", title: "Model resolution",
+      id: "w-routing", zone: "web", x: WX[2], y: 476, kind: "Module", title: "Model resolution",
       summary: "Turns the header's tier or pin into a concrete provider and model before a check is sent.",
       body: [
         "Tier mode looks the language up in the routing table from `GET /api/routing`. A missing or unavailable entry is an explicit failure: the LLM part is skipped and rules and terminology still run.",
@@ -172,7 +179,7 @@ window.ATLAS = (function () {
       docs: ["frontend#the-checking-lifecycle"],
     },
     {
-      id: "w-i18n", zone: "web", x: WX[3], y: 310, kind: "Module", title: "Internationalization",
+      id: "w-i18n", zone: "web", x: WX[2], y: 310, kind: "Module", title: "Internationalization",
       summary: "Seven UI locales (en, de, fr, es, it, ja, zh), independent of the seven checked languages.",
       body: [
         "The locale is the user's choice or the browser preference. Components call `useMessages()`, other code `currentMessages()`.",
@@ -184,7 +191,7 @@ window.ATLAS = (function () {
       docs: ["frontend#internationalization"],
     },
     {
-      id: "w-editor", zone: "web", x: WX[0], y: 450, kind: "UI", title: "Editor (CodeMirror 6)",
+      id: "w-editor", zone: "web", x: WX[0], y: 636, kind: "UI", title: "Editor (CodeMirror 6)",
       summary: "The text editor, and the source of truth for where findings are while the writer keeps typing.",
       body: [
         "Findings live inside the editor as a CodeMirror `StateField` (`findingsField`). Every edit maps their positions through the change; a finding whose text was edited, or whose span collapsed, is dropped.",
@@ -196,7 +203,7 @@ window.ATLAS = (function () {
       docs: ["frontend#the-editor-and-finding-positions"],
     },
     {
-      id: "w-scheduler", zone: "web", x: WX[1], y: 450, kind: "Module", title: "Check scheduler",
+      id: "w-scheduler", zone: "web", x: WX[1], y: 636, kind: "Module", title: "Check scheduler",
       summary: "Typing-pause debounce: a fast check after 1 s, the full LLM check after 5 s.",
       body: [
         "- 1 s after the last keystroke: rules and terminology only.",
@@ -208,7 +215,7 @@ window.ATLAS = (function () {
       docs: ["frontend#the-checking-lifecycle"],
     },
     {
-      id: "w-controller", zone: "web", x: WX[2], y: 450, kind: "Module", title: "Check controller",
+      id: "w-controller", zone: "web", x: WX[2], y: 636, kind: "Module", title: "Check controller",
       summary: "runCheck(): builds the request, applies fast findings at once, then follows the LLM stream.",
       body: [
         "Snapshots the text and resolves the active profile into `domain_ids`, `rule_config` and `llm_instructions`, plus the LLM selection.",
@@ -220,7 +227,7 @@ window.ATLAS = (function () {
       docs: ["frontend#the-checking-lifecycle"],
     },
     {
-      id: "w-suggest", zone: "web", x: WX[3], y: 450, kind: "Module", title: "Suggestions & rewrites",
+      id: "w-suggest", zone: "web", x: WX[3], y: 636, kind: "Module", title: "Suggestions & rewrites",
       summary: "On-demand LLM fixes for one finding: drop-in replacements or whole-sentence rewrites.",
       body: [
         "Uses the finding's current tracked span, not the offsets from the original check. Only one LLM action runs at a time.",
@@ -231,7 +238,7 @@ window.ATLAS = (function () {
       docs: ["frontend#the-checking-lifecycle"],
     },
     {
-      id: "w-sidebar", zone: "web", x: WX[0], y: 590, kind: "UI", title: "Findings sidebar",
+      id: "w-sidebar", zone: "web", x: WX[3], y: 776, kind: "UI", title: "Findings sidebar",
       summary: "Counters, filters, findings grouped by category, and the detail card with fixes.",
       body: [
         "Severity and source chips are independent filters. Findings are grouped by category; clicking a row selects the finding in the editor.",
@@ -243,7 +250,7 @@ window.ATLAS = (function () {
       docs: ["frontend#finding-identity-across-checks"],
     },
     {
-      id: "w-score", zone: "web", x: WX[1], y: 590, kind: "Module", title: "Quality score",
+      id: "w-score", zone: "web", x: WX[2], y: 776, kind: "Module", title: "Quality score",
       summary: "A 0–100 score from the findings (mechanics) and the LLM scorecard (craft).",
       body: [
         "**Mechanics:** points = 5 per error + 2 per warning + 0.5 per suggestion; density = points per 100 words; mechanics = round(100 · e^(−density/15)).",
@@ -255,7 +262,7 @@ window.ATLAS = (function () {
       docs: ["scoring#", "frontend#state-management"],
     },
     {
-      id: "w-equiv", zone: "web", x: WX[2], y: 590, kind: "Module", title: "Finding identity",
+      id: "w-equiv", zone: "web", x: WX[1], y: 776, kind: "Module", title: "Finding identity",
       summary: "Decides when a finding from a new check is 'the same' as one from the previous check.",
       body: [
         "Same category, same rule id, same span text and overlapping position; the nearest match wins and the mapping is one-to-one.",
@@ -265,7 +272,7 @@ window.ATLAS = (function () {
       docs: ["frontend#finding-identity-across-checks"],
     },
     {
-      id: "w-docport", zone: "web", x: WX[3], y: 590, kind: "Interface", title: "Document port",
+      id: "w-docport", zone: "web", x: WX[0], y: 776, kind: "Interface", title: "Document port",
       summary: "The seam between the checking layer and whatever holds the text: CodeMirror or a host page.",
       body: [
         "`DocumentPort` offers `getText`, `setDocument`, `mergeFindings`, `selectFinding`, `applySuggestion`, `applyRewrite` and a few more. The controller, suggestions, autosave and sidebar call the port, never CodeMirror directly.",
@@ -276,7 +283,7 @@ window.ATLAS = (function () {
       docs: ["frontend#the-document-port"],
     },
     {
-      id: "w-docs", zone: "web", x: WX[0], y: 730, kind: "UI", title: "Document sidebar",
+      id: "w-docs", zone: "web", x: WX[0], y: 942, kind: "UI", title: "Document sidebar",
       summary: "The list of documents and folders: create, open, rename, move, delete.",
       body: [
         "Documents are ordered by when the writer last edited them (`edited_at`), exactly as the server orders them. A background check-and-save does not reorder the list.",
@@ -288,7 +295,7 @@ window.ATLAS = (function () {
       docs: ["frontend#documents"],
     },
     {
-      id: "w-autosave", zone: "web", x: WX[1], y: 730, kind: "Module", title: "Autosave & buffer",
+      id: "w-autosave", zone: "web", x: WX[2], y: 942, kind: "Module", title: "Autosave & buffer",
       summary: "Buffers every change locally, saves after 1.5 s, retries with backoff, never loses an edit.",
       body: [
         "`noteChange()` writes a snapshot (text, findings, scorecard, settings) to the localStorage buffer synchronously, then saves after a 1.5 s pause.",
@@ -300,7 +307,7 @@ window.ATLAS = (function () {
       docs: ["frontend#the-write-through-buffer-and-autosave-engine"],
     },
     {
-      id: "w-hydration", zone: "web", x: WX[2], y: 730, kind: "Module", title: "Hydration & recovery",
+      id: "w-hydration", zone: "web", x: WX[1], y: 942, kind: "Module", title: "Hydration & recovery",
       summary: "Loads a document into editor and header in one step, and resolves save conflicts.",
       body: [
         "`hydrateFromDocument` first cancels any in-flight check, then replaces text and findings in one CodeMirror transaction and copies the document's settings into the header.",
@@ -312,7 +319,7 @@ window.ATLAS = (function () {
       docs: ["frontend#document-lifecycle-and-self-write-aware-recovery"],
     },
     {
-      id: "w-folderdefaults", zone: "web", x: WX[3], y: 730, kind: "UI", title: "Folder defaults dialog",
+      id: "w-folderdefaults", zone: "web", x: WX[3], y: 942, kind: "UI", title: "Folder defaults dialog",
       summary: "Seven optional defaults applied to documents created inside a folder.",
       body: [
         "Language, profile, domains, LLM provider/model/tier (as one unit) and the auto-check flag.",
@@ -323,7 +330,7 @@ window.ATLAS = (function () {
       docs: ["frontend#per-folder-defaults"],
     },
     {
-      id: "w-rulesview", zone: "web", x: WX[0], y: 870, kind: "View", title: "Rules view",
+      id: "w-rulesview", zone: "web", x: WX[0], y: 1102, kind: "View", title: "Rules view",
       summary: "The rule catalog per language, with per-profile switches. Doubles as rule documentation.",
       body: [
         "General rules grouped by category, then one section per use-case pack (marketing, technical docs, blog) with its own switch.",
@@ -334,7 +341,7 @@ window.ATLAS = (function () {
       docs: ["frontend#profiles-in-the-frontend"],
     },
     {
-      id: "w-termview", zone: "web", x: WX[1], y: 870, kind: "View", title: "Terminology view",
+      id: "w-termview", zone: "web", x: WX[2], y: 1102, kind: "View", title: "Terminology view",
       summary: "Manage terminology domains and their terms; built-in domains are read-only for non-admins.",
       body: [
         "A term has a preferred form, forbidden variants, a definition, a language and a case-sensitivity flag. Terms are edited in place.",
@@ -344,7 +351,7 @@ window.ATLAS = (function () {
       docs: ["frontend#is_global-affordances-and-the-domains-fetch-guard|Built-in items and ownership"],
     },
     {
-      id: "w-profilesview", zone: "web", x: WX[2], y: 870, kind: "View", title: "Profiles view",
+      id: "w-profilesview", zone: "web", x: WX[1], y: 1102, kind: "View", title: "Profiles view",
       summary: "Profile cards: name, domains, example text, LLM instructions, tier or pinned model, packs.",
       body: [
         "Fields save on blur. A resolved caption shows which model a check with this profile would use.",
@@ -355,7 +362,7 @@ window.ATLAS = (function () {
       docs: ["frontend#profiles-in-the-frontend"],
     },
     {
-      id: "w-adminview", zone: "web", x: WX[3], y: 870, kind: "View", title: "Admin view",
+      id: "w-adminview", zone: "web", x: WX[3], y: 1102, kind: "View", title: "Admin view",
       summary: "User list for admins: create or invite, change tier, admin and active flags, reset passwords.",
       body: [
         "Rendered only for admins, so non-admins never issue `/api/admin/*` requests.",
@@ -367,7 +374,7 @@ window.ATLAS = (function () {
       docs: ["frontend#admin-view-m6"],
     },
     {
-      id: "w-activity", zone: "web", x: WX[0], y: 1010, kind: "View", title: "Activity view",
+      id: "w-activity", zone: "web", x: WX[0], y: 1242, kind: "View", title: "Activity view",
       summary: "Daily charts of LLM runs, tokens and credits over 30, 90 or 365 days.",
       body: [
         "Every user sees their own activity. Admins can switch to all users, with a sortable per-user table, and drill into one user.",
@@ -377,7 +384,7 @@ window.ATLAS = (function () {
       docs: ["frontend#activity-view-b40-124"],
     },
     {
-      id: "w-account", zone: "web", x: WX[1], y: 1010, kind: "UI", title: "Account menu",
+      id: "w-account", zone: "web", x: WX[2], y: 170, kind: "UI", title: "Account menu",
       summary: "Signed-in email, change password, activity, About, sign out.",
       body: [
         "Change password opens a dialog; after success the app silently signs the same user back in, because the change revoked the old token.",
@@ -387,7 +394,7 @@ window.ATLAS = (function () {
       docs: ["frontend#dialogs-b3"],
     },
     {
-      id: "w-reset", zone: "web", x: WX[2], y: 1010, kind: "UI", title: "Reset & invite forms",
+      id: "w-reset", zone: "web", x: WX[1], y: 170, kind: "UI", title: "Reset & invite forms",
       summary: "Forgot-password request and the form that sets a password from an emailed link.",
       body: [
         "The emailed link carries `#token_hash=…&type=recovery|invite` in the URL fragment, which never reaches server logs. The gate reads it once and strips it from the URL.",
@@ -400,7 +407,7 @@ window.ATLAS = (function () {
 
     // ─────────────────── Embed & browser extension ───────────────────
     {
-      id: "e-embedapp", zone: "embed", x: WX[0], y: 1360, kind: "Entry", title: "Embed app (/embed)",
+      id: "e-embedapp", zone: "embed", x: WX[0], y: 1540, kind: "Entry", title: "Embed app (/embed)",
       summary: "A narrow page with login, header selectors and the findings sidebar, but no editor.",
       body: [
         "A second Vite entry (`embed.html`). It reuses the header, selectors and `Sidebar` over the host-document shim instead of CodeMirror.",
@@ -412,7 +419,7 @@ window.ATLAS = (function () {
       docs: ["frontend#the-embed-entry"],
     },
     {
-      id: "e-bridge", zone: "embed", x: WX[1], y: 1360, kind: "Module", title: "Bridge",
+      id: "e-bridge", zone: "embed", x: WX[1], y: 1540, kind: "Module", title: "Bridge",
       summary: "The embed's single postMessage listener: pins the host and routes its messages.",
       body: [
         "Waits for the first valid `hello`, then pins that message's window and origin; messages from anywhere else are ignored.",
@@ -423,7 +430,7 @@ window.ATLAS = (function () {
       docs: ["frontend#bridge-protocol"],
     },
     {
-      id: "e-hostdoc", zone: "embed", x: WX[2], y: 1360, kind: "Module", title: "Host document shim",
+      id: "e-hostdoc", zone: "embed", x: WX[2], y: 1540, kind: "Module", title: "Host document shim",
       summary: "DocumentPort over text owned by the host page; tracks findings through host edits.",
       body: [
         "Each full-text snapshot from the host is reduced to one splice (common prefix and suffix); findings before it stay, findings after it shift, overlapping ones are dropped. Same semantics as CodeMirror's mapping.",
@@ -434,7 +441,7 @@ window.ATLAS = (function () {
       docs: ["frontend#the-host-document-shim"],
     },
     {
-      id: "e-protocol", zone: "embed", x: WX[3], y: 1360, kind: "Contract", title: "Bridge protocol v1",
+      id: "e-protocol", zone: "embed", x: WX[3], y: 1540, kind: "Contract", title: "Bridge protocol v1",
       summary: "Versioned message contract shared by the embed and every host, including FieldAdapter.",
       body: [
         "Host → embed: `hello`, `fieldConnected` (with capabilities), `textChanged`, `replaceResult`, `markingClicked`, `fieldDisconnected`.",
@@ -446,7 +453,7 @@ window.ATLAS = (function () {
       docs: ["frontend#bridge-protocol"],
     },
     {
-      id: "x-scout", zone: "embed", x: WX[0], y: 1500, kind: "Extension", title: "Content script (scout)",
+      id: "x-scout", zone: "embed", x: WX[0], y: 1680, kind: "Extension", title: "Content script (scout)",
       summary: "Runs in every page; shows a connect chip on eligible text fields.",
       body: [
         "Listens to focus and mouse events at the document level, so fields injected later are noticed when the user interacts with them.",
@@ -457,7 +464,7 @@ window.ATLAS = (function () {
       docs: ["extension#architecture"],
     },
     {
-      id: "x-session", zone: "embed", x: WX[1], y: 1500, kind: "Extension", title: "Field session & adapters",
+      id: "x-session", zone: "embed", x: WX[1], y: 1680, kind: "Extension", title: "Field session & adapters",
       summary: "Owns one connected field: extracts text, draws markings, applies replacements.",
       body: [
         "Picks the textarea adapter (a mirror overlay behind the field paints highlights) or the contentEditable adapter (CSS Custom Highlight API) per field.",
@@ -468,7 +475,7 @@ window.ATLAS = (function () {
       docs: ["extension#architecture", "frontend#contenteditable-adapter"],
     },
     {
-      id: "x-sw", zone: "embed", x: WX[2], y: 1500, kind: "Extension", title: "Service worker registry",
+      id: "x-sw", zone: "embed", x: WX[2], y: 1680, kind: "Extension", title: "Service worker registry",
       summary: "Routes messages between field and panel: one connected field per browser window.",
       body: [
         "`registry.ts` is a pure state machine that returns effects (send to panel, field or badge); `sw.ts` executes them against live ports. That keeps routing rules unit-testable.",
@@ -479,7 +486,7 @@ window.ATLAS = (function () {
       docs: ["extension#architecture"],
     },
     {
-      id: "x-panel", zone: "embed", x: WX[3], y: 1500, kind: "Extension", title: "Side panel relay",
+      id: "x-panel", zone: "embed", x: WX[3], y: 1680, kind: "Extension", title: "Side panel relay",
       summary: "The Chrome side panel: an iframe of the server's /embed page plus a message relay.",
       body: [
         "Relays protocol envelopes between the runtime port and the iframe without translating them.",
@@ -490,7 +497,7 @@ window.ATLAS = (function () {
       docs: ["extension#architecture"],
     },
     {
-      id: "x-detect", zone: "embed", x: WX[0], y: 1640, kind: "Extension", title: "Field detection",
+      id: "x-detect", zone: "embed", x: WX[0], y: 1820, kind: "Extension", title: "Field detection",
       summary: "Which fields qualify: visible, enabled, writable textareas and contentEditable roots ≥ 120×40 px.",
       body: [
         "A contentEditable field qualifies only at its editing-host root (its parent is not editable). Plain `<input>` fields are out of scope for now.",
@@ -499,7 +506,7 @@ window.ATLAS = (function () {
       docs: ["extension#architecture"],
     },
     {
-      id: "x-reacquire", zone: "embed", x: WX[1], y: 1640, kind: "Extension", title: "Field re-acquisition",
+      id: "x-reacquire", zone: "embed", x: WX[1], y: 1820, kind: "Extension", title: "Field re-acquisition",
       summary: "Survives pages that replace the field's DOM node, as GitHub's composer does on blur.",
       body: [
         "Fingerprints the field at session start (id, name, aria label, form index, field kind). When the node disappears, it probes for a matching replacement for about 2 s and starts a new session on it.",
@@ -509,7 +516,7 @@ window.ATLAS = (function () {
       docs: ["extension#architecture"],
     },
     {
-      id: "x-options", zone: "embed", x: WX[2], y: 1640, kind: "Extension", title: "Options page",
+      id: "x-options", zone: "embed", x: WX[2], y: 1820, kind: "Extension", title: "Options page",
       summary: "Sets the server URL the side panel loads /embed from.",
       body: [
         "The extension ID is pinned by a public `key` in the manifest. That ID is what the server's `embed.allowed_ancestors` allowlists; a CI test recomputes it and checks the fly config.",
@@ -518,7 +525,7 @@ window.ATLAS = (function () {
       docs: ["extension#options-page-server-url|Options page", "extension#the-pinned-id"],
     },
     {
-      id: "sim", zone: "embed", x: WX[3], y: 1640, kind: "Dev tool", title: "Host simulator",
+      id: "sim", zone: "embed", x: WX[3], y: 1820, kind: "Dev tool", title: "Host simulator",
       summary: "Dev-only page that plays the host role around an /embed iframe. Never shipped.",
       body: [
         "Hosts a textarea and a contentEditable demo field, each with its own Connect button, and exercises the full bridge protocol by hand.",
@@ -1128,7 +1135,7 @@ window.ATLAS = (function () {
 
     // ───────────────────────── Delivery ─────────────────────────
     {
-      id: "g-devloop", zone: "delivery", x: GX(0), y: 1990, kind: "Local", title: "Local development",
+      id: "g-devloop", zone: "delivery", x: GX(0), y: 2170, kind: "Local", title: "Local development",
       summary: "Vite dev server on :5173 and uvicorn on :8000, SQLite file, optional local Supabase stack.",
       body: [
         "Backend gate: `uv run pytest` (parallel, zero warnings). Frontend gate: tests, lint, build and the embed bundle check. Extension gate: tests, lint, build.",
@@ -1138,14 +1145,14 @@ window.ATLAS = (function () {
       docs: ["backend#testing"],
     },
     {
-      id: "g-repo", zone: "delivery", x: GX(1), y: 1990, kind: "GitHub", title: "Repository & pull requests",
+      id: "g-repo", zone: "delivery", x: GX(1), y: 2170, kind: "GitHub", title: "Repository & pull requests",
       summary: "saigyo/fabulous-writing. Main accepts no direct pushes; every change is a PR, rebase-merged.",
       body: ["Each PR ends with a LOGBOOK entry referencing its number. Architecture docs are updated alongside non-trivial changes."],
       files: ["docs/LOGBOOK.md"],
       docs: ["readme#"],
     },
     {
-      id: "g-ci", zone: "delivery", x: GX(2), y: 1990, kind: "GitHub Actions", title: "CI workflows",
+      id: "g-ci", zone: "delivery", x: GX(2), y: 2170, kind: "GitHub Actions", title: "CI workflows",
       summary: "Backend (SQLite + Postgres), frontend, extension and Docker checks, each run when its paths change.",
       body: [
         "- `backend.yml`: pytest with coverage, also against a Postgres service container.",
@@ -1159,21 +1166,21 @@ window.ATLAS = (function () {
       docs: ["backend#testing"],
     },
     {
-      id: "g-release", zone: "delivery", x: GX(3), y: 1990, kind: "GitHub Actions", title: "Release workflow",
+      id: "g-release", zone: "delivery", x: GX(3), y: 2170, kind: "GitHub Actions", title: "Release workflow",
       summary: "Pushing a vX.Y.Z tag builds the image for amd64 and arm64 and creates a GitHub release.",
       body: ["The tag is the single source of the version string: it becomes `APP_VERSION`, then `FW_APP_VERSION`, then `/api/health`'s `version`."],
       files: [".github/workflows/release.yml"],
       docs: ["backend#container-deployment-b17"],
     },
     {
-      id: "g-ghcr", zone: "delivery", x: GX(4), y: 1990, kind: "Registry", title: "GHCR image",
+      id: "g-ghcr", zone: "delivery", x: GX(4), y: 2170, kind: "Registry", title: "GHCR image",
       summary: "ghcr.io/saigyo/fabulous-writing:<version>, public, multi-arch.",
       body: ["fly pulls it without registry credentials. After a deploy, the running digest is compared with the registry's amd64 entry."],
       files: ["Dockerfile"],
       docs: ["fly#"],
     },
     {
-      id: "g-fly", zone: "delivery", x: GX(5), y: 1990, kind: "fly.io", title: "fly.io machine",
+      id: "g-fly", zone: "delivery", x: GX(5), y: 2170, kind: "fly.io", title: "fly.io machine",
       summary: "One always-on shared-cpu-2x machine (2 GB) in Frankfurt, deployed with --ha=false.",
       body: [
         "Always on since 2026-08-22: scale-to-zero was woken constantly by internet scans and paid a ~32 s model-loading cold start per wake. Cost about $11–12 per month.",
@@ -1183,28 +1190,28 @@ window.ATLAS = (function () {
       docs: ["fly#4-operational-notes|Operational notes"],
     },
     {
-      id: "g-flyproxy", zone: "delivery", x: GX(6), y: 1990, kind: "fly.io", title: "fly-proxy & health check",
+      id: "g-flyproxy", zone: "delivery", x: GX(6), y: 2170, kind: "fly.io", title: "fly-proxy & health check",
       summary: "TLS termination, HTTPS redirect, health check on /api/health every 30 s (60 s grace).",
       body: ["Requests reach the app only through fly-proxy, so trusting forwarded headers from fly's private ranges (`fdaa::/16`, `172.16.0.0/12`) gives the login throttle real client IPs without allowing spoofing."],
       files: ["deploy/fly/fly.toml"],
       docs: ["fly#4-operational-notes|Operational notes"],
     },
     {
-      id: "g-e2e", zone: "delivery", x: GX(0), y: 2160, kind: "Local", title: "Local Supabase stack",
+      id: "g-e2e", zone: "delivery", x: GX(0), y: 2340, kind: "Local", title: "Local Supabase stack",
       summary: "A supabase start stack (API, Postgres, GoTrue, Mailpit) for the e2e suite and Postgres tests.",
       body: ["Started and stopped only with `supabase start`/`stop`. Test runs use per-run identities and throwaway schemas."],
       files: ["supabase/config.toml", "scripts/e2e-supabase.sh"],
       docs: ["backend#offline-supabase-e2e-suite-b27"],
     },
     {
-      id: "g-extrelease", zone: "delivery", x: GX(2), y: 2160, kind: "GitHub Actions", title: "Extension release",
+      id: "g-extrelease", zone: "delivery", x: GX(2), y: 2340, kind: "GitHub Actions", title: "Extension release",
       summary: "A chrome-ext-vX.Y.Z tag builds the extension and attaches a zip to a GitHub release.",
       body: ["Separate tag prefix, so server and extension releases never trigger each other. Testers install the unpacked zip."],
       files: [".github/workflows/chrome-extension-release.yml", "clients/browser-extension/public/manifest.json"],
       docs: ["extension#from-a-release-recommended-for-testers"],
     },
     {
-      id: "g-image", zone: "delivery", x: GX(3), y: 2160, kind: "Container", title: "Container image",
+      id: "g-image", zone: "delivery", x: GX(3), y: 2340, kind: "Container", title: "Container image",
       summary: "Built frontend plus backend in one image; entrypoint starts one uvicorn process.",
       body: [
         "Layers ordered by change frequency: OS packages, Hunspell dictionaries, Python dependencies, spaCy/GiNZA models, then app code.",
@@ -1214,14 +1221,14 @@ window.ATLAS = (function () {
       docs: ["backend#container-deployment-b17"],
     },
     {
-      id: "g-initdb", zone: "delivery", x: GX(4), y: 2160, kind: "Operation", title: "Schema migration",
+      id: "g-initdb", zone: "delivery", x: GX(4), y: 2340, kind: "Operation", title: "Schema migration",
       summary: "init-db under the admin DSN, run from an operator machine before a schema-changing deploy.",
       body: ["Changes are additive, so the old release keeps serving while the schema moves ahead. The admin DSN is never a fly secret."],
       files: ["backend/app/manage.py"],
       docs: ["fly#3-updating|Updating"],
     },
     {
-      id: "g-secrets", zone: "delivery", x: GX(5), y: 2160, kind: "fly.io", title: "fly config & secrets",
+      id: "g-secrets", zone: "delivery", x: GX(5), y: 2340, kind: "fly.io", title: "fly config & secrets",
       summary: "fly.toml pins the image; config.yaml is delivered as a file; secrets via fly secrets.",
       body: [
         "Secrets (names only): `FW_DATABASE_URL`, `FW_SUPABASE_SECRET_KEY`, `FW_SUPABASE_PUBLISHABLE_KEY`, `FW_ADMIN_EMAIL`, `FW_ADMIN_PASSWORD`, `ANTHROPIC_API_KEY`.",
@@ -1231,7 +1238,7 @@ window.ATLAS = (function () {
       docs: ["fly#2-first-deploy|First deploy"],
     },
     {
-      id: "g-selfhost", zone: "delivery", x: GX(6), y: 2160, kind: "Container", title: "Self-hosted container",
+      id: "g-selfhost", zone: "delivery", x: GX(6), y: 2340, kind: "Container", title: "Self-hosted container",
       summary: "fabulous.sh serve: pull the image and run it with /config and /data volumes.",
       body: ["Checks the host port first, pulls the image (falls back to the cached one offline), and runs the setup wizard on first use. SQLite by default."],
       files: ["fabulous.sh"],
@@ -1568,7 +1575,7 @@ window.ATLAS = (function () {
     howto: [
       "Drag to pan, scroll or pinch to zoom. Zoom in to see more detail on each component.",
       "Click a component to read what it does, its key files and the processes it takes part in.",
-      "Arrows point from the component that calls or uses something to the one it depends on. Hover or click a component to highlight its arrows.",
+      "Arrows point from the component that calls or uses something to the one it depends on. Hover or click a component to highlight its connections: linked cards are outlined in blue and labelled 'uses it' or 'used by it' relative to that component.",
       "Pick a process on the left to walk through it step by step with ← and →.",
       "Press / to search, 0 to fit the whole map, Esc to close panels.",
     ],
