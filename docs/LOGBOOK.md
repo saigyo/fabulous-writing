@@ -4936,3 +4936,12 @@ see which cards connect, so selecting or hovering a card now outlines its
 connected cards in a dedicated link color and fades the rest. Zoomed in, the
 cards are tagged "uses it" or "used by it", and the detail panel splits its
 connections into "Uses" and "Used by".
+
+Follow-up (2026-10-07): `.github/workflows/atlas-pages.yml` publishes the
+atlas to GitHub Pages (https://saigyo.github.io/fabulous-writing/). The
+folder is uploaded as-is with configure-pages v6, upload-pages-artifact v5
+and deploy-pages v5. It runs on pushes to main that touch the atlas, and by
+manual dispatch. Pages was already set to the "GitHub Actions" source, and
+its `github-pages` environment only allows `main`, so the first real run
+happens after this PR merges. It could not be exercised from the branch;
+the YAML was only syntax-checked (actionlint is not installed).
