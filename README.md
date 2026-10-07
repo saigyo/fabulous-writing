@@ -460,7 +460,8 @@ Detailed developer documentation:
 - **[Architecture atlas](docs/architecture-atlas/)** — an interactive, zoomable map
   of every component, the processes that run through them (sign-in, checking,
   suggestions, saving, the extension, release and deploy), third-party services and
-  infrastructure. Open `docs/architecture-atlas/index.html` in a browser.
+  infrastructure. Published at https://saigyo.github.io/fabulous-writing/, or open
+  `docs/architecture-atlas/index.html` locally.
 - **[Backend architecture](docs/backend-architecture.md)** — application assembly,
   the check flow and job/SSE model, the YAML rule engine, the NLP registry,
   terminology matching, the LLM provider layer with its deterministic gates,
