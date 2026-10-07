@@ -4,6 +4,9 @@ An interactive map of Fabulous Writing: its components, the processes that
 run through them, the third-party services it uses, and how it is built and
 deployed. Open `index.html` in a browser (a local file works; no server or
 build step needed).
+The version on `main` is published to GitHub Pages at
+https://saigyo.github.io/fabulous-writing/ by
+`.github/workflows/atlas-pages.yml` whenever this folder changes.
 
 - Drag to pan, scroll or pinch to zoom; zooming in shows more detail.
 - Click a component for its description, key files, connections and the
