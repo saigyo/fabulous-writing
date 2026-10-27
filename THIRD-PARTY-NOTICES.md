@@ -829,7 +829,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### certifi 2026.6.17
+### certifi 2026.10.23
 
 License: Mozilla Public License 2.0 (MPL 2.0)
 
@@ -7785,7 +7785,7 @@ s3transfer
 Copyright 2016 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 ````
 
-### setuptools 83.0.0
+### setuptools 84.2.1
 
 License: MIT
 
