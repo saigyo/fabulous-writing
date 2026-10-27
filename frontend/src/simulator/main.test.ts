@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+// @vitest-environment-options {"settings":{"enableIframePageLoading":true}}
 //
 // main.ts is the host simulator's bootstrap script (coverage-excluded, like
 // src/main.tsx and src/embed/main.tsx — see vite.config.ts): it wires itself
