@@ -4984,3 +4984,17 @@ is a major bump; the backend suite passes with spaCy and thinc on it
 (1622 passed, 179 skipped, no warnings). The same round also merged #190
 (zustand, vite) and #191, the first grouped extension PR from the new
 `dependabot.yml` entry (vitest 5, happy-dom 21.0.4), which superseded #189.
+
+## 2026-10-27 — v0.7.4 rollout: security dependency updates deployed (PR #193)
+
+Patch release after the Dependabot round (#177, #183, #185, #186, #187,
+#190, #191, #192): certifi 2026.10.23 (critical alert) and urllib3 2.8.0
+in the backend image, plus the frontend tooling and runtime bumps. Tag
+push → release workflow; fly.toml bumped on this branch and deployed
+first, committed afterwards. The deploy must run from the repo root
+(`fly deploy --ha=false -c deploy/fly/fly.toml`, as the fly.toml header
+says); run from `deploy/fly/` it fails before touching anything because
+the config.yaml path is root-relative. Verified: single machine
+(version 9), checks 1/1, `/api/health` 200 reporting 0.7.4, running
+digest equals the GHCR 0.7.4 linux/amd64 index entry. No schema
+changes → no `init-db`.
