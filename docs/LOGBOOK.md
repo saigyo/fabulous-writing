@@ -4971,3 +4971,16 @@ fixed releases. It also moves source-map-js to 1.2.2, superseding #182.
 `.github/dependabot.yml`, grouped into one PR (`extension-dependencies`)
 like the frontend. Before this it only received security PRs, and the
 vite/vitest alerts got none (fixed by hand in #187).
+
+## 2026-10-27 — certifi and setuptools security bump (PR #192)
+
+Two backend alerts arrived during the Dependabot round: certifi (critical,
+compromised emSign intermediate CA keys) and setuptools (low, Windows path
+escape in legacy wheel installs). Dependabot showed "creating a security
+update" but no PR came within 20 minutes, so this PR upgrades both in
+`uv.lock` (certifi 2026.10.23, setuptools 84.2.1; both transitive, so
+`pyproject.toml` is unchanged) and regenerates the notices. setuptools 84
+is a major bump; the backend suite passes with spaCy and thinc on it
+(1622 passed, 179 skipped, no warnings). The same round also merged #190
+(zustand, vite) and #191, the first grouped extension PR from the new
+`dependabot.yml` entry (vitest 5, happy-dom 21.0.4), which superseded #189.
