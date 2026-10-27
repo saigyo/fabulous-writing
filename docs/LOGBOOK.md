@@ -4998,3 +4998,15 @@ the config.yaml path is root-relative. Verified: single machine
 (version 9), checks 1/1, `/api/health` 200 reporting 0.7.4, running
 digest equals the GHCR 0.7.4 linux/amd64 index entry. No schema
 changes → no `init-db`.
+
+## 2026-10-27 — Chrome extension v0.2.1 version bump (PR #194)
+
+Patch release of the extension after the Dependabot round: #187 (vite
+8.3.5, vitest 4.1.12, source-map-js 1.2.2; security alerts) and #191
+(vitest 5, happy-dom 21.0.4, oxlint 1.89, @types/chrome 0.3.6 and other
+dev tooling). No runtime dependency changed. Building v0.2.0 and main
+side by side shows the bundle differs only in minification (the newer
+vite minifies the side panel's inline CSS and compacts a few statements);
+behavior is unchanged. The release workflow refuses a tag whose version
+does not match the manifest, so this bump lands first; the
+`chrome-ext-v0.2.1` tag follows on main.
