@@ -4964,3 +4964,10 @@ The extension's vite and @vitest/mocker alerts had no PR, because
 `clients/browser-extension` is not in `dependabot.yml`. This PR bumps
 vite to 8.3.5 and vitest to 4.1.12 there, raising the floors to the first
 fixed releases. It also moves source-map-js to 1.2.2, superseding #182.
+
+## 2026-10-27 — Dependabot covers the browser extension (PR #188)
+
+`clients/browser-extension` now has its own weekly npm entry in
+`.github/dependabot.yml`, grouped into one PR (`extension-dependencies`)
+like the frontend. Before this it only received security PRs, and the
+vite/vitest alerts got none (fixed by hand in #187).
