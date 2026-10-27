@@ -18,7 +18,7 @@
     "@types/chrome": "^0.0.280",
     "@types/node": "^26.2.0",
     "@types/webextension-polyfill": "^0.12.1",
-    "happy-dom": "^20.11.2",
+    "happy-dom": "^21.0.4",
     "oxlint": "^1.79.0",
     "playwright-core": "^1.62.1",
     "typescript": "~7.0.2",
