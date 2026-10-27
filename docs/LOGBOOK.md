@@ -4945,3 +4945,22 @@ manual dispatch. Pages was already set to the "GitHub Actions" source, and
 its `github-pages` environment only allows `main`, so the first real run
 happens after this PR merges. It could not be exercised from the branch;
 the YAML was only syntax-checked (actionlint is not installed).
+
+## 2026-10-27 — Dependabot round and extension security bump (PR #187)
+
+Five Dependabot PRs: #177 (urllib3 2.8.0), #182 and #183 (source-map-js
+1.2.2 in the extension and the frontend), #185 (vite 8.3.5), #186 (the
+frontend group, 16 updates). Together they close the open urllib3,
+source-map-js and frontend vite/vitest alerts. #177 and #186 failed the
+licenses drift gate and got regenerated notices from the Linux container;
+#186 also adds `@codemirror/streamparser` (MIT), a new dependency of
+`@codemirror/language` 6.13. #186 additionally failed all 22 simulator
+tests: happy-dom 21 disables iframe page loading by default, so the
+fixture iframe had no `contentWindow`. `main.test.ts` now opts back in
+with a per-file `@vitest-environment-options` docblock (mutation-checked:
+without it, 22 fail). oxlint 1.89 reports the same 8 warnings as main.
+
+The extension's vite and @vitest/mocker alerts had no PR, because
+`clients/browser-extension` is not in `dependabot.yml`. This PR bumps
+vite to 8.3.5 and vitest to 4.1.12 there, raising the floors to the first
+fixed releases. It also moves source-map-js to 1.2.2, superseding #182.
