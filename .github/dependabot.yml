@@ -1,5 +1,5 @@
-# Weekly dependency update PRs for the backend (uv), the frontend (npm),
-# and the GitHub Actions used by the CI workflows.
+# Weekly dependency update PRs for the backend (uv), the frontend and the
+# browser extension (npm), and the GitHub Actions used by the CI workflows.
 version: 2
 updates:
   - package-ecosystem: uv
@@ -16,6 +16,14 @@ updates:
       interval: weekly
     groups:
       node-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /clients/browser-extension
+    schedule:
+      interval: weekly
+    groups:
+      extension-dependencies:
         patterns: ["*"]
 
   - package-ecosystem: github-actions
