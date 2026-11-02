@@ -5035,3 +5035,29 @@ LLM check versus client timeouts, so a compat endpoint would serve rules and
 terminology only. Speaking the protocol creates no LGPL obligation; the
 trademark caution is to say "works with LanguageTool clients" rather than
 naming anything "LanguageTool".
+
+## 2026-11-02 — Word add-in feasibility research (PR #199)
+
+Research only, no code. Follow-up to the LanguageTool-compatible API research
+(PR #197, issue #198): since the official LanguageTool Word add-in is closed
+source, could we build our own Word add-in and use all of our features, and
+can that be done from macOS/Linux without a Windows machine? The findings are
+in `docs/notes/2026-11-02-word-add-in-feasibility.md`, each claim cited to a
+primary source (Microsoft Learn, OfficeDev repos, Microsoft devblogs), with an
+explicit list of what could not be verified.
+
+Bottom line: feasible without Windows. A Word add-in is a hosted HTTPS web
+app plus a manifest, runs on Word for Windows, Mac, web and iPad, needs no
+code signing and no Windows runner; Word for Mac and Word on the web both
+sideload a manifest. On our side it is one more B43 host: a task pane page
+that iframes the server-served embed page and implements a field adapter
+against Office.js. The native squiggle API (`insertAnnotations` with
+critiques, WordApi 1.7/1.8) is listed for all four platforms but needs a
+Microsoft 365 subscription and silently does nothing on perpetual Office;
+annotation offset units are undocumented and paragraph text excludes fields,
+footnote marks and images, so an empirical spike is the next step. The XML
+manifest is the lower-risk choice over the unified manifest (GA July 2026,
+no perpetual Office/iPad). Distribution without a company entity is limited
+to sideloading and organisation admin deployment; the free Microsoft 365
+developer sandbox now requires a Visual Studio subscription or partner
+program.
