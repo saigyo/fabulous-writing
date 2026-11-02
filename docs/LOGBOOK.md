@@ -5010,3 +5010,28 @@ vite minifies the side panel's inline CSS and compacts a few statements);
 behavior is unchanged. The release workflow refuses a tag whose version
 does not match the manifest, so this bump lands first; the
 `chrome-ext-v0.2.1` tag follows on main.
+
+## 2026-11-02 — LanguageTool-compatible API feasibility research (PR #197)
+
+Research only, no code. Someone suggested exposing a LanguageTool-compatible
+HTTP API so that the existing LanguageTool add-ins (Word, LibreOffice,
+browser extension, editor plugins) could talk to Fabulous Writing. The
+findings are in `docs/notes/2026-11-02-languagetool-compatible-api-feasibility.md`,
+each claim cited to a primary source (LT server source, LT docs, client
+source, forum answers by LT staff), with an explicit list of what could not
+be verified.
+
+Bottom line: the server surface is small (form-encoded `POST /v2/check` with
+`text`/`data` + `language`, `GET /v2/languages`, CORS header), and several
+2026 projects already serve it over non-LT engines. LibreOffice core, LTeX+,
+Obsidian, the VS Code linter and the Emacs packages accept a custom server;
+the official browser extension does too (HTTPS, hard-coded language list).
+The Word add-in had a custom-server field in 2022–2023 (HTTPS only) but its
+status in 2026 is unverified; Outlook, the Windows desktop app and Apple Mail
+cannot be redirected. Gaps on our side: `username`/`apiKey` auth (we have only
+bearer JWTs), UTF-16 offsets (ours are code points; the embed layer already
+converts), `language=auto` and annotated `data` input, and the asynchronous
+LLM check versus client timeouts, so a compat endpoint would serve rules and
+terminology only. Speaking the protocol creates no LGPL obligation; the
+trademark caution is to say "works with LanguageTool clients" rather than
+naming anything "LanguageTool".
