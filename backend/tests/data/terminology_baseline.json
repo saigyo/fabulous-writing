@@ -1,0 +1,290 @@
+{
+  "Baseline global/de": [
+    {
+      "category": "terminology",
+      "message": "Use 'Anmeldung' instead of 'anmeldung'. Vorgang der Authentifizierung.",
+      "severity": "error",
+      "source": "terminology",
+      "span": {
+        "end": 64,
+        "start": 55,
+        "text": "anmeldung"
+      },
+      "suggestions": [
+        "Anmeldung"
+      ]
+    },
+    {
+      "category": "terminology",
+      "message": "Use 'Anmeldung' instead of 'Login'. Vorgang der Authentifizierung.",
+      "severity": "error",
+      "source": "terminology",
+      "span": {
+        "end": 76,
+        "start": 71,
+        "text": "Login"
+      },
+      "suggestions": [
+        "Anmeldung"
+      ]
+    },
+    {
+      "category": "terminology",
+      "message": "Use 'Datei' instead of 'File'.",
+      "severity": "error",
+      "source": "terminology",
+      "span": {
+        "end": 89,
+        "start": 85,
+        "text": "File"
+      },
+      "suggestions": [
+        "Datei"
+      ]
+    }
+  ],
+  "Baseline global/en": [
+    {
+      "category": "terminology",
+      "message": "Use 'sign in' instead of 'login'.",
+      "severity": "error",
+      "source": "terminology",
+      "span": {
+        "end": 37,
+        "start": 32,
+        "text": "login"
+      },
+      "suggestions": [
+        "sign in"
+      ]
+    },
+    {
+      "category": "terminology",
+      "message": "Use 'sign in' instead of 'log in'.",
+      "severity": "error",
+      "source": "terminology",
+      "span": {
+        "end": 52,
+        "start": 46,
+        "text": "log in"
+      },
+      "suggestions": [
+        "sign in"
+      ]
+    },
+    {
+      "category": "terminology",
+      "message": "Use 'GitHub' instead of 'Github'. The code hosting product.",
+      "severity": "error",
+      "source": "terminology",
+      "span": {
+        "end": 71,
+        "start": 65,
+        "text": "Github"
+      },
+      "suggestions": [
+        "GitHub"
+      ]
+    },
+    {
+      "category": "terminology",
+      "message": "Use 'sign in' instead of 'Sign in'.",
+      "severity": "error",
+      "source": "terminology",
+      "span": {
+        "end": 88,
+        "start": 81,
+        "text": "Sign in"
+      },
+      "suggestions": [
+        "sign in"
+      ]
+    }
+  ],
+  "Baseline global/es": [],
+  "Baseline global/fr": [
+    {
+      "category": "terminology",
+      "message": "Use 'connexion' instead of 'Connexion'.",
+      "severity": "error",
+      "source": "terminology",
+      "span": {
+        "end": 40,
+        "start": 31,
+        "text": "Connexion"
+      },
+      "suggestions": [
+        "connexion"
+      ]
+    },
+    {
+      "category": "terminology",
+      "message": "Use 'courriel' instead of 'email'. Adresse électronique.",
+      "severity": "error",
+      "source": "terminology",
+      "span": {
+        "end": 65,
+        "start": 60,
+        "text": "email"
+      },
+      "suggestions": [
+        "courriel"
+      ]
+    },
+    {
+      "category": "terminology",
+      "message": "Use 'connexion' instead of 'login'.",
+      "severity": "error",
+      "source": "terminology",
+      "span": {
+        "end": 81,
+        "start": 76,
+        "text": "login"
+      },
+      "suggestions": [
+        "connexion"
+      ]
+    }
+  ],
+  "Baseline global/it": [],
+  "Baseline global/ja": [
+    {
+      "category": "terminology",
+      "message": "Use 'ログイン' instead of 'サインイン'. 認証すること。",
+      "severity": "error",
+      "source": "terminology",
+      "span": {
+        "end": 16,
+        "start": 11,
+        "text": "サインイン"
+      },
+      "suggestions": [
+        "ログイン"
+      ]
+    }
+  ],
+  "Baseline global/zh": [],
+  "Baseline own/de": [],
+  "Baseline own/en": [
+    {
+      "category": "terminology",
+      "message": "Use 'email' instead of 'e-mail'. Electronic mail.",
+      "severity": "error",
+      "source": "terminology",
+      "span": {
+        "end": 142,
+        "start": 136,
+        "text": "e-mail"
+      },
+      "suggestions": [
+        "email"
+      ]
+    }
+  ],
+  "Baseline own/es": [
+    {
+      "category": "terminology",
+      "message": "Use 'contraseña' instead of 'Contraseña'. Secreto del usuario.",
+      "severity": "error",
+      "source": "terminology",
+      "span": {
+        "end": 37,
+        "start": 27,
+        "text": "Contraseña"
+      },
+      "suggestions": [
+        "contraseña"
+      ]
+    },
+    {
+      "category": "terminology",
+      "message": "Use 'correo electrónico' instead of 'email'.",
+      "severity": "error",
+      "source": "terminology",
+      "span": {
+        "end": 83,
+        "start": 78,
+        "text": "email"
+      },
+      "suggestions": [
+        "correo electrónico"
+      ]
+    },
+    {
+      "category": "terminology",
+      "message": "Use 'contraseña' instead of 'password'. Secreto del usuario.",
+      "severity": "error",
+      "source": "terminology",
+      "span": {
+        "end": 99,
+        "start": 91,
+        "text": "password"
+      },
+      "suggestions": [
+        "contraseña"
+      ]
+    }
+  ],
+  "Baseline own/fr": [],
+  "Baseline own/it": [
+    {
+      "category": "terminology",
+      "message": "Use 'accesso' instead of 'Accesso'.",
+      "severity": "error",
+      "source": "terminology",
+      "span": {
+        "end": 35,
+        "start": 28,
+        "text": "Accesso"
+      },
+      "suggestions": [
+        "accesso"
+      ]
+    },
+    {
+      "category": "terminology",
+      "message": "Use 'posta elettronica' instead of 'email'.",
+      "severity": "error",
+      "source": "terminology",
+      "span": {
+        "end": 84,
+        "start": 79,
+        "text": "email"
+      },
+      "suggestions": [
+        "posta elettronica"
+      ]
+    },
+    {
+      "category": "terminology",
+      "message": "Use 'accesso' instead of 'login'.",
+      "severity": "error",
+      "source": "terminology",
+      "span": {
+        "end": 98,
+        "start": 93,
+        "text": "login"
+      },
+      "suggestions": [
+        "accesso"
+      ]
+    }
+  ],
+  "Baseline own/ja": [],
+  "Baseline own/zh": [
+    {
+      "category": "terminology",
+      "message": "Use '登录' instead of '登入'. 验证身份。",
+      "severity": "error",
+      "source": "terminology",
+      "span": {
+        "end": 12,
+        "start": 10,
+        "text": "登入"
+      },
+      "suggestions": [
+        "登录"
+      ]
+    }
+  ]
+}
