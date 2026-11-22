@@ -1,5 +1,6 @@
 import json
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -20,6 +21,7 @@ from app.services.terminology.model import (
     Domain,
     LanguageSection,
     SectionInput,
+    TerminologyConflictError,
     TerminologyRuleError,
     UsageStatus,
     is_enforced,
@@ -110,6 +112,39 @@ def _validate(sections: list[SectionInput], current: Concept | None) -> None:
         if len(preferred) > 1:
             raise TerminologyRuleError(
                 "second_preferred", "A language can have only one active preferred term."
+            )
+
+
+def _check_versions(
+    current: Concept, sections: list[SectionInput], domain_ids: list[int] | None, revision: int | None
+) -> None:
+    stored = {s.language: s for s in current.sections}
+    for given in sections:
+        found = stored.get(given.language)
+        expected = (found.id, found.revision) if found else (None, None)
+        if (given.id, given.revision) != expected:
+            raise TerminologyConflictError(
+                given.language.value,
+                "This language section was changed since it was read. Reload and try again.",
+            )
+    if domain_ids is not None and revision != current.revision:
+        raise TerminologyConflictError(
+            "links", "The domains of this concept were changed since they were read."
+            " Reload and try again.",
+        )
+
+
+def _check_domains(conn: Any, domain_ids: list[int], current: Concept, actor: Actor) -> None:
+    if not domain_ids:
+        raise TerminologyRuleError("no_domain", "A concept belongs to at least one domain.")
+    owners = rows.domain_owners(conn, sorted(set(domain_ids)))
+    for domain_id in domain_ids:
+        if domain_id not in owners or not is_visible(owners[domain_id], user_id=actor.user_id):
+            raise TerminologyRuleError("unknown_domain", "A domain does not exist.")
+        if owners[domain_id] != current.owner_id:
+            raise TerminologyRuleError(
+                "domain_owner_mismatch",
+                "A concept can only be in domains with the same owner: own or built-in.",
             )
 
 
@@ -226,17 +261,7 @@ class TerminologyStore:
         with self._connect() as conn:
             if self._visible_domain_row(conn, domain_id, owner_id) is None:
                 return None
-            ids = [
-                row["concept_id"]
-                for row in conn.execute(
-                    "SELECT cd.concept_id FROM concept_domains cd"
-                    " JOIN concepts c ON c.id = cd.concept_id"
-                    " WHERE cd.domain_id = ? AND " + visible_clause("c.owner_id")
-                    + " ORDER BY cd.concept_id",
-                    (domain_id, owner_id),
-                ).fetchall()
-            ]
-            return rows.load_concepts(conn, ids)
+            return rows.load_domain_concepts(conn, domain_id, user_id=owner_id)
 
     def get_concept(self, concept_id: int, *, owner_id: int) -> Concept | None:
         with self._connect() as conn:
@@ -274,6 +299,37 @@ class TerminologyStore:
                 conn, concept_id, None, sections, now=now, user_id=actor.user_id
             )
             return _record(conn, concept_id, None, actor=actor, comment=comment, now=now)
+
+    def save_section(
+        self, concept_id: int, section: SectionInput, *, actor: Actor, comment: str = ""
+    ) -> Concept | None:
+        return self.save_concept(concept_id, sections=[section], actor=actor, comment=comment)
+
+    def save_concept(
+        self,
+        concept_id: int,
+        *,
+        sections: Sequence[SectionInput] = (),
+        domain_ids: list[int] | None = None,
+        revision: int | None = None,
+        actor: Actor,
+        comment: str = "",
+    ) -> Concept | None:
+        sections = list(sections)
+        with self._connect() as conn:
+            _lock(conn, domain_ids=set(domain_ids or ()), concept_ids=[concept_id])
+            before = rows.load_concept(conn, concept_id)
+            if before is None or not is_visible(before.owner_id, user_id=actor.user_id):
+                return None
+            require_writable(before.owner_id, is_admin=actor.is_admin)
+            _check_versions(before, sections, domain_ids, revision)
+            _validate(sections, before)
+            if domain_ids is not None:
+                _check_domains(conn, domain_ids, before, actor)
+                rows.set_links(conn, concept_id, domain_ids)
+            now = _utcnow()
+            rows.apply_sections(conn, concept_id, before, sections, now=now, user_id=actor.user_id)
+            return _record(conn, concept_id, before, actor=actor, comment=comment, now=now)
 
     def delete_concept(self, concept_id: int, *, actor: Actor, comment: str = "") -> bool:
         with self._connect() as conn:

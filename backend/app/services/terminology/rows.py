@@ -2,6 +2,8 @@ import uuid
 from typing import Any
 
 from app.core.models import Language
+from app.services.ownership import visible_clause
+from app.services.terminology.changes import TERM_FIELDS, term_value
 from app.services.terminology.model import (
     Concept,
     ConceptTerm,
@@ -40,26 +42,24 @@ def _term_from_row(row: Any) -> ConceptTerm:
     )
 
 
-def load_concepts(conn: Any, concept_ids: list[int]) -> list[Concept]:
-    if not concept_ids:
-        return []
-    marks = _marks(len(concept_ids))
+def _load(conn: Any, where: str, params: tuple) -> list[Concept]:
+    chosen = f"SELECT id FROM concepts WHERE {where}"
     concept_rows = conn.execute(
-        f"SELECT * FROM concepts WHERE id IN ({marks}) ORDER BY id", tuple(concept_ids)
+        f"SELECT * FROM concepts WHERE {where} ORDER BY id", params
     ).fetchall()
     link_rows = conn.execute(
-        f"SELECT concept_id, domain_id FROM concept_domains WHERE concept_id IN ({marks})"
+        f"SELECT concept_id, domain_id FROM concept_domains WHERE concept_id IN ({chosen})"
         " ORDER BY domain_id",
-        tuple(concept_ids),
+        params,
     ).fetchall()
     section_rows = conn.execute(
-        f"SELECT * FROM concept_languages WHERE concept_id IN ({marks}) ORDER BY id",
-        tuple(concept_ids),
+        f"SELECT * FROM concept_languages WHERE concept_id IN ({chosen}) ORDER BY id",
+        params,
     ).fetchall()
     term_rows = conn.execute(
         "SELECT t.* FROM concept_terms t JOIN concept_languages s ON s.id = t.section_id"
-        f" WHERE s.concept_id IN ({marks}) ORDER BY t.id",
-        tuple(concept_ids),
+        f" WHERE s.concept_id IN ({chosen}) ORDER BY t.id",
+        params,
     ).fetchall()
 
     terms_by_section: dict[int, list[ConceptTerm]] = {}
@@ -104,8 +104,22 @@ def load_concepts(conn: Any, concept_ids: list[int]) -> list[Concept]:
     ]
 
 
+def load_concepts(conn: Any, concept_ids: list[int]) -> list[Concept]:
+    if not concept_ids:
+        return []
+    return _load(conn, f"id IN ({_marks(len(concept_ids))})", tuple(concept_ids))
+
+
+def load_domain_concepts(conn: Any, domain_id: int, *, user_id: int | None) -> list[Concept]:
+    return _load(
+        conn,
+        "id IN (SELECT concept_id FROM concept_domains WHERE domain_id = ?) AND " + visible_clause(),
+        (domain_id, user_id),
+    )
+
+
 def load_concept(conn: Any, concept_id: int) -> Concept | None:
-    loaded = load_concepts(conn, [concept_id])
+    loaded = _load(conn, "id = ?", (concept_id,))
     return loaded[0] if loaded else None
 
 
@@ -138,29 +152,16 @@ def set_links(conn: Any, concept_id: int, domain_ids: list[int]) -> None:
         )
 
 
-def _term_values(term: TermInput) -> tuple:
-    return (
-        term.text,
-        term.usage_status.value,
-        term.process_status.value,
-        term.status_reason,
-        term.context,
-        term.source,
-        term.part_of_speech.value if term.part_of_speech else "",
-        int(term.case_sensitive),
-    )
-
-
-def _current_values(term: ConceptTerm) -> tuple:
-    return _term_values(TermInput.from_term(term))
+def _term_values(term: TermInput | ConceptTerm) -> tuple:
+    values = (term_value(term, field) for field in TERM_FIELDS)
+    return tuple(int(v) if isinstance(v, bool) else v for v in values)
 
 
 def _insert_term(conn: Any, section_id: int, term: TermInput, now: str | None, user_id: int | None) -> None:
     conn.execute(
-        "INSERT INTO concept_terms (uid, section_id, text, usage_status, process_status,"
-        " status_reason, context, source, part_of_speech, case_sensitive,"
+        f"INSERT INTO concept_terms (uid, section_id, {', '.join(TERM_FIELDS)},"
         " created_at, created_by, modified_at, modified_by)"
-        f" VALUES ({_marks(14)})",
+        f" VALUES ({_marks(len(TERM_FIELDS) + 6)})",
         (str(uuid.uuid4()), section_id, *_term_values(term), now, user_id, now, user_id),
     )
 
@@ -211,12 +212,10 @@ def apply_sections(
             if term.id is None:
                 _insert_term(conn, existing.id, term, now, user_id)
                 changed = True
-            elif _term_values(term) != _current_values(current_terms[term.id]):
+            elif _term_values(term) != _term_values(current_terms[term.id]):
                 conn.execute(
-                    "UPDATE concept_terms SET text = ?, usage_status = ?, process_status = ?,"
-                    " status_reason = ?, context = ?, source = ?, part_of_speech = ?,"
-                    " case_sensitive = ?, revision = revision + 1, modified_at = ?, modified_by = ?"
-                    " WHERE id = ?",
+                    f"UPDATE concept_terms SET {', '.join(f'{f} = ?' for f in TERM_FIELDS)},"
+                    " revision = revision + 1, modified_at = ?, modified_by = ? WHERE id = ?",
                     (*_term_values(term), now, user_id, term.id),
                 )
                 changed = True
@@ -236,11 +235,18 @@ def touch_concept(conn: Any, concept_id: int, *, now: str, user_id: int | None) 
     )
 
 
-def domain_names(conn: Any, domain_ids: list[int]) -> dict[int, str]:
+def _domains(conn: Any, domain_ids: list[int]) -> list[Any]:
     if not domain_ids:
-        return {}
-    rows = conn.execute(
-        f"SELECT id, name FROM domains WHERE id IN ({_marks(len(domain_ids))})",
+        return []
+    return conn.execute(
+        f"SELECT id, name, owner_id FROM domains WHERE id IN ({_marks(len(domain_ids))})",
         tuple(domain_ids),
     ).fetchall()
-    return {row["id"]: row["name"] for row in rows}
+
+
+def domain_names(conn: Any, domain_ids: list[int]) -> dict[int, str]:
+    return {row["id"]: row["name"] for row in _domains(conn, domain_ids)}
+
+
+def domain_owners(conn: Any, domain_ids: list[int]) -> dict[int, int | None]:
+    return {row["id"]: row["owner_id"] for row in _domains(conn, domain_ids)}
