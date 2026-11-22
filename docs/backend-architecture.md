@@ -523,9 +523,15 @@ so the concept row is locked before the read (a plain read under Postgres' defau
 isolation could be out of date by the time it is compared). And one fixed order means two
 transactions cannot wait for each other. The domain locks close a second gap: without
 them, deleting a domain while a concept is being created in it could leave a concept with
-no domain. `test_terminology_concurrency.py` runs competing OS processes against Postgres
-for both cases; the threads of one process do not race there, because the GIL serialises
-them against a fast local database.
+no domain. `test_terminology_concurrency.py` (Postgres only) has five tests. The first
+races eight OS processes that save the same section with one number, and exactly one may
+succeed; processes, because the GIL serialises the threads of one process against a fast
+local database. The other four hold a lock on a raw connection and run the store call in a
+thread, which must still be waiting after one second: a save whose number changed while it
+waited for the concept lock; creating a concept in a domain that is being deleted; moving a
+concept to a domain that is being deleted (`unknown_domain`); and deleting a domain while a
+concept is being created in it (no concept may be left without a link). The last two fail
+if the domain lock of `save_concept` or of `delete_domain` is removed.
 
 ### The three version numbers
 
@@ -619,7 +625,14 @@ null and every number is 1. It writes one `carried_over` batch per concept (orig
 
 The last statement is `ALTER TABLE terms RENAME TO terms_legacy`. It comes last because on
 SQLite a DDL statement issued before the first insert would run outside the transaction
-and survive a failure. The legacy table stays until the screen rewrite removes it; a second
+and survive a failure. On Postgres the migration first takes `LOCK TABLE terms IN ACCESS
+EXCLUSIVE MODE`, before it reads a row: a write by a previous release still running during
+`init-db` would otherwise commit between the read and the rename and stay in `terms_legacy`
+only; with the lock it waits and then fails on the renamed table. SQLite has a single
+writer and needs no lock. The previous release must be stopped before `init-db` runs
+anyway, since it reads `terms`; see the upgrade note in
+[fly-deployment.md](fly-deployment.md#3-updating). The legacy table stays until the screen
+rewrite removes it; a second
 start finds no `terms` table and does nothing. With `manage_schema=False`, `schema.verify`
 only checks: it fails, pointing to `init-db`, if a table is missing or the old `terms` table
 is still there. The import tool (`app/manage_import.py`) opens its source through the
@@ -644,7 +657,8 @@ and go with them.
   and saves with the numbers it just read. The endpoints therefore use the same checked path
   as any caller; the store has no unchecked save. If another write lands between the read
   and the save, the endpoint answers 409. Terms that are not forbidden variants (for
-  instance an admitted term) are kept as they are. Changing the language removes the
+  instance an admitted term) are kept, but a `case_sensitive` in the request is set on every
+  term of the section. Changing the language removes the
   section and creates one in the new language in one `save_concept` call, so the id changes;
   the screen reloads after each save.
 - `DELETE` deletes the concept if the section is its only one, otherwise removes the section.
@@ -681,9 +695,11 @@ same store check as every other read; an invisible domain gives no findings. Fro
 section it uses only enforced terms, and skips a section that has no enforced preferred
 term. It reports occurrences of the enforced `forbidden` terms; `admitted` and `deprecated`
 terms are not looked at yet. Sections are visited in the order of their preferred text,
-which keeps the finding order of the old checker. Findings are `terminology`/`error`, with
-the preferred term as the only suggestion, and the section's definition appended to the
-message.
+compared in Python, and the findings are then sorted by span. On SQLite this is the finding
+order of the old checker; on Postgres the old checker's order followed the database
+collation, so the two can differ, but only in the order of two findings on the same span.
+Findings are `terminology`/`error`, with the preferred term as the only suggestion, and the
+section's definition appended to the message.
 
 The **rule id is `terminology.<uid of the matched term>`**, where it was
 `terminology.<numeric term id>`. A UUID cannot collide with an old numeric id, which a
@@ -1089,6 +1105,12 @@ folder/profile partial unique indexes (`idx_folders_owner_name`,
 `idx_profiles_owner_lang_name`, `idx_profiles_global_lang_name`) are created
 solely by the DDL path, so an index-only schema change still requires
 running `init-db` and gets no startup failure if that step is skipped.
+`init-db` assumes additive DDL, under which the previous release keeps
+serving while it runs. The terminology concept model is the exception: its
+migration renames `terms`, which the previous release reads, so the app is
+stopped first (upgrade note in [fly-deployment.md](fly-deployment.md#3-updating)).
+A store start that refuses the data (both `terms` and `terms_legacy`, or a
+row that cannot be converted) makes `init-db` print the message and return 1.
 
 **The Postgres pool** (`PostgresDatabase`, wrapping `psycopg_pool.ConnectionPool`) is
 fixed-size, 1–5 connections, with no config knobs: a syntactically malformed DSN is
@@ -2153,8 +2175,8 @@ cover everything:
   first (see [Checking profiles](#checking-profiles) above) — an authorization refusal
   must never be shaped by a business rule the caller was never going to reach anyway.
 
-**The shared checks** live in `app/services/ownership.py` so that no store writes its own
-copy of the rule:
+**The shared checks** live in `app/services/ownership.py`. The terminology store uses only
+these; the profiles store and API still have their own inline checks of the same rule:
 
 - `visible_clause(column="owner_id")` returns the SQL condition `(column IS NULL OR column
   = ?)` with one placeholder, for queries (`visible_clause("c.owner_id")` for a joined
@@ -2867,7 +2889,9 @@ each API router, anchoring, vetting, providers, profiles, seeding, …). Convent
   a golden file (`tests/data/terminology_baseline.json`, built from `terminology_baseline.py`),
   and `test_terminology_migration.py` re-runs it on migrated data; both must give equal
   findings. Both backends run the store and migration tests when `FW_TEST_DATABASE_URL` is
-  set, and `test_terminology_concurrency.py` (Postgres only) races OS processes. Guard tests
+  set, and `test_terminology_concurrency.py` (Postgres only) checks the locks: one test
+  races OS processes, four run a thread against a lock held on a raw connection (see
+  [Locks and their order](#locks-and-their-order)). Guard tests
   are checked by deleting the guard and watching the test fail. `terminology_helpers.py` holds
   the shared builders.
 - Anchoring and vetting have dedicated edge-case suites (ambiguous quotes, fuzzy
