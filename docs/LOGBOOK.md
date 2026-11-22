@@ -5061,3 +5061,27 @@ no perpetual Office/iPad). Distribution without a company entity is limited
 to sideloading and organisation admin deployment; the free Microsoft 365
 developer sandbox now requires a Visual Studio subscription or partner
 program.
+
+## 2026-11-22 — Terminology management roadmap (PR #210)
+
+Planning only, no code. Turns the terminology research note
+(`docs/notes/2026-08-24-terminology-management-research.md`, issue #150) into
+an ordered roadmap, `docs/terminology-roadmap.md`. Direction from the owner:
+serve individual writers first, but keep the design open for organisations
+later.
+
+Five milestones, each a sub-issue of #150 with its own spec, plan and PR:
+T1 concept and status model (#205), T2 morphology-aware matching (#206),
+T3 LLM-based term extraction (#207), T4 import and export via CSV and
+TBX-Basic (#208), T5 governance and organisations (#209). T1 is the
+prerequisite for T3 to T5; T2 touches only the checker. The order differs
+from the research note's tiers: matching and extraction come before
+interchange because they matter more to individual writers, and governance
+comes last because approval needs shared termbases, which do not exist
+(domains are global or owned by one user).
+
+Custom attributes (free text or pick-list fields defined by the customer)
+are deferred to T5. They are an additive change provided T1 models every
+variant as a term row with its own identifier instead of a string in a
+list, which per-variant statuses and TBX need anyway. That condition is
+recorded in the roadmap and in the T1 issue.
