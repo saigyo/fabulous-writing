@@ -72,6 +72,10 @@ def migrate_legacy_terms(conn: Any, *, now: str) -> int:
             "tables 'terms' and 'terms_legacy' both exist; the old terms cannot be"
             " migrated. Remove 'terms_legacy' once its data is no longer needed."
         )
+    if conn.dialect == "postgres":
+        # A write by a still-running previous release would otherwise commit
+        # between the read below and the rename and stay in terms_legacy only.
+        conn.execute("LOCK TABLE terms IN ACCESS EXCLUSIVE MODE")
     (orphans,) = conn.execute(
         "SELECT count(*) FROM terms WHERE domain_id NOT IN (SELECT id FROM domains)"
     ).fetchone()
