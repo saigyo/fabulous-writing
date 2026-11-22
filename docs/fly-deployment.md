@@ -100,13 +100,35 @@ to `fly.toml` itself.
 
 ## 3. Updating
 
-- Schema-changing release: run `init-db` under the admin DSN FIRST
-  (additive DDL — the old release keeps serving), then bump the image
-  tag in `deploy/fly/fly.toml` (commit) and `fly deploy --ha=false -c
-  deploy/fly/fly.toml`.
+- Schema-changing release: run `init-db` under the admin DSN FIRST,
+  then bump the image tag in `deploy/fly/fly.toml` (commit) and `fly
+  deploy --ha=false -c deploy/fly/fly.toml`. The old release keeps
+  serving while `init-db` runs only if the DDL is additive; a release
+  that renames or drops something the old release reads needs the
+  stop described below.
 - Non-schema release: tag bump + deploy only.
 - Every deploy keeps `--ha=false` (see step 5 above); re-check the
   machine count after deploying.
+
+**Upgrade to the terminology concept model.** This release's `init-db`
+migrates the rows of the old `terms` table into concepts and renames
+the table to `terms_legacy`. The previous release still reads `terms`,
+so from the rename on it fails every terminology request. Stop the app
+before `init-db` and start it only with the new image:
+
+1. `fly machine stop <id>` (id from `fly machine list -a
+   fabulous-writing`). `auto_start_machines` is on, so a request starts
+   the machine again: check right before step 2 that `fly machine
+   list` still shows it stopped.
+2. `init-db` under the admin DSN. It stops with an error naming the
+   row if an old row cannot be converted; nothing is migrated then.
+3. Bump the image tag and `fly deploy --ha=false -c
+   deploy/fly/fly.toml`.
+
+On Postgres the migration locks `terms` before it reads it, so a write
+of a previous release that is still running cannot be lost; that write
+fails after the rename instead. `terms_legacy` keeps the original rows
+unchanged until a later release drops it.
 
 ## 4. Operational notes
 

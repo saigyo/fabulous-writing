@@ -1,5 +1,6 @@
 import json
 import logging
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -372,6 +373,36 @@ def test_check_results_after_migration_match_the_baseline(db):
             )
             actual = normalise([f.model_dump(mode="json") for f in findings])
             assert actual == golden[f"{domain.name}/{language.value}"], (domain.name, language)
+
+
+def test_migration_waits_for_a_write_of_the_previous_release_and_carries_it_over(pg_database):
+    # Without the table lock the migration reads the old value and only waits
+    # at the rename, so the updated definition would stay in terms_legacy.
+    ids = legacy(pg_database, [Old("Shared", L.EN, "sign in", ["login"], "Old.")])
+    outcome: dict = {}
+
+    def start() -> None:
+        try:
+            outcome["store"] = TerminologyStore(pg_database)
+        except Exception as exc:
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=start, daemon=True)
+    conn = pg_database.raw_connect()
+    try:
+        conn.execute("UPDATE terms SET definition = ? WHERE id = 1", ("Updated.",))
+        worker.start()
+        worker.join(timeout=1.0)
+        assert worker.is_alive()
+        conn.commit()
+    finally:
+        conn.close()
+        if worker.is_alive():
+            worker.join(timeout=10)
+    assert not worker.is_alive()
+    assert "error" not in outcome, outcome
+    (concept,) = concepts_in(outcome["store"], ids["Shared"])
+    assert concept.sections[0].definition == "Updated."
 
 
 def test_row_with_an_unknown_language_stops_the_migration_naming_the_row(db):
