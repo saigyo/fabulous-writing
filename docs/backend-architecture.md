@@ -26,7 +26,7 @@ backend/
 │   │   ├── suggestions.py       # on-demand LLM fixes and sentence rewrites
 │   │   ├── llm_gate.py          # get_effective_provider: the one path from a request to a provider
 │   │   ├── rules.py             # rule catalog + reload
-│   │   ├── terminology.py       # domain/term CRUD
+│   │   ├── terminology.py       # domain CRUD; term endpoints as a layer over concepts (temporary)
 │   │   ├── profiles.py          # checking-profile CRUD + reset
 │   │   ├── documents.py         # document CRUD + auto-titling
 │   │   ├── folders.py           # folder CRUD + per-folder defaults
@@ -63,13 +63,13 @@ backend/
 │       │   ├── __init__.py      # seam contract: Database/Row protocols, UniqueViolationError, migrate_columns()
 │       │   ├── sqlite.py        # SqliteDatabase
 │       │   └── postgres.py      # PostgresDatabase (B15 PR2) — imported lazily, only when selected
-│       ├── ownership.py         # GlobalReadOnlyError — the one exception every owner-scoped store raises
+│       ├── ownership.py         # GlobalReadOnlyError, visible_clause, is_visible, require_writable — the shared owner checks
 │       ├── jobs.py              # in-memory check jobs, scoped to their creator
-│       ├── terminology.py       # domains, terms — owner-scoped, nullable owner_id
+│       ├── terminology/         # package: domains and concepts (language sections, terms), change log, legacy-term migration — owner-scoped, nullable owner_id
 │       ├── profiles.py          # checking profiles — owner-scoped, nullable owner_id
 │       ├── documents.py         # documents — owner-scoped, NOT NULL owner_id
 │       ├── folders.py           # folders + per-folder defaults — owner-scoped
-│       ├── seed.py              # example terminology domain (seeded as a global row)
+│       ├── seed.py              # example terminology domain and its concepts (global rows, origin `seed`)
 │       ├── seed_profiles.py     # Standard + example profiles per language (seeded as global rows)
 │       ├── users.py             # UserStore: users + admin_audit tables; per-user token_epoch
 │       └── seed_admin.py        # bootstrap the first admin from the environment
@@ -127,7 +127,7 @@ Singletons on `app.state`:
 | Object | Role |
 |---|---|
 | `settings` | validated `Settings` (see below) |
-| `terminology_store` | domains/terms (SQLite or Postgres, see [the `db/` seam](#documents)) |
+| `terminology_store` | domains and concepts (SQLite or Postgres, see [the `db/` seam](#documents)) |
 | `profile_store` | checking profiles (SQLite or Postgres, see [the `db/` seam](#documents)) |
 | `rule_engine` | all YAML rules, loaded and validated |
 | `jobs` | in-memory `JobManager` for check jobs |
@@ -427,52 +427,287 @@ incompatibility (`compound_splitter.split_mode`).
 
 ## Terminology
 
-Storage (`app/services/terminology.py`) is two SQLite tables: `domains(id, name,
-description, owner_id)` and `terms(id, domain_id, language, preferred,
-forbidden_variants JSON, definition, case_sensitive)` — **terms carry no `owner_id` of
-their own**; a term's visibility and mutability are entirely derived from its parent
-domain's (`get_term`/`update_term`/`delete_term` join to `domains` and read
-`d.owner_id`) — with `ON DELETE CASCADE` from domain to terms. CRUD is exposed under
-`/api/domains` and `/api/terms`; deleting a domain also prunes it from every profile
-(`ProfileStore.remove_domain_everywhere`, deliberately unscoped by owner — see
-[Ownership](#ownership) for why a domain deletion must reach every owner's profiles).
+Terminology is a **concept store**. A *concept* is one meaning; it has one *language
+section* per language it is defined in, and each section holds the *terms* (the wordings)
+for that meaning, each with a usage status (`preferred`, `admitted`, `deprecated`,
+`forbidden`) and a process status (`candidate`, `active`). Only `active` terms are
+enforced (`PROCESS_STATUS_ENFORCED`); a candidate is stored but ignored by every reader
+that enforces. A concept is linked to one or more *domains*. The vocabulary and the reasons
+for the model are in the spec,
+`docs/superpowers/specs/2026-11-22-terminology-t1-concept-model-design.md`.
+
+### The package
+
+`app/services/terminology/` replaces the former single module. Its `__init__.py`
+re-exports the public names, so callers import from `app.services.terminology`.
+
+| Module | Owns |
+|---|---|
+| `model.py` | Pydantic models (`Domain`, `Concept`, `LanguageSection`, `ConceptTerm`), the input models (`SectionInput`, `TermInput`, which carry the version numbers a save read), the pick-list enums, `Actor`, the two exceptions, `section_label` |
+| `schema.py` | The DDL, `REQUIRED_SCHEMA` (what `manage_schema=false` verifies), `verify`, and `migrate_domains` (the `domains.owner_id` backfill and its indexes) |
+| `rows.py` | SQL on the concept tables: loading concepts, inserting, applying a section input, the link rows, and the version-number updates. It decides nothing; it writes what it is told |
+| `changes.py` | `diff` (two states of a concept to a list of log entries) and `write` (the entries to `terminology_changes`) |
+| `migration.py` | `migrate_legacy_terms`: the old `terms` table to concepts |
+| `store.py` | `TerminologyStore`: the transactions, the locks, the rules, the version comparison, and the ownership checks |
+
+`app/api/terminology.py` and `app/checkers/terminology.py` use the store only through
+these names.
+
+### Tables
+
+- `domains(id, name, description, owner_id)` is unchanged.
+- `concepts(id, uid, owner_id, revision, created_*, modified_*)`. `uid` is a UUID. A
+  concept has **its own `owner_id`**: it takes the owner of the domain it is created in.
+- `concept_domains(concept_id, domain_id)`, the many-to-many link. A concept can be in
+  several domains and is then one row seen from each.
+- `concept_languages(id, concept_id, language, definition, revision, created_*,
+  modified_*)`, unique on `(concept_id, language)`. This is the language section.
+- `concept_terms(id, uid, section_id, text, usage_status, process_status, status_reason,
+  context, source, part_of_speech, case_sensitive, revision, created_*, modified_*)`.
+- `terminology_changes`, the change log (below).
+
+Deleting a domain, concept or section cascades to the rows below it. The same DDL text
+runs on SQLite and Postgres.
+
+### Ownership of concepts
+
+Visibility and mutability follow the same rule as profiles (see [Ownership](#ownership)):
+`owner_id NULL` is global (readable by everyone, writable by admins), otherwise private
+to the owner. A concept's owner is fixed when it is created, from its first domain, and
+`_check_domains` refuses to put a concept in a domain with a different owner
+(`domain_owner_mismatch`). A private concept can therefore never be reached through a
+domain of another user, and a global concept never carries private domain links. Reads of
+a domain's concepts filter on the concept's `owner_id`, not on the domain's.
+
+### What the store enforces
+
+Every rule is checked inside the transaction that writes, after the locks below.
+
+- A concept has at least one language section with a term (`no_section`) and at least one
+  domain (`no_domain`). Saving a section with no terms removes it; removing the last
+  section is refused.
+- One section per language (`duplicate_language`).
+- A term id in a save must belong to that section of that concept (`unknown_term`) and
+  appear once (`duplicate_term`). A term without an id is created; a term of the section
+  that the save leaves out is deleted.
+- Within a section, the text of two terms may not be equal (`duplicate_text`). The
+  comparison is exact, so wordings that differ only in case are different terms.
+- A section has at most one `active` `preferred` term (`second_preferred`). A candidate
+  preferred term does not count.
+- The domains of a save must be visible to the actor (`unknown_domain`) and have the
+  concept's owner.
+- Writing to a global concept or domain needs an admin (`GlobalReadOnlyError`), including
+  a save that would change nothing.
+
+There is **no unique index on a term's text**. Uniqueness is checked on the final state of
+a save, after locking. An index is checked row by row while the statements run, so it
+would reject a save that swaps the wordings of two terms of a section, which is a legal
+end state. The same reason is why a term's text is not unique across concepts at all:
+the same wording can mean different things.
+
+A rule error is a `TerminologyRuleError` carrying the rule name. A failed version
+comparison is a `TerminologyConflictError`, a subclass.
+
+### Locks and their order
+
+Every transaction that writes first takes the locks, then reads, then writes. A lock is
+a value-preserving update (`UPDATE domains SET name = name`, `UPDATE concepts SET uid =
+uid`), which takes the row lock on Postgres and starts the write transaction on SQLite.
+The order is fixed: the domain rows the call names, in ascending id, then the concept rows
+it changes, in ascending id. `delete_domain` locks its domain, reads the linked
+concepts, and then locks those.
+
+Two reasons. The version comparison reads the concept and compares numbers in Python; that
+is only sound if no other writer can change the concept between the read and the write,
+so the concept row is locked before the read (a plain read under Postgres' default
+isolation could be out of date by the time it is compared). And one fixed order means two
+transactions cannot wait for each other. The domain locks close a second gap: without
+them, deleting a domain while a concept is being created in it could leave a concept with
+no domain. `test_terminology_concurrency.py` runs competing OS processes against Postgres
+for both cases; the threads of one process do not race there, because the GIL serialises
+them against a fast local database.
+
+### The three version numbers
+
+Concept, language section and term each carry `revision`, starting at 1. The store
+increases a number in the same statement that changes the row (`SET revision = revision
++ 1`), so the number never depends on a value read earlier.
+
+| Level | Increases when |
+|---|---|
+| Term | one of its own fields changes |
+| Language section | its definition changes, or a term in it is added, changed or removed |
+| Concept | a domain link changes, or a language section is added or removed |
+
+`modified_at` and `modified_by` change exactly when the number does. A change to a term
+therefore shows on the term and its section, not on the concept.
+
+A save carries the id and number of every section it writes or removes, and, if it sends
+domain links, the concept's number (`SectionInput.id`/`revision`, and `revision` on
+`save_concept`). After locking, `_check_versions` compares them to the loaded state. The
+section id is part of the comparison because a language can be removed and added again,
+and the new section starts at 1 like the old one; ids are not reused. For a language the
+concept does not have yet, the save states neither, and the language must still be
+absent. Any failed comparison refuses the whole save and writes nothing
+(`TerminologyConflictError`, whose `part` names the language or `links`). Two saves of
+different languages made from one read therefore both succeed; two saves of the same
+language, or of the links, do not. The term's number is maintained and returned but
+nothing compares it yet, since every save writes a whole section.
+
+Deleting a concept, removing it from a domain and deleting a domain are not compared;
+they do not write from a possibly stale copy.
+
+### The change log
+
+`terminology_changes` has one row per entry: batch, time, user, origin, action, concept,
+term (id, uid, text, language), the concept's labels per language after the change, a JSON
+list of `{field, old, new}`, and the comment. Entries are only inserted; no statement in
+the package updates or deletes one, and a test scans the package for that. Rows hold
+copies of the concept uid and term text rather than references, so the history survives
+deleting the concept.
+
+A write method loads the concept before and after its changes and gives both to
+`changes.diff`; a method never describes its own change. The diff produces:
+
+- the same state, no entries (a no-op save writes no log row);
+- one `edited` entry for the concept when definitions change (one change per language);
+- one `added_to_domain` or `removed_from_domain` entry per link, because an entry has one
+  action;
+- per term: `created` (every field new), `deleted` (every field old), or `edited` with
+  only the fields that changed, as one entry for all of them;
+- for a whole concept created or deleted, one entry for the concept (all definitions and
+  domains) and one per term. A new section with an empty definition adds no concept
+  entry, only the term entries, because a definition is compared as text and an absent
+  section counts as empty.
+
+All entries of one call share a batch id and time. `delete_domain` writes one batch for
+all the concepts it deletes or unlinks. `Actor` carries the user, admin flag and origin
+(`manual`, `extraction`, `import`, `migration`, `seed`); `Actor.system(origin)` has no user.
+Domain create and update are not logged.
+
+### Migration of the old terms
+
+`TerminologyStore.__init__`, when it manages the schema, runs `executescript(SCHEMA)`,
+`migrate_domains`, an explicit `commit()`, and then `migrate_legacy_terms`. The commit
+is deliberate. `migrate_domains` may add `domains.owner_id` and backfill it. If the term
+migration then failed and rolled everything back, SQLite would undo the backfill but keep
+the added column (the `ALTER` is not rolled back with the data), so the next start would
+see the column, skip the backfill and leave every domain global; on Postgres the new
+tables would be rolled back. With the commit, only the term migration is all-or-nothing.
+
+`migrate_legacy_terms` runs only if the table `terms` exists. For each row, in id order, it
+creates one concept (with the owner of the row's domain) linked to that domain, one
+language section, one `preferred` `active` term, and one `forbidden` `active` term per
+distinct, non-blank variant, all with the row's `case_sensitive`. Dates and users stay
+null and every number is 1. It writes one `carried_over` batch per concept (origin
+`migration`). Special cases:
+
+- **The section keeps the old term id**, so that the old endpoints, whose id is the section
+  id, address the same entry before and after the upgrade (a browser tab left open across
+  the upgrade still holds old ids). On Postgres the identity is then restarted past the
+  largest id with `ALTER ... RESTART`, which rolls back with the transaction, unlike
+  `setval`.
+- A variant equal to the preferred wording is skipped with a warning; one that differs only
+  in case is kept.
+- A row with a blank preferred wording becomes a section with its forbidden terms and no
+  preferred term; with no usable wording at all it is skipped with a warning. A row whose
+  domain no longer exists is not migrated (it was never visible); the count is logged.
+- A row that cannot be converted (an unknown language, or `forbidden_variants` that is not
+  a list of strings) **stops startup** with a `RuntimeError` naming the row id and domain.
+  It is not skipped, since skipping would silently lose terminology.
+- If `terms` and `terms_legacy` both exist, startup stops instead of choosing.
+
+The last statement is `ALTER TABLE terms RENAME TO terms_legacy`. It comes last because on
+SQLite a DDL statement issued before the first insert would run outside the transaction
+and survive a failure. The legacy table stays until the screen rewrite removes it; a second
+start finds no `terms` table and does nothing. With `manage_schema=False`, `schema.verify`
+only checks: it fails, pointing to `init-db`, if a table is missing or the old `terms` table
+is still there. The import tool (`app/manage_import.py`) opens its source through the
+stores, so the source is migrated first; its table list names the five tables parents
+first and does not copy `terms_legacy`.
+
+### Old endpoints as a translation layer
+
+`/api/domains/{id}/terms` and `/api/terms/{id}` keep their request and response shapes.
+They are **temporary**; the third pull request replaces them with concept endpoints, and
+`get_concept_by_section` and `section_ids_by_preferred` on the store exist only for them
+and go with them.
+
+- A "term" in these endpoints is one language section seen through one domain, and its `id`
+  is the section id. A section with no enforced preferred term is not listed.
+- `POST` creates a concept with one section: the preferred term plus one `forbidden` term per
+  cleaned variant, all with the request's `case_sensitive`.
+- `GET` returns the sections of the domain's concepts in the order of
+  `section_ids_by_preferred`, a store read that sorts by the preferred term's text in SQL so
+  that the database's collation decides the order, as it did before.
+- `PUT` reads the concept, builds the new section from what it read (`SectionInput.from_section`)
+  and saves with the numbers it just read. The endpoints therefore use the same checked path
+  as any caller; the store has no unchecked save. If another write lands between the read
+  and the save, the endpoint answers 409. Terms that are not forbidden variants (for
+  instance an admitted term) are kept as they are. Changing the language removes the
+  section and creates one in the new language in one `save_concept` call, so the id changes;
+  the screen reloads after each save.
+- `DELETE` deletes the concept if the section is its only one, otherwise removes the section.
+- `GlobalReadOnlyError` maps to 403 and any `TerminologyRuleError` (including a version
+  conflict) to 409; an empty `preferred` is a 422 from `validate_name`.
+
+Deleting a domain also prunes it from every profile (`ProfileStore.remove_domain_everywhere`,
+deliberately unscoped by owner; see [Ownership](#ownership)).
+
+### Domain ownership
 
 `domains.owner_id` is nullable, exactly like `profiles.owner_id`: `NULL` is a **global**
-domain — the seeded "Product docs" example, and nothing else, since `create_domain`
-always writes `owner_id=user.id` regardless of caller; a caller's `users.id` is a
-private one. **One-shot backfill**: when `owner_id`
-is first added to an existing database, the single row matching the seed domain's name
-(`seed.DOMAIN_NAME`, "Product docs" — asserted equal to `terminology.py`'s own
-`_SEED_DOMAIN_NAME` by a test, since the two constants can't share an import without a
-cycle) keeps `owner_id NULL`; every other row becomes `owner_id = 1`. Unlike `profiles`
-and `folders`, `domains` never had a `UNIQUE` constraint to begin with, so there is no
-guarded table rebuild here — only the two partial unique indexes
-(`idx_domains_owner_name`, `idx_domains_global_name`, same `WHERE owner_id IS [NOT]
-NULL` shape as profiles), each behind the same duplicate pre-scan and skip-with-warning
-fallback. Because `domains` never enforced uniqueness pre-M3, this is the table most
-likely, on a real legacy database, to have the index actually skipped for one or both
-partitions — a live-DB rehearsal found neither partition needed a skip on this repo's
-current data, but the code path (and its warning) exists for exactly that pre-existing
-data shape, unlike `folders`, whose old `UNIQUE(name)` already made a legacy
-case-*sensitive* skip the more likely finding.
+domain, the seeded "Product docs" example and nothing else, since `create_domain` always
+writes `owner_id=user.id` regardless of caller; a caller's `users.id` is a private one.
+**One-shot backfill** (`schema.migrate_domains`): when `owner_id` is first added to an
+existing database, the single row matching the seed domain's name (`SEED_DOMAIN_NAME`,
+"Product docs", asserted equal to `seed.DOMAIN_NAME` by a test, since `seed.py` imports the
+store and the two constants cannot share an import without a cycle) keeps `owner_id NULL`;
+every other row becomes `owner_id = 1`. Unlike `profiles` and `folders`, `domains` never had
+a `UNIQUE` constraint, so there is no table rebuild, only the two partial unique indexes
+(`idx_domains_owner_name`, `idx_domains_global_name`, same `WHERE owner_id IS [NOT] NULL`
+shape as profiles), each behind a duplicate pre-scan that skips the index with a warning.
+Because `domains` never enforced uniqueness before M3, this is the table most likely, on a
+real legacy database, to have an index skipped; a live-database rehearsal found neither
+partition needed a skip on this repository's data, but the code path exists for that shape
+of data, unlike `folders`, whose old `UNIQUE(name)` made a legacy case-*sensitive* skip the
+more likely finding.
 
-Term names go through the same shared `validate_name()` guard documents/profiles/folders
-use (below): `POST`/`PUT /api/terms` reject an empty (whitespace-only) `preferred` term
-with a 422, closing a gap where an empty preferred term could previously be stored.
+### The checker
 
-The checker (`app/checkers/terminology.py`) produces two kinds of findings, both
-`terminology`/`error` with the preferred term as the suggestion:
+`TerminologyChecker.check(text, language, domain_id, owner_id=…)` reads
+`store.list_sections(domain_id, owner_id=…, language=…)`, so visibility goes through the
+same store check as every other read; an invisible domain gives no findings. From each
+section it uses only enforced terms, and skips a section that has no enforced preferred
+term. It reports occurrences of the enforced `forbidden` terms; `admitted` and `deprecated`
+terms are not looked at yet. Sections are visited in the order of their preferred text,
+which keeps the finding order of the old checker. Findings are `terminology`/`error`, with
+the preferred term as the only suggestion, and the section's definition appended to the
+message.
+
+The **rule id is `terminology.<uid of the matched term>`**, where it was
+`terminology.<numeric term id>`. A UUID cannot collide with an old numeric id, which a
+new term's id could. Findings already saved on a document keep their old ids (they are
+not rewritten), so the first check of a document after the migration does not carry over
+the selection and cached suggestion of its terminology findings, once.
+
+Matching:
 
 - **Forbidden variants**: for Latin-script languages, word-boundary regexes per variant
   (case-insensitive unless the term is case-sensitive). For ja/zh there are no `\b`
   boundaries, so variants are matched with spaCy's `PhraseMatcher` over tokens
   (`ORTH`/`LOWER` depending on case sensitivity), falling back to plain substring search
   when no tokenizer is available.
-- **Casing violations**: for case-sensitive terms, an occurrence of the preferred term
-  with the wrong casing is flagged — except an initial capital at a conventional
-  sentence start (text start, after `.!?…` + closing quotes, after a newline with
-  optional markdown structure characters). Variant findings win over casing findings on
-  overlapping spans.
+- **Casing violations**: for case-sensitive preferred terms, an occurrence with the wrong
+  casing is flagged, except an initial capital at a conventional sentence start (text
+  start, after `.!?…` + closing quotes, after a newline with optional markdown structure
+  characters). Variant findings win over casing findings on overlapping spans.
+
+### Seeding
+
+`seed_terminology` (`app/services/seed.py`) creates the example domain as a global domain
+if no global domain exists, then one concept per entry through `create_concept`, with the
+actor `Actor.system(Origin.SEED)`; the seeded concepts therefore appear in the change log.
 
 ## The LLM layer
 
@@ -804,7 +1039,7 @@ hand-written `INSERT` that forgot the column. What M3 changed is that `owner_id`
 *enforced*: pre-M3 code accepted the column but never scoped a query by it, so every
 document was visible to every logged-in caller regardless of whose id was stored.
 
-All six stores (`terminology.py`, `profiles.py`, `documents.py`,
+All six stores (`terminology/`, `profiles.py`, `documents.py`,
 `folders.py`, `users.py`, `usage.py` under `app/services/`) hold a `Database` (the
 `app/services/db/` seam, spec: docs/superpowers/specs/2026-08-16-b15-postgres-backend-
 design.md) instead of a bare `db_path`. The contract lives in `db/__init__.py`: qmark
@@ -1901,9 +2136,9 @@ cover everything:
   `owner_id=user.id`, even for an admin caller, so a startup seeder is the only path to
   a global row. A global row
   is visible to every caller (`WHERE owner_id IS NULL OR owner_id = ?`) but mutable only
-  by an admin: any store's `update_*`/`delete_*` (and, for domains, `create_term` on a
-  global domain) raises `GlobalReadOnlyError` (`app/services/ownership.py`) when a
-  non-admin caller reaches a row with `owner_id IS NULL`. Every API router maps that one
+  by an admin: any store's `update_*`/`delete_*` (and, for terminology, every write to a
+  global domain or concept) raises `GlobalReadOnlyError` (`app/services/ownership.py`) when
+  a non-admin caller reaches a row with `owner_id IS NULL`. Every API router maps that one
   exception to **403** ("Only admins can change built-in items") — the single shared
   error shape for "you may see this, but not touch it," independent of *which* store or
   endpoint raised it. `Profile.is_global`/`Domain.is_global` are `computed_field`
@@ -1917,6 +2152,23 @@ cover everything:
   general non-admin 403 can both apply to the same request, the router checks the 403
   first (see [Checking profiles](#checking-profiles) above) — an authorization refusal
   must never be shaped by a business rule the caller was never going to reach anyway.
+
+**The shared checks** live in `app/services/ownership.py` so that no store writes its own
+copy of the rule:
+
+- `visible_clause(column="owner_id")` returns the SQL condition `(column IS NULL OR column
+  = ?)` with one placeholder, for queries (`visible_clause("c.owner_id")` for a joined
+  table);
+- `is_visible(row_owner_id, user_id=…)` is the same test on a value already loaded;
+- `require_writable(row_owner_id, is_admin=…)` raises `GlobalReadOnlyError` for a global
+  row and a non-admin.
+
+A store checks visibility first (an invisible row is a miss, so 404 or `None`) and only
+then writability, so a caller who cannot see a row never learns that it is global.
+Terminology concepts have their own `owner_id`, taken from the domain they are created in,
+rather than reading the domain's: a concept can be in several domains, so the check on a
+write must not depend on which domain the caller came through (see
+[Terminology](#terminology)).
 
 **Two guarded table rebuilds** were needed because SQLite cannot drop an inline
 `UNIQUE`/`DEFAULT` constraint without recreating the table: `profiles` (dropping the
@@ -2565,7 +2817,7 @@ Every endpoint below requires a valid `Authorization: Bearer <token>` caller **e
 | `POST /api/checks` → `GET /api/checks/{id}[/events]` | run a check; poll or stream results |
 | `POST /api/suggestions` | on-demand LLM fix (span) or sentence rewrite |
 | `GET /api/rules`, `POST /api/rules/reload` | rule catalog + validation errors; hot reload |
-| `GET/POST/PUT/DELETE /api/domains`, `/api/domains/{id}/terms`, `/api/terms/{id}` | terminology CRUD |
+| `GET/POST/PUT/DELETE /api/domains`, `/api/domains/{id}/terms`, `/api/terms/{id}` | domain CRUD; term endpoints kept as a temporary layer over concepts |
 | `GET/POST/PUT/DELETE /api/profiles`, `POST /api/profiles/{id}/reset` | profile CRUD |
 | `GET/POST/PUT/DELETE /api/documents`, `POST /api/documents/{id}/generate-name` | revision-guarded document CRUD + auto-titling (see [Documents](#documents)) |
 | `GET/POST/PUT/DELETE /api/folders` | folder CRUD, lossless delete, read-time defaults pruning (see [Folders](#folders)) |
@@ -2608,6 +2860,16 @@ each API router, anchoring, vetting, providers, profiles, seeding, …). Convent
   JSON responses — no network, no mocking of internals.
 - Golden tests pair a rule or text sample with its expected findings
   (`test_starter_rules.py`, `test_demo_texts.py` keeps the seeded example texts firing).
+- Terminology has one module per layer of `app/services/terminology/` (`test_terminology_model.py`,
+  `_changes.py`, `_store.py`, `_migration.py`), plus `test_terminology_api.py` for the old
+  endpoints, which stay unchanged because they are the contract of the translation layer.
+  `test_terminology_baseline.py` compares check findings created through those endpoints with
+  a golden file (`tests/data/terminology_baseline.json`, built from `terminology_baseline.py`),
+  and `test_terminology_migration.py` re-runs it on migrated data; both must give equal
+  findings. Both backends run the store and migration tests when `FW_TEST_DATABASE_URL` is
+  set, and `test_terminology_concurrency.py` (Postgres only) races OS processes. Guard tests
+  are checked by deleting the guard and watching the test fail. `terminology_helpers.py` holds
+  the shared builders.
 - Anchoring and vetting have dedicated edge-case suites (ambiguous quotes, fuzzy
   fallback, unanchorable discard; spell-gate whitelisting, length ratios).
 - `scripts/vetting-benchmark.py` measures the spell gate's false-reject rate against
