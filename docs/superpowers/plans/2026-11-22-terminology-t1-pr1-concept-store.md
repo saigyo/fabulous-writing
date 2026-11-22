@@ -205,10 +205,11 @@ class TermInput(BaseModel):
 
 class SectionInput(BaseModel):
     language: Language
-    revision: int | None = None                  # the section's number as read; None: the language must not exist yet
+    id: int | None = None                        # the section's id and number as read;
+    revision: int | None = None                  # both None: the language must not exist yet
     definition: str = ""; terms: list[TermInput]
     @classmethod
-    def from_section(cls, section: LanguageSection) -> "SectionInput"   # carries the section's revision
+    def from_section(cls, section: LanguageSection) -> "SectionInput"   # carries the section's id and revision
 
 class TerminologyRuleError(Exception):
     def __init__(self, rule: str, message: str) -> None   # .rule holds the code
@@ -234,7 +235,7 @@ def section_label(section: LanguageSection) -> str
   - `test_unknown_pick_list_value_is_rejected`: `usage_status="banned"`, `process_status="trial"`, `part_of_speech="article"` each raise `ValidationError`.
   - `test_concept_hides_owner_id_and_reports_is_global`: `model_dump()` has `is_global` and no `owner_id`.
   - `test_section_label_order`, parametrised: active preferred wins over an alphabetically earlier admitted term; with only a candidate preferred and two active admitted terms `"beta"`, `"Alpha"` the label is `"Alpha"`; with only forbidden terms `"zeta"`, `"eta"` the label is `"eta"`.
-  - `test_input_from_model_round_trip`: `SectionInput.from_section(section)` carries the language, the section's `revision`, the definition and each term's id and eight fields.
+  - `test_input_from_model_round_trip`: `SectionInput.from_section(section)` carries the language, the section's `id` and `revision`, the definition and each term's id and eight fields.
   - `test_conflict_error_is_a_rule_error`: `TerminologyConflictError("en", "…")` has `rule == "conflict"` and `part == "en"` and is caught by `except TerminologyRuleError`.
 - [ ] **Step 3:** Run them: FAIL. Implement `model.py`. Run: PASS.
 
@@ -399,7 +400,8 @@ def load_concepts(conn, concept_ids: list[int]) -> list[Concept]          # asce
 def insert_concept(conn, *, owner_id: int | None, now: str | None, user_id: int | None) -> int
 def set_links(conn, concept_id: int, domain_ids: list[int]) -> None       # makes the links equal to the list
 def apply_sections(conn, concept_id: int, current: Concept | None, sections: list[SectionInput], *,
-                   now: str | None, user_id: int | None) -> None
+                   now: str | None, user_id: int | None,
+                   new_section_ids: dict[Language, int] | None = None) -> None   # only the migration passes ids
 def touch_concept(conn, concept_id: int, *, now: str, user_id: int | None) -> None   # revision + 1, modified_at, modified_by
 def domain_names(conn, domain_ids: list[int]) -> dict[int, str]
 ```
@@ -457,8 +459,8 @@ def save_concept(self, concept_id: int, *, sections: list[SectionInput] = (),
 - `save_section` writes one language section and leaves the others and the links alone. It creates the section if the concept has none in that language. With `terms=[]` it removes the section and raises `no_section` if it was the last.
 - `save_concept` writes several parts in one transaction and one batch (spec 9.2, 10 "Save all"): each listed section as `save_section` would, and, when `domain_ids` is given, the links as the complete list. **A section that is not listed is left untouched.** With `domain_ids=None` the links are left untouched. It locks the given domains, then the concept. Domain rules (spec 5.4): empty list raises `no_domain`; an id not visible to the actor raises `unknown_domain`; a domain whose `owner_id` differs from the concept's raises `domain_owner_mismatch`.
 - **Version check (spec 5.7)**, after locking, loading, the visibility check and `require_writable`, before `_validate` and before any write. Each failure raises `TerminologyConflictError`:
-  - for every listed section whose language the concept has: `section.revision` must equal the stored number, otherwise `part` is the language value;
-  - for every listed section whose language the concept does not have: `section.revision` must be `None`, otherwise `part` is the language value (the language was removed in the meantime). A listed section with `revision=None` whose language exists is refused the same way (someone added it in the meantime);
+  - for every listed section whose language the concept has: `section.id` and `section.revision` must both equal the stored values, otherwise `part` is the language value. The id is compared because a language that was removed and added again starts at 1 again, with a new id;
+  - for every listed section whose language the concept does not have: `section.id` and `section.revision` must be `None`, otherwise `part` is the language value (the language was removed in the meantime). A listed section without them whose language exists is refused the same way (someone added it in the meantime);
   - when `domain_ids` is given: `revision` must equal the concept's number, otherwise `part` is `"links"`.
 - **What increases (spec 5.7).** Term: one of its fields changed. Section: its definition changed, or a term in it was added, changed or removed. Concept: the links changed, or a section was added or removed. `rows.apply_sections` increases term and section numbers and sets their `modified_*`; the store calls `rows.touch_concept` only for a concept-level change. A save whose result equals the current state increases nothing and writes nothing.
 - Both methods return `None` for a concept that is not visible and raise `GlobalReadOnlyError` for a global concept and a non-admin **before** the version check and before deciding whether anything changes.
@@ -473,6 +475,7 @@ def save_concept(self, concept_id: int, *, sections: list[SectionInput] = (),
   - `test_two_different_languages_can_be_added_from_the_same_read`: add `de`, then `fr`, both with `revision=None`; both exist.
   - `test_adding_a_language_that_exists_meanwhile_is_refused`: add `de`, then add `de` again with `revision=None`: conflict with `part == "de"`.
   - `test_saving_a_language_removed_meanwhile_is_refused`: read a concept with `en` and `de`, remove `de` with its number, then save `de` with the old number: conflict with `part == "de"`, and `de` is not re-created.
+  - `test_a_language_removed_and_added_again_refuses_the_old_copy`: read a concept with `en` and `de`; remove `de` and add it again (it is at `revision` 1 again, with a new id); a save and a removal built from the first read are both refused with `part == "de"`.
   - `test_removing_the_last_term_removes_the_section`: with an `en` and a `de` section (definition `"a"`), `save_section(…, SectionInput(language=DE, revision=<its number>, terms=[]))` leaves only `en`, logs the definition and the terms of `de`, and increases the concept's number.
   - `test_removing_a_section_with_an_out_of_date_number_is_refused`.
   - `test_removing_the_last_section_is_refused`: `no_section`, state unchanged.
@@ -492,7 +495,7 @@ def save_concept(self, concept_id: int, *, sections: list[SectionInput] = (),
   - `test_non_admin_cannot_save_a_global_concept_even_without_changes`, also with an out-of-date number (the refusal is `GlobalReadOnlyError`, not a conflict).
   - `test_failed_save_leaves_no_partial_write`: patch `changes.write` to raise; a `save_concept` that adds a `de` section and edits an `en` term raises; afterwards there is no `de` section, the `en` term and every number are unchanged and the log has no new entry.
   - `test_comment_is_stored_on_every_entry_of_the_batch`.
-- [ ] **Step 2:** Run: FAIL. **Step 3:** Implement, reusing `_lock`, `_validate`, the `rows` functions and `changes.diff`. **Step 4:** Mutation checks, one at a time, each with the test that failed named in the report: remove the section comparison; remove the "must be absent" comparison; remove the "must exist" comparison (a number sent for a language the concept no longer has); remove the links comparison; call `touch_concept` on every save; increase the section number on every save; delete unlisted sections in `save_concept`; remove each of the three domain rules; move `require_writable` after the version check; call `conn.commit()` right before `changes.write`.
+- [ ] **Step 2:** Run: FAIL. **Step 3:** Implement, reusing `_lock`, `_validate`, the `rows` functions and `changes.diff`. **Step 4:** Mutation checks, one at a time, each with the test that failed named in the report: remove the section number comparison; remove the section id comparison; remove the "must be absent" comparison; remove the "must exist" comparison (a number sent for a language the concept no longer has); remove the links comparison; call `touch_concept` on every save; increase the section number on every save; delete unlisted sections in `save_concept`; remove each of the three domain rules; move `require_writable` after the version check; call `conn.commit()` right before `changes.write`.
 - [ ] **Step 5:** Run the gate on both backends. **Commit.** `feat(terminology): save concepts and language sections`
 
 ---
@@ -681,12 +684,14 @@ One task and one commit: the checker and the endpoints must switch together, or 
 - `terms` and `terms_legacy` both present: `RuntimeError` naming both tables; nothing is written.
 - No `terms` table: return 0.
 - Rows are read with their domain (`JOIN domains`), in id order. Per row: a concept with the domain's owner, linked to the domain; one section with the row's language and definition; the preferred term (preferred, active) unless the wording is empty or whitespace only; one forbidden active term per variant after skipping empty or whitespace-only ones, repeats, and one that equals the preferred wording exactly; every term with the row's `case_sensitive`; `created_*` and `modified_*` null on concept, section and terms; every `revision` 1; one batch of `carried_over` entries with origin `migration`, no user, `at = now`.
+- **The section takes the old row's id** (`new_section_ids`), so that `PUT` and `DELETE /api/terms/{id}` address the same entry before and after. On Postgres the migration then moves the identity past the highest id with `ALTER TABLE concept_languages ALTER COLUMN id RESTART WITH <max + 1>`, as `manage_import.py` does and for the same reason (it rolls back with the transaction); SQLite needs nothing.
 - The rows are written with `rows.insert_concept`, `rows.set_links` and `rows.apply_sections` (`now=None`, `user_id=None`) and logged with `changes.diff(None, concept, initial_action=Action.CARRIED_OVER)` and `changes.write`, so that the migration cannot drift from what a save writes. The store's `_validate` is not used: carried-over data is taken as it is.
 - Warnings through the module logger: one per variant equal to its preferred wording, naming the domain and the wording; one for a row left without any term; one with the number of rows whose domain is missing, if any.
 - The last statement is `ALTER TABLE terms RENAME TO terms_legacy`. Every insert comes before it, so a failure rolls everything back on both backends.
 
 - [ ] **Step 1: Write the failing tests.** A helper `legacy(db, rows)` creates `domains` (current shape) and `terms` (`LEGACY_TERMS_DDL`) through `conn.executescript` inside `db.connect()` (the identity column needs that path on Postgres) and inserts the given rows with SQL.
   - `test_rows_become_concepts_sections_and_terms` (both backends): a global and an owned domain; rows in en, de and ja; one row with variants `["login", "", "  ", "login", "log-in", "sign in"]` and preferred `"sign in"`. After `TerminologyStore(db)`: one concept per row with the right owner and domain; that row's section has `sign in` preferred and `login`, `log-in` forbidden, all active, all with the row's `case_sensitive`; `created_at` and `modified_at` are `None` and `revision` is 1 on every concept, section and term.
+  - `test_sections_keep_the_old_term_ids` (both backends): legacy rows with ids 1, 3 and 4 become sections with ids 1, 3 and 4; a concept created afterwards gets a section id above 4.
   - `test_migration_logs_carried_over_entries`: per concept one batch, action `carried_over`, origin `migration`, `user_id is None`, one shared `at`; term entries carry `term_text` and `term_language`.
   - `test_variant_equal_to_preferred_is_skipped_with_a_warning` (`caplog`): the message contains the domain name and the wording.
   - `test_variant_differing_only_in_case_is_carried_over`.
@@ -702,7 +707,7 @@ One task and one commit: the checker and the endpoints must switch together, or 
   - In `tests/test_import_postgres.py`: remove `terms` from `_ALL_TABLES` and from the expected counts; add `test_source_from_before_the_concept_model_is_migrated_and_imported`: a source file with `domains` and a legacy `terms` table holding two rows; `main(["--db", src, "import-to-postgres"])` returns 0; the target has two concepts and no table named `terms` or `terms_legacy`.
   - `tests/test_terminology.py::test_migration_backfills_domain_ownership` keeps passing unchanged.
 - [ ] **Step 2:** Run: FAIL. **Step 3:** Implement.
-- [ ] **Step 4:** Mutation checks: issue the rename before the inserts and commit right after it (the failed-migration test must fail; report on which backend); drop the "equals preferred" skip; drop the both-tables check; drop the `conn.commit()` before the term migration (the failed-migration test must fail on Postgres, where the tables vanish with the rollback, and the domain-backfill test on SQLite).
+- [ ] **Step 4:** Mutation checks: issue the rename before the inserts and commit right after it (the failed-migration test must fail; report on which backend); drop the "equals preferred" skip; drop the both-tables check; drop the identity restart (the id test must fail on Postgres); drop the `conn.commit()` before the term migration (the failed-migration test must fail on Postgres, where the tables vanish with the rollback, and the domain-backfill test on SQLite).
 - [ ] **Step 5:** Run the gate on both backends. **Commit.** `feat(terminology): migrate existing terms to concepts`
 
 ---
