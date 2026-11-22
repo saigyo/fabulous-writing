@@ -273,7 +273,7 @@ class TerminologyStore:
             _lock(conn, concept_ids=linked)
             batch = uuid.uuid4().hex
             now = _utcnow()
-            for before in rows.load_concepts(conn, sorted(linked)):
+            for before in rows.load_linked_concepts(conn, domain_id):
                 if before.domain_ids == [domain_id]:
                     entries = changes.diff(
                         before, None, domain_names=rows.domain_names(conn, before.domain_ids)

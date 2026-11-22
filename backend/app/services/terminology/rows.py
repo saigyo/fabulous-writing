@@ -118,6 +118,12 @@ def load_domain_concepts(conn: Any, domain_id: int, *, user_id: int | None) -> l
     )
 
 
+def load_linked_concepts(conn: Any, domain_id: int) -> list[Concept]:
+    return _load(
+        conn, "id IN (SELECT concept_id FROM concept_domains WHERE domain_id = ?)", (domain_id,)
+    )
+
+
 def load_concept(conn: Any, concept_id: int) -> Concept | None:
     loaded = _load(conn, "id = ?", (concept_id,))
     return loaded[0] if loaded else None

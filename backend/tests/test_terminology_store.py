@@ -860,3 +860,50 @@ def test_delete_empty_domain_writes_no_entry(store, db, d):
     assert store.delete_domain(d.id, actor=ME) is True
     assert store.get_domain(d.id, owner_id=1) is None
     assert changes(db) == []
+
+
+def test_remove_from_domain_of_a_global_concept_needs_admin(store, db):
+    g1 = store.create_domain("G1", owner_id=None)
+    g2 = store.create_domain("G2", owner_id=None)
+    first = add_term(store, g1.id, language=Language.EN, preferred="a")
+    linked = store.save_concept(
+        first.id, domain_ids=[g1.id, g2.id], revision=first.revision, actor=ADMIN
+    )
+    log = changes(db)
+    with pytest.raises(GlobalReadOnlyError):
+        store.remove_concept_from_domain(first.id, g2.id, actor=ME)
+    assert store.get_concept(first.id, owner_id=1) == linked
+    assert changes(db) == log
+
+
+def test_links_are_refused_after_a_language_was_added(store, db, d, c):
+    d2 = store.create_domain("Docs", owner_id=1)
+    store.save_concept(c.id, sections=[section(Language.DE, term("Anmeldung"))], actor=ME)
+    log = changes(db)
+    state = store.get_concept(c.id, owner_id=1)
+    with pytest.raises(TerminologyConflictError) as caught:
+        store.save_concept(
+            c.id, domain_ids=[d.id, d2.id], revision=c.revision, actor=ME
+        )
+    assert caught.value.part == "links"
+    assert store.get_concept(c.id, owner_id=1) == state
+    assert changes(db) == log
+
+
+def test_audit_fields_follow_the_acting_user(store):
+    g = store.create_domain("Global", owner_id=None)
+    g2 = store.create_domain("Global2", owner_id=None)
+    c = add_term(store, g.id, language=Language.EN, preferred="login")
+    other = Actor(user_id=2, is_admin=True)
+    edited = store.save_concept(
+        c.id, sections=[with_term(en(c), "login", source="x")], actor=other
+    )
+    sec = stored_section(edited, Language.EN)
+    tm = stored_term(edited, "login")
+    assert (tm.modified_by, tm.created_by) == (2, 1)
+    assert (sec.modified_by, sec.created_by) == (2, 1)
+    assert edited.modified_by == 1
+    linked = store.save_concept(
+        c.id, domain_ids=[g.id, g2.id], revision=edited.revision, actor=other
+    )
+    assert linked.modified_by == 2
