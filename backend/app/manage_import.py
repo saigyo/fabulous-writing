@@ -23,18 +23,18 @@ from app.services.db.postgres import PostgresDatabase
 from app.services.db.sqlite import SqliteDatabase
 
 # Copy order: a table comes after the tables it declares a foreign key to:
-# terms and concept_domains reference domains, concept_domains and
+# concept_domains references domains, concept_domains and
 # concept_languages reference concepts, concept_terms references
 # concept_languages. Everything else is logical-reference only, ordered
 # parents-first for sanity. profile_seed_markers and concept_domains have no
-# identity column.
+# identity column. terms_legacy, which the store migration leaves in the
+# source, is not copied.
 _TABLES = (
     "users",
     "admin_audit",
     "folders",
     "documents",
     "domains",
-    "terms",
     "concepts",
     "concept_domains",
     "concept_languages",

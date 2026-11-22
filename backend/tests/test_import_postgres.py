@@ -18,12 +18,14 @@ import pytest
 from app.core.models import Language
 from app.manage import main
 from app.manage_import import run_import
+from app.services.db import table_columns
 from app.services.db.postgres import PostgresConnection, PostgresDatabase
 from app.services.db.sqlite import SqliteDatabase
 from app.services.documents import DocumentStore
 from app.services.folders import FolderStore
 from app.services.profiles import ProfileStore
 from app.services.terminology import Actor, TerminologyStore
+from app.services.terminology.migration import LEGACY_TERMS_DDL
 from app.services.usage import UsageStore
 from app.services.users import UserStore
 from tests.terminology_helpers import add_term
@@ -64,7 +66,6 @@ _ALL_TABLES = (
     "folders",
     "documents",
     "domains",
-    "terms",
     "concepts",
     "concept_domains",
     "concept_languages",
@@ -299,7 +300,6 @@ def test_happy_path_copies_all_tables_with_ids_and_sequences(
         "folders": 1,
         "documents": 1,
         "domains": 1,
-        "terms": 0,
         "concepts": 1,
         "concept_domains": 1,
         "concept_languages": 1,
@@ -336,6 +336,29 @@ def test_happy_path_copies_all_tables_with_ids_and_sequences(
     expected_next_id = max(user1.id, user2.id) + 1
     fresh = target_users.create_user("carol@example.com", "password12345")
     assert fresh.id == expected_next_id
+
+
+def test_source_from_before_the_concept_model_is_migrated_and_imported(
+    tmp_path: Path, pg_import_target: PostgresDatabase
+) -> None:
+    src_path = tmp_path / "src.db"
+    with closing(sqlite3.connect(src_path)) as raw, raw:
+        raw.executescript(
+            "CREATE TABLE domains (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,"
+            " description TEXT NOT NULL DEFAULT '', owner_id INTEGER);\n"
+            + LEGACY_TERMS_DDL
+            + ";\nINSERT INTO domains (name) VALUES ('Product docs');"
+            "\nINSERT INTO terms (domain_id, language, preferred, forbidden_variants)"
+            " VALUES (1, 'en', 'sign in', '[\"login\"]'), (1, 'de', 'Anmeldung', '[]');"
+        )
+
+    rc = main(["--db", str(src_path), "import-to-postgres"])
+
+    assert rc == 0
+    assert _table_counts(pg_import_target)["concepts"] == 2
+    with pg_import_target.connect() as conn:
+        assert table_columns(conn, "terms") == set()
+        assert table_columns(conn, "terms_legacy") == set()
 
 
 def test_non_empty_target_refused_without_writes(
@@ -487,19 +510,22 @@ def test_failure_after_identity_restart_leaves_sequences_untouched(
     UserStore(SqliteDatabase(src_path)).create_user("user@example.com", "password12345")
 
     calls = {"n": 0}
-    real_commit = PostgresConnection.commit
+    real_raw_connect = PostgresDatabase.raw_connect
 
-    def failing_commit(self: PostgresConnection) -> None:
-        calls["n"] += 1
-        if calls["n"] == 1:
+    def raw_connect(self: PostgresDatabase) -> PostgresConnection:
+        conn = real_raw_connect(self)
+
+        def failing_commit() -> None:
+            calls["n"] += 1
             raise RuntimeError("boom")
-        real_commit(self)
 
-    # The import's own dst_conn.commit() is the only PostgresConnection.commit()
-    # call in this window: store construction and the probe queries all go
-    # through connect()'s context manager, which commits via the pool's own
-    # mechanism on the raw psycopg connection, never through this method.
-    monkeypatch.setattr(PostgresConnection, "commit", failing_commit)
+        conn.commit = failing_commit  # type: ignore[method-assign]
+        return conn
+
+    # The import's dst_conn is the only raw_connect() connection in this
+    # window. The terminology store also calls commit() while it is
+    # constructed, on a connect() connection, which must keep working.
+    monkeypatch.setattr(PostgresDatabase, "raw_connect", raw_connect)
 
     rc = main(["--db", str(src_path), "import-to-postgres"])
 
