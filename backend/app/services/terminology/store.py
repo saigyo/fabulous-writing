@@ -1,53 +1,13 @@
 import json
-import logging
 from typing import Any
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field
 
 from app.core.models import Language
-from app.services.db import Database, Row, UniqueViolationError, table_columns, verify_schema
+from app.services.db import Database, Row, UniqueViolationError, verify_schema
 from app.services.ownership import GlobalReadOnlyError, require_writable, visible_clause
-
-logger = logging.getLogger(__name__)
-
-# The literal lives here (not in seed.py) because seed.py imports
-# TerminologyStore; importing back would be a cycle. Tied to seed.DOMAIN_NAME
-# by test_seed_domain_name_constant_matches_the_seeder.
-_SEED_DOMAIN_NAME = "Product docs"
-
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS domains (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    owner_id INTEGER
-);
-CREATE TABLE IF NOT EXISTS terms (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    domain_id INTEGER NOT NULL REFERENCES domains(id) ON DELETE CASCADE,
-    language TEXT NOT NULL,
-    preferred TEXT NOT NULL,
-    forbidden_variants TEXT NOT NULL DEFAULT '[]',
-    definition TEXT NOT NULL DEFAULT '',
-    case_sensitive INTEGER NOT NULL DEFAULT 0
-);
-"""
-
-# Tables (and post-release columns) this store needs; checked instead of
-# created when the app runs without schema management (B36 spec R3).
-_REQUIRED_SCHEMA = {"domains": [("owner_id", "INTEGER")], "terms": []}
-
-
-class Domain(BaseModel):
-    id: int
-    name: str
-    description: str = ""
-    owner_id: int | None = Field(default=None, exclude=True)
-
-    @computed_field  # appears in every API response; owner_id itself does not
-    @property
-    def is_global(self) -> bool:
-        return self.owner_id is None
+from app.services.terminology.model import Domain
+from app.services.terminology.schema import REQUIRED_SCHEMA, SCHEMA, migrate_domains
 
 
 class Term(BaseModel):
@@ -86,52 +46,10 @@ class TerminologyStore:
         self.db = db
         with self._connect() as conn:
             if manage_schema:
-                conn.executescript(_SCHEMA)
-                self._migrate(conn)
+                conn.executescript(SCHEMA)
+                migrate_domains(conn)
             else:
-                verify_schema(conn, _REQUIRED_SCHEMA)
-
-    def _migrate(self, conn: Any) -> None:
-        columns = table_columns(conn, "domains")
-        if "owner_id" not in columns:
-            # One-shot backfill (spec §9 step 3): the seed domain (matched
-            # by name — seed.DOMAIN_NAME, asserted equal by a test) becomes
-            # global; every other pre-auth row belongs to the admin (id 1).
-            conn.execute("ALTER TABLE domains ADD COLUMN owner_id INTEGER")
-            conn.execute(
-                "UPDATE domains SET owner_id = 1 WHERE name <> ?",
-                (_SEED_DOMAIN_NAME,),
-            )
-        # domains never had a uniqueness guarantee, so legal duplicates may
-        # exist: pre-scan and skip-with-warning before each partial index.
-        owner_dupes = conn.execute(
-            "SELECT owner_id, MIN(name) AS name FROM domains WHERE owner_id IS NOT NULL"
-            " GROUP BY owner_id, lower(name) HAVING count(*) > 1"
-        ).fetchall()
-        if owner_dupes:
-            logger.warning(
-                "domains has per-owner duplicates %s; skipping owner index",
-                [tuple(row) for row in owner_dupes],
-            )
-        else:
-            conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_domains_owner_name"
-                " ON domains(owner_id, LOWER(name)) WHERE owner_id IS NOT NULL"
-            )
-        global_dupes = conn.execute(
-            "SELECT MIN(name) AS name FROM domains WHERE owner_id IS NULL"
-            " GROUP BY lower(name) HAVING count(*) > 1"
-        ).fetchall()
-        if global_dupes:
-            logger.warning(
-                "domains has global duplicates %s; skipping global index",
-                [tuple(row) for row in global_dupes],
-            )
-        else:
-            conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_domains_global_name"
-                " ON domains(LOWER(name)) WHERE owner_id IS NULL"
-            )
+                verify_schema(conn, REQUIRED_SCHEMA)
 
     def _connect(self):  # thin delegate; the shared helper carries the docs
         return self.db.connect()
