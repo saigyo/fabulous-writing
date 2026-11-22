@@ -5085,3 +5085,34 @@ are deferred to T5. They are an additive change provided T1 models every
 variant as a term row with its own identifier instead of a string in a
 list, which per-variant statuses and TBX need anyway. That condition is
 recorded in the roadmap and in the T1 issue.
+
+## 2026-11-22 — Terminology T1 spec: concept and status model (PR #212)
+
+Planning only, no code. Spec for #205 in
+`docs/superpowers/specs/2026-11-22-terminology-t1-concept-model-design.md`,
+with a mockup of the chosen screen layout next to it.
+
+Decisions taken with the owner: a concept has no name and holds one
+language section per language (definition plus terms); usage status keeps
+"forbidden" as a fourth value beside the three TBX-Basic ones; a separate
+process status (candidate, active) decides whether a term is enforced; at
+most one active preferred term per concept and language, as our own rule;
+concepts can be shared between domains of one owner; the change log is
+strictly append-only and keeps its user references, since accounts are
+only deactivated; each log entry carries the term's wording and the
+concept's labels so it can be shown after a deletion; the concept entry
+saves per language section as well as all at once; terms are stored in
+their base form so inflected replacements can follow later. With several
+domains the first one still wins; a specified precedence is backlog issue
+#211. Delivery is split into three pull requests (schema, migration and
+change log behind the existing endpoints; checker; concept endpoints and
+screen).
+
+Checked against the TBX-Basic version 4 text: three usage status values at
+term level, no limit on the number of preferred terms, no process status
+category. The value tables on datcatinfo.net could not be read; the status
+list no longer depends on them.
+
+The spec was read once by a reviewing agent acting as the builder; its
+nine questions were all answerable from the conversation or the code and
+are settled in the document. Section 11 lists the author's own calls.
