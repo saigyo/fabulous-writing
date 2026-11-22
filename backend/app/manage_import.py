@@ -143,6 +143,11 @@ def run_import(source_path: Path, *, env: Mapping[str, str] | None = None) -> in
             file=sys.stderr,
         )
         return 1
+    except RuntimeError as exc:
+        # Raised by a store migration that refuses the source's data, e.g.
+        # the terminology store finding both 'terms' and 'terms_legacy'.
+        print(f"could not migrate source database at {source_path}: {exc}", file=sys.stderr)
+        return 1
     try:
         # A bad DSN raises RuntimeError from the pool's boot wait; keep the
         # CLI's rc=1 convention instead of a traceback. The message names
