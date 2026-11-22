@@ -151,6 +151,24 @@ def test_api_smoke_under_restricted_role(restricted, tmp_path, monkeypatch):
             json={"language": "en", "preferred": "Fabulous"},
         )
         assert term.status_code == 201, term.text
+        term_id = term.json()["id"]
+        updated = client.put(f"/api/terms/{term_id}", json={"preferred": "Wonderful"})
+        assert updated.status_code == 200, updated.text
+        deleted = client.delete(f"/api/terms/{term_id}")
+        assert deleted.status_code == 204, deleted.text
+
+    with psycopg.connect(restricted.restricted_dsn) as conn:
+        counts = {
+            table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in (
+                "concepts",
+                "concept_domains",
+                "concept_languages",
+                "concept_terms",
+                "terminology_changes",
+            )
+        }
+    assert counts["terminology_changes"] >= 3
 
 
 def test_restricted_role_cannot_create_tables(restricted):

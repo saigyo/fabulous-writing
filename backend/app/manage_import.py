@@ -22,9 +22,12 @@ from app.services.db import DATABASE_URL_ENV, table_columns
 from app.services.db.postgres import PostgresDatabase
 from app.services.db.sqlite import SqliteDatabase
 
-# Copy order: terms REFERENCES domains (the schema's one declared FK);
-# everything else is logical-reference only, ordered parents-first for
-# sanity. profile_seed_markers has no identity column.
+# Copy order: a table comes after the tables it declares a foreign key to:
+# terms and concept_domains reference domains, concept_domains and
+# concept_languages reference concepts, concept_terms references
+# concept_languages. Everything else is logical-reference only, ordered
+# parents-first for sanity. profile_seed_markers and concept_domains have no
+# identity column.
 _TABLES = (
     "users",
     "admin_audit",
@@ -32,11 +35,18 @@ _TABLES = (
     "documents",
     "domains",
     "terms",
+    "concepts",
+    "concept_domains",
+    "concept_languages",
+    "concept_terms",
+    "terminology_changes",
     "profiles",
     "profile_seed_markers",
     "llm_usage",
 )
-_IDENTITY_TABLES = tuple(t for t in _TABLES if t != "profile_seed_markers")
+_IDENTITY_TABLES = tuple(
+    t for t in _TABLES if t not in ("profile_seed_markers", "concept_domains")
+)
 
 
 def _collisions_under_unicode_folding(src_conn, dst_conn) -> list[tuple[int, str]]:
