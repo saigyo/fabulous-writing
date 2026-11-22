@@ -4,13 +4,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.core.models import Language
-from app.services.db import Database, Row, UniqueViolationError, verify_schema
+from app.services.db import Database, Row, UniqueViolationError
 from app.services.ownership import (
     is_visible,
     require_writable,
     visible_clause,
 )
-from app.services.terminology import changes, rows
+from app.services.terminology import changes, migration, rows, schema
 from app.services.terminology.model import (
     PROCESS_STATUS_ENFORCED,
     Actor,
@@ -23,7 +23,6 @@ from app.services.terminology.model import (
     UsageStatus,
     is_enforced,
 )
-from app.services.terminology.schema import REQUIRED_SCHEMA, SCHEMA, migrate_domains
 
 
 def _row_to_domain(row: Row) -> Domain:
@@ -156,10 +155,15 @@ class TerminologyStore:
         self.db = db
         with self._connect() as conn:
             if manage_schema:
-                conn.executescript(SCHEMA)
-                migrate_domains(conn)
+                conn.executescript(schema.SCHEMA)
+                schema.migrate_domains(conn)
+                # Without this commit a failed term migration would roll back the
+                # domain backfill on SQLite but keep its added column, so the next
+                # start would skip the backfill; on Postgres the new tables would go.
+                conn.commit()
+                migration.migrate_legacy_terms(conn, now=_utcnow())
             else:
-                verify_schema(conn, REQUIRED_SCHEMA)
+                schema.verify(conn)
 
     def _connect(self):  # thin delegate; the shared helper carries the docs
         return self.db.connect()

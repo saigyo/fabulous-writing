@@ -8,6 +8,8 @@ from app.core.config import Settings
 from app.main import create_app
 from app.services.db.sqlite import SqliteDatabase
 from app.services.documents import DocumentStore
+from app.services.terminology import TerminologyStore
+from app.services.terminology.migration import LEGACY_TERMS_DDL
 
 
 def _settings(tmp_path: Path, manage_schema: bool) -> Settings:
@@ -48,6 +50,24 @@ def test_verification_names_missing_column_and_remedy(tmp_path: Path) -> None:
     assert "checked_at" in str(exc.value)
     assert "init-db" in str(exc.value)
     assert "FW_DATABASE_URL" in str(exc.value)
+
+
+def test_unmigrated_terms_table_fails_verification(tmp_path: Path) -> None:
+    db = SqliteDatabase(tmp_path / "unmigrated.db")
+    TerminologyStore(db)
+    with db.connect() as conn:
+        conn.executescript(LEGACY_TERMS_DDL + ";")
+    with pytest.raises(RuntimeError, match="'terms' has not been migrated.*init-db"):
+        TerminologyStore(db, manage_schema=False)
+
+
+def test_missing_concept_table_fails_verification(tmp_path: Path) -> None:
+    db = SqliteDatabase(tmp_path / "partial.db")
+    TerminologyStore(db)
+    with db.connect() as conn:
+        conn.execute("DROP TABLE concept_terms")
+    with pytest.raises(RuntimeError, match="table 'concept_terms' is missing"):
+        TerminologyStore(db, manage_schema=False)
 
 
 def test_create_app_honors_manage_schema_false(tmp_path: Path) -> None:

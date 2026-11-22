@@ -36,8 +36,11 @@ def _tables(db_path: Path) -> set[str]:
 def test_init_db_creates_schema(tmp_path, monkeypatch) -> None:
     db_path = _config(tmp_path, monkeypatch, manage_schema=True)
     assert main(["init-db"]) == 0
-    assert {"users", "documents", "folders", "domains", "terms",
-            "profiles", "llm_usage"} <= _tables(db_path)
+    tables = _tables(db_path)
+    assert {"users", "documents", "folders", "domains", "concepts", "concept_domains",
+            "concept_languages", "concept_terms", "terminology_changes",
+            "profiles", "llm_usage"} <= tables
+    assert "terms" not in tables
 
 
 def test_init_db_is_idempotent(tmp_path, monkeypatch) -> None:

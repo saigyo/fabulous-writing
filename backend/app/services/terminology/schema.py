@@ -1,7 +1,7 @@
 import logging
 from typing import Any
 
-from app.services.db import table_columns
+from app.services.db import DATABASE_URL_ENV, table_columns, verify_schema
 
 logger = logging.getLogger(__name__)
 
@@ -16,15 +16,6 @@ CREATE TABLE IF NOT EXISTS domains (
     name TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     owner_id INTEGER
-);
-CREATE TABLE IF NOT EXISTS terms (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    domain_id INTEGER NOT NULL REFERENCES domains(id) ON DELETE CASCADE,
-    language TEXT NOT NULL,
-    preferred TEXT NOT NULL,
-    forbidden_variants TEXT NOT NULL DEFAULT '[]',
-    definition TEXT NOT NULL DEFAULT '',
-    case_sensitive INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS concepts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,13 +77,21 @@ CREATE INDEX IF NOT EXISTS idx_terminology_changes_term ON terminology_changes(t
 # created when the app runs without schema management (B36 spec R3).
 REQUIRED_SCHEMA: dict[str, list[tuple[str, str]]] = {
     "domains": [("owner_id", "INTEGER")],
-    "terms": [],
     "concepts": [],
     "concept_domains": [],
     "concept_languages": [],
     "concept_terms": [],
     "terminology_changes": [],
 }
+
+
+def verify(conn: Any) -> None:
+    verify_schema(conn, REQUIRED_SCHEMA)
+    if table_columns(conn, "terms"):
+        raise RuntimeError(
+            "legacy table 'terms' has not been migrated. Run the 'init-db' manage command"
+            f" with an admin {DATABASE_URL_ENV} first."
+        )
 
 
 def migrate_domains(conn: Any) -> None:
