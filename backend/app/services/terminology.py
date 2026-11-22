@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, computed_field
 
 from app.core.models import Language
 from app.services.db import Database, Row, UniqueViolationError, table_columns, verify_schema
-from app.services.ownership import GlobalReadOnlyError
+from app.services.ownership import GlobalReadOnlyError, require_writable, visible_clause
 
 logger = logging.getLogger(__name__)
 
@@ -141,8 +141,7 @@ class TerminologyStore:
     def list_domains(self, *, owner_id: int) -> list[Domain]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM domains"
-                " WHERE (owner_id IS NULL OR owner_id = ?) ORDER BY name",
+                "SELECT * FROM domains WHERE " + visible_clause() + " ORDER BY name",
                 (owner_id,),
             ).fetchall()
         return [_row_to_domain(row) for row in rows]
@@ -150,8 +149,7 @@ class TerminologyStore:
     def get_domain(self, domain_id: int, *, owner_id: int) -> Domain | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM domains WHERE id = ?"
-                " AND (owner_id IS NULL OR owner_id = ?)",
+                "SELECT * FROM domains WHERE id = ? AND " + visible_clause(),
                 (domain_id, owner_id),
             ).fetchone()
         return _row_to_domain(row) if row else None
@@ -191,8 +189,7 @@ class TerminologyStore:
         current = self.get_domain(domain_id, owner_id=owner_id)
         if current is None:
             return None
-        if current.is_global and not is_admin:
-            raise GlobalReadOnlyError("Only admins can change built-in items")
+        require_writable(current.owner_id, is_admin=is_admin)
         new_name = name if name is not None else current.name
         new_description = description if description is not None else current.description
         try:
@@ -209,8 +206,7 @@ class TerminologyStore:
         current = self.get_domain(domain_id, owner_id=owner_id)
         if current is None:
             return False
-        if current.is_global and not is_admin:
-            raise GlobalReadOnlyError("Only admins can change built-in items")
+        require_writable(current.owner_id, is_admin=is_admin)
         with self._connect() as conn:
             cursor = conn.execute("DELETE FROM domains WHERE id = ?", (domain_id,))
         return cursor.rowcount > 0
@@ -221,8 +217,7 @@ class TerminologyStore:
         self, conn: Any, domain_id: int, owner_id: int
     ) -> Row | None:
         return conn.execute(
-            "SELECT * FROM domains WHERE id = ?"
-            " AND (owner_id IS NULL OR owner_id = ?)",
+            "SELECT * FROM domains WHERE id = ? AND " + visible_clause(),
             (domain_id, owner_id),
         ).fetchone()
 
