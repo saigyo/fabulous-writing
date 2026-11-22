@@ -9,6 +9,7 @@ from app.services.terminology import (
     SectionInput,
     TermInput,
     TerminologyConflictError,
+    TerminologyRuleError,
     TerminologyStore,
     UsageStatus,
 )
@@ -158,3 +159,79 @@ def test_creating_a_concept_waits_for_a_domain_being_deleted(pg_database):
     assert outcome == {"result": None}
     with pg_database.connect() as check:
         assert check.execute("SELECT COUNT(*) AS n FROM concepts").fetchone()["n"] == 0
+
+
+def test_moving_a_concept_waits_for_its_new_domain_being_deleted(pg_database):
+    store, concept = _setup(pg_database)
+    (a,) = concept.domain_ids
+    b = store.create_domain("Law", owner_id=ME.user_id).id
+    outcome: dict = {}
+
+    def move() -> None:
+        try:
+            outcome["result"] = store.save_concept(
+                concept.id, domain_ids=[b], revision=concept.revision, actor=ME
+            )
+        except Exception as exc:
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=move, daemon=True)
+    conn = pg_database.raw_connect()
+    try:
+        conn.execute("UPDATE domains SET name = name WHERE id = ?", (b,))
+        worker.start()
+        worker.join(timeout=1.0)
+        assert worker.is_alive()
+        conn.execute("DELETE FROM domains WHERE id = ?", (b,))
+        conn.commit()
+    finally:
+        conn.close()
+        if worker.is_alive():
+            worker.join(timeout=10)
+    assert not worker.is_alive()
+    error = outcome.get("error")
+    assert isinstance(error, TerminologyRuleError) and error.rule == "unknown_domain", outcome
+    after = store.get_concept(concept.id, owner_id=ME.user_id)
+    assert after is not None
+    assert after.domain_ids == [a]
+
+
+def test_deleting_a_domain_waits_for_a_concept_being_created_in_it(pg_database):
+    store = TerminologyStore(pg_database)
+    domain = store.create_domain("Medicine", owner_id=ME.user_id)
+    outcome: dict = {}
+
+    def delete() -> None:
+        try:
+            outcome["result"] = store.delete_domain(domain.id, actor=ME)
+        except Exception as exc:
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=delete, daemon=True)
+    conn = pg_database.raw_connect()
+    try:
+        conn.execute("UPDATE domains SET name = name WHERE id = ?", (domain.id,))
+        concept_id = conn.execute(
+            "INSERT INTO concepts (uid, owner_id) VALUES (?, ?) RETURNING id",
+            ("concurrent", ME.user_id),
+        ).fetchone()["id"]
+        conn.execute(
+            "INSERT INTO concept_domains (concept_id, domain_id) VALUES (?, ?)",
+            (concept_id, domain.id),
+        )
+        worker.start()
+        worker.join(timeout=1.0)
+        assert worker.is_alive()
+        conn.commit()
+    finally:
+        conn.close()
+        if worker.is_alive():
+            worker.join(timeout=10)
+    assert not worker.is_alive()
+    assert outcome == {"result": True}
+    with pg_database.connect() as check:
+        unlinked = check.execute(
+            "SELECT COUNT(*) AS n FROM concepts"
+            " WHERE id NOT IN (SELECT concept_id FROM concept_domains)"
+        ).fetchone()["n"]
+    assert unlinked == 0
