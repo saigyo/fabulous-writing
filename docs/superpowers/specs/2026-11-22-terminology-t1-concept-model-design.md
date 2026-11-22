@@ -45,8 +45,9 @@ loss or a second migration.
   term fields (gender, term type, geographical usage, notes); a source for
   the definition.
 - Inflection and compound matching (T2, #206).
-- Protection against two people editing the same concept at once. The last
-  save wins, as it does for every other resource today.
+- Detection of two people editing the same concept at once. The last
+  save wins, as it does for every other resource today. The rules in 5.3
+  hold all the same (see there).
 
 **Anti-goals**
 
@@ -168,6 +169,12 @@ whether it is enforced; the checker asks only that. A later value such as
   and 8 already work on a list.
 - A language section may have terms and no preferred one.
 - All writes of one save happen in one transaction.
+- **Saves to the same concept are serialised by the database.** A save
+  first updates the concept row (its modified fields), which locks that
+  row until commit on Postgres; only then does it read the concept's
+  state and check these rules. SQLite serialises writers by itself. Two
+  simultaneous saves can therefore not both pass a check that only one
+  of them may pass.
 
 ### 5.4 Ownership and sharing
 
@@ -246,8 +253,14 @@ For each old term row:
 - one "carried over" change-log entry for the concept and one for each
   term (section 7).
 
-Duplicate or empty entries in `forbidden_variants` are skipped. A variant
-equal to the preferred wording is skipped.
+Duplicate or empty entries in `forbidden_variants` are skipped.
+
+A variant that is exactly equal to the preferred wording is skipped, and
+the migration logs a warning naming the domain and the wording. This is
+the one deliberate exception to "checked exactly as before": such an
+entry makes today's checker flag every occurrence of the preferred term
+and suggest the same word as its replacement. A variant that differs only
+in case is a different wording and is carried over.
 
 Afterwards the old table is renamed to `terms_legacy`. The store
 migration of the third pull request drops it. *(Author's call: a rename costs nothing and keeps
@@ -341,15 +354,25 @@ offered as replacements.
   reason if there is one and the definition if there is one. Without a
   replacement the message states that the wording is forbidden or
   deprecated.
-- **Rule id:** `terminology.<id of the matched term>`. Rule ids of
-  terminology findings are not stored anywhere today, so the change of
-  numbers is harmless.
+- **Rule id:** `terminology.<id of the matched term>`, from the first
+  pull request on. Saved findings keep the old numbers
+  (`documents.last_findings`), and the editor uses the rule id to
+  recognise the same finding across checks
+  (`frontend/src/findings/equivalence.ts`). After the migration the first
+  check of a document therefore does not carry over the selection and the
+  cached suggestion of its terminology findings, once per document. This
+  is accepted; saved findings are not rewritten.
 - **Overlapping findings within one domain:** as today, a status finding
   wins over a casing finding. Between two status findings the more severe
   one is kept. The first pull request keeps today's rule unchanged.
-- **Several domains:** unchanged. The checker runs per domain in the order
-  given and the first domain wins on the same span. A concept shared by
-  two of the domains is therefore reported once.
+- **Several domains: the first domain wins.** Today this holds only
+  between findings: a later domain's finding is dropped when an earlier
+  domain reported the same span. If the first domain prefers a word and
+  the second forbids it, the error is still reported. From the second
+  pull request on, a match of any active term of an earlier domain,
+  whatever its usage status, claims its span, and later domains report
+  nothing that overlaps it. A concept shared by two of the domains is
+  reported once. The first pull request keeps today's behaviour.
 
 ## 9. API
 
@@ -380,8 +403,9 @@ API tests. Empty or duplicate variants, and a variant equal to the
 preferred wording, are dropped silently, as in the migration. Variants are
 returned in the order their terms were created.
 
-The checker in the first pull request reads the new tables and reports as
-before (forbidden only, always error).
+The checker in the first pull request reads the new tables and reports
+exactly as before: an error for a forbidden term and an error for a
+case-sensitive preferred term in the wrong case.
 
 ### 9.2 Third pull request: concept endpoints
 
@@ -481,7 +505,12 @@ the rest.
    deleting it silently.
 7. **A wrongly cased admitted term is an error**, like a preferred one.
 8. **No database constraint for the one-preferred rule.** The store
-   checks it inside the save transaction.
+   checks it inside the save transaction, after locking the concept row
+   (5.3). A unique index would cover this one rule only and would have to
+   be rebuilt for every new enforced process status.
+9. **The first domain wins over later domains for every match**, not only
+   between findings (section 8). This is what "first domain wins" was
+   taken to mean when it was agreed; the code today is narrower.
 
 ## 12. Verified against TBX-Basic version 4
 
@@ -527,7 +556,11 @@ Each pull request updates `docs/backend-architecture.md` or
   nothing is written for a no-op save; no store method can update or
   delete an entry.
 - **Checker:** the severity table, candidates ignored, the replacement
-  fallback, a shared concept in two domains reported once.
+  fallback, a shared concept in two domains reported once, a word
+  preferred in the first domain and forbidden in the second not reported.
+- **Simultaneous saves** on Postgres: two processes each add a preferred
+  term to the same language section; exactly one succeeds. The test must
+  fail when the initial update of the concept row is removed.
 - **Translation layer:** the existing API tests pass unchanged in the
   first pull request.
 - **Screen:** list labels including the fallback, saving one language
