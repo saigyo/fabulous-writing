@@ -206,7 +206,7 @@ class SectionInput(BaseModel):
 
 class TerminologyRuleError(Exception):
     def __init__(self, rule: str, message: str) -> None   # .rule holds the code
-# rule codes: "duplicate_language", "no_section", "unknown_term", "duplicate_text",
+# rule codes: "duplicate_language", "no_section", "unknown_term", "duplicate_term", "duplicate_text",
 # "second_preferred", "no_domain", "unknown_domain", "domain_owner_mismatch"
 
 def section_label(section: LanguageSection) -> str
@@ -396,9 +396,9 @@ def domain_names(conn, domain_ids: list[int]) -> dict[int, str]
 **Rules this task implements**
 
 - `_lock` runs `UPDATE domains SET name = name WHERE id = ?` for each domain id ascending, then `UPDATE concepts SET uid = uid WHERE id = ?` for each concept id ascending. In every writing method it is the first statement, before any read (reading 3).
-- `_validate` (spec 5.3): drop input sections without terms; then raise `TerminologyRuleError` for two sections with the same language (`duplicate_language`), no section left (`no_section`), a term id that is not a term of that language's current section (`unknown_term`), two terms with the same text in a section (`duplicate_text`), more than one term that is preferred and enforced in a section (`second_preferred`). It returns the cleaned sections. Each message names the rule in one plain sentence, for example "A language can have only one active preferred term."
+- `_validate` (spec 5.3): drop input sections without terms; then raise `TerminologyRuleError` for two sections with the same language (`duplicate_language`), no section left (`no_section`), a term id that is not a term of that language's current section (`unknown_term`), the same term id given twice (`duplicate_term`), two terms with the same text in a section (`duplicate_text`), more than one term that is preferred and enforced in a section (`second_preferred`). It returns the cleaned sections. Each message names the rule in one plain sentence, for example "A language can have only one active preferred term."
 - `apply_sections` writes the difference between `current` and the given sections: deletes missing sections and terms, updates changed terms and definitions, inserts new ones with uid `str(uuid.uuid4())`. Sections are matched by language, terms by id. `created_*` and `modified_*` on inserted terms and `modified_*` on changed terms are set from `now` and `user_id`; an unchanged term is not written.
-- A writing method, in this order: `_lock`; load the current state; return `None`/`False` if not visible to `actor.user_id`; `require_writable(owner, is_admin=actor.is_admin)`; `_validate`; `apply_sections` (and `set_links` where links change); load the new state; `entries = changes.diff(before, after, domain_names=…)`; if there are entries, `touch_concept` and `changes.write(…)` with a new batch (`uuid.uuid4().hex`) and the same `now`; return the new state. Always call it as `changes.write`, through the module, so that a test can patch it.
+- A writing method, in this order: `_lock`; load the current state; return `None`/`False` if not visible to `actor.user_id`; `require_writable(owner, is_admin=actor.is_admin)`; `_validate`; `apply_sections` (and `set_links` where links change); load the new state; `entries = changes.diff(before, after, domain_names=…)`; if there are entries, `touch_concept` and `changes.write(…)` with a new batch (`uuid.uuid4().hex`) and the same `now`; return the state as loaded after `touch_concept`, so that the returned concept carries the new `modified_at` and `modified_by`. Always call it as `changes.write`, through the module, so that a test can patch it.
 - Visibility and write permission of concepts and domains go through `ownership.visible_clause`, `ownership.is_visible` and `ownership.require_writable` only; the new code contains no inline visibility or admin check. (The old term methods keep theirs until Task 9 deletes them. Comparing a domain's owner with a concept's for `domain_owner_mismatch` is a rule, not a visibility check.)
 - `create_concept`: the concept takes the domain's `owner_id`; `created_*` and `modified_*` are both set (to `None` user for a system actor).
 - `delete_concept`: logs `diff(before, None)` and deletes the concept row (links, sections and terms cascade).
@@ -444,7 +444,7 @@ def save_section(self, concept_id: int, section: SectionInput, *,
 - Both return `None` for a concept that is not visible, raise `GlobalReadOnlyError` for a global concept and a non-admin **before** deciding whether anything changes, and write nothing at all when the result equals the current state.
 
 - [ ] **Step 1: Write the failing tests.** Start each from `c = add_term(store, d.id, language=Language.EN, preferred="sign in", forbidden_variants=["login"], definition="d")`, with a clock fixture that patches `store._utcnow` and advances between saves.
-  - `test_save_section_edits_a_term_and_logs_one_entry`: change `login` to deprecated with a reason; one new entry, `edited`, two changes; the term's `modified_at` is the new time and `created_at` the old; the other term's `modified_at` is unchanged; the concept's `modified_at` is the new time.
+  - `test_save_section_edits_a_term_and_logs_one_entry`: change `login` to deprecated with a reason; one new entry, `edited`, two changes; the term's `modified_at` is the new time and `created_at` the old; the other term's `modified_at` is unchanged; the concept's `modified_at` is the new time, both on the returned concept and on a fresh `get_concept`.
   - `test_saving_the_current_state_changes_nothing`: `save_section(c.id, SectionInput.from_section(c.sections[0]), …)` after advancing the clock: `changes(db)` unchanged and `get_concept` equal to before, including `modified_at`. Same for `save_concept` with the current sections and links.
   - `test_missing_term_is_deleted_and_new_term_is_created`: entries `deleted` and `created` in one batch.
   - `test_term_ids_survive_a_save`: an untouched term keeps `id` and `uid`.
@@ -454,6 +454,7 @@ def save_section(self, concept_id: int, section: SectionInput, *,
   - `test_removing_the_last_section_is_refused`: `no_section`, state unchanged.
   - `test_unknown_term_id_is_refused`: an id of a term of the `de` section sent in the `en` section, and an id of another concept: `unknown_term`.
   - `test_second_active_preferred_term_is_refused_on_save`.
+  - `test_the_same_term_id_twice_is_refused`: two inputs with the id of `login`, different texts: `duplicate_term`, state unchanged.
   - `test_save_concept_replaces_sections_and_links`: add a second own domain `d2`; `domain_ids=[d2.id]` logs `removed_from_domain` then `added_to_domain`; `list_concepts(d.id)` no longer contains it.
   - `test_domain_rules`, parametrised: `[]` gives `no_domain`; a foreign owner's domain gives `unknown_domain`; a global domain for an own concept gives `domain_owner_mismatch`; an own domain for a global concept (as admin) gives `domain_owner_mismatch`.
   - `test_shared_concept_is_one_row_seen_from_both_domains`: after linking to `d` and `d2`, both `list_concepts` return the same `id`, and an edit through one is visible through the other.
@@ -500,7 +501,7 @@ def delete_domain(self, domain_id: int, *, actor: Actor, comment: str = "") -> b
 **Files:**
 - Test: `backend/tests/test_terminology_concurrency.py` (create)
 
-Both tests need Postgres and skip without `FW_TEST_DATABASE_URL`. Read `TestPostgresReservationConcurrency` in `tests/test_usage.py` first and follow its process handling exactly (spawn context, module-level worker, barrier, queue, terminate-and-join in `finally`, `dsn = pg_database._pool.conninfo`).
+All three tests need Postgres and skip without `FW_TEST_DATABASE_URL`. Read `TestPostgresReservationConcurrency` in `tests/test_usage.py` first and follow its process handling exactly (spawn context, module-level worker, barrier, queue, terminate-and-join in `finally`, `dsn = pg_database._pool.conninfo`).
 
 - [ ] **Step 1: The preferred-term race** (spec 14, reading 4).
 
@@ -519,9 +520,26 @@ def test_simultaneous_saves_leave_one_active_preferred_term(pg_database):
 
   `existing_term` is passed as the `TermInput.model_dump()` of the forbidden term, with its id.
 
-- [ ] **Step 2: Mutation.** Remove the concept update in `_lock`. Run the test with `PG_ENV` three times: it must fail each time with more than one preferred term. If it passes even once, the test does not prove the lock: stop and report, do not continue. Restore.
+- [ ] **Step 2: The same rule, with a fixed interleaving.** The race above depends on timing, so this test is the binding guard for the concept lock:
 
-- [ ] **Step 3: The domain lock** (reading 3), deterministic, one process:
+```python
+def test_a_save_reads_the_concept_only_after_locking_it(pg_database):
+    # setup: one concept whose en section has a single forbidden term
+    # main: conn = pg_database.raw_connect()
+    #       conn.execute("UPDATE concepts SET uid = uid WHERE id = ?", (c.id,))
+    #       INSERT INTO concept_terms: an active preferred term "from main" in that section   # not committed
+    # worker thread: store.save_section(c.id, SectionInput(language=EN, terms=[
+    #     <the forbidden term with its id>, TermInput(text="from worker", usage_status=PREFERRED)]), actor=...)
+    # worker.join(timeout=1.0); assert worker.is_alive()
+    # main: conn.commit(); conn.close(); worker.join(timeout=10); assert not worker.is_alive()
+    # assert: the section has exactly one active preferred term, "from worker"
+```
+
+  With the lock taken first, the worker reads the section after the main transaction committed, finds "from main" missing from its input and deletes it. Without it, the worker has read the old state and inserted its term before it blocks on `touch_concept`, and both preferred terms remain.
+
+- [ ] **Step 3: Mutation.** Remove the concept update in `_lock`. The fixed-interleaving test must fail, with two preferred terms. Run the race test five times with `PG_ENV` and report how many runs failed; it is expected to fail in most, but it is not the binding guard. Restore.
+
+- [ ] **Step 4: The domain lock** (reading 3), deterministic, one process:
 
 ```python
 def test_creating_a_concept_waits_for_a_domain_being_deleted(pg_database):
@@ -534,8 +552,8 @@ def test_creating_a_concept_waits_for_a_domain_being_deleted(pg_database):
     # assert SELECT COUNT(*) FROM concepts == 0
 ```
 
-- [ ] **Step 4: Mutation.** Remove the domain updates in `_lock`: the `is_alive()` assertion must fail. Restore.
-- [ ] **Step 5:** Run the gate on both backends. **Commit.** `test(terminology): simultaneous saves and domain deletion on Postgres`
+- [ ] **Step 5: Mutation.** Remove the domain updates in `_lock`: the `is_alive()` assertion must fail. Restore.
+- [ ] **Step 6:** Run the gate on both backends. **Commit.** `test(terminology): simultaneous saves and domain deletion on Postgres`
 
 ---
 
@@ -662,7 +680,7 @@ One task and one commit: the checker and the endpoints must switch together, or 
 - Modify: `docs/backend-architecture.md`, `docs/superpowers/specs/2026-11-22-terminology-t1-concept-model-design.md`
 
 - [ ] **Step 1:** Rewrite the "Terminology" section of `docs/backend-architecture.md` for the as-built state: the package and what each module owns; the five tables; the rules the store enforces and the lock order with its reason; how a save produces log entries; the migration and `terms_legacy`; the translation in the endpoints and that it is temporary; the checker's data source and the new rule id. Keep the paragraphs on domain ownership and on the casing rules that still hold. Update the "Ownership" section for `visible_clause`, `is_visible`, `require_writable` and for concepts having their own `owner_id`. Update the module map and the testing section where they name `terminology.py` or its tests.
-- [ ] **Step 2:** In the spec, replace the "Simultaneous saves" item of section 14 with: "**Simultaneous saves** on Postgres: several processes each save the same language section with an added preferred term. Every save succeeds, because a save carries the complete term list, and the section ends with exactly one active preferred term. The test must fail when the initial write to the concept row is removed." Add to section 5.3, after the item on serialised saves: "A save also locks the domain rows it names before the concept row, so that a domain cannot be deleted while a concept is being linked to it." Add to section 6, after the paragraph on the variant equal to the preferred wording: "A second exception: a row with an empty preferred wording, which the API has not accepted for some time, is carried over as a section with its forbidden terms and no preferred term. Until the second and third pull requests it produces no finding and is not listed on the old screen. A row whose domain no longer exists is not carried over." In the sentence "Duplicate or empty entries in `forbidden_variants` are skipped", change "empty" to "empty or whitespace-only".
+- [ ] **Step 2:** In the spec, replace the "Simultaneous saves" item of section 14 with: "**Simultaneous saves** on Postgres: several processes each save the same language section with an added preferred term. Every save succeeds, because a save carries the complete term list, and the section ends with exactly one active preferred term. A second test fixes the order of the two transactions and must fail when the initial write to the concept row is removed." Add to section 5.3, after the item on serialised saves: "A save also locks the domain rows it names before the concept row, so that a domain cannot be deleted while a concept is being linked to it." Add to section 6, after the paragraph on the variant equal to the preferred wording: "A second exception: a row with an empty preferred wording, which the API has not accepted for some time, is carried over as a section with its forbidden terms and no preferred term. Until the second and third pull requests it produces no finding and is not listed on the old screen. A row whose domain no longer exists is not carried over." In the sentence "Duplicate or empty entries in `forbidden_variants` are skipped", change "empty" to "empty or whitespace-only".
 - [ ] **Step 3:** Run `rtk proxy grep -n "terms(id, domain_id" /Users/markus/IdeaProjects/fabulous-writing/docs/backend-architecture.md`: no match. **Commit.** `docs: terminology concept store`
 
 ---
