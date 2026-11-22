@@ -28,6 +28,7 @@ loss or a second migration.
   status (candidate, active) on every term.
 - Concepts can belong to several domains of the same owner.
 - An append-only change log, written by the store.
+- A save that would overwrite someone else's change is refused (5.7).
 - Existing terms are migrated and are checked exactly as before.
 - The checker maps status to severity and ignores candidates.
 - A concept list and a concept entry screen as in the mockup.
@@ -46,9 +47,8 @@ loss or a second migration.
   term fields (gender, term type, geographical usage, notes); a source for
   the definition.
 - Inflection and compound matching (T2, #206).
-- Detection of two people editing the same concept at once. The last
-  save wins, as it does for every other resource today. The rules in 5.3
-  hold all the same (see there).
+- Merging of conflicting edits. A refused save keeps the edits on screen;
+  the writer loads the current version and applies them again.
 
 **Anti-goals**
 
@@ -119,8 +119,9 @@ stores (integer identity key; UTC ISO text timestamps).
 | `id` | Primary key. |
 | `uid` | Globally unique identifier (UUID), unique, set at creation, never changed. |
 | `owner_id` | Null means global, as for domains. |
+| `revision` | Version number, see 5.7. |
 | `created_at`, `created_by` | Nullable; null for rows carried over by the migration, where they are unknown. |
-| `modified_at`, `modified_by` | Nullable; updated whenever the concept, one of its language sections or one of its terms changes. |
+| `modified_at`, `modified_by` | Nullable; set when the concept's domain links or its set of languages change (5.7), not when a language section or a term changes. |
 
 **`concept_domains`**: `concept_id`, `domain_id`, primary key on both.
 
@@ -132,6 +133,8 @@ stores (integer identity key; UTC ISO text timestamps).
 | `concept_id` | |
 | `language` | One of the existing `Language` values. Unique together with `concept_id`. |
 | `definition` | Text, default empty. |
+| `revision` | Version number, see 5.7. |
+| `created_at`, `created_by`, `modified_at`, `modified_by` | As on the concept. |
 
 **`concept_terms`**
 
@@ -148,6 +151,7 @@ stores (integer identity key; UTC ISO text timestamps).
 | `source` | Text, default empty. Where the term comes from. |
 | `part_of_speech` | Empty, or one of `noun`, `verb`, `adjective`, `adverb`, `proper_noun`, `other` (the TBX-Basic list). |
 | `case_sensitive` | As today, but per term. |
+| `revision` | Version number, see 5.7. |
 | `created_at`, `created_by`, `modified_at`, `modified_by` | As on the concept. |
 
 **`terminology_changes`** is described in section 7.
@@ -175,9 +179,12 @@ whether it is enforced; the checker asks only that. A later value such as
   sets a column to its own value), which locks that row until commit on
   Postgres; only then does it read the concept's state and check these
   rules. The modified fields are set only when the save changes
-  something, so a save without changes leaves no trace. SQLite serialises writers by itself. Two
+  something, so a save without changes leaves no trace. SQLite
+  serialises writers by itself. Two
   simultaneous saves can therefore not both pass a check that only one
-  of them may pass.
+  of them may pass. A save also locks the domain rows it names, before
+  the concept row, so that a domain cannot be deleted while a concept is
+  being linked to it.
 
 ### 5.4 Ownership and sharing
 
@@ -236,6 +243,46 @@ term for cases a generator gets wrong (irregular plurals, new or borrowed
 words). `language` is a text column, so a finer value such as a script or
 regional variant needs no schema change either.
 
+### 5.7 Version numbers and simultaneous edits
+
+Concept, language section and term each carry a version number
+(`revision`). It starts at 1 and increases by 1 with every save that
+changes that level:
+
+| Level | Its number increases when |
+|---|---|
+| Term | one of its own fields changes |
+| Language section | its definition changes, or a term in it is added, changed or removed |
+| Concept | a domain link changes, or a language section is added or removed |
+
+A level's `modified_at` and `modified_by` are set exactly when its number
+increases. A change to a term therefore shows on the term and on its
+language section, and not on the concept. "Last activity" on a concept is
+the latest of the three levels and is computed where it is displayed.
+
+A save states the numbers it read, and the store compares them after
+locking (5.3) and before writing anything:
+
+- For every language section the save writes or removes: the section's
+  number. For a language the concept does not have yet, the save states
+  none, and the language must still be absent.
+- For the domain links, whenever a save sends them: the concept's number.
+
+If one comparison fails, the whole save is refused and nothing is written.
+Two people can therefore save different languages of one concept at the
+same time, and add different languages at the same time. Two saves of the
+same language, or of the domain links, conflict: the second is refused.
+A save of the domain links is also refused when a language was added or
+removed since it was read, because that increases the concept's number.
+
+The term's number is maintained and returned. No operation in T1 checks
+it, because every save writes a whole language section. A later operation
+that writes a single term must check it, and must also increase the
+section's number.
+
+Deleting a concept, removing it from a domain and deleting a domain are
+not checked: they do not write from a copy that may be out of date.
+
 ## 6. Migration
 
 Runs once in the store's startup migration when the old `terms` table is
@@ -252,11 +299,13 @@ For each old term row:
 - one term with the row's preferred wording: `preferred`, `active`;
 - one term per entry in `forbidden_variants`: `forbidden`, `active`;
 - every new term takes the row's `case_sensitive` value;
-- created and modified fields stay null;
+- created and modified fields stay null on all three levels; every
+  version number is 1;
 - one "carried over" change-log entry for the concept and one for each
   term (section 7).
 
-Duplicate or empty entries in `forbidden_variants` are skipped.
+Duplicate entries in `forbidden_variants` and entries that are empty or
+consist of whitespace only are skipped.
 
 A variant that is exactly equal to the preferred wording is skipped, and
 the migration logs a warning naming the domain and the wording. This is
@@ -264,6 +313,13 @@ the one deliberate exception to "checked exactly as before": such an
 entry makes today's checker flag every occurrence of the preferred term
 and suggest the same word as its replacement. A variant that differs only
 in case is a different wording and is carried over.
+
+A second exception: a row with an empty preferred wording, which the API
+has not accepted for some time, is carried over as a language section
+with its forbidden terms and no preferred term. Until the second and
+third pull requests it produces no finding and is not listed on the old
+screen; today it reports its variants with an empty suggestion. A row
+whose domain no longer exists is not carried over.
 
 Afterwards the old table is renamed to `terms_legacy`. The store
 migration of the third pull request drops it. *(Author's call: a rename costs nothing and keeps
@@ -402,7 +458,9 @@ All of these go through the store and are logged with origin `manual`.
 While this layer exists nothing can create a shape it cannot express; in
 particular every concept is in exactly one domain. `PUT` and `DELETE` on
 `/api/terms/{id}` have no domain in their path and find it through the
-section's concept.
+section's concept. The old screen holds no version numbers, so each of
+these endpoints reads the current state and saves with the numbers it
+just read. For the writer this is "last save wins", as today.
 
 The layer lives in the API module. The old store methods are replaced by
 the new ones, so the store tests are rewritten; "unchanged" applies to the
@@ -421,22 +479,29 @@ case-sensitive preferred term in the wrong case.
 | `GET /api/domains/{id}/concepts` | All concepts of a domain, complete (sections, terms, domain ids). |
 | `POST /api/domains/{id}/concepts` | Create a concept in this domain. |
 | `GET /api/concepts/{id}` | One concept. |
-| `PUT /api/concepts/{id}` | Save the whole entry: sections, terms and domain links. Terms and sections are matched by id; ones without an id are created, missing ones are deleted. Optional comment. |
-| `PUT /api/concepts/{id}/languages/{language}` | Save one language section: its definition and terms, matched as above. Creates the section if the concept has none in that language. Optional comment. |
+| `PUT /api/concepts/{id}` | Save several parts in one request: the language sections it lists and, if given, the complete list of domain links. A section that is not listed is left untouched; a section listed without terms is removed. Optional comment. |
+| `PUT /api/concepts/{id}/languages/{language}` | Save one language section: its definition and terms. Creates the section if the concept has none in that language; sent without terms, it removes the section. Optional comment. |
 | `DELETE /api/concepts/{id}` | Delete the concept. |
 | `DELETE /api/domains/{id}/concepts/{concept_id}` | Remove from this domain only. |
 
-`PUT` on the concept carries the complete list of the concept's domains,
-including the one it was opened from. Each request is one transaction and
-one batch in the change log. A new concept is created with its first
-save, whichever button is used.
+A language section is identified by its language, which never changes.
+Within a section, terms are matched by id; ones without an id are
+created, missing ones are deleted. Every response carries the version
+numbers of all three levels. Every section in a save carries the number
+that was read (none for a new language); domain links are sent as the
+complete list, including the domain the entry was opened from, together
+with the concept's number (5.7). Each request is one transaction and one
+batch in the change log. A new concept is created with its first save,
+whichever button is used.
 
 Status codes follow the existing endpoints: 403 for a global row and a
 non-admin; 404 for a concept or domain that is not visible; 422 for an
 invalid value (empty term text, unknown language or pick-list value); 409,
 with a message naming the rule, for a save that would break a rule from
 5.3 or 5.4 (duplicate wording in a section, a second active preferred
-term, no section or no domain left, a domain with a different owner).
+term, no section or no domain left, a domain with a different owner),
+and for a save whose version number is out of date. That answer names the
+part that was changed in the meantime: the language, or the domain links.
 
 The old term endpoints, their models, the translation layer and
 `terms_legacy` are removed in this pull request.
@@ -469,9 +534,18 @@ uses the existing components and theme tokens.
 - Adding a term, adding a language.
 - **Saving.** Each language section has its own save and discard, active
   only while that section has unsaved changes, so a long entry can be
-  saved language by language. "Save all" saves every section with unsaved
-  changes and the domain links in one request. What a language save has
-  stored stays stored when the rest is discarded later.
+  saved language by language. "Save all" sends, in one request, only the
+  sections with unsaved changes, and the domain links only if they were
+  changed. Sections without unsaved changes are not sent, so a language
+  that someone else added or edited in the meantime is not touched. What
+  a language save has stored stays stored when the rest is discarded
+  later.
+- **A save refused as out of date** keeps the edits on screen and says,
+  next to the button that was used, which part someone else changed in
+  the meantime, with an action to load the current version of that part.
+  Loading it discards the writer's edits to that part, after asking.
+  There is no merging in T1.
+- Removing a language is an explicit action in its section.
 - Unsaved changes are marked per section. A failed save keeps the edits
   on screen with the error next to the button that was used.
 - One optional "reason for this change" field; whichever save is used
@@ -515,6 +589,11 @@ the rest.
    checks it inside the save transaction, after locking the concept row
    (5.3). A unique index would cover this one rule only and would have to
    be rebuilt for every new enforced process status.
+9. **Adding a language is checked by the language still being absent**,
+   not by the concept's version number, so that two people can add
+   different languages at the same time. The concept's number is checked
+   for domain links only.
+10. **Deleting and removing are not checked against version numbers.**
 
 ## 12. Verified against TBX-Basic version 4
 
@@ -561,13 +640,21 @@ Each pull request updates `docs/backend-architecture.md` or
   delete an entry.
 - **Checker:** the severity table, candidates ignored, the replacement
   fallback, a shared concept in two domains reported once.
-- **Simultaneous saves** on Postgres: two processes each add a preferred
-  term to the same language section; exactly one succeeds. The test must
-  fail when the initial write to the concept row is removed.
+- **Version numbers:** each level's number and modified fields change
+  exactly as defined in 5.7; a save with an out-of-date number is refused
+  and writes nothing; two saves of different languages made from the same
+  read both succeed.
+- **Simultaneous saves** on Postgres: several processes save the same
+  language section with the same version number, each adding a preferred
+  term; exactly one succeeds and the others are refused as out of date.
+  A second test fixes the order of the two transactions. Both must fail
+  when the initial write to the concept row is removed.
 - **Translation layer:** the existing API tests pass unchanged in the
   first pull request.
 - **Screen:** list labels including the fallback, saving one language
-  without touching the others, "Save all" as one request, the two removal actions, read-only global concepts.
+  without touching the others, "Save all" as one request that contains
+  only the changed parts, a refused save keeping the edits, the two
+  removal actions, read-only global concepts.
 
 ## 15. Left to the builder
 
