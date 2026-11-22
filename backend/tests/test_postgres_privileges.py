@@ -123,6 +123,17 @@ def restricted() -> Iterator[Restricted]:
             admin.execute(f'DROP ROLE "{role}"')
 
 
+_CONCEPT_TABLES = ("concepts", "concept_domains", "concept_languages", "concept_terms")
+
+
+def _terminology_counts(dsn: str) -> dict[str, int]:
+    with psycopg.connect(dsn) as conn:
+        return {
+            table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in (*_CONCEPT_TABLES, "terminology_changes")
+        }
+
+
 def test_api_smoke_under_restricted_role(restricted, tmp_path, monkeypatch):
     monkeypatch.setenv("FW_DATABASE_URL", restricted.restricted_dsn)
     settings = Settings(
@@ -146,6 +157,7 @@ def test_api_smoke_under_restricted_role(restricted, tmp_path, monkeypatch):
             "/api/domains", json={"name": "b36 domain", "description": ""}
         )
         assert domain.status_code == 201, domain.text
+        before = _terminology_counts(restricted.restricted_dsn)
         term = client.post(
             f"/api/domains/{domain.json()['id']}/terms",
             json={"language": "en", "preferred": "Fabulous"},
@@ -157,18 +169,10 @@ def test_api_smoke_under_restricted_role(restricted, tmp_path, monkeypatch):
         deleted = client.delete(f"/api/terms/{term_id}")
         assert deleted.status_code == 204, deleted.text
 
-    with psycopg.connect(restricted.restricted_dsn) as conn:
-        counts = {
-            table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            for table in (
-                "concepts",
-                "concept_domains",
-                "concept_languages",
-                "concept_terms",
-                "terminology_changes",
-            )
-        }
-    assert counts["terminology_changes"] >= 3
+    after = _terminology_counts(restricted.restricted_dsn)
+    # The seeded example domain stays; the term's concept rows are all gone again.
+    assert {t: after[t] for t in _CONCEPT_TABLES} == {t: before[t] for t in _CONCEPT_TABLES}
+    assert after["terminology_changes"] >= before["terminology_changes"] + 3
 
 
 def test_restricted_role_cannot_create_tables(restricted):

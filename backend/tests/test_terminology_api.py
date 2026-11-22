@@ -4,7 +4,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import Settings
+from app.core.models import Language
 from app.main import create_app
+from app.services.terminology import Actor, SectionInput, TermInput, UsageStatus
 from tests.conftest import auth_headers, second_user_headers
 
 
@@ -391,3 +393,33 @@ def test_renaming_to_a_current_variant_drops_that_variant(client: TestClient) ->
     updated = client.put(f"/api/terms/{term['id']}", json={"preferred": "login"})
     assert updated.status_code == 200
     assert updated.json()["forbidden_variants"] == []
+
+
+def test_list_follows_the_store_order(client: TestClient) -> None:
+    domain_id = _domain(client)
+    for wording in ["Zoom", "apple", "Äpfel", "Bild"]:
+        _post_term(client, domain_id, preferred=wording)
+    admin_id = client.get("/api/auth/me").json()["id"]
+    order = client.app.state.terminology_store.section_ids_by_preferred(
+        domain_id, owner_id=admin_id
+    )
+    listed = client.get(f"/api/domains/{domain_id}/terms").json()
+    assert [t["id"] for t in listed] == order
+
+
+def test_update_into_a_language_the_concept_has_is_409(client: TestClient) -> None:
+    store = client.app.state.terminology_store
+    admin = Actor(user_id=client.get("/api/auth/me").json()["id"], is_admin=True)
+    term = _post_term(client, _domain(client), preferred="sign in")
+    concept = store.get_concept_by_section(term["id"], owner_id=admin.user_id)
+    store.save_section(
+        concept.id,
+        SectionInput(
+            language=Language.DE,
+            terms=[TermInput(text="anmelden", usage_status=UsageStatus.PREFERRED)],
+        ),
+        actor=admin,
+    )
+    response = client.put(f"/api/terms/{term['id']}", json={"language": "de"})
+    assert response.status_code == 409
+    assert response.json()["detail"]

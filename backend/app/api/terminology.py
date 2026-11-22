@@ -252,16 +252,19 @@ def list_terms(
     language: Language | None = None,
     user: CurrentUser = Depends(get_current_user),
 ) -> list[Term]:
-    concepts = _store(request).list_concepts(domain_id, owner_id=user.id)
-    if concepts is None:
+    store = _store(request)
+    concepts = store.list_concepts(domain_id, owner_id=user.id)
+    order = store.section_ids_by_preferred(domain_id, owner_id=user.id)
+    if concepts is None or order is None:
         raise HTTPException(404, "Domain not found")
-    terms = (
-        _as_term(section, domain_id)
+    terms = {
+        section.id: term
         for concept in concepts
         for section in concept.sections
         if language is None or section.language == language
-    )
-    return sorted((t for t in terms if t is not None), key=lambda t: t.preferred)
+        if (term := _as_term(section, domain_id)) is not None
+    }
+    return [terms[section_id] for section_id in order if section_id in terms]
 
 
 @router.post("/domains/{domain_id}/terms", status_code=201)
