@@ -108,7 +108,7 @@ def test_a_save_compares_the_number_only_after_locking_the_concept(pg_database):
         except Exception as exc:
             outcome["error"] = exc
 
-    worker = threading.Thread(target=save)
+    worker = threading.Thread(target=save, daemon=True)
     conn = pg_database.raw_connect()
     try:
         conn.execute("UPDATE concepts SET uid = uid WHERE id = ?", (concept.id,))
@@ -141,7 +141,7 @@ def test_creating_a_concept_waits_for_a_domain_being_deleted(pg_database):
         except Exception as exc:
             outcome["error"] = exc
 
-    worker = threading.Thread(target=create)
+    worker = threading.Thread(target=create, daemon=True)
     conn = pg_database.raw_connect()
     try:
         conn.execute("UPDATE domains SET name = name WHERE id = ?", (domain.id,))
