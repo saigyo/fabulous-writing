@@ -6,7 +6,7 @@ from app.api.validation import validate_name
 from app.core.models import Language
 from app.core.permissions import features_for
 from app.services.ownership import GlobalReadOnlyError
-from app.services.terminology import Domain, Term, TerminologyStore
+from app.services.terminology import Actor, Domain, Term, TerminologyStore
 
 router = APIRouter(prefix="/api", tags=["terminology"])
 
@@ -98,7 +98,7 @@ def delete_domain(
 ) -> Response:
     try:
         deleted = _store(request).delete_domain(
-            domain_id, owner_id=user.id, is_admin=user.is_admin
+            domain_id, actor=Actor(user_id=user.id, is_admin=user.is_admin)
         )
     except GlobalReadOnlyError:
         raise HTTPException(403, "Only admins can change built-in items") from None

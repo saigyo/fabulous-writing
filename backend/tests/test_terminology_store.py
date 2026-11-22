@@ -777,3 +777,86 @@ def test_comment_is_stored_on_every_entry_of_the_batch(store, db, d, c):
     assert len(new) == 3
     assert {e["comment"] for e in new} == {"merge"}
     assert len({e["batch"] for e in new}) == 1
+
+
+def in_two_domains(store, d, c):
+    d2 = store.create_domain("Docs", owner_id=1)
+    two = store.save_concept(c.id, domain_ids=[d.id, d2.id], revision=c.revision, actor=ME)
+    assert two is not None
+    return d2, two
+
+
+def test_remove_from_domain_deletes_the_link_only(store, db, d, c):
+    d2, two = in_two_domains(store, d, c)
+    log = len(changes(db))
+    assert store.remove_concept_from_domain(c.id, d2.id, actor=ME, comment="x") is True
+    after = store.get_concept(c.id, owner_id=1)
+    assert after.domain_ids == [d.id]
+    assert after.revision == two.revision + 1
+    assert [s.revision for s in after.sections] == [s.revision for s in two.sections]
+    new = changes(db)[log:]
+    assert [e["action"] for e in new] == ["removed_from_domain"]
+    assert new[0]["changes"] == [
+        {"field": "domain", "old": {"id": d2.id, "name": "Docs"}, "new": None}
+    ]
+
+
+def test_remove_from_the_last_domain_is_refused(store, db, d, c):
+    log = changes(db)
+    with pytest.raises(TerminologyRuleError) as caught:
+        store.remove_concept_from_domain(c.id, d.id, actor=ME)
+    assert caught.value.rule == "no_domain"
+    assert store.get_concept(c.id, owner_id=1) == c
+    assert changes(db) == log
+
+
+def test_remove_returns_false_when_not_linked(store, d, c):
+    d2 = store.create_domain("Docs", owner_id=1)
+    foreign = store.create_domain("Theirs", owner_id=2)
+    assert store.remove_concept_from_domain(c.id, d2.id, actor=ME) is False
+    assert store.remove_concept_from_domain(c.id, foreign.id, actor=ME) is False
+    assert store.remove_concept_from_domain(9999, d.id, actor=ME) is False
+    assert store.remove_concept_from_domain(c.id, 9999, actor=ME) is False
+
+
+def test_delete_domain_deletes_concepts_that_are_in_no_other_domain(store, db, d, c):
+    d2, two = in_two_domains(store, d, c)
+    a = add_term(store, d.id, language=Language.EN, preferred="alpha")
+    log = len(changes(db))
+    assert store.delete_domain(d.id, actor=ME) is True
+    assert store.get_domain(d.id, owner_id=1) is None
+    assert store.get_concept(a.id, owner_id=1) is None
+    b = store.get_concept(c.id, owner_id=1)
+    assert b.domain_ids == [d2.id]
+    assert b.revision == two.revision + 1
+    new = changes(db)[log:]
+    assert len({e["batch"] for e in new}) == 1
+    assert [(e["action"], e["concept_id"]) for e in new] == [
+        ("removed_from_domain", c.id), ("deleted", a.id), ("deleted", a.id),
+    ]
+    assert new[0]["changes"] == [
+        {"field": "domain", "old": {"id": d.id, "name": "Cloud"}, "new": None}
+    ]
+
+
+def test_delete_domain_as_non_admin_on_a_global_domain_is_refused(store, db):
+    g = store.create_domain("Global", owner_id=None)
+    add_term(store, g.id, language=Language.EN, preferred="a")
+    log = changes(db)
+    with pytest.raises(GlobalReadOnlyError):
+        store.delete_domain(g.id, actor=ME)
+    assert store.get_domain(g.id, owner_id=1) is not None
+    assert concept_count(db) == 1
+    assert changes(db) == log
+
+
+def test_delete_domain_that_is_not_visible_returns_false(store):
+    theirs = store.create_domain("Theirs", owner_id=2)
+    assert store.delete_domain(theirs.id, actor=ME) is False
+    assert store.delete_domain(9999, actor=ME) is False
+
+
+def test_delete_empty_domain_writes_no_entry(store, db, d):
+    assert store.delete_domain(d.id, actor=ME) is True
+    assert store.get_domain(d.id, owner_id=1) is None
+    assert changes(db) == []

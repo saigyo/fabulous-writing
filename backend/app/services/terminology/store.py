@@ -149,14 +149,23 @@ def _check_domains(conn: Any, domain_ids: list[int], current: Concept, actor: Ac
 
 
 def _record(
-    conn: Any, concept_id: int, before: Concept | None, *, actor: Actor, comment: str, now: str
+    conn: Any,
+    concept_id: int,
+    before: Concept | None,
+    *,
+    actor: Actor,
+    comment: str,
+    now: str,
+    batch: str | None = None,
 ) -> Concept:
     after = rows.load_concept(conn, concept_id)
     assert after is not None
     names = rows.domain_names(conn, sorted(set(after.domain_ids) | set(before.domain_ids if before else [])))
     entries = changes.diff(before, after, domain_names=names)
     if entries:
-        changes.write(conn, entries, batch=uuid.uuid4().hex, at=now, actor=actor, comment=comment)
+        changes.write(
+            conn, entries, batch=batch or uuid.uuid4().hex, at=now, actor=actor, comment=comment
+        )
     if before is not None and (
         before.domain_ids != after.domain_ids
         or {s.language for s in before.sections} != {s.language for s in after.sections}
@@ -246,14 +255,40 @@ class TerminologyStore:
             raise ValueError(f"Domain '{new_name}' already exists") from exc
         return current.model_copy(update={"name": new_name, "description": new_description})
 
-    def delete_domain(self, domain_id: int, *, owner_id: int, is_admin: bool) -> bool:
-        current = self.get_domain(domain_id, owner_id=owner_id)
-        if current is None:
-            return False
-        require_writable(current.owner_id, is_admin=is_admin)
+    def delete_domain(self, domain_id: int, *, actor: Actor, comment: str = "") -> bool:
         with self._connect() as conn:
-            cursor = conn.execute("DELETE FROM domains WHERE id = ?", (domain_id,))
-        return cursor.rowcount > 0
+            _lock(conn, domain_ids=[domain_id])
+            domain = conn.execute(
+                "SELECT owner_id FROM domains WHERE id = ?", (domain_id,)
+            ).fetchone()
+            if domain is None or not is_visible(domain["owner_id"], user_id=actor.user_id):
+                return False
+            require_writable(domain["owner_id"], is_admin=actor.is_admin)
+            linked = [
+                row["concept_id"]
+                for row in conn.execute(
+                    "SELECT concept_id FROM concept_domains WHERE domain_id = ?", (domain_id,)
+                ).fetchall()
+            ]
+            _lock(conn, concept_ids=linked)
+            batch = uuid.uuid4().hex
+            now = _utcnow()
+            for before in rows.load_concepts(conn, sorted(linked)):
+                if before.domain_ids == [domain_id]:
+                    entries = changes.diff(
+                        before, None, domain_names=rows.domain_names(conn, before.domain_ids)
+                    )
+                    changes.write(conn, entries, batch=batch, at=now, actor=actor, comment=comment)
+                    conn.execute("DELETE FROM concepts WHERE id = ?", (before.id,))
+                else:
+                    rows.set_links(
+                        conn, before.id, [d for d in before.domain_ids if d != domain_id]
+                    )
+                    _record(
+                        conn, before.id, before, actor=actor, comment=comment, now=now, batch=batch
+                    )
+            conn.execute("DELETE FROM domains WHERE id = ?", (domain_id,))
+            return True
 
     # -- concepts --------------------------------------------------------
 
@@ -345,6 +380,28 @@ class TerminologyStore:
                 conn, entries, batch=uuid.uuid4().hex, at=_utcnow(), actor=actor, comment=comment
             )
             conn.execute("DELETE FROM concepts WHERE id = ?", (concept_id,))
+            return True
+
+    def remove_concept_from_domain(
+        self, concept_id: int, domain_id: int, *, actor: Actor, comment: str = ""
+    ) -> bool:
+        with self._connect() as conn:
+            _lock(conn, domain_ids=[domain_id], concept_ids=[concept_id])
+            before = rows.load_concept(conn, concept_id)
+            if before is None or not is_visible(before.owner_id, user_id=actor.user_id):
+                return False
+            owner = rows.domain_owners(conn, [domain_id]).get(domain_id, False)
+            if (
+                domain_id not in before.domain_ids
+                or owner is False
+                or not is_visible(owner, user_id=actor.user_id)
+            ):
+                return False
+            require_writable(before.owner_id, is_admin=actor.is_admin)
+            if before.domain_ids == [domain_id]:
+                raise TerminologyRuleError("no_domain", "A concept belongs to at least one domain.")
+            rows.set_links(conn, concept_id, [d for d in before.domain_ids if d != domain_id])
+            _record(conn, concept_id, before, actor=actor, comment=comment, now=_utcnow())
             return True
 
     # -- terms -----------------------------------------------------------
