@@ -12,6 +12,7 @@ from app.services.ownership import (
 )
 from app.services.terminology import changes, rows
 from app.services.terminology.model import (
+    PROCESS_STATUS_ENFORCED,
     Actor,
     Concept,
     Domain,
@@ -299,6 +300,28 @@ class TerminologyStore:
         if concept is None or not is_visible(concept.owner_id, user_id=owner_id):
             return None
         return concept
+
+    def section_ids_by_preferred(self, domain_id: int, *, owner_id: int) -> list[int] | None:
+        """Ids of the domain's language sections that have an enforced preferred
+        term, ordered by its text in SQL, so that the database's collation decides
+        the order of the old term list as it did before. Removed again in the third
+        pull request, together with `get_concept_by_section`."""
+        enforced = [status.value for status, on in PROCESS_STATUS_ENFORCED.items() if on]
+        with self._connect() as conn:
+            if self._visible_domain_row(conn, domain_id, owner_id) is None:
+                return None
+            found = conn.execute(
+                "SELECT s.id FROM concept_languages s"
+                " JOIN concepts c ON c.id = s.concept_id"
+                " JOIN concept_domains cd ON cd.concept_id = s.concept_id"
+                " JOIN concept_terms t ON t.section_id = s.id"
+                " WHERE cd.domain_id = ? AND " + visible_clause("c.owner_id")
+                + " AND t.usage_status = ?"
+                f" AND t.process_status IN ({', '.join('?' for _ in enforced)})"
+                " ORDER BY t.text, s.id",
+                (domain_id, owner_id, UsageStatus.PREFERRED.value, *enforced),
+            ).fetchall()
+        return [row["id"] for row in found]
 
     def list_sections(
         self, domain_id: int, *, owner_id: int, language: Language

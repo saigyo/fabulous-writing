@@ -65,6 +65,40 @@ class TestStore:
         assert store.list_concepts(domain.id, owner_id=1) is None
 
 
+    def test_section_order_follows_the_database_collation(
+        self, store: TerminologyStore, db
+    ) -> None:
+        domain = store.create_domain("Cloud", owner_id=None)
+        wordings = ["Zoom", "apple", "Äpfel", "Bild"]
+        by_id = {
+            add_term(store, domain.id, language=Language.EN, preferred=w).sections[0].id: w
+            for w in wordings
+        }
+        store.create_concept(
+            domain.id,
+            [
+                SectionInput(
+                    language=Language.EN,
+                    terms=[TermInput(text="login", usage_status=UsageStatus.FORBIDDEN)],
+                )
+            ],
+            actor=Actor(user_id=1, is_admin=True),
+        )
+        with db.connect() as conn:
+            conn.execute("CREATE TEMPORARY TABLE wordings (text TEXT NOT NULL)")
+            for wording in wordings:
+                conn.execute("INSERT INTO wordings (text) VALUES (?)", (wording,))
+            expected = [
+                row["text"]
+                for row in conn.execute("SELECT text FROM wordings ORDER BY text").fetchall()
+            ]
+        order = store.section_ids_by_preferred(domain.id, owner_id=1)
+        assert order is not None
+        assert [by_id[section_id] for section_id in order] == expected
+        assert store.section_ids_by_preferred(domain.id, owner_id=2) == order
+        assert store.section_ids_by_preferred(9999, owner_id=1) is None
+
+
 class TestChecker:
     def test_flags_forbidden_variant_and_suggests_preferred(
         self, store: TerminologyStore
@@ -516,3 +550,45 @@ class TestCjkChecker:
         )
         assert len(findings) == 1
         assert findings[0].span.text == "Github"
+
+    def _mixed_case_section(self, store: TerminologyStore) -> int:
+        domain = store.create_domain("dev", owner_id=None)
+        store.create_concept(
+            domain.id,
+            [
+                SectionInput(
+                    language=Language.JA,
+                    terms=[
+                        TermInput(text="ギットハブ", usage_status=UsageStatus.PREFERRED),
+                        TermInput(
+                            text="Github",
+                            usage_status=UsageStatus.FORBIDDEN,
+                            case_sensitive=True,
+                        ),
+                    ],
+                )
+            ],
+            actor=Actor(user_id=1, is_admin=True),
+        )
+        return domain.id
+
+    def test_token_path_uses_the_forbidden_terms_own_case_sensitivity(
+        self, store: TerminologyStore
+    ) -> None:
+        from app.core.config import NlpSettings
+        from app.nlp.registry import NlpRegistry
+
+        domain_id = self._mixed_case_section(store)
+        checker = TerminologyChecker(store, nlp=NlpRegistry(NlpSettings().models))
+        assert checker.check("コードは github にあります。", Language.JA, domain_id, owner_id=1) == []
+        findings = checker.check("コードは Github にあります。", Language.JA, domain_id, owner_id=1)
+        assert [f.span.text for f in findings] == ["Github"]
+
+    def test_substring_fallback_uses_the_forbidden_terms_own_case_sensitivity(
+        self, store: TerminologyStore
+    ) -> None:
+        domain_id = self._mixed_case_section(store)
+        checker = TerminologyChecker(store)
+        assert checker.check("コードは github にあります。", Language.JA, domain_id, owner_id=1) == []
+        findings = checker.check("コードは Github にあります。", Language.JA, domain_id, owner_id=1)
+        assert [f.span.text for f in findings] == ["Github"]
