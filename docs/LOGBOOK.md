@@ -5116,3 +5116,13 @@ list no longer depends on them.
 The spec was read once by a reviewing agent acting as the builder; its
 nine questions were all answerable from the conversation or the code and
 are settled in the document. Section 11 lists the author's own calls.
+
+Copilot review, one round, five comments, all valid and applied: the
+migration's skipping of a variant equal to the preferred wording is now a
+stated exception with a warning; the claim that terminology rule ids are
+not stored was wrong (saved findings and the editor's equivalence check
+use them) and the one-time effect is documented; "first domain wins" held
+only between findings in the code, so the spec now defines it for every
+active match from the checker pull request on; casing checks stay in the
+first pull request; saves to one concept are serialised by locking the
+concept row before validating.
