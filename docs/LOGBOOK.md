@@ -5126,3 +5126,10 @@ only between findings in the code, so the spec now defines it for every
 active match from the checker pull request on; casing checks stay in the
 first pull request; saves to one concept are serialised by locking the
 concept row before validating.
+
+Second Copilot round, three comments, all applied: the row lock is taken
+with a write that changes nothing, so a save without changes does not
+touch the modified fields; rule ids use the term's globally unique
+identifier, which cannot collide with an old numeric id in saved
+findings; the translation layer finds the domain of `PUT` and `DELETE`
+on `/api/terms/{id}` through the section's concept.
