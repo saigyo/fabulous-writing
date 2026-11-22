@@ -338,6 +338,11 @@ def main(
                 # handling of the same driver error (manage_import.py).
                 print(f"could not initialize the schema: {exc}", file=sys.stderr)
                 return 1
+            except RuntimeError as exc:
+                # Raised by a store migration that refuses the data, e.g. the
+                # terminology store finding both 'terms' and 'terms_legacy'.
+                print(f"could not migrate the database: {exc}", file=sys.stderr)
+                return 1
         finally:
             database.close()
         print("database schema initialized (or already up to date)")

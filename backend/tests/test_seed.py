@@ -15,12 +15,11 @@ def test_seed_creates_domain_with_terms_for_all_languages(db) -> None:
     assert len(domains) == 1
     for language in Language:
         sections = store.list_sections(domains[0].id, owner_id=1, language=language)
-        assert sections is not None
-        assert any(
-            {UsageStatus.PREFERRED, UsageStatus.FORBIDDEN}
-            <= {term.usage_status for term in section.terms}
-            for section in sections
-        ), f"no seeded terms for {language.value}"
+        assert sections, f"no seeded terms for {language.value}"
+        for section in sections:
+            usages = [term.usage_status for term in section.terms]
+            assert usages.count(UsageStatus.PREFERRED) == 1, (language.value, usages)
+            assert UsageStatus.FORBIDDEN in usages, (language.value, usages)
 
 
 def test_seed_is_logged_with_origin_seed_and_no_user(db) -> None:

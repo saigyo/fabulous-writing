@@ -150,6 +150,14 @@ def _record(
     return final
 
 
+def _delete(
+    conn: Any, before: Concept, *, actor: Actor, comment: str, now: str, batch: str
+) -> None:
+    entries = changes.diff(before, None, domain_names=rows.domain_names(conn, before.domain_ids))
+    changes.write(conn, entries, batch=batch, at=now, actor=actor, comment=comment)
+    conn.execute("DELETE FROM concepts WHERE id = ?", (before.id,))
+
+
 class TerminologyStore:
     def __init__(self, db: Database, *, manage_schema: bool = True) -> None:
         self.db = db
@@ -172,11 +180,11 @@ class TerminologyStore:
 
     def list_domains(self, *, owner_id: int) -> list[Domain]:
         with self._connect() as conn:
-            rows = conn.execute(
+            found = conn.execute(
                 "SELECT * FROM domains WHERE " + visible_clause() + " ORDER BY name",
                 (owner_id,),
             ).fetchall()
-        return [_row_to_domain(row) for row in rows]
+        return [_row_to_domain(row) for row in found]
 
     def get_domain(self, domain_id: int, *, owner_id: int) -> Domain | None:
         with self._connect() as conn:
@@ -254,11 +262,7 @@ class TerminologyStore:
             now = _utcnow()
             for before in rows.load_linked_concepts(conn, domain_id):
                 if before.domain_ids == [domain_id]:
-                    entries = changes.diff(
-                        before, None, domain_names=rows.domain_names(conn, before.domain_ids)
-                    )
-                    changes.write(conn, entries, batch=batch, at=now, actor=actor, comment=comment)
-                    conn.execute("DELETE FROM concepts WHERE id = ?", (before.id,))
+                    _delete(conn, before, actor=actor, comment=comment, now=now, batch=batch)
                 else:
                     rows.set_links(
                         conn, before.id, [d for d in before.domain_ids if d != domain_id]
@@ -395,13 +399,9 @@ class TerminologyStore:
             if before is None or not is_visible(before.owner_id, user_id=actor.user_id):
                 return False
             require_writable(before.owner_id, is_admin=actor.is_admin)
-            entries = changes.diff(
-                before, None, domain_names=rows.domain_names(conn, before.domain_ids)
+            _delete(
+                conn, before, actor=actor, comment=comment, now=_utcnow(), batch=uuid.uuid4().hex
             )
-            changes.write(
-                conn, entries, batch=uuid.uuid4().hex, at=_utcnow(), actor=actor, comment=comment
-            )
-            conn.execute("DELETE FROM concepts WHERE id = ?", (concept_id,))
             return True
 
     def remove_concept_from_domain(
@@ -412,12 +412,7 @@ class TerminologyStore:
             before = rows.load_concept(conn, concept_id)
             if before is None or not is_visible(before.owner_id, user_id=actor.user_id):
                 return False
-            owner = rows.domain_owners(conn, [domain_id]).get(domain_id, False)
-            if (
-                domain_id not in before.domain_ids
-                or owner is False
-                or not is_visible(owner, user_id=actor.user_id)
-            ):
+            if domain_id not in before.domain_ids:
                 return False
             require_writable(before.owner_id, is_admin=actor.is_admin)
             if before.domain_ids == [domain_id]:

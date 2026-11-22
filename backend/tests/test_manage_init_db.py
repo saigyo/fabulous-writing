@@ -65,6 +65,28 @@ def test_manage_commands_honor_manage_schema_false(tmp_path, monkeypatch) -> Non
         main(["list-users"])
 
 
+def test_init_db_reports_a_refused_term_migration_without_a_traceback(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    from contextlib import closing
+
+    from app.services.terminology.migration import LEGACY_TERMS_DDL
+
+    db_path = _config(tmp_path, monkeypatch, manage_schema=True)
+    with closing(sqlite3.connect(db_path)) as conn:
+        conn.executescript(
+            "CREATE TABLE domains (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,"
+            " description TEXT NOT NULL DEFAULT '', owner_id INTEGER);\n"
+            + LEGACY_TERMS_DDL + ";\n"
+            + LEGACY_TERMS_DDL.replace("TABLE terms", "TABLE terms_legacy") + ";"
+        )
+
+    assert main(["init-db"]) == 1
+    err = capsys.readouterr().err
+    assert "'terms_legacy'" in err
+    assert "Traceback" not in err
+
+
 def test_init_db_respects_db_override(tmp_path, monkeypatch) -> None:
     _config(tmp_path, monkeypatch, manage_schema=True)
     other = tmp_path / "other.db"

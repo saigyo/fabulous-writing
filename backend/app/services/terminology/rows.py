@@ -104,12 +104,6 @@ def _load(conn: Any, where: str, params: tuple) -> list[Concept]:
     ]
 
 
-def load_concepts(conn: Any, concept_ids: list[int]) -> list[Concept]:
-    if not concept_ids:
-        return []
-    return _load(conn, f"id IN ({_marks(len(concept_ids))})", tuple(concept_ids))
-
-
 def load_domain_concepts(conn: Any, domain_id: int, *, user_id: int | None) -> list[Concept]:
     return _load(
         conn,
