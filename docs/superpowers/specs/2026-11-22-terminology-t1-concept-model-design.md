@@ -264,8 +264,11 @@ A save states the numbers it read, and the store compares them after
 locking (5.3) and before writing anything:
 
 - For every language section the save writes or removes: the section's
-  number. For a language the concept does not have yet, the save states
-  none, and the language must still be absent.
+  id and number. The id is part of the comparison because a language can
+  be removed and added again, and the new section starts at 1 like the
+  old one did; ids are never reused. For a language the concept does not
+  have yet, the save states neither, and the language must still be
+  absent.
 - For the domain links, whenever a save sends them: the concept's number.
 
 If one comparison fails, the whole save is refused and nothing is written.
@@ -298,6 +301,9 @@ For each old term row:
 - one language section with the row's language and definition;
 - one term with the row's preferred wording: `preferred`, `active`;
 - one term per entry in `forbidden_variants`: `forbidden`, `active`;
+- the language section takes the old row's id, so that the old
+  endpoints keep addressing the same entry across the migration (a
+  screen left open during the upgrade still holds the old ids);
 - every new term takes the row's `case_sensitive` value;
 - created and modified fields stay null on all three levels; every
   version number is 1;
@@ -487,8 +493,8 @@ case-sensitive preferred term in the wrong case.
 A language section is identified by its language, which never changes.
 Within a section, terms are matched by id; ones without an id are
 created, missing ones are deleted. Every response carries the version
-numbers of all three levels. Every section in a save carries the number
-that was read (none for a new language); domain links are sent as the
+numbers of all three levels. Every section in a save carries the id and
+the number that were read (neither for a new language); domain links are sent as the
 complete list, including the domain the entry was opened from, together
 with the concept's number (5.7). Each request is one transaction and one
 batch in the change log. A new concept is created with its first save,
