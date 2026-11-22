@@ -41,9 +41,12 @@ def _terms(row: Any) -> list[TermInput]:
             case_sensitive=case_sensitive,
         )
 
+    variants = json.loads(row["forbidden_variants"])
+    if not isinstance(variants, list) or not all(isinstance(v, str) for v in variants):
+        raise ValueError("forbidden_variants is not a list of strings")
     terms = [term(preferred, UsageStatus.PREFERRED)] if preferred.strip() else []
     seen: set[str] = set()
-    for variant in json.loads(row["forbidden_variants"]):
+    for variant in variants:
         if not variant.strip() or variant in seen:
             continue
         seen.add(variant)
@@ -84,14 +87,19 @@ def migrate_legacy_terms(conn: Any, *, now: str) -> int:
     actor = Actor.system(Origin.MIGRATION)
     created = 0
     for row in legacy_rows:
-        terms = _terms(row)
+        try:
+            language = Language(row["language"])
+            terms = _terms(row)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"term row {row['id']} in domain {row['domain_name']!r} cannot be migrated: {exc}"
+            ) from exc
         if not terms:
             logger.warning(
                 "domain %r: term row %d has no usable wording; not migrated",
                 row["domain_name"], row["id"],
             )
             continue
-        language = Language(row["language"])
         concept_id = rows.insert_concept(conn, owner_id=row["owner_id"], now=None, user_id=None)
         rows.set_links(conn, concept_id, [row["domain_id"]])
         rows.apply_sections(

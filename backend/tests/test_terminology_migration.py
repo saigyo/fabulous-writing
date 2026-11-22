@@ -180,17 +180,17 @@ def test_sections_keep_the_old_term_ids(db):
     assert later.sections[0].id > 4
 
 
-def test_migration_logs_carried_over_entries(sqlite_db, monkeypatch):
+def test_migration_logs_carried_over_entries(db, monkeypatch):
     monkeypatch.setattr(
         "app.services.terminology.store._utcnow", lambda: "2026-11-22T10:00:00+00:00"
     )
-    legacy(sqlite_db, [
+    legacy(db, [
         Old("Shared", L.EN, "sign in", ["login"]),
         Old("Mine", L.DE, "Anmeldung", ["Login", "Log-in"]),
     ])
-    store = TerminologyStore(sqlite_db)
+    store = TerminologyStore(db)
 
-    entries = logged_changes(sqlite_db)
+    entries = logged_changes(db)
     assert len(entries) == 2 + 2 + 3
     assert {e["action"] for e in entries} == {Action.CARRIED_OVER.value}
     assert {e["origin"] for e in entries} == {Origin.MIGRATION.value}
@@ -233,24 +233,24 @@ def test_variant_differing_only_in_case_is_carried_over(sqlite_db):
     assert term_shape(concept) == [("GitHub", P, A, True), ("Github", F, A, True)]
 
 
-def test_old_table_is_renamed_and_a_second_start_changes_nothing(sqlite_db):
-    legacy(sqlite_db, [
+def test_old_table_is_renamed_and_a_second_start_changes_nothing(db):
+    legacy(db, [
         Old("Shared", L.EN, "sign in", ["login"]),
         Old("Mine", L.DE, "Anmeldung", ["Login"], "Vorgang.", True),
     ])
-    with sqlite_db.connect() as conn:
+    with db.connect() as conn:
         original = [tuple(r) for r in conn.execute("SELECT * FROM terms ORDER BY id").fetchall()]
 
-    TerminologyStore(sqlite_db)
-    assert columns(sqlite_db, "terms") == set()
-    with sqlite_db.connect() as conn:
+    TerminologyStore(db)
+    assert columns(db, "terms") == set()
+    with db.connect() as conn:
         kept = [tuple(r) for r in conn.execute("SELECT * FROM terms_legacy ORDER BY id").fetchall()]
     assert kept == original
-    counts = {table: count(sqlite_db, table) for table in _NEW_TABLES}
+    counts = {table: count(db, table) for table in _NEW_TABLES}
     assert counts["concepts"] == 2
 
-    TerminologyStore(sqlite_db)
-    assert {table: count(sqlite_db, table) for table in _NEW_TABLES} == counts
+    TerminologyStore(db)
+    assert {table: count(db, table) for table in _NEW_TABLES} == counts
 
 
 def test_failed_migration_leaves_everything_as_it_was(db, failing_write, monkeypatch):
@@ -372,3 +372,25 @@ def test_check_results_after_migration_match_the_baseline(db):
             )
             actual = normalise([f.model_dump(mode="json") for f in findings])
             assert actual == golden[f"{domain.name}/{language.value}"], (domain.name, language)
+
+
+def test_row_with_an_unknown_language_stops_the_migration_naming_the_row(db):
+    legacy(db, [Old("Shared", L.EN, "sign in"), Old("Shared", L.DE, "Anmeldung")])
+    with db.connect() as conn:
+        conn.execute("UPDATE terms SET language = 'xx' WHERE id = 2")
+
+    with pytest.raises(RuntimeError, match="term row 2 in domain 'Shared'") as raised:
+        TerminologyStore(db)
+    assert isinstance(raised.value.__cause__, ValueError)
+    assert count(db, "terms") == 2
+    assert count(db, "concepts") == 0
+
+
+def test_row_with_a_variant_that_is_not_a_string_stops_the_migration_naming_the_row(db):
+    legacy(db, [Old("Shared", L.EN, "sign in"), Old("Mine", L.DE, "Anmeldung", ["Login", 5])])
+
+    with pytest.raises(RuntimeError, match="term row 2 in domain 'Mine'") as raised:
+        TerminologyStore(db)
+    assert isinstance(raised.value.__cause__, ValueError)
+    assert count(db, "terms") == 2
+    assert count(db, "concepts") == 0

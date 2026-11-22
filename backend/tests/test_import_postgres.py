@@ -153,6 +153,32 @@ def test_directory_source_fails_naming_the_path_without_traceback(
     assert "Traceback" not in err
 
 
+def test_source_that_cannot_be_migrated_fails_without_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The source's store migrations run before the target is dialed, so the
+    # dummy DSN (needed only to pass the DSN-present check) is never used.
+    monkeypatch.setenv("FW_DATABASE_URL", "postgresql://user:pass@localhost:5432/db")
+    src_path = tmp_path / "src.db"
+    with closing(sqlite3.connect(src_path)) as raw, raw:
+        raw.executescript(
+            "CREATE TABLE domains (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,"
+            " description TEXT NOT NULL DEFAULT '', owner_id INTEGER);\n"
+            + LEGACY_TERMS_DDL
+            + ";\n"
+            + LEGACY_TERMS_DDL.replace("TABLE terms", "TABLE terms_legacy")
+            + ";"
+        )
+
+    rc = main(["--db", str(src_path), "import-to-postgres"])
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert f"could not migrate source database at {src_path}" in err
+    assert "'terms_legacy'" in err
+    assert "Traceback" not in err
+
+
 def test_copy_table_streams_in_bounded_chunks() -> None:
     """Pins _copy_table's bounded-memory streaming (fetchmany, not
     fetchall): every other test in this file copies well under one
