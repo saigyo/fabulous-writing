@@ -10730,7 +10730,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### eventsource-parser 4.1.2
+### eventsource-parser 4.1.3
 
 License: MIT
 
@@ -10894,7 +10894,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ````
 
-### zustand 5.0.16
+### zustand 5.1.0
 
 License: MIT
 
