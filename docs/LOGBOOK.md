@@ -5133,3 +5133,8 @@ touch the modified fields; rule ids use the term's globally unique
 identifier, which cannot collide with an old numeric id in saved
 findings; the translation layer finds the domain of `PUT` and `DELETE`
 on `/api/terms/{id}` through the section's concept.
+
+Owner decision after the reviews: behaviour with several domains stays
+exactly as today. The wider rule from the first review round (any match
+in an earlier domain overrules later domains) is withdrawn, because the
+order of domains is not defined today; both questions moved to #211.
