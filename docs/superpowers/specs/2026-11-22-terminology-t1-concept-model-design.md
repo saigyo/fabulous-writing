@@ -360,11 +360,14 @@ before (forbidden only, always error).
 | `POST /api/domains/{id}/concepts` | Create a concept in this domain. |
 | `GET /api/concepts/{id}` | One concept. |
 | `PUT /api/concepts/{id}` | Save the whole entry: sections, terms and domain links. Terms and sections are matched by id; ones without an id are created, missing ones are deleted. Optional comment. |
+| `PUT /api/concepts/{id}/languages/{language}` | Save one language section: its definition and terms, matched as above. Creates the section if the concept has none in that language. Optional comment. |
 | `DELETE /api/concepts/{id}` | Delete the concept. |
 | `DELETE /api/domains/{id}/concepts/{concept_id}` | Remove from this domain only. |
 
-`PUT` carries the complete list of the concept's domains, including the
-one it was opened from.
+`PUT` on the concept carries the complete list of the concept's domains,
+including the one it was opened from. Each request is one transaction and
+one batch in the change log. A new concept is created with its first
+save, whichever button is used.
 
 Status codes follow the existing endpoints: 403 for a global row and a
 non-admin; 404 for a concept or domain that is not visible; 422 for an
@@ -402,9 +405,16 @@ uses the existing components and theme tokens.
   process status and reason. Details per term hold context, source, part
   of speech and case sensitivity.
 - Adding a term, adding a language.
-- One save for the whole entry, with an optional "reason for this
-  change" that is stored as the log comment. Leaving with unsaved changes
-  asks first.
+- **Saving.** Each language section has its own save and discard, active
+  only while that section has unsaved changes, so a long entry can be
+  saved language by language. "Save all" saves every section with unsaved
+  changes and the domain links in one request. What a language save has
+  stored stays stored when the rest is discarded later.
+- Unsaved changes are marked per section. A failed save keeps the edits
+  on screen with the error next to the button that was used.
+- One optional "reason for this change" field; whichever save is used
+  next stores it as the log comment.
+- Leaving with unsaved changes asks first.
 - "Remove from this domain" and "Delete concept" are separate actions.
   The first is unavailable when the concept is in no other domain.
 - Read-only for a global concept unless the user is an admin, as for
@@ -489,8 +499,8 @@ Each pull request updates `docs/backend-architecture.md` or
   fallback, a shared concept in two domains reported once.
 - **Translation layer:** the existing API tests pass unchanged in the
   first pull request.
-- **Screen:** list labels including the fallback, saving an entry as one
-  request, the two removal actions, read-only global concepts.
+- **Screen:** list labels including the fallback, saving one language
+  without touching the others, "Save all" as one request, the two removal actions, read-only global concepts.
 
 ## 15. Left to the builder
 

@@ -37,6 +37,12 @@
   .fw .link { color:#6e56cf; }
   .fw .save { display:flex; gap:8px; justify-content:flex-end; align-items:center; margin-top:12px; }
   .fw .btn.fill { background:#6e56cf; color:#fff; }
+  .fw .btn.off { border-color:#e4e4e7; color:#6f6f78; }
+  .fw .sechead { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+  .fw .sechead h4 { margin:0 auto 0 0; }
+  .fw .dot { color:#8a4207; font-size:12px; }
+  .fw .sec.dirty { border-color:#d9a75a; }
+  .fw .edited { outline:2px solid #f3d9a8; }
   .legend .chip { font-size:12px; }
   .legend .fw { display:inline-flex; min-height:0; border:none; padding:2px 0; background:transparent; }
 </style>
@@ -84,7 +90,7 @@ the real screen uses the app's existing components, theme tokens and translated 
 
 <div class="section">
   <h3>2 · Concept entry (opens when a row is clicked)</h3>
-  <p class="subtitle">All languages of one concept. Everything is saved together with one Save, which is recorded in the change log as one batch, with an optional reason. The details of "Login" are shown open.</p>
+  <p class="subtitle">All languages of one concept. Each language has its own Save, so work can be saved language by language. "Save all" at the bottom saves every language with unsaved changes and the domain links in one go. Every save is recorded in the change log as one batch, with the optional reason. Here two fields of "Login" are edited and not yet saved; English is saved. The details of "Login" are shown open.</p>
   <div class="fw">
     <div class="side">
       <div class="on">Product docs <small>Built-in</small></div>
@@ -99,12 +105,12 @@ the real screen uses the app's existing components, theme tokens and translated 
       </div>
       <div>Also in domains: <span class="ctl">Support ✕</span> <span class="link">+ add domain</span></div>
 
-      <div class="sec">
-        <h4>German</h4>
+      <div class="sec dirty">
+        <div class="sechead"><h4>German</h4><span class="dot">● 2 unsaved changes</span><span class="link">Discard</span><span class="btn fill">Save German</span></div>
         <div class="def"><span class="dim">Definition · </span>Vorgang, mit dem sich ein Nutzer gegenüber dem System ausweist.</div>
         <div class="term dim" style="border:none;font-size:11px"><span>Term</span><span>Usage status</span><span>Process status</span><span>Reason</span><span></span></div>
         <div class="term"><b>Anmeldung</b><span class="ctl">preferred ▾</span><span class="ctl">active ▾</span><span class="dim">—</span><span class="link">details ▾</span></div>
-        <div class="term"><b>Login</b><span class="ctl">deprecated ▾</span><span class="ctl">active ▾</span><span>Anglizismus</span><span class="link">details ▴</span>
+        <div class="term"><b>Login</b><span class="ctl edited">deprecated ▾</span><span class="ctl">active ▾</span><span class="edited">Anglizismus</span><span class="link">details ▴</span>
           <div class="detail">
             <span class="dim">Context</span><span>„Nach dem Login sehen Sie Ihre Dokumente.“</span>
             <span class="dim">Source</span><span>Redaktionsleitfaden 2025, S. 12</span>
@@ -117,7 +123,7 @@ the real screen uses the app's existing components, theme tokens and translated 
       </div>
 
       <div class="sec">
-        <h4>English</h4>
+        <div class="sechead"><h4>English</h4><span class="dim">✓ saved</span><span class="btn off">Save English</span></div>
         <div class="def"><span class="dim">Definition · </span>The step in which a user proves their identity to the system.</div>
         <div class="term" style="border:none"><b>sign-in</b><span class="ctl">preferred ▾</span><span class="ctl">active ▾</span><span class="dim">—</span><span class="link">details ▾</span></div>
         <div class="term"><b>log-in</b><span class="ctl">admitted ▾</span><span class="ctl">candidate ▾</span><span class="dim">—</span><span class="link">details ▾</span></div>
@@ -126,7 +132,7 @@ the real screen uses the app's existing components, theme tokens and translated 
 
       <div class="sec dim">French · 1 term <span class="link" style="float:right">open ▾</span></div>
       <div class="link" style="margin-top:10px">+ Language</div>
-      <div class="save"><span class="ctl dim" style="flex:1">Reason for this change (optional)</span><span class="dim">Unsaved changes</span><span class="btn">Cancel</span><span class="btn fill">Save</span></div>
+      <div class="save"><span class="ctl dim" style="flex:1">Reason for this change (optional, used by the next save)</span><span class="dim">Unsaved: German</span><span class="btn">Discard all</span><span class="btn fill">Save all</span></div>
     </div>
   </div>
 </div>
