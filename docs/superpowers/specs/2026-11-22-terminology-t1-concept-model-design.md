@@ -138,7 +138,7 @@ stores (integer identity key; UTC ISO text timestamps).
 | `id` | Primary key. |
 | `uid` | Globally unique identifier, as on the concept. |
 | `section_id` | References `concept_languages`. |
-| `text` | The wording. Not empty. Unique within its section (exact match). |
+| `text` | The wording, in its base form (section 5.6). Not empty. Unique within its section (exact match). |
 | `usage_status` | `preferred`, `admitted`, `deprecated`, `forbidden`. |
 | `process_status` | `candidate`, `active`. |
 | `status_reason` | Text, default empty. Why the term has its usage status. |
@@ -202,6 +202,29 @@ viewing. The first match wins:
    order of the `Language` enum, shown with a language marker.
 
 The label is computed where it is displayed and is not stored.
+
+### 5.6 Base form, and room for inflection later
+
+Replacements suggested by the checker will later have to be inflected to
+fit the sentence (T2 and after). T1 builds none of that, but two things
+are fixed now so that it stays an additive change.
+
+- **A term is stored in its base form:** nominative singular for a noun,
+  infinitive for a verb, the uninflected dictionary form for an adjective.
+  A wording that only exists in the plural, and a fixed phrase, are stored
+  as they are. The entry screen says so next to the term field. Without
+  this convention later generation of forms has no defined starting point.
+- **An inflected form is never a term of its own.** It belongs to its
+  term. Existing data may contain plurals that writers typed as separate
+  forbidden variants; the migration cannot tell them apart and carries
+  them over as terms.
+
+Everything else attaches to the term row later without touching T1 data:
+grammatical gender (a nullable column, as in TBX-Basic), the opt-in for
+inflection matching from T2 (a column), and a table of explicit forms per
+term for cases a generator gets wrong (irregular plurals, new or borrowed
+words). `language` is a text column, so a finer value such as a script or
+regional variant needs no schema change either.
 
 ## 6. Migration
 
