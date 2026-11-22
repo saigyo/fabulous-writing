@@ -170,9 +170,11 @@ whether it is enforced; the checker asks only that. A later value such as
 - A language section may have terms and no preferred one.
 - All writes of one save happen in one transaction.
 - **Saves to the same concept are serialised by the database.** A save
-  first updates the concept row (its modified fields), which locks that
-  row until commit on Postgres; only then does it read the concept's
-  state and check these rules. SQLite serialises writers by itself. Two
+  first writes to the concept row without changing it (an update that
+  sets a column to its own value), which locks that row until commit on
+  Postgres; only then does it read the concept's state and check these
+  rules. The modified fields are set only when the save changes
+  something, so a save without changes leaves no trace. SQLite serialises writers by itself. Two
   simultaneous saves can therefore not both pass a check that only one
   of them may pass.
 
@@ -354,9 +356,10 @@ offered as replacements.
   reason if there is one and the definition if there is one. Without a
   replacement the message states that the wording is forbidden or
   deprecated.
-- **Rule id:** `terminology.<id of the matched term>`, from the first
-  pull request on. Saved findings keep the old numbers
-  (`documents.last_findings`), and the editor uses the rule id to
+- **Rule id:** `terminology.<uid of the matched term>`, from the first
+  pull request on. The globally unique identifier cannot collide with an
+  old numeric rule id, which a new term id could. Saved findings keep the
+  old ids (`documents.last_findings`), and the editor uses the rule id to
   recognise the same finding across checks
   (`frontend/src/findings/equivalence.ts`). After the migration the first
   check of a document therefore does not carry over the selection and the
@@ -385,7 +388,7 @@ domain:
 | Old field | Source |
 |---|---|
 | `id` | the language section's id |
-| `domain_id` | the domain in the request path |
+| `domain_id` | the one domain of the section's concept |
 | `preferred` | the section's active preferred term |
 | `forbidden_variants` | the section's forbidden terms |
 | `definition` | the section's definition |
@@ -395,7 +398,10 @@ Creating a term creates a concept with one section. Updating renames the
 preferred term and adds or removes forbidden terms to match the list.
 Deleting removes the section, and the concept when it was the last one.
 All of these go through the store and are logged with origin `manual`.
-While this layer exists nothing can create a shape it cannot express.
+While this layer exists nothing can create a shape it cannot express; in
+particular every concept is in exactly one domain. `PUT` and `DELETE` on
+`/api/terms/{id}` have no domain in their path and find it through the
+section's concept.
 
 The layer lives in the API module. The old store methods are replaced by
 the new ones, so the store tests are rewritten; "unchanged" applies to the
@@ -560,7 +566,7 @@ Each pull request updates `docs/backend-architecture.md` or
   preferred in the first domain and forbidden in the second not reported.
 - **Simultaneous saves** on Postgres: two processes each add a preferred
   term to the same language section; exactly one succeeds. The test must
-  fail when the initial update of the concept row is removed.
+  fail when the initial write to the concept row is removed.
 - **Translation layer:** the existing API tests pass unchanged in the
   first pull request.
 - **Screen:** list labels including the fallback, saving one language
