@@ -279,3 +279,115 @@ class TestCustomDomainsGate:
         )
         assert updated.status_code == 200
         assert app_b.delete(f"/api/terms/{term['id']}", headers=headers_b).status_code == 204
+
+
+def _domain(client: TestClient) -> int:
+    return client.post("/api/domains", json={"name": "Cloud"}).json()["id"]
+
+
+def _post_term(client: TestClient, domain_id: int, **fields) -> dict:
+    response = client.post(
+        f"/api/domains/{domain_id}/terms", json={"language": "en", **fields}
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def _findings(client: TestClient, domain_id: int, text: str) -> list[dict]:
+    response = client.post(
+        "/api/checks",
+        json={
+            "text": text,
+            "language": "en",
+            "domain_ids": [domain_id],
+            "checkers": ["terminology"],
+        },
+    )
+    assert response.json()["status"] == "done", response.text
+    return response.json()["findings"]
+
+
+def test_variants_are_cleaned(client: TestClient) -> None:
+    term = _post_term(
+        client,
+        _domain(client),
+        preferred="sign in",
+        forbidden_variants=["login", "", "  ", "login", "sign in"],
+    )
+    assert term["forbidden_variants"] == ["login"]
+
+
+def test_update_adds_and_removes_variants_in_creation_order(client: TestClient) -> None:
+    term = _post_term(client, _domain(client), preferred="x", forbidden_variants=["a", "b"])
+    updated = client.put(f"/api/terms/{term['id']}", json={"forbidden_variants": ["c", "a"]})
+    assert updated.status_code == 200
+    assert updated.json()["forbidden_variants"] == ["a", "c"]
+
+
+def test_update_can_change_the_language(client: TestClient) -> None:
+    domain_id = _domain(client)
+    term = _post_term(
+        client,
+        domain_id,
+        preferred="sign in",
+        forbidden_variants=["login"],
+        definition="Authenticating.",
+    )
+    assert client.put(f"/api/terms/{term['id']}", json={"language": "de"}).status_code == 200
+    def listed(language: str) -> list[dict]:
+        return client.get(
+            f"/api/domains/{domain_id}/terms", params={"language": language}
+        ).json()
+
+    assert listed("en") == []
+    [moved] = listed("de")
+    assert (moved["preferred"], moved["forbidden_variants"], moved["definition"]) == (
+        "sign in",
+        ["login"],
+        "Authenticating.",
+    )
+
+
+def test_case_sensitive_applies_to_every_wording(client: TestClient) -> None:
+    domain_id = _domain(client)
+    term = _post_term(client, domain_id, preferred="sign in", forbidden_variants=["login"])
+    assert (
+        client.put(f"/api/terms/{term['id']}", json={"case_sensitive": True}).status_code
+        == 200
+    )
+    assert _findings(client, domain_id, "Please LOGIN now") == []
+    assert len(_findings(client, domain_id, "Please login now")) == 1
+
+
+def test_term_changes_are_logged(client: TestClient) -> None:
+    admin_id = client.get("/api/auth/me").json()["id"]
+    term = _post_term(client, _domain(client), preferred="sign in")
+    assert client.put(f"/api/terms/{term['id']}", json={"preferred": "log on"}).status_code == 200
+    assert client.delete(f"/api/terms/{term['id']}").status_code == 204
+    with client.app.state.db.connect() as conn:
+        entries = conn.execute(
+            "SELECT batch, origin, user_id FROM terminology_changes ORDER BY id"
+        ).fetchall()
+    assert len({entry["batch"] for entry in entries}) == 3
+    assert {(entry["origin"], entry["user_id"]) for entry in entries} == {("manual", admin_id)}
+
+
+def test_two_edits_in_a_row_both_succeed(client: TestClient) -> None:
+    term = _post_term(client, _domain(client), preferred="sign in")
+    first = client.put(f"/api/terms/{term['id']}", json={"definition": "One."})
+    second = client.put(f"/api/terms/{term['id']}", json={"definition": "Two."})
+    assert (first.status_code, second.status_code) == (200, 200)
+    assert second.json()["definition"] == "Two."
+
+
+def test_renaming_keeps_the_term_id(client: TestClient) -> None:
+    term = _post_term(client, _domain(client), preferred="sign in")
+    updated = client.put(f"/api/terms/{term['id']}", json={"preferred": "log on"})
+    assert updated.json()["id"] == term["id"]
+
+
+def test_renaming_to_a_current_variant_drops_that_variant(client: TestClient) -> None:
+    term = _post_term(client, _domain(client), preferred="sign in", forbidden_variants=["login"])
+    updated = client.put(f"/api/terms/{term['id']}", json={"preferred": "login"})
+    assert updated.status_code == 200
+    assert updated.json()["forbidden_variants"] == []

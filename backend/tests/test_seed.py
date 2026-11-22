@@ -1,6 +1,7 @@
 from app.core.models import Language
 from app.services.seed import DOMAIN_NAME, seed_terminology
-from app.services.terminology import TerminologyStore
+from app.services.terminology import TerminologyStore, UsageStatus
+from tests.terminology_helpers import changes
 
 
 def make_store(db) -> TerminologyStore:
@@ -13,9 +14,20 @@ def test_seed_creates_domain_with_terms_for_all_languages(db) -> None:
     domains = store.list_domains(owner_id=1)
     assert len(domains) == 1
     for language in Language:
-        terms = store.list_terms(domains[0].id, owner_id=1, language=language)
-        assert terms, f"no seeded terms for {language.value}"
-        assert all(term.forbidden_variants for term in terms)
+        sections = store.list_sections(domains[0].id, owner_id=1, language=language)
+        assert sections is not None
+        assert any(
+            {UsageStatus.PREFERRED, UsageStatus.FORBIDDEN}
+            <= {term.usage_status for term in section.terms}
+            for section in sections
+        ), f"no seeded terms for {language.value}"
+
+
+def test_seed_is_logged_with_origin_seed_and_no_user(db) -> None:
+    seed_terminology(make_store(db))
+    entries = changes(db)
+    assert entries
+    assert {(entry["origin"], entry["user_id"]) for entry in entries} == {("seed", None)}
 
 
 def test_seed_only_populates_an_empty_store(db) -> None:

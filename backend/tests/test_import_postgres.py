@@ -23,9 +23,10 @@ from app.services.db.sqlite import SqliteDatabase
 from app.services.documents import DocumentStore
 from app.services.folders import FolderStore
 from app.services.profiles import ProfileStore
-from app.services.terminology import TerminologyStore
+from app.services.terminology import Actor, TerminologyStore
 from app.services.usage import UsageStore
 from app.services.users import UserStore
+from tests.terminology_helpers import add_term
 from tests.test_usage import EFFECTIVE, LIMITS, REQUESTED, SERVER, FakeUser
 
 
@@ -259,12 +260,12 @@ def test_happy_path_copies_all_tables_with_ids_and_sequences(
 
     terms = TerminologyStore(source)
     domain = terms.create_domain("Style", owner_id=user1.id)
-    term = terms.create_term(
+    add_term(
+        terms,
         domain.id,
-        owner_id=user1.id,
-        is_admin=False,
         language=Language.EN,
         preferred="color",
+        actor=Actor(user_id=user1.id, is_admin=False),
     )
 
     profiles = ProfileStore(source)
@@ -292,7 +293,7 @@ def test_happy_path_copies_all_tables_with_ids_and_sequences(
         "folders": 1,
         "documents": 1,
         "domains": 1,
-        "terms": 1,
+        "terms": 0,
         "profiles": 1,
         "profile_seed_markers": 1,
         "llm_usage": 1,
@@ -303,10 +304,6 @@ def test_happy_path_copies_all_tables_with_ids_and_sequences(
             "SELECT folder_id FROM documents WHERE id = ?", (document.id,)
         ).fetchone()
         assert doc_row["folder_id"] == folder.id
-        term_row = conn.execute(
-            "SELECT domain_id FROM terms WHERE id = ?", (term.id,)
-        ).fetchone()
-        assert term_row["domain_id"] == domain.id
 
     target_users = UserStore(pg_import_target)
     expected_next_id = max(user1.id, user2.id) + 1

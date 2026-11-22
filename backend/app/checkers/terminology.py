@@ -1,8 +1,15 @@
 import re
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from app.core.models import Category, Finding, Language, Severity, Source, Span
-from app.services.terminology import TerminologyStore, Term
+from app.services.terminology import (
+    ConceptTerm,
+    LanguageSection,
+    TerminologyStore,
+    UsageStatus,
+    is_enforced,
+)
 
 if TYPE_CHECKING:
     from app.nlp.registry import NlpRegistry
@@ -78,6 +85,22 @@ def _without_overlaps(
     ]
 
 
+@dataclass(frozen=True)
+class _Entry:
+    preferred: ConceptTerm
+    forbidden: list[ConceptTerm]
+    definition: str
+
+
+def _entry(section: LanguageSection) -> _Entry | None:
+    enforced = [t for t in section.terms if is_enforced(t.process_status)]
+    preferred = next((t for t in enforced if t.usage_status == UsageStatus.PREFERRED), None)
+    if preferred is None:
+        return None
+    forbidden = [t for t in enforced if t.usage_status == UsageStatus.FORBIDDEN]
+    return _Entry(preferred, forbidden, section.definition)
+
+
 class TerminologyChecker:
     def __init__(self, store: TerminologyStore, nlp: "NlpRegistry | None" = None) -> None:
         self.store = store
@@ -86,54 +109,59 @@ class TerminologyChecker:
     def check(
         self, text: str, language: Language, domain_id: int, *, owner_id: int
     ) -> list[Finding]:
-        terms = self.store.list_terms(domain_id, owner_id=owner_id, language=language)
-        if terms is None:
+        sections = self.store.list_sections(domain_id, owner_id=owner_id, language=language)
+        if sections is None:
             # Invisible domain (foreign or deleted): no findings, through
             # the same store-level ownership check every other term read
             # goes through (spec §5.2).
             return []
+        entries = sorted(
+            (entry for entry in map(_entry, sections) if entry is not None),
+            key=lambda entry: entry.preferred.text,
+        )
         if language in CJK_LANGUAGES:
-            variants = self._check_cjk(text, language, terms)
-            casing = self._casing_cjk(text, language, terms)
+            variants = self._check_cjk(text, language, entries)
+            casing = self._casing_cjk(text, language, entries)
         else:
-            variants = self._check_regex(text, terms)
-            casing = self._casing_regex(text, terms)
+            variants = self._check_regex(text, entries)
+            casing = self._casing_regex(text, entries)
         findings = variants + _without_overlaps(casing, variants)
         findings.sort(key=lambda f: (f.span.start, f.span.end))
         return findings
 
-    def _check_regex(self, text: str, terms: list[Term]) -> list[Finding]:
+    def _check_regex(self, text: str, entries: list[_Entry]) -> list[Finding]:
         findings: list[Finding] = []
-        for term in terms:
-            flags = 0 if term.case_sensitive else re.IGNORECASE
-            for variant in term.forbidden_variants:
-                pattern = rf"\b{re.escape(variant)}\b"
+        for entry in entries:
+            for term in entry.forbidden:
+                flags = 0 if term.case_sensitive else re.IGNORECASE
+                pattern = rf"\b{re.escape(term.text)}\b"
                 for match in re.finditer(pattern, text, flags):
                     findings.append(
-                        self._finding(term, match.group(), match.start(), match.end())
+                        self._finding(entry, term, match.group(), match.start(), match.end())
                     )
         return findings
 
-    def _casing_regex(self, text: str, terms: list[Term]) -> list[Finding]:
+    def _casing_regex(self, text: str, entries: list[_Entry]) -> list[Finding]:
         findings: list[Finding] = []
-        for term in terms:
-            if not term.case_sensitive:
+        for entry in entries:
+            preferred = entry.preferred
+            if not preferred.case_sensitive:
                 continue
-            pattern = rf"\b{re.escape(term.preferred)}\b"
+            pattern = rf"\b{re.escape(preferred.text)}\b"
             for match in re.finditer(pattern, text, re.IGNORECASE):
-                if _casing_ok(text, match.start(), match.group(), term.preferred):
+                if _casing_ok(text, match.start(), match.group(), preferred.text):
                     continue
                 findings.append(
-                    self._finding(term, match.group(), match.start(), match.end())
+                    self._finding(entry, preferred, match.group(), match.start(), match.end())
                 )
         return findings
 
     def _casing_cjk(
-        self, text: str, language: Language, terms: list[Term]
+        self, text: str, language: Language, entries: list[_Entry]
     ) -> list[Finding]:
         # Only meaningful for Latin terms embedded in CJK text: pure CJK
         # strings have no case, so lowercasing never changes them.
-        cased = [t for t in terms if t.case_sensitive]
+        cased = [e for e in entries if e.preferred.case_sensitive]
         if not cased:
             return []
         pipeline = self.nlp.get(language.value) if self.nlp else None
@@ -143,86 +171,91 @@ class TerminologyChecker:
 
         doc = pipeline.make_doc(text)  # tokenization only
         matcher = PhraseMatcher(pipeline.vocab, attr="LOWER")
-        for index, term in enumerate(cased):
-            matcher.add(str(index), [pipeline.make_doc(term.preferred)])
+        for index, entry in enumerate(cased):
+            matcher.add(str(index), [pipeline.make_doc(entry.preferred.text)])
         findings: list[Finding] = []
         for match_id, start, end in matcher(doc):
-            term = cased[int(pipeline.vocab.strings[match_id])]
+            entry = cased[int(pipeline.vocab.strings[match_id])]
             span = doc[start:end]
-            if _casing_ok(text, span.start_char, span.text, term.preferred):
+            if _casing_ok(text, span.start_char, span.text, entry.preferred.text):
                 continue
             findings.append(
-                self._finding(term, span.text, span.start_char, span.end_char)
+                self._finding(entry, entry.preferred, span.text, span.start_char, span.end_char)
             )
         return findings
 
-    def _casing_substring(self, text: str, cased: list[Term]) -> list[Finding]:
+    def _casing_substring(self, text: str, cased: list[_Entry]) -> list[Finding]:
         haystack = text.lower()
         findings: list[Finding] = []
-        for term in cased:
-            needle = term.preferred.lower()
+        for entry in cased:
+            needle = entry.preferred.text.lower()
             pos = haystack.find(needle)
             while pos != -1:
                 end = pos + len(needle)
                 matched = text[pos:end]
-                if not _casing_ok(text, pos, matched, term.preferred):
-                    findings.append(self._finding(term, matched, pos, end))
+                if not _casing_ok(text, pos, matched, entry.preferred.text):
+                    findings.append(self._finding(entry, entry.preferred, matched, pos, end))
                 pos = haystack.find(needle, pos + 1)
         return findings
 
     def _check_cjk(
-        self, text: str, language: Language, terms: list[Term]
+        self, text: str, language: Language, entries: list[_Entry]
     ) -> list[Finding]:
         pipeline = self.nlp.get(language.value) if self.nlp else None
         if pipeline is None:
             # Documented fallback without a tokenizer: may over-match inside
             # longer words, but keeps terminology working.
-            return self._check_substring(text, terms)
+            return self._check_substring(text, entries)
         from spacy.matcher import PhraseMatcher
 
         doc = pipeline.make_doc(text)  # tokenization only
         findings: list[Finding] = []
         for attr, case_sensitive in (("ORTH", True), ("LOWER", False)):
-            group = [t for t in terms if t.case_sensitive is case_sensitive]
+            group = [
+                (entry, term)
+                for entry in entries
+                for term in entry.forbidden
+                if term.case_sensitive is case_sensitive
+            ]
             if not group:
                 continue
             matcher = PhraseMatcher(pipeline.vocab, attr=attr)
-            variants: list[Term] = []
-            for term in group:
-                for variant in term.forbidden_variants:
-                    matcher.add(str(len(variants)), [pipeline.make_doc(variant)])
-                    variants.append(term)
+            for index, (_, term) in enumerate(group):
+                matcher.add(str(index), [pipeline.make_doc(term.text)])
             for match_id, start, end in matcher(doc):
-                term = variants[int(pipeline.vocab.strings[match_id])]
+                entry, term = group[int(pipeline.vocab.strings[match_id])]
                 span = doc[start:end]
                 findings.append(
-                    self._finding(term, span.text, span.start_char, span.end_char)
+                    self._finding(entry, term, span.text, span.start_char, span.end_char)
                 )
         return findings
 
-    def _check_substring(self, text: str, terms: list[Term]) -> list[Finding]:
+    def _check_substring(self, text: str, entries: list[_Entry]) -> list[Finding]:
         findings: list[Finding] = []
-        for term in terms:
-            haystack = text if term.case_sensitive else text.lower()
-            for variant in term.forbidden_variants:
-                needle = variant if term.case_sensitive else variant.lower()
+        for entry in entries:
+            for term in entry.forbidden:
+                haystack = text if term.case_sensitive else text.lower()
+                needle = term.text if term.case_sensitive else term.text.lower()
                 pos = haystack.find(needle)
                 while pos != -1:
                     end = pos + len(needle)
-                    findings.append(self._finding(term, text[pos:end], pos, end))
+                    findings.append(self._finding(entry, term, text[pos:end], pos, end))
                     pos = haystack.find(needle, pos + 1)
         return findings
 
-    def _finding(self, term: Term, matched: str, start: int, end: int) -> Finding:
-        message = f"Use '{term.preferred}' instead of '{matched}'."
-        if term.definition:
-            message += f" {term.definition}"
+    def _finding(
+        self, entry: _Entry, term: ConceptTerm, matched: str, start: int, end: int
+    ) -> Finding:
+        preferred = entry.preferred.text
+        message = f"Use '{preferred}' instead of '{matched}'."
+        if entry.definition:
+            message += f" {entry.definition}"
         return Finding(
             category=Category.TERMINOLOGY,
             severity=Severity.ERROR,
             source=Source.TERMINOLOGY,
-            rule_id=f"terminology.{term.id}",
+            rule_id=f"terminology.{term.uid}",
             message=message,
             span=Span(start=start, end=end, text=matched),
-            suggestions=[term.preferred],
+            suggestions=[preferred],
         )
