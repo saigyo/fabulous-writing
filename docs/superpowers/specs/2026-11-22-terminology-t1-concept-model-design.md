@@ -38,7 +38,8 @@ loss or a second migration.
 - Import and export in any format, including TBX-Basic (T4, #208). The
   mapping of "forbidden" to TBX-Basic is decided there.
 - Per-domain status overrides on a shared concept (#209).
-- A specified precedence between domains (#211).
+- A specified precedence between domains, including a defined order and
+  an approval in one domain overruling a complaint in another (#211).
 - More than one preferred term per concept and language.
 - A checking option that flags admitted terms.
 - Custom fields; subject fields; cross-references; the further TBX-Basic
@@ -368,14 +369,14 @@ offered as replacements.
 - **Overlapping findings within one domain:** as today, a status finding
   wins over a casing finding. Between two status findings the more severe
   one is kept. The first pull request keeps today's rule unchanged.
-- **Several domains: the first domain wins.** Today this holds only
-  between findings: a later domain's finding is dropped when an earlier
-  domain reported the same span. If the first domain prefers a word and
-  the second forbids it, the error is still reported. From the second
-  pull request on, a match of any active term of an earlier domain,
-  whatever its usage status, claims its span, and later domains report
-  nothing that overlaps it. A concept shared by two of the domains is
-  reported once. The first pull request keeps today's behaviour.
+- **Several domains: unchanged.** The checker runs per domain in the
+  order the request gives, and a later domain's finding is dropped when
+  an earlier domain already reported an overlapping span. A concept
+  shared by two of the domains is therefore reported once. This holds
+  between findings only: if one domain prefers a word and another forbids
+  it, the error is reported whatever the order. The order itself is not
+  defined today (it follows how the selection was made in the browser).
+  Both points are left as they are and belong to #211.
 
 ## 9. API
 
@@ -514,9 +515,6 @@ the rest.
    checks it inside the save transaction, after locking the concept row
    (5.3). A unique index would cover this one rule only and would have to
    be rebuilt for every new enforced process status.
-9. **The first domain wins over later domains for every match**, not only
-   between findings (section 8). This is what "first domain wins" was
-   taken to mean when it was agreed; the code today is narrower.
 
 ## 12. Verified against TBX-Basic version 4
 
@@ -562,8 +560,7 @@ Each pull request updates `docs/backend-architecture.md` or
   nothing is written for a no-op save; no store method can update or
   delete an entry.
 - **Checker:** the severity table, candidates ignored, the replacement
-  fallback, a shared concept in two domains reported once, a word
-  preferred in the first domain and forbidden in the second not reported.
+  fallback, a shared concept in two domains reported once.
 - **Simultaneous saves** on Postgres: two processes each add a preferred
   term to the same language section; exactly one succeeds. The test must
   fail when the initial write to the concept row is removed.
