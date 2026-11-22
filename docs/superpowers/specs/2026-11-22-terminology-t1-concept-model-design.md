@@ -325,7 +325,17 @@ has not accepted for some time, is carried over as a language section
 with its forbidden terms and no preferred term. Until the second and
 third pull requests it produces no finding and is not listed on the old
 screen; today it reports its variants with an empty suggestion. A row
-whose domain no longer exists is not carried over.
+that has neither a preferred wording nor a usable variant is skipped with
+a warning. A row whose domain no longer exists is not carried over.
+
+A row that cannot be converted, because its language is unknown or its
+list of variants is not a list of texts, stops the migration with an
+error that names the row and its domain. Nothing is migrated in that case.
+
+On Postgres the migration locks the old table before it reads it, so that
+a write by a still-running previous release cannot be lost between the
+read and the rename. The previous release must be stopped before the
+migration runs.
 
 Afterwards the old table is renamed to `terms_legacy`. The store
 migration of the third pull request drops it. *(Author's call: a rename costs nothing and keeps
@@ -337,7 +347,7 @@ before T1 still imports. Its table list gets the new tables, parents
 first; `concept_domains` has no identity column; `terms_legacy` is not
 copied.
 
-Also to update: `_REQUIRED_SCHEMA`, the seeding in
+Also to update: `REQUIRED_SCHEMA`, the seeding in
 `backend/app/services/seed.py` (it creates concepts through the store, with
 origin `seed`), and the schema tests. The Postgres application role gets
 access to new tables through the existing default privileges; the
