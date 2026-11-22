@@ -8,7 +8,7 @@ from app.core.models import Category, Language, Severity, Source
 from app.services.db.sqlite import SqliteDatabase, connect
 from app.services.ownership import GlobalReadOnlyError
 from app.services.seed import DOMAIN_NAME, seed_terminology
-from app.services.terminology import TerminologyStore
+from app.services.terminology import Actor, TerminologyStore
 
 
 @pytest.fixture
@@ -51,7 +51,7 @@ class TestStore:
             preferred="virtual machine",
             forbidden_variants=["VM instance"],
         )
-        assert store.delete_domain(domain.id, owner_id=1, is_admin=True) is True
+        assert store.delete_domain(domain.id, actor=Actor(user_id=1, is_admin=True)) is True
         assert store.list_domains(owner_id=1) == []
         # The domain is gone, so its terms are unreachable through the same
         # invisible-domain path as a foreign one.
@@ -173,7 +173,7 @@ def test_domain_visibility_and_admin_rule(db):
     with pytest.raises(GlobalReadOnlyError):
         store.update_domain(shared.id, owner_id=1, is_admin=False, name="X")
     with pytest.raises(GlobalReadOnlyError):
-        store.delete_domain(shared.id, owner_id=1, is_admin=False)
+        store.delete_domain(shared.id, actor=Actor(user_id=1, is_admin=False))
     assert store.update_domain(shared.id, owner_id=1, is_admin=True, name="X").name == "X"
 
 
