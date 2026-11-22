@@ -1,12 +1,29 @@
 import json
+import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from app.core.models import Language
 from app.services.db import Database, Row, UniqueViolationError, verify_schema
-from app.services.ownership import GlobalReadOnlyError, require_writable, visible_clause
-from app.services.terminology.model import Domain
+from app.services.ownership import (
+    GlobalReadOnlyError,
+    is_visible,
+    require_writable,
+    visible_clause,
+)
+from app.services.terminology import changes, rows
+from app.services.terminology.model import (
+    Actor,
+    Concept,
+    Domain,
+    LanguageSection,
+    SectionInput,
+    TerminologyRuleError,
+    UsageStatus,
+    is_enforced,
+)
 from app.services.terminology.schema import REQUIRED_SCHEMA, SCHEMA, migrate_domains
 
 
@@ -39,6 +56,80 @@ def _row_to_term(row: Row) -> Term:
         definition=row["definition"],
         case_sensitive=bool(row["case_sensitive"]),
     )
+
+
+def _utcnow() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _lock(conn: Any, *, domain_ids: Any = (), concept_ids: Any = ()) -> None:
+    for domain_id in sorted(domain_ids):
+        conn.execute("UPDATE domains SET name = name WHERE id = ?", (domain_id,))
+    for concept_id in sorted(concept_ids):
+        conn.execute("UPDATE concepts SET uid = uid WHERE id = ?", (concept_id,))
+
+
+def _validate(sections: list[SectionInput], current: Concept | None) -> None:
+    languages = [s.language for s in sections]
+    if len(set(languages)) != len(languages):
+        raise TerminologyRuleError(
+            "duplicate_language", "A concept can have only one section per language."
+        )
+    given = set(languages)
+    remaining = {s.language for s in current.sections} - given if current else set()
+    remaining |= {s.language for s in sections if s.terms}
+    if not remaining:
+        raise TerminologyRuleError("no_section", "A concept needs at least one language with a term.")
+    current_terms = (
+        {s.language: {t.id for t in s.terms} for s in current.sections} if current else {}
+    )
+    for given_section in sections:
+        known = current_terms.get(given_section.language, set())
+        seen_ids: set[int] = set()
+        for term in given_section.terms:
+            if term.id is None:
+                continue
+            if term.id not in known:
+                raise TerminologyRuleError(
+                    "unknown_term", "A term id must belong to this language section of the concept."
+                )
+            if term.id in seen_ids:
+                raise TerminologyRuleError(
+                    "duplicate_term", "A term can appear only once in a section."
+                )
+            seen_ids.add(term.id)
+        texts = [t.text for t in given_section.terms]
+        if len(set(texts)) != len(texts):
+            raise TerminologyRuleError(
+                "duplicate_text", "A language section cannot contain the same term text twice."
+            )
+        preferred = [
+            t for t in given_section.terms
+            if t.usage_status == UsageStatus.PREFERRED and is_enforced(t.process_status)
+        ]
+        if len(preferred) > 1:
+            raise TerminologyRuleError(
+                "second_preferred", "A language can have only one active preferred term."
+            )
+
+
+def _record(
+    conn: Any, concept_id: int, before: Concept | None, *, actor: Actor, comment: str, now: str
+) -> Concept:
+    after = rows.load_concept(conn, concept_id)
+    assert after is not None
+    names = rows.domain_names(conn, sorted(set(after.domain_ids) | set(before.domain_ids if before else [])))
+    entries = changes.diff(before, after, domain_names=names)
+    if entries:
+        changes.write(conn, entries, batch=uuid.uuid4().hex, at=now, actor=actor, comment=comment)
+    if before is not None and (
+        before.domain_ids != after.domain_ids
+        or {s.language for s in before.sections} != {s.language for s in after.sections}
+    ):
+        rows.touch_concept(conn, concept_id, now=now, user_id=actor.user_id)
+    final = rows.load_concept(conn, concept_id)
+    assert final is not None
+    return final
 
 
 class TerminologyStore:
@@ -128,6 +219,77 @@ class TerminologyStore:
         with self._connect() as conn:
             cursor = conn.execute("DELETE FROM domains WHERE id = ?", (domain_id,))
         return cursor.rowcount > 0
+
+    # -- concepts --------------------------------------------------------
+
+    def list_concepts(self, domain_id: int, *, owner_id: int) -> list[Concept] | None:
+        with self._connect() as conn:
+            if self._visible_domain_row(conn, domain_id, owner_id) is None:
+                return None
+            ids = [
+                row["concept_id"]
+                for row in conn.execute(
+                    "SELECT cd.concept_id FROM concept_domains cd"
+                    " JOIN concepts c ON c.id = cd.concept_id"
+                    " WHERE cd.domain_id = ? AND " + visible_clause("c.owner_id")
+                    + " ORDER BY cd.concept_id",
+                    (domain_id, owner_id),
+                ).fetchall()
+            ]
+            return rows.load_concepts(conn, ids)
+
+    def get_concept(self, concept_id: int, *, owner_id: int) -> Concept | None:
+        with self._connect() as conn:
+            concept = rows.load_concept(conn, concept_id)
+        if concept is None or not is_visible(concept.owner_id, user_id=owner_id):
+            return None
+        return concept
+
+    def list_sections(
+        self, domain_id: int, *, owner_id: int, language: Language
+    ) -> list[LanguageSection] | None:
+        concepts = self.list_concepts(domain_id, owner_id=owner_id)
+        if concepts is None:
+            return None
+        return [s for c in concepts for s in c.sections if s.language == language]
+
+    def create_concept(
+        self, domain_id: int, sections: list[SectionInput], *, actor: Actor, comment: str = ""
+    ) -> Concept | None:
+        with self._connect() as conn:
+            _lock(conn, domain_ids=[domain_id])
+            domain = conn.execute(
+                "SELECT owner_id FROM domains WHERE id = ?", (domain_id,)
+            ).fetchone()
+            if domain is None or not is_visible(domain["owner_id"], user_id=actor.user_id):
+                return None
+            require_writable(domain["owner_id"], is_admin=actor.is_admin)
+            _validate(sections, None)
+            now = _utcnow()
+            concept_id = rows.insert_concept(
+                conn, owner_id=domain["owner_id"], now=now, user_id=actor.user_id
+            )
+            rows.set_links(conn, concept_id, [domain_id])
+            rows.apply_sections(
+                conn, concept_id, None, sections, now=now, user_id=actor.user_id
+            )
+            return _record(conn, concept_id, None, actor=actor, comment=comment, now=now)
+
+    def delete_concept(self, concept_id: int, *, actor: Actor, comment: str = "") -> bool:
+        with self._connect() as conn:
+            _lock(conn, concept_ids=[concept_id])
+            before = rows.load_concept(conn, concept_id)
+            if before is None or not is_visible(before.owner_id, user_id=actor.user_id):
+                return False
+            require_writable(before.owner_id, is_admin=actor.is_admin)
+            entries = changes.diff(
+                before, None, domain_names=rows.domain_names(conn, before.domain_ids)
+            )
+            changes.write(
+                conn, entries, batch=uuid.uuid4().hex, at=_utcnow(), actor=actor, comment=comment
+            )
+            conn.execute("DELETE FROM concepts WHERE id = ?", (concept_id,))
+            return True
 
     # -- terms -----------------------------------------------------------
 
