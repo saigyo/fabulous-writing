@@ -65,6 +65,11 @@ _ALL_TABLES = (
     "documents",
     "domains",
     "terms",
+    "concepts",
+    "concept_domains",
+    "concept_languages",
+    "concept_terms",
+    "terminology_changes",
     "profiles",
     "profile_seed_markers",
     "llm_usage",
@@ -260,13 +265,14 @@ def test_happy_path_copies_all_tables_with_ids_and_sequences(
 
     terms = TerminologyStore(source)
     domain = terms.create_domain("Style", owner_id=user1.id)
-    add_term(
+    concept = add_term(
         terms,
         domain.id,
         language=Language.EN,
         preferred="color",
         actor=Actor(user_id=user1.id, is_admin=False),
     )
+    source_section_id = concept.sections[0].id
 
     profiles = ProfileStore(source)
     profiles.create_profile(Language.EN, "My Profile", owner_id=user1.id)
@@ -294,6 +300,11 @@ def test_happy_path_copies_all_tables_with_ids_and_sequences(
         "documents": 1,
         "domains": 1,
         "terms": 0,
+        "concepts": 1,
+        "concept_domains": 1,
+        "concept_languages": 1,
+        "concept_terms": 1,
+        "terminology_changes": 2,
         "profiles": 1,
         "profile_seed_markers": 1,
         "llm_usage": 1,
@@ -304,6 +315,22 @@ def test_happy_path_copies_all_tables_with_ids_and_sequences(
             "SELECT folder_id FROM documents WHERE id = ?", (document.id,)
         ).fetchone()
         assert doc_row["folder_id"] == folder.id
+
+        term_row = conn.execute("SELECT section_id FROM concept_terms").fetchone()
+        assert term_row["section_id"] == source_section_id
+        link_row = conn.execute("SELECT domain_id FROM concept_domains").fetchone()
+        assert link_row["domain_id"] == domain.id
+
+    target_terms = TerminologyStore(pg_import_target)
+    target_domain = target_terms.create_domain("Later", owner_id=user1.id)
+    later = add_term(
+        target_terms,
+        target_domain.id,
+        language=Language.EN,
+        preferred="colour",
+        actor=Actor(user_id=user1.id, is_admin=False),
+    )
+    assert later.id > concept.id
 
     target_users = UserStore(pg_import_target)
     expected_next_id = max(user1.id, user2.id) + 1
