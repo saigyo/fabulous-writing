@@ -9,9 +9,11 @@ from app.services.terminology.model import (
     Concept,
     ConceptTerm,
     LanguageSection,
+    TermInput,
     section_label,
 )
 
+# Also the column list of concept_terms that rows.py writes and compares.
 TERM_FIELDS = (
     "text", "usage_status", "process_status", "status_reason",
     "context", "source", "part_of_speech", "case_sensitive",
@@ -31,7 +33,7 @@ class Entry:
     changes: list[dict]
 
 
-def _value(term: ConceptTerm, field: str) -> Any:
+def term_value(term: ConceptTerm | TermInput, field: str) -> Any:
     value = getattr(term, field)
     if field == "part_of_speech" and value is None:
         return ""
@@ -66,7 +68,7 @@ def _whole(
             entries.append(Entry(
                 action, concept.id, concept.uid, term.id, term.uid, term.text,
                 section.language.value, labels,
-                [change(f, _value(term, f)) for f in TERM_FIELDS],
+                [change(f, term_value(term, f)) for f in TERM_FIELDS],
             ))
     return entries
 
@@ -129,16 +131,16 @@ def diff(
             old, new = old_terms.get(term_id), new_terms.get(term_id)
             if old is None:
                 entries.append(entry(Action.CREATED, [
-                    {"field": f, "old": None, "new": _value(new, f)} for f in TERM_FIELDS
+                    {"field": f, "old": None, "new": term_value(new, f)} for f in TERM_FIELDS
                 ], new, language.value))
             elif new is None:
                 entries.append(entry(Action.DELETED, [
-                    {"field": f, "old": _value(old, f), "new": None} for f in TERM_FIELDS
+                    {"field": f, "old": term_value(old, f), "new": None} for f in TERM_FIELDS
                 ], old, language.value))
             else:
                 edits = [
-                    {"field": f, "old": _value(old, f), "new": _value(new, f)}
-                    for f in TERM_FIELDS if _value(old, f) != _value(new, f)
+                    {"field": f, "old": term_value(old, f), "new": term_value(new, f)}
+                    for f in TERM_FIELDS if term_value(old, f) != term_value(new, f)
                 ]
                 if edits:
                     entries.append(entry(Action.EDITED, edits, new, language.value))
