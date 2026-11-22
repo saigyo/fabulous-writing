@@ -257,6 +257,8 @@ in the same transaction as the change.
 | `action` | `created`, `edited`, `deleted`, `added_to_domain`, `removed_from_domain`, `carried_over`. |
 | `concept_id`, `concept_uid` | The concept. |
 | `term_id`, `term_uid` | The term, when the change is to a term; otherwise null. |
+| `term_text`, `term_language` | Copy of the term's wording and language, for term entries. |
+| `concept_labels` | JSON object with one label per language the concept has terms in (section 5.5, steps 1 to 3). |
 | `changes` | JSON list of field changes: `{field, old, new}`, plus `language` for a definition. |
 | `comment` | Optional reason, default empty. |
 
@@ -265,6 +267,12 @@ Rules:
 - **Append-only.** No code path updates or deletes a row. The user
   reference is never rewritten, including for deactivated accounts.
 - **No foreign keys to concepts or terms.** Entries outlive their subject.
+- **Every entry can be displayed on its own.** The copied wording and
+  labels are the state after the change, or the last state for a
+  deletion. A history view shows a deleted term by its wording and a
+  deleted concept by the label in the viewer's language, with the usual
+  fallback to another language, without reconstructing anything from
+  earlier entries.
 - **One entry per changed subject per save.** Saving a concept entry that
   changes the concept and three of its terms writes four entries with the
   same `batch`. Several fields changed on one subject are one entry.
