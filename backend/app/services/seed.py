@@ -8,7 +8,14 @@ Disable entirely via `seed_terminology: false` in config.yaml.
 """
 
 from app.core.models import Language
-from app.services.terminology import TerminologyStore
+from app.services.terminology import (
+    Actor,
+    Origin,
+    SectionInput,
+    TermInput,
+    TerminologyStore,
+    UsageStatus,
+)
 
 DOMAIN_NAME = "Product docs"
 DOMAIN_DESCRIPTION = "Example style-guide terminology (seeded — edit or delete freely)"
@@ -44,16 +51,12 @@ def seed_terminology(store: TerminologyStore) -> bool:
         return False
     domain = store.create_domain(DOMAIN_NAME, DOMAIN_DESCRIPTION, owner_id=None)
     for language, preferred, variants, definition in DEFAULT_TERMS:
-        # owner_id here is only a visibility key — the domain is global,
-        # visible to every owner, so any value passes — and is_admin=True
-        # authorizes the global write; no ownership is recorded on terms.
-        store.create_term(
+        terms = [TermInput(text=preferred, usage_status=UsageStatus.PREFERRED)] + [
+            TermInput(text=variant, usage_status=UsageStatus.FORBIDDEN) for variant in variants
+        ]
+        store.create_concept(
             domain.id,
-            owner_id=1,
-            is_admin=True,
-            language=language,
-            preferred=preferred,
-            forbidden_variants=variants,
-            definition=definition,
+            [SectionInput(language=language, definition=definition, terms=terms)],
+            actor=Actor.system(Origin.SEED),
         )
     return True

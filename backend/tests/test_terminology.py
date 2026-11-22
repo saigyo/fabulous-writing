@@ -8,7 +8,15 @@ from app.core.models import Category, Language, Severity, Source
 from app.services.db.sqlite import SqliteDatabase, connect
 from app.services.ownership import GlobalReadOnlyError
 from app.services.seed import DOMAIN_NAME, seed_terminology
-from app.services.terminology import Actor, TerminologyStore
+from app.services.terminology import (
+    Actor,
+    ProcessStatus,
+    SectionInput,
+    TermInput,
+    TerminologyStore,
+    UsageStatus,
+)
+from tests.terminology_helpers import add_term
 
 
 @pytest.fixture
@@ -43,10 +51,9 @@ class TestStore:
 
     def test_delete_domain_cascades_terms(self, store: TerminologyStore) -> None:
         domain = store.create_domain("Cloud", owner_id=None)
-        store.create_term(
+        add_term(
+            store,
             domain.id,
-            owner_id=1,
-            is_admin=True,
             language=Language.EN,
             preferred="virtual machine",
             forbidden_variants=["VM instance"],
@@ -55,49 +62,7 @@ class TestStore:
         assert store.list_domains(owner_id=1) == []
         # The domain is gone, so its terms are unreachable through the same
         # invisible-domain path as a foreign one.
-        assert store.list_terms(domain.id, owner_id=1) is None
-
-    def test_create_and_update_term(self, store: TerminologyStore) -> None:
-        domain = store.create_domain("Cloud", owner_id=None)
-        term = store.create_term(
-            domain.id,
-            owner_id=1,
-            is_admin=True,
-            language=Language.EN,
-            preferred="sign in",
-            forbidden_variants=["login", "log-in"],
-            definition="Authenticating with the service.",
-        )
-        assert term is not None
-        assert term.forbidden_variants == ["login", "log-in"]
-        assert term.case_sensitive is False
-        updated = store.update_term(
-            term.id, owner_id=1, is_admin=True, preferred="sign in to"
-        )
-        assert updated is not None
-        assert updated.preferred == "sign in to"
-        assert updated.forbidden_variants == ["login", "log-in"]
-
-    def test_list_terms_filters_by_language(self, store: TerminologyStore) -> None:
-        domain = store.create_domain("Cloud", owner_id=None)
-        store.create_term(
-            domain.id, owner_id=1, is_admin=True, language=Language.EN, preferred="sign in"
-        )
-        store.create_term(
-            domain.id, owner_id=1, is_admin=True, language=Language.DE, preferred="anmelden"
-        )
-        en_terms = store.list_terms(domain.id, owner_id=1, language=Language.EN)
-        assert en_terms is not None
-        assert [t.preferred for t in en_terms] == ["sign in"]
-
-    def test_delete_term(self, store: TerminologyStore) -> None:
-        domain = store.create_domain("Cloud", owner_id=None)
-        term = store.create_term(
-            domain.id, owner_id=1, is_admin=True, language=Language.EN, preferred="x"
-        )
-        assert term is not None
-        assert store.delete_term(term.id, owner_id=1, is_admin=True) is True
-        assert store.delete_term(term.id, owner_id=1, is_admin=True) is False
+        assert store.list_concepts(domain.id, owner_id=1) is None
 
 
 class TestChecker:
@@ -105,10 +70,9 @@ class TestChecker:
         self, store: TerminologyStore
     ) -> None:
         domain = store.create_domain("Cloud", owner_id=None)
-        store.create_term(
+        add_term(
+            store,
             domain.id,
-            owner_id=1,
-            is_admin=True,
             language=Language.EN,
             preferred="sign in",
             forbidden_variants=["login", "log-in"],
@@ -128,10 +92,9 @@ class TestChecker:
 
     def test_case_sensitive_term(self, store: TerminologyStore) -> None:
         domain = store.create_domain("Cloud", owner_id=None)
-        store.create_term(
+        add_term(
+            store,
             domain.id,
-            owner_id=1,
-            is_admin=True,
             language=Language.EN,
             preferred="GitHub",
             forbidden_variants=["Github"],
@@ -149,10 +112,9 @@ class TestChecker:
     ) -> None:
         domain = store.create_domain("Cloud", owner_id=None)
         other = store.create_domain("Legal", owner_id=None)
-        store.create_term(
+        add_term(
+            store,
             domain.id,
-            owner_id=1,
-            is_admin=True,
             language=Language.DE,
             preferred="anmelden",
             forbidden_variants=["einloggen"],
@@ -161,6 +123,72 @@ class TestChecker:
         assert checker.check("einloggen", Language.EN, domain.id, owner_id=1) == []
         assert checker.check("einloggen", Language.DE, other.id, owner_id=1) == []
         assert len(checker.check("einloggen", Language.DE, domain.id, owner_id=1)) == 1
+
+    def test_rule_id_is_the_uid_of_the_matched_term(self, store: TerminologyStore) -> None:
+        domain = store.create_domain("Dev", owner_id=None)
+        concept = add_term(
+            store,
+            domain.id,
+            language=Language.EN,
+            preferred="GitHub",
+            forbidden_variants=["Git Hub"],
+            case_sensitive=True,
+        )
+        preferred, forbidden = concept.sections[0].terms
+        checker = TerminologyChecker(store)
+        findings = checker.check("Use Git Hub or github.", Language.EN, domain.id, owner_id=1)
+        assert [(f.span.text, f.rule_id) for f in findings] == [
+            ("Git Hub", f"terminology.{forbidden.uid}"),
+            ("github", f"terminology.{preferred.uid}"),
+        ]
+
+    def test_forbidden_term_uses_its_own_case_sensitivity(
+        self, store: TerminologyStore
+    ) -> None:
+        domain = store.create_domain("Dev", owner_id=None)
+        store.create_concept(
+            domain.id,
+            [
+                SectionInput(
+                    language=Language.EN,
+                    terms=[
+                        TermInput(text="GitHub", usage_status=UsageStatus.PREFERRED),
+                        TermInput(
+                            text="Github",
+                            usage_status=UsageStatus.FORBIDDEN,
+                            case_sensitive=True,
+                        ),
+                    ],
+                )
+            ],
+            actor=Actor(user_id=1, is_admin=True),
+        )
+        checker = TerminologyChecker(store)
+        assert checker.check("Open github now.", Language.EN, domain.id, owner_id=1) == []
+        findings = checker.check("Open Github now.", Language.EN, domain.id, owner_id=1)
+        assert [f.span.text for f in findings] == ["Github"]
+
+    def test_section_without_preferred_term_yields_nothing(
+        self, store: TerminologyStore
+    ) -> None:
+        domain = store.create_domain("Dev", owner_id=None)
+        admin = Actor(user_id=1, is_admin=True)
+        forbidden = TermInput(text="login", usage_status=UsageStatus.FORBIDDEN)
+        store.create_concept(
+            domain.id, [SectionInput(language=Language.EN, terms=[forbidden])], actor=admin
+        )
+        candidate = TermInput(
+            text="sign in",
+            usage_status=UsageStatus.PREFERRED,
+            process_status=ProcessStatus.CANDIDATE,
+        )
+        store.create_concept(
+            domain.id,
+            [SectionInput(language=Language.EN, terms=[candidate, forbidden])],
+            actor=admin,
+        )
+        checker = TerminologyChecker(store)
+        assert checker.check("Please login now.", Language.EN, domain.id, owner_id=1) == []
 
 
 def test_domain_visibility_and_admin_rule(db):
@@ -186,36 +214,6 @@ def test_domain_names_unique_per_owner(db):
         store.create_domain("DOCS", owner_id=1)  # own duplicate, case-insensitive (LOWER)
     with pytest.raises(ValueError):
         store.create_domain("docs", owner_id=None)
-
-
-def test_terms_inherit_domain_ownership(db):
-    store = TerminologyStore(db)
-    shared = store.create_domain("Shared", owner_id=None)
-    theirs = store.create_domain("Theirs", owner_id=2)
-    term = store.create_term(
-        theirs.id, owner_id=2, is_admin=False,
-        language=Language.EN, preferred="ok",
-    )
-    # Foreign domain: everything is invisible/404-shaped.
-    assert store.list_terms(theirs.id, owner_id=1) is None
-    assert store.get_term(term.id, owner_id=1) is None
-    assert store.create_term(
-        theirs.id, owner_id=1, is_admin=False,
-        language=Language.EN, preferred="x",
-    ) is None
-    assert store.update_term(term.id, owner_id=1, is_admin=False, preferred="x") is None
-    assert store.delete_term(term.id, owner_id=1, is_admin=False) is False
-    # Global domain: reads for everyone, writes for admins.
-    with pytest.raises(GlobalReadOnlyError):
-        store.create_term(
-            shared.id, owner_id=1, is_admin=False,
-            language=Language.EN, preferred="x",
-        )
-    ok = store.create_term(
-        shared.id, owner_id=1, is_admin=True,
-        language=Language.EN, preferred="sign in",
-    )
-    assert store.list_terms(shared.id, owner_id=1) == [ok]
 
 
 def test_migration_backfills_domain_ownership(tmp_path):
@@ -321,10 +319,9 @@ class TestCasingHelpers:
 class TestPreferredCasing:
     def _github_domain(self, store: TerminologyStore) -> int:
         domain = store.create_domain("Dev", owner_id=None)
-        store.create_term(
+        add_term(
+            store,
             domain.id,
-            owner_id=1,
-            is_admin=True,
             language=Language.EN,
             preferred="GitHub",
             forbidden_variants=["Git Hub"],
@@ -356,10 +353,9 @@ class TestPreferredCasing:
         self, store: TerminologyStore
     ) -> None:
         domain = store.create_domain("Dev", owner_id=None)
-        store.create_term(
+        add_term(
+            store,
             domain.id,
-            owner_id=1,
-            is_admin=True,
             language=Language.EN,
             preferred="sign in",
             forbidden_variants=["login"],
@@ -371,10 +367,9 @@ class TestPreferredCasing:
         self, store: TerminologyStore
     ) -> None:
         domain = store.create_domain("Dev", owner_id=None)
-        store.create_term(
+        add_term(
+            store,
             domain.id,
-            owner_id=1,
-            is_admin=True,
             language=Language.EN,
             preferred="sign in",
             forbidden_variants=["login"],
@@ -397,10 +392,9 @@ class TestPreferredCasing:
         self, store: TerminologyStore
     ) -> None:
         domain = store.create_domain("Dev", owner_id=None)
-        store.create_term(
+        add_term(
+            store,
             domain.id,
-            owner_id=1,
-            is_admin=True,
             language=Language.EN,
             preferred="GitHub",
             forbidden_variants=["Github Enterprise"],
@@ -420,10 +414,9 @@ class TestCjkChecker:
         from app.nlp.registry import NlpRegistry
 
         domain = store.create_domain("dev", owner_id=None)
-        store.create_term(
+        add_term(
+            store,
             domain.id,
-            owner_id=1,
-            is_admin=True,
             language=Language.JA,
             preferred="利用者",
             forbidden_variants=["ユーザー"],
@@ -443,10 +436,9 @@ class TestCjkChecker:
         from app.nlp.registry import NlpRegistry
 
         domain = store.create_domain("dev", owner_id=None)
-        store.create_term(
+        add_term(
+            store,
             domain.id,
-            owner_id=1,
-            is_admin=True,
             language=Language.ZH,
             preferred="用户",
             forbidden_variants=["使用者"],
@@ -464,10 +456,9 @@ class TestCjkChecker:
         from app.nlp.registry import NlpRegistry
 
         domain = store.create_domain("dev", owner_id=None)
-        store.create_term(
+        add_term(
+            store,
             domain.id,
-            owner_id=1,
-            is_admin=True,
             language=Language.JA,
             preferred="利用者",
             forbidden_variants=["ユーザー"],
@@ -486,10 +477,9 @@ class TestCjkChecker:
         from app.nlp.registry import NlpRegistry
 
         domain = store.create_domain("dev", owner_id=None)
-        store.create_term(
+        add_term(
+            store,
             domain.id,
-            owner_id=1,
-            is_admin=True,
             language=Language.JA,
             preferred="GitHub",
             forbidden_variants=["ギットハブ"],
@@ -512,10 +502,9 @@ class TestCjkChecker:
         from app.nlp.registry import NlpRegistry
 
         domain = store.create_domain("dev", owner_id=None)
-        store.create_term(
+        add_term(
+            store,
             domain.id,
-            owner_id=1,
-            is_admin=True,
             language=Language.JA,
             preferred="GitHub",
             forbidden_variants=["ギットハブ"],
