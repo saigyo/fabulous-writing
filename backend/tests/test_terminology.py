@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from app.checkers.terminology import TerminologyChecker
-from app.core.models import Category, Language, Severity, Source
+from app.core.models import Category, Finding, Language, Severity, Source, Span
 from app.services.db.sqlite import SqliteDatabase, connect
 from app.services.ownership import GlobalReadOnlyError
 from app.services.seed import DOMAIN_NAME, seed_terminology
@@ -325,6 +325,52 @@ class TestCasingHelpers:
         started = time.perf_counter()
         assert _sentence_start(text, len(text) - 1) is True
         assert time.perf_counter() - started < 5.0
+
+
+def test_overlap_resolution_is_linear_in_the_number_of_findings() -> None:
+    # A long document with a deprecated short word yields a finding per
+    # occurrence; scanning every other finding for each one (the form this
+    # replaced) needs ~75 s here, the interval lookup a few milliseconds.
+    # The 5 s bound is as loose as in the sentence-start test above.
+    import time
+
+    from app.checkers.terminology import _resolve_overlaps
+
+    n = 40_000
+    status = [_finding_at(2 * i, 2 * i + 1, Severity.WARNING) for i in range(n)]
+    status.append(_finding_at(2 * n - 1, 2 * n, Severity.ERROR))
+    casing = [_finding_at(2 * i, 2 * i + 1, Severity.ERROR) for i in range(n)]
+    started = time.perf_counter()
+    kept = _resolve_overlaps(status, casing)
+    assert time.perf_counter() - started < 5.0
+    assert kept == status
+
+
+def test_overlap_lookup_keeps_touching_spans_and_sees_nested_ones() -> None:
+    from app.checkers.terminology import _resolve_overlaps
+
+    errors = [_finding_at(s, e, Severity.ERROR) for s, e in ((0, 10), (2, 4), (20, 22))]
+    inside_outer = _finding_at(5, 6, Severity.WARNING)
+    after_outer = _finding_at(10, 12, Severity.WARNING)
+    before_last = _finding_at(18, 20, Severity.WARNING)
+    across_last = _finding_at(21, 23, Severity.WARNING)
+    casing_on_warning = _finding_at(11, 12, Severity.ERROR)
+    casing_after_warning = _finding_at(12, 13, Severity.ERROR)
+    kept = _resolve_overlaps(
+        [*errors, inside_outer, after_outer, before_last, across_last],
+        [casing_on_warning, casing_after_warning],
+    )
+    assert kept == [*errors, after_outer, before_last, casing_after_warning]
+
+
+def _finding_at(start: int, end: int, severity: Severity) -> Finding:
+    return Finding(
+        category=Category.TERMINOLOGY,
+        severity=severity,
+        source=Source.TERMINOLOGY,
+        message="m",
+        span=Span(start=start, end=end, text="a" * (end - start)),
+    )
 
 
 class TestPreferredCasing:

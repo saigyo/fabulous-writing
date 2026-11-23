@@ -202,9 +202,9 @@ def test_list_sections_returns_one_language(store):
         ],
         actor=ME,
     )
-    store.save_section(first.id, section(Language.DE, term("Anmeldung")), actor=ME)
     second = add_term(store, d.id, language=Language.EN, preferred="logout")
     third = add_term(store, d.id, language=Language.DE, preferred="Abmeldung")
+    store.save_section(first.id, section(Language.DE, term("Anmeldung")), actor=ME)
     first = store.get_concept(first.id, owner_id=1)
     en = store.list_sections(d.id, owner_id=1, language=Language.EN)
     assert en == [first.sections[0], second.sections[0]]

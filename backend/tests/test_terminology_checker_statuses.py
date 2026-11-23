@@ -272,3 +272,79 @@ def test_cjk_casing_covers_admitted_terms(store, with_nlp):
     (finding,) = check(store, d, "GitHubを使います。github を開く。", language=Language.JA, nlp=nlp)
     assert finding.span.text == "github"
     assert finding.suggestions == ["GitHub"]
+
+
+CASING_PATHS = pytest.mark.parametrize(
+    "language, tokens",
+    [(EN, False), (Language.JA, True), (Language.JA, False)],
+    ids=["regex", "ja-tokens", "ja-substring"],
+)
+
+
+def check_on_path(store, d, language, tokens, texts: dict[Language, str]) -> list[Finding]:
+    nlp = NlpRegistry(NlpSettings().models) if tokens else None
+    return check(store, d, texts[language], language=language, nlp=nlp)
+
+
+@CASING_PATHS
+@pytest.mark.parametrize("admitted_case_sensitive", [True, False])
+def test_an_accepted_case_variant_is_not_a_casing_finding(
+    store, language, tokens, admitted_case_sensitive
+):
+    d = domain(store)
+    add_concept(store, d, language=language, terms=[
+        cased("JavaScript", P),
+        TermInput(text="Javascript", usage_status=A, case_sensitive=admitted_case_sensitive),
+    ])
+    findings = check_on_path(store, d, language, tokens, {
+        EN: "I write Javascript and javascript.",
+        Language.JA: "Javascript と javascript を書く。",
+    })
+    assert [(f.span.text, f.suggestions) for f in findings] == [("javascript", ["JavaScript"])]
+
+
+@CASING_PATHS
+@pytest.mark.parametrize("terms, expected", [
+    ([cased("Javascript", A), cased("JAVAScript", A), cased("JavaScript", P)], "JavaScript"),
+    ([cased("Javascript", A), cased("JAVAScript", A), ("ECMAScript", P, ACTIVE)], "JAVAScript"),
+])
+def test_one_casing_finding_per_span_for_the_first_cased_term(
+    store, language, tokens, terms, expected
+):
+    d = domain(store)
+    add_concept(store, d, language=language, terms=terms)
+    findings = check_on_path(store, d, language, tokens, {
+        EN: "Use javascript.",
+        Language.JA: "javascript を使う。",
+    })
+    assert [(f.span.text, f.suggestions) for f in findings] == [("javascript", [expected])]
+
+
+@CASING_PATHS
+def test_each_cased_term_is_checked_against_its_own_text(store, language, tokens):
+    d = domain(store)
+    add_concept(store, d, language=language, terms=[cased("GitHub", P), cased("GitLab", A)])
+    findings = check_on_path(store, d, language, tokens, {
+        EN: "Open github and gitlab.",
+        Language.JA: "github と gitlab を開く。",
+    })
+    assert [f.suggestions for f in findings] == [["GitHub"], ["GitLab"]]
+
+
+@CASING_PATHS
+def test_sentence_start_exception_uses_the_matched_terms_own_text(store, language, tokens):
+    d = domain(store)
+    add_concept(store, d, language=language, terms=[cased("JavaScript", P), cased("js", A)])
+    findings = check_on_path(store, d, language, tokens, {
+        EN: "Js runs here, javascript too.",
+        Language.JA: "Js は動く。javascript も。",
+    })
+    assert [(f.span.text, f.suggestions) for f in findings] == [("javascript", ["JavaScript"])]
+
+
+def test_each_section_reports_its_own_casing_finding(store):
+    d = domain(store)
+    add_concept(store, d, language=EN, terms=[cased("JavaScript", P)])
+    add_concept(store, d, language=EN, terms=[cased("JAVAscript", P)])
+    findings = check(store, d, "Use javascript.")
+    assert [f.suggestions for f in findings] == [["JAVAscript"], ["JavaScript"]]
