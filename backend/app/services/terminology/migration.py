@@ -60,6 +60,33 @@ def _terms(row: Any) -> list[TermInput]:
     return terms
 
 
+def _reserve_legacy_ids(conn: Any) -> None:
+    """Move the id allocator of `concept_languages` past every id the old
+    table ever gave out. A section must never get the id of an old row that
+    was skipped here or deleted earlier: a request still addressing that old
+    term would reach an unrelated entry."""
+    (legacy_max,) = conn.execute("SELECT max(id) FROM terms").fetchone()
+    (section_max,) = conn.execute("SELECT max(id) FROM concept_languages").fetchone()
+    if conn.dialect == "postgres":
+        (allocated,) = conn.execute(
+            "SELECT pg_sequence_last_value(pg_get_serial_sequence('terms', 'id')::regclass)"
+        ).fetchone()
+    else:
+        row = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = 'terms'").fetchone()
+        allocated = row[0] if row else None
+    high = max(legacy_max or 0, section_max or 0, allocated or 0)
+    if not high:
+        return
+    if conn.dialect == "postgres":
+        # RESTART (unlike setval) rolls back with the transaction.
+        conn.execute(f"ALTER TABLE concept_languages ALTER COLUMN id RESTART WITH {int(high) + 1}")
+    else:
+        conn.execute("DELETE FROM sqlite_sequence WHERE name = 'concept_languages'")
+        conn.execute(
+            "INSERT INTO sqlite_sequence (name, seq) VALUES ('concept_languages', ?)", (high,)
+        )
+
+
 def migrate_legacy_terms(conn: Any, *, now: str) -> int:
     """Carry the rows of the old `terms` table over into concepts, then rename
     the table to `terms_legacy`. The rename is the last statement: on SQLite a
@@ -124,12 +151,6 @@ def migrate_legacy_terms(conn: Any, *, now: str) -> int:
         )
         changes.write(conn, entries, batch=uuid.uuid4().hex, at=now, actor=actor)
         created += 1
-    if created and conn.dialect == "postgres":
-        # The sections took explicit ids past the identity; RESTART (unlike
-        # setval) rolls back with the transaction.
-        (max_id,) = conn.execute("SELECT max(id) FROM concept_languages").fetchone()
-        conn.execute(
-            f"ALTER TABLE concept_languages ALTER COLUMN id RESTART WITH {int(max_id) + 1}"
-        )
+    _reserve_legacy_ids(conn)
     conn.execute("ALTER TABLE terms RENAME TO terms_legacy")
     return created

@@ -610,9 +610,12 @@ null and every number is 1. It writes one `carried_over` batch per concept (orig
 
 - **The section keeps the old term id**, so that the old endpoints, whose id is the section
   id, address the same entry before and after the upgrade (a browser tab left open across
-  the upgrade still holds old ids). On Postgres the identity is then restarted past the
-  largest id with `ALTER ... RESTART`, which rolls back with the transaction, unlike
-  `setval`.
+  the upgrade still holds old ids). The id allocator of `concept_languages` is then moved
+  past every id the old table ever gave out (its largest id and its allocator's high-water
+  mark), so a later section cannot take the id of a skipped or earlier deleted old row: on
+  Postgres with `ALTER ... RESTART`, which rolls back with the transaction, unlike
+  `setval`; on SQLite through `sqlite_sequence`. `import-to-postgres` carries the SQLite
+  high-water marks over in the same way, for every table.
 - A variant equal to the preferred wording is skipped with a warning; one that differs only
   in case is kept.
 - A row with a blank preferred wording becomes a section with its forbidden terms and no
