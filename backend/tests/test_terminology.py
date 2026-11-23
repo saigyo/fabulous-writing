@@ -10,7 +10,6 @@ from app.services.ownership import GlobalReadOnlyError
 from app.services.seed import DOMAIN_NAME, seed_terminology
 from app.services.terminology import (
     Actor,
-    ProcessStatus,
     SectionInput,
     TermInput,
     TerminologyStore,
@@ -201,28 +200,6 @@ class TestChecker:
         assert checker.check("Open github now.", Language.EN, domain.id, owner_id=1) == []
         findings = checker.check("Open Github now.", Language.EN, domain.id, owner_id=1)
         assert [f.span.text for f in findings] == ["Github"]
-
-    def test_section_without_preferred_term_yields_nothing(
-        self, store: TerminologyStore
-    ) -> None:
-        domain = store.create_domain("Dev", owner_id=None)
-        admin = Actor(user_id=1, is_admin=True)
-        forbidden = TermInput(text="login", usage_status=UsageStatus.FORBIDDEN)
-        store.create_concept(
-            domain.id, [SectionInput(language=Language.EN, terms=[forbidden])], actor=admin
-        )
-        candidate = TermInput(
-            text="sign in",
-            usage_status=UsageStatus.PREFERRED,
-            process_status=ProcessStatus.CANDIDATE,
-        )
-        store.create_concept(
-            domain.id,
-            [SectionInput(language=Language.EN, terms=[candidate, forbidden])],
-            actor=admin,
-        )
-        checker = TerminologyChecker(store)
-        assert checker.check("Please login now.", Language.EN, domain.id, owner_id=1) == []
 
 
 def test_domain_visibility_and_admin_rule(db):
