@@ -348,3 +348,21 @@ def test_each_section_reports_its_own_casing_finding(store):
     add_concept(store, d, language=EN, terms=[cased("JAVAscript", P)])
     findings = check(store, d, "Use javascript.")
     assert [f.suggestions for f in findings] == [["JAVAscript"], ["JavaScript"]]
+
+
+@CASING_PATHS
+@pytest.mark.parametrize("preferred, admitted", [("sign in", "Sign In"), ("Sign In", "sign in")])
+def test_a_span_accepted_by_one_cased_term_is_not_a_casing_finding(
+    store, language, tokens, preferred, admitted
+):
+    d = domain(store)
+    add_concept(store, d, language=language, terms=[cased(preferred, P), cased(admitted, A)])
+    assert check_on_path(store, d, language, tokens, {
+        EN: "Sign in now.",
+        Language.JA: "Sign in する。",
+    }) == []
+    findings = check_on_path(store, d, language, tokens, {
+        EN: "Please Sign in now.",
+        Language.JA: "ここで Sign in する。",
+    })
+    assert [(f.span.text, f.suggestions) for f in findings] == [("Sign in", [preferred])]
