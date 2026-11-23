@@ -121,10 +121,14 @@ before `init-db` and start it only with the new image:
    the first command a request would start the old image again, because
    `auto_start_machines` is on. The deploy in step 3 applies
    `fly.toml` and turns automatic starts back on.
-2. `init-db` under the admin DSN. It stops with an error naming the
+2. `init-db` under the admin DSN (user `postgres.<projectref>`; with
+   the app role's DSN it fails with "permission denied for schema
+   public" and changes nothing). It stops with an error naming the
    row if an old row cannot be converted; nothing is migrated then.
 3. Bump the image tag and `fly deploy --ha=false -c
    deploy/fly/fly.toml`.
+4. `fly machine start <id>`. The deploy updates a stopped machine but
+   leaves it stopped.
 
 On Postgres the migration locks `terms` before it reads it, so a write
 of a previous release that is still running cannot be lost; that write
