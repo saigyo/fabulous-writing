@@ -364,6 +364,32 @@ def test_happy_path_copies_all_tables_with_ids_and_sequences(
     assert fresh.id == expected_next_id
 
 
+def test_removed_section_id_is_not_given_out_again_after_import(
+    tmp_path: Path, pg_import_target: PostgresDatabase
+) -> None:
+    src_path = tmp_path / "src.db"
+    source = SqliteDatabase(src_path)
+    admin = Actor(user_id=None, is_admin=True)
+    terms = TerminologyStore(source)
+    domain = terms.create_domain("Style", owner_id=None)
+    kept = add_term(terms, domain.id, language=Language.EN, preferred="color", actor=admin)
+    removed = add_term(terms, domain.id, language=Language.EN, preferred="gray", actor=admin)
+    terms.delete_concept(removed.id, actor=admin, comment="")
+    source.close()
+
+    assert main(["--db", str(src_path), "import-to-postgres"]) == 0
+
+    later = add_term(
+        TerminologyStore(pg_import_target),
+        domain.id,
+        language=Language.EN,
+        preferred="grey",
+        actor=admin,
+    )
+    assert later.sections[0].id > removed.sections[0].id > kept.sections[0].id
+    assert later.id > removed.id
+
+
 def test_source_from_before_the_concept_model_is_migrated_and_imported(
     tmp_path: Path, pg_import_target: PostgresDatabase
 ) -> None:

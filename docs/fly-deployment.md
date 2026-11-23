@@ -116,10 +116,11 @@ the table to `terms_legacy`. The previous release still reads `terms`,
 so from the rename on it fails every terminology request. Stop the app
 before `init-db` and start it only with the new image:
 
-1. `fly machine stop <id>` (id from `fly machine list -a
-   fabulous-writing`). `auto_start_machines` is on, so a request starts
-   the machine again: check right before step 2 that `fly machine
-   list` still shows it stopped.
+1. `fly machine update <id> --autostart=false` (id from `fly machine
+   list -a fabulous-writing`), then `fly machine stop <id>`. Without
+   the first command a request would start the old image again, because
+   `auto_start_machines` is on. The deploy in step 3 applies
+   `fly.toml` and turns automatic starts back on.
 2. `init-db` under the admin DSN. It stops with an error naming the
    row if an old row cannot be converted; nothing is migrated then.
 3. Bump the image tag and `fly deploy --ha=false -c

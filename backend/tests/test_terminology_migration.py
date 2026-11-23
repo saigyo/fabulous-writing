@@ -334,6 +334,33 @@ def test_row_without_any_usable_wording_is_skipped_with_a_warning(sqlite_db, cap
     assert count(sqlite_db, "terms_legacy") == 2
 
 
+def test_new_sections_never_take_the_id_of_an_old_row(db):
+    """Not of a skipped row (2), and not of a row deleted before the upgrade (3)."""
+    ids = legacy(db, [Old("Shared", L.EN, "sign in"), Old("Shared", L.DE, " ")])
+    with db.connect() as conn:
+        if conn.dialect == "postgres":  # `legacy` inserts explicit ids
+            conn.execute("ALTER TABLE terms ALTER COLUMN id RESTART WITH 3")
+        conn.execute(
+            "INSERT INTO terms (domain_id, language, preferred) VALUES (?, 'fr', 'connexion')",
+            (ids["Shared"],),
+        )
+        conn.execute("DELETE FROM terms WHERE id = 3")
+    store = TerminologyStore(db)
+
+    later = add_term(store, ids["Shared"], language=L.EN, preferred="log out")
+
+    assert later.sections[0].id == 4
+
+
+def test_ids_are_reserved_when_every_old_row_is_skipped(db):
+    ids = legacy(db, [Old("Shared", L.EN, " ", id=5)])
+    store = TerminologyStore(db)
+
+    later = add_term(store, ids["Shared"], language=L.EN, preferred="log out")
+
+    assert later.sections[0].id == 6
+
+
 def test_row_of_a_deleted_domain_is_not_migrated(sqlite_db, caplog):
     legacy(sqlite_db, [Old("Shared", L.EN, "sign in")])
     raw = sqlite_db.raw_connect()

@@ -303,7 +303,9 @@ For each old term row:
 - one term per entry in `forbidden_variants`: `forbidden`, `active`;
 - the language section takes the old row's id, so that the old
   endpoints keep addressing the same entry across the migration (a
-  screen left open during the upgrade still holds the old ids);
+  screen left open during the upgrade still holds the old ids). A
+  section created later never takes an id the old table ever gave out,
+  also not that of a row that was skipped or deleted before the upgrade;
 - every new term takes the row's `case_sensitive` value;
 - created and modified fields stay null on all three levels; every
   version number is 1;
