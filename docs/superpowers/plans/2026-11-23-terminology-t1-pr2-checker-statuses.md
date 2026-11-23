@@ -66,6 +66,8 @@ Nothing new. The checker keeps reading `TerminologyStore.list_sections(domain_id
 | `backend/tests/test_terminology_migration.py` | One test for old rows with an empty preferred wording (Task 2). |
 | `backend/tests/test_check_api.py` | Shared concept in two domains (Task 3). |
 | `docs/backend-architecture.md` | Checker section (Task 4). |
+| `docs/superpowers/specs/2026-11-22-terminology-t1-concept-model-design.md` | Section 8, the sentences Task 4 names. |
+| `docs/LOGBOOK.md` | Entry for this pull request, last commit, on the owner's cue. |
 
 ---
 
@@ -331,7 +333,7 @@ Subagent-driven, one implementer at a time. The controller (this session's model
 | Review | After tasks | Reviewer | Scope |
 |---|---|---|---|
 | R1 | 1 to 3 | opus | Spec section 8 line by line against the code and the Readings; the baseline file untouched and green; all four matching paths use both lists; the SQL of `load_domain_sections` (visibility, language, order); evidence that the mutation checks were run. |
-| Final | whole branch, after 4 | sonnet | Documentation against the code; nothing outside the files listed under File Structure changed; no frontend file touched. |
+| Final | whole branch, after 4 | sonnet | Documentation against the code; nothing outside the files listed under File Structure and this plan changed; no frontend file touched. |
 
 Each review gets the spec, this plan, the task reports and the diff of its range, and returns findings with severity, location and a concrete fix. Findings are fixed by the implementer of the task they belong to; the same reviewer then re-checks only those findings. One review covers Tasks 1 to 3 because they change one module and its read, about 300 lines; a second full review on the strongest model after the documentation task would read the same code again.
 
