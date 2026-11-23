@@ -735,7 +735,8 @@ Matching:
   (`ORTH`/`LOWER` depending on case sensitivity), falling back to plain substring search
   when no tokenizer is available.
 - **Casing findings**: for each case-sensitive enforced preferred or admitted term, an
-  occurrence in another casing is an error, except an initial capital at a conventional
+  occurrence in another casing (found by matching without regard to case, on the same three
+  paths as status findings) is an error, except an initial capital at a conventional
   sentence start (text start, after `.!?…` + closing quotes, after a newline with optional
   markdown structure characters). The message is `Use 'T' instead of 'M'.` followed by the
   definition, with the term's own text as the only suggestion, also for an admitted term. It
@@ -757,7 +758,9 @@ Matching:
 **Order.** Sections with an enforced preferred term come first, sorted by the text of their
 first replacement, compared in Python; the other sections follow in store order. The
 findings are then sorted by span with a stable sort, so two findings on the same span keep
-the order of their sections. On SQLite this is the finding order of the old checker; on
+the order of their sections. The token path for Japanese and Chinese is the exception: it
+collects case-sensitive terms before the others, so two status findings on the same span
+can follow that grouping instead. On SQLite this is the finding order of the old checker; on
 Postgres the old checker's order followed the database collation, so the two can differ,
 but only in the order of two findings on the same span.
 
@@ -2939,8 +2942,8 @@ each API router, anchoring, vetting, providers, profiles, seeding, …). Convent
   findings. Both backends run the store and migration tests when `FW_TEST_DATABASE_URL` is
   set, and `test_terminology_concurrency.py` (Postgres only) checks the locks: one test
   races OS processes, four run a thread against a lock held on a raw connection (see
-  [Locks and their order](#locks-and-their-order)). `test_terminology_checker_statuses.py` covers the checker's status, replacement,
-  message, casing and overlap rules. Guard tests
+  [Locks and their order](#locks-and-their-order)). `test_terminology_checker_statuses.py`
+  covers the checker's status, replacement, message, casing and overlap rules. Guard tests
   are checked by deleting the guard and watching the test fail. `terminology_helpers.py` holds
   the shared builders.
 - Anchoring and vetting have dedicated edge-case suites (ambiguous quotes, fuzzy

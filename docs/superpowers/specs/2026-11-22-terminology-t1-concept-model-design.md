@@ -453,7 +453,7 @@ offered as replacements.
   wins over a casing finding. Between two status findings the more severe
   one is kept; if both have the same severity, both are kept. A casing
   finding is dropped when it overlaps any status finding that is kept,
-  also a warning. The first pull request keeps today's rule unchanged.
+  also a warning.
 - **Several domains: unchanged.** The checker runs per domain in the
   order the request gives, and a later domain's finding is dropped when
   an earlier domain already reported an overlapping span. A concept
@@ -461,7 +461,10 @@ offered as replacements.
   between findings only: if one domain prefers a word and another forbids
   it, the error is reported whatever the order. The order itself is not
   defined today (it follows how the selection was made in the browser).
-  Both points are left as they are and belong to #211.
+  Both points are left as they are and belong to #211, and so does a
+  third: the rule that drops a later domain's overlapping finding does
+  not look at severity, so a warning of an earlier domain hides an error
+  of a later one.
 
 ## 9. API
 
