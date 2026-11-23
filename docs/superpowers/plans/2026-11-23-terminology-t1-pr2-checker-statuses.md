@@ -40,7 +40,7 @@ A reviewer checks the code against these, not against a different reading.
    - the matched term's `status_reason`, if not empty, unchanged;
    - the section's definition, if not empty, unchanged.
    `M` is the text as it stands in the document.
-5. **Casing finding:** for every enforced preferred or admitted term with `case_sensitive`, a match in another casing is `Severity.ERROR`, with the existing sentence-start exception. The replacement is the term's own text, also for an admitted term: `Use 'T' instead of 'M'.`, then the definition. No status reason: it explains a status, not a spelling.
+5. **Casing finding:** for every enforced preferred or admitted term with `case_sensitive`, a match in another casing is `Severity.ERROR`, with the existing sentence-start exception. The replacement is the term's own text, also for an admitted term: `Use 'T' instead of 'M'.`, then the definition. No status reason: it explains a status, not a spelling. Three limits, added after review R1: a match whose text equals an enforced preferred or admitted term of the same section is not a finding (the store allows two terms that differ only in case); a span that any matching cased term of the section accepts, sentence-start exception included, is not a finding; otherwise there is one finding per section and span, for the first cased term in the order preferred terms, then admitted terms, each sorted by `(text.casefold(), text)`.
 6. **Overlaps within one domain.** A warning that overlaps an error is dropped. Two overlapping status findings of the same severity are both kept, as today. A casing finding that overlaps any kept status finding is dropped, also when the status finding is a warning.
 7. **A section without any reported or cased term** produces nothing. A section with forbidden terms and no preferred term is reported now; this includes the rows that the migration carried over from old data with an empty preferred wording (first plan, reading 8).
 8. **Order.** Sections with an enforced preferred term come first, sorted by the first of their replacement texts, which is today's key; the others follow in store order. Findings are sorted by span with a stable sort, as today.
@@ -127,7 +127,7 @@ class _Entry:
     cased: list[ConceptTerm]         # filled in Task 3; in this task: the enforced preferred term if case_sensitive
     replacements: list[str]
     definition: str
-    order: tuple[bool, str]          # (no enforced preferred term, first replacement text or "")
+    order: tuple[bool, str]          # (no enforced preferred term, first preferred text or ""), see Reading 8
 
 def _entry(section: LanguageSection) -> _Entry | None   # None when reported and cased are both empty
 def _status_finding(entry: _Entry, term: ConceptTerm, matched: str, start: int, end: int) -> Finding
@@ -346,3 +346,7 @@ Each review gets the spec, this plan, the task reports and the diff of its range
 ## Plan review
 
 Reviewed on 2026-11-23 by an Opus agent against the spec and the code (spec conformance, coherence with the code, the unchanged-results constraint, executability). No critical finding. Two important ones, both applied: the "expected to fail" statements of Tasks 2 and 3 were wrong for several tests, which are now listed with the mutation that pins each; and nothing guarded the order of findings on the same span, which now has its own test. Nine minor ones, all applied: replacements work on a list of preferred terms; the spec sentence on the casing message is required in Task 4; the cross-domain effect of warnings is stated; the unchanged-results constraint is worded exactly; Task 1 extends two existing tests; and five test set-ups are written out.
+
+## Review R1
+
+Opus review of Tasks 1 to 3 on 2026-11-23. Two important findings: a correctly written admitted case variant was reported as wrong casing of the preferred term, and the overlap check was quadratic in the number of findings. Four minor ones: no test with two case-sensitive terms in one section, the concept order of `load_domain_sections` not pinned, a filter written twice, a parameter name. All fixed in `bb698ec` and `7bf9d72` and confirmed by the same reviewer; Reading 5 carries the three limits that came out of it.
