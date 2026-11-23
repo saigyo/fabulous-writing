@@ -71,18 +71,18 @@ def _casing_ok(text: str, start: int, matched: str, preferred: str) -> bool:
     return matched == capitalized and _sentence_start(text, start)
 
 
-def _without_overlaps(
-    casing: list[Finding], variants: list[Finding]
-) -> list[Finding]:
-    # Variant findings win: drop casing findings on overlapping spans.
-    return [
-        c
-        for c in casing
-        if not any(
-            c.span.start < v.span.end and v.span.start < c.span.end
-            for v in variants
-        )
+def _overlap(a: Finding, b: Finding) -> bool:
+    return a.span.start < b.span.end and b.span.start < a.span.end
+
+
+def _resolve_overlaps(status: list[Finding], casing: list[Finding]) -> list[Finding]:
+    kept = [
+        f
+        for f in status
+        if f.severity == Severity.ERROR
+        or not any(e.severity == Severity.ERROR and _overlap(f, e) for e in status)
     ]
+    return kept + [c for c in casing if not any(_overlap(c, k) for k in kept)]
 
 
 _SEVERITY = {UsageStatus.FORBIDDEN: Severity.ERROR, UsageStatus.DEPRECATED: Severity.WARNING}
@@ -106,7 +106,7 @@ def _entry(section: LanguageSection) -> _Entry | None:
     preferred = [t for t in enforced if t.usage_status == UsageStatus.PREFERRED]
     admitted = [t for t in enforced if t.usage_status == UsageStatus.ADMITTED]
     reported = [t for t in enforced if t.usage_status in _SEVERITY]
-    cased = [t for t in preferred if t.case_sensitive]
+    cased = [t for t in preferred + admitted if t.case_sensitive]
     if not reported and not cased:
         return None
     replacements = _texts(preferred) or _texts(admitted)
@@ -178,12 +178,12 @@ class TerminologyChecker:
             key=lambda entry: entry.order,
         )
         if language in CJK_LANGUAGES:
-            variants = self._check_cjk(text, language, entries)
+            status = self._check_cjk(text, language, entries)
             casing = self._casing_cjk(text, language, entries)
         else:
-            variants = self._check_regex(text, entries)
+            status = self._check_regex(text, entries)
             casing = self._casing_regex(text, entries)
-        findings = variants + _without_overlaps(casing, variants)
+        findings = _resolve_overlaps(status, casing)
         findings.sort(key=lambda f: (f.span.start, f.span.end))
         return findings
 
