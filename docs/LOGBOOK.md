@@ -5138,3 +5138,72 @@ Owner decision after the reviews: behaviour with several domains stays
 exactly as today. The wider rule from the first review round (any match
 in an earlier domain overrules later domains) is withdrawn, because the
 order of domains is not defined today; both questions moved to #211.
+
+## 2026-11-23 — Terminology T1, pull request 1: concept store, migration, change log
+PR: #213 (issue #205) · Commits: `79c882e`…`50b21c0`
+
+First of three pull requests for the concept and status model. Terms are now
+stored as concepts with one language section per language; the current screen
+and its eight term endpoints are unchanged and work through a translation
+layer in `backend/app/api/terminology.py`. Plan and code are on the same
+branch; the plan was written for this pull request only and lists what the
+second (checker statuses) and third (concept endpoints and screen) need.
+
+Design decisions taken while planning, all written into the spec (sections
+5.7, 9 and 10): a version number on the concept, on each language section and
+on each term, so that two people can edit different languages of one concept
+at the same time; created and modified fields on the language section too; a
+level's modified fields change only together with its own version number, a
+section edit does not touch the concept; a save lists only the parts it
+changes, and "Save all" sends only changed sections; an out-of-date save is
+refused naming the part.
+
+Built: five tables (`concepts`, `concept_domains`, `concept_languages`,
+`concept_terms`, `terminology_changes`); the store as a package
+(`backend/app/services/terminology/`) with a fixed lock order (domain rows,
+then concept rows, before any read), version check after the lock, one
+transaction per save, and no write at all for a save without changes; the
+change log derived from a before/after comparison, append-only, one entry per
+changed subject; ownership checks moved into `services/ownership.py`; the
+migration of the old `terms` table at store start, all or nothing, with the
+old table kept as `terms_legacy`.
+
+Migration behaviour worth knowing: sections keep the old term ids, so a
+request addressing an old term reaches the same entry; no later section can
+take an id the old table ever gave out, including skipped rows and rows
+deleted before the upgrade; a row that cannot be converted stops the start
+with an error naming the row; on Postgres the old table is locked first.
+**Upgrade on a deployment without schema management: turn automatic starts
+off, stop the app, run `init-db`, deploy the new image**
+(`docs/fly-deployment.md`). The previous release cannot run against the
+renamed table.
+
+Execution: twelve tasks by subagents on weaker models, five grouped reviews
+and one whole-branch review on Opus, as laid out in the plan. Findings that
+mattered: the term list would have changed its order on Postgres (sorted in
+Python, now by the database); the documented upgrade steps were unsafe for a
+rename; three locks and one permission check had no test that fails without
+them. Copilot, four rounds on plan and code: duplicate term ids, stale
+modified fields in a returned concept, a timing-dependent concurrency test, a
+recreated language defeating the version check (the section id is compared
+too), and three ways a section id could be reused (old ids, skipped rows,
+import to Postgres). All applied. The last round had no findings; its note
+that the checker loads all languages of a domain and filters afterwards is
+left for the second pull request, which changes that read.
+
+Verification: 2029 tests on Postgres, 1762 on SQLite, no warnings. Check
+results are compared with findings recorded on the old code before any
+change, through the API and after migrating old data. Every guard was shown
+to fail with the guard removed; the five concurrency tests race OS processes
+on Postgres. Manual trial through the browser on SQLite: a database created
+and filled by the version on `main` (seeded domain plus a second domain, one
+term deleted) was upgraded by the branch build; both term lists and the check
+result were identical, edit, add and delete worked, new ids did not reuse
+deleted ones, and a second restart changed nothing. Suite runtime about 23 s
+on SQLite and 27 s on Postgres against a baseline of about 19 s; three lock
+tests wait one second each by design.
+
+Left as is: delete and remove operations are not version-checked;
+`create_concept` ignores an id or version number on its input; a variant
+equal to the preferred wording is dropped on save where the old code stored
+it.
