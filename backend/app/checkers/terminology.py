@@ -1,4 +1,6 @@
 import re
+from bisect import bisect_right
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -64,25 +66,34 @@ def _sentence_start(text: str, start: int) -> bool:
     return index > 0 and text[index - 1] in _SENTENCE_PUNCTUATION
 
 
-def _casing_ok(text: str, start: int, matched: str, preferred: str) -> bool:
-    if matched == preferred:
+def _casing_ok(text: str, start: int, matched: str, term_text: str) -> bool:
+    if matched == term_text:
         return True
-    capitalized = preferred[0].upper() + preferred[1:]
+    capitalized = term_text[0].upper() + term_text[1:]
     return matched == capitalized and _sentence_start(text, start)
 
 
-def _overlap(a: Finding, b: Finding) -> bool:
-    return a.span.start < b.span.end and b.span.start < a.span.end
+def _overlap_test(findings: list[Finding]) -> Callable[[Finding], bool]:
+    merged: list[list[int]] = []
+    for start, end in sorted((f.span.start, f.span.end) for f in findings):
+        if merged and start < merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    starts = [start for start, _ in merged]
+
+    def overlaps(finding: Finding) -> bool:
+        index = bisect_right(starts, finding.span.end - 1) - 1
+        return index >= 0 and merged[index][1] > finding.span.start
+
+    return overlaps
 
 
 def _resolve_overlaps(status: list[Finding], casing: list[Finding]) -> list[Finding]:
-    kept = [
-        f
-        for f in status
-        if f.severity == Severity.ERROR
-        or not any(e.severity == Severity.ERROR and _overlap(f, e) for e in status)
-    ]
-    return kept + [c for c in casing if not any(_overlap(c, k) for k in kept)]
+    hits_error = _overlap_test([f for f in status if f.severity == Severity.ERROR])
+    kept = [f for f in status if f.severity == Severity.ERROR or not hits_error(f)]
+    hits_kept = _overlap_test(kept)
+    return kept + [c for c in casing if not hits_kept(c)]
 
 
 _SEVERITY = {UsageStatus.FORBIDDEN: Severity.ERROR, UsageStatus.DEPRECATED: Severity.WARNING}
@@ -92,13 +103,18 @@ _SEVERITY = {UsageStatus.FORBIDDEN: Severity.ERROR, UsageStatus.DEPRECATED: Seve
 class _Entry:
     reported: list[ConceptTerm]
     cased: list[ConceptTerm]
+    accepted: frozenset[str]
     replacements: list[str]
     definition: str
     order: tuple[bool, str]
 
 
+def _by_text(terms: list[ConceptTerm]) -> list[ConceptTerm]:
+    return sorted(terms, key=lambda t: (t.text.casefold(), t.text))
+
+
 def _texts(terms: list[ConceptTerm]) -> list[str]:
-    return sorted((t.text for t in terms), key=lambda text: (text.casefold(), text))
+    return [t.text for t in _by_text(terms)]
 
 
 def _entry(section: LanguageSection) -> _Entry | None:
@@ -106,12 +122,13 @@ def _entry(section: LanguageSection) -> _Entry | None:
     preferred = [t for t in enforced if t.usage_status == UsageStatus.PREFERRED]
     admitted = [t for t in enforced if t.usage_status == UsageStatus.ADMITTED]
     reported = [t for t in enforced if t.usage_status in _SEVERITY]
-    cased = [t for t in preferred + admitted if t.case_sensitive]
+    cased = [t for t in _by_text(preferred) + _by_text(admitted) if t.case_sensitive]
     if not reported and not cased:
         return None
+    accepted = frozenset(t.text for t in preferred + admitted)
     replacements = _texts(preferred) or _texts(admitted)
     order = (not preferred, replacements[0] if preferred else "")
-    return _Entry(reported, cased, replacements, section.definition, order)
+    return _Entry(reported, cased, accepted, replacements, section.definition, order)
 
 
 def _finding(
@@ -159,6 +176,24 @@ def _casing_finding(
     return _finding(term, Severity.ERROR, message, [term.text], matched, start, end)
 
 
+def _casing_findings(
+    text: str, matches: Iterable[tuple[_Entry, ConceptTerm, str, int, int]]
+) -> list[Finding]:
+    findings: list[Finding] = []
+    reported: set[tuple[int, int, int]] = set()
+    for entry, term, matched, start, end in matches:
+        span = (id(entry), start, end)
+        if (
+            matched in entry.accepted
+            or span in reported
+            or _casing_ok(text, start, matched, term.text)
+        ):
+            continue
+        reported.add(span)
+        findings.append(_casing_finding(entry, term, matched, start, end))
+    return findings
+
+
 class TerminologyChecker:
     def __init__(self, store: TerminologyStore, nlp: "NlpRegistry | None" = None) -> None:
         self.store = store
@@ -200,17 +235,15 @@ class TerminologyChecker:
         return findings
 
     def _casing_regex(self, text: str, entries: list[_Entry]) -> list[Finding]:
-        findings: list[Finding] = []
-        for entry in entries:
-            for term in entry.cased:
-                pattern = rf"\b{re.escape(term.text)}\b"
-                for match in re.finditer(pattern, text, re.IGNORECASE):
-                    if _casing_ok(text, match.start(), match.group(), term.text):
-                        continue
-                    findings.append(
-                        _casing_finding(entry, term, match.group(), match.start(), match.end())
-                    )
-        return findings
+        return _casing_findings(
+            text,
+            (
+                (entry, term, match.group(), match.start(), match.end())
+                for entry in entries
+                for term in entry.cased
+                for match in re.finditer(rf"\b{re.escape(term.text)}\b", text, re.IGNORECASE)
+            ),
+        )
 
     def _casing_cjk(
         self, text: str, language: Language, entries: list[_Entry]
@@ -229,32 +262,29 @@ class TerminologyChecker:
         matcher = PhraseMatcher(pipeline.vocab, attr="LOWER")
         for index, (_, term) in enumerate(cased):
             matcher.add(str(index), [pipeline.make_doc(term.text)])
-        findings: list[Finding] = []
-        for match_id, start, end in matcher(doc):
-            entry, term = cased[int(pipeline.vocab.strings[match_id])]
-            span = doc[start:end]
-            if _casing_ok(text, span.start_char, span.text, term.text):
-                continue
-            findings.append(
-                _casing_finding(entry, term, span.text, span.start_char, span.end_char)
-            )
-        return findings
+        matches = sorted(
+            (int(pipeline.vocab.strings[match_id]), start, end)
+            for match_id, start, end in matcher(doc)
+        )
+        spans = ((index, doc[start:end]) for index, start, end in matches)
+        return _casing_findings(
+            text,
+            ((*cased[index], span.text, span.start_char, span.end_char) for index, span in spans),
+        )
 
     def _casing_substring(
         self, text: str, cased: list[tuple[_Entry, ConceptTerm]]
     ) -> list[Finding]:
         haystack = text.lower()
-        findings: list[Finding] = []
+        matches: list[tuple[_Entry, ConceptTerm, str, int, int]] = []
         for entry, term in cased:
             needle = term.text.lower()
             pos = haystack.find(needle)
             while pos != -1:
                 end = pos + len(needle)
-                matched = text[pos:end]
-                if not _casing_ok(text, pos, matched, term.text):
-                    findings.append(_casing_finding(entry, term, matched, pos, end))
+                matches.append((entry, term, text[pos:end], pos, end))
                 pos = haystack.find(needle, pos + 1)
-        return findings
+        return _casing_findings(text, matches)
 
     def _check_cjk(
         self, text: str, language: Language, entries: list[_Entry]

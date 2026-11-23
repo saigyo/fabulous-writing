@@ -119,22 +119,22 @@ def load_domain_concepts(conn: Any, domain_id: int, *, user_id: int | None) -> l
 def load_domain_sections(
     conn: Any, domain_id: int, *, user_id: int | None, language: Language
 ) -> list[LanguageSection]:
-    section_rows = conn.execute(
-        "SELECT s.* FROM concept_languages s JOIN concepts c ON c.id = s.concept_id"
+    selected = (
+        "JOIN concepts c ON c.id = s.concept_id"
         " WHERE s.language = ?"
         " AND c.id IN (SELECT concept_id FROM concept_domains WHERE domain_id = ?)"
-        f" AND {visible_clause('c.owner_id')} ORDER BY s.concept_id, s.id",
-        (language.value, domain_id, user_id),
+        f" AND {visible_clause('c.owner_id')}"
+    )
+    params = (language.value, domain_id, user_id)
+    section_rows = conn.execute(
+        f"SELECT s.* FROM concept_languages s {selected} ORDER BY s.concept_id, s.id", params
     ).fetchall()
     if not section_rows:
         return []
     term_rows = conn.execute(
         "SELECT t.* FROM concept_terms t JOIN concept_languages s ON s.id = t.section_id"
-        " JOIN concepts c ON c.id = s.concept_id"
-        " WHERE s.language = ?"
-        " AND c.id IN (SELECT concept_id FROM concept_domains WHERE domain_id = ?)"
-        f" AND {visible_clause('c.owner_id')} ORDER BY t.id",
-        (language.value, domain_id, user_id),
+        f" {selected} ORDER BY t.id",
+        params,
     ).fetchall()
     terms_by_section: dict[int, list[ConceptTerm]] = {}
     for row in term_rows:
