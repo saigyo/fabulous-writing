@@ -5207,3 +5207,24 @@ Left as is: delete and remove operations are not version-checked;
 `create_concept` ignores an id or version number on its input; a variant
 equal to the preferred wording is dropped on save where the old code stored
 it.
+
+## 2026-11-23 — v0.7.5 rollout: terminology concept store deployed (PR #214)
+
+Patch release for PR #213; nothing visible changes for users yet. Tag push →
+release workflow → GitHub release. This rollout needed the stop-first order
+because `init-db` renames the old `terms` table: automatic starts off
+(`fly machine update <id> --autostart=false`), machine stopped, `init-db`
+under the admin DSN, fly.toml bumped on this branch, `fly deploy --ha=false
+-c deploy/fly/fly.toml`, committed afterwards.
+
+Two things found on the way, both now in `docs/fly-deployment.md`. `init-db`
+with the app role's DSN fails on the first statement with "permission denied
+for schema public" and changes nothing; the admin DSN is the one with user
+`postgres.<projectref>`. And `fly deploy` updates a machine that was stopped
+beforehand but does not start it: it looked like a failed start, the logs
+showed no start attempt at all, and `fly machine start` brought it up.
+
+Verified: single machine, started, checks 1/1, image 0.7.5, `/api/health`
+200 reporting 0.7.5, automatic starts on again in the machine config. The
+production migration ran without an error. The app was offline for about a
+quarter of an hour.
