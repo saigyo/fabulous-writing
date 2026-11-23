@@ -22,6 +22,7 @@ from app.core.config import (
     TierLimitsSettings,
 )
 from app.main import create_app
+from app.services.terminology import Actor, ProcessStatus, SectionInput, TermInput, UsageStatus
 from app.services.credits import estimate_cost
 from tests.conftest import auth_headers, second_user_headers
 
@@ -117,6 +118,47 @@ def test_terminology_checker_requires_domain(client: TestClient) -> None:
     findings = response.json()["findings"]
     assert len(findings) == 1
     assert findings[0]["suggestions"] == ["sign in"]
+
+
+def test_concept_shared_by_two_domains_is_reported_once(client: TestClient) -> None:
+    first = client.post("/api/domains", json={"name": "First"}).json()["id"]
+    second = client.post("/api/domains", json={"name": "Second"}).json()["id"]
+    store = client.app.state.terminology_store
+    actor = Actor(user_id=1, is_admin=True)
+    concept = store.create_concept(
+        first,
+        [
+            SectionInput(
+                language="en",
+                terms=[
+                    TermInput(
+                        text="login",
+                        usage_status=UsageStatus.FORBIDDEN,
+                        process_status=ProcessStatus.ACTIVE,
+                    )
+                ],
+            )
+        ],
+        actor=actor,
+    )
+    assert store.save_concept(
+        concept.id, domain_ids=[first, second], revision=concept.revision, actor=actor
+    )
+
+    def findings(domain_ids: list[int]) -> list[dict]:
+        response = client.post(
+            "/api/checks",
+            json={
+                "text": "Please login now.",
+                "language": "en",
+                "domain_ids": domain_ids,
+                "checkers": ["terminology"],
+            },
+        )
+        return response.json()["findings"]
+
+    assert len(findings([first, second])) == 1
+    assert len(findings([second])) == 1
 
 
 def test_check_request_ignores_foreign_domain_ids(tmp_path: Path) -> None:
