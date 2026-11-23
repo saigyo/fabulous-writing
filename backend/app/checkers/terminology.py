@@ -179,17 +179,17 @@ def _casing_finding(
 def _casing_findings(
     text: str, matches: Iterable[tuple[_Entry, ConceptTerm, str, int, int]]
 ) -> list[Finding]:
+    groups: dict[tuple[int, int, int], list[tuple[_Entry, ConceptTerm, str, int, int]]] = {}
+    for match in matches:
+        entry, _, _, start, end = match
+        groups.setdefault((id(entry), start, end), []).append(match)
     findings: list[Finding] = []
-    reported: set[tuple[int, int, int]] = set()
-    for entry, term, matched, start, end in matches:
-        span = (id(entry), start, end)
-        if (
-            matched in entry.accepted
-            or span in reported
-            or _casing_ok(text, start, matched, term.text)
+    for group in groups.values():
+        entry, term, matched, start, end = group[0]
+        if matched in entry.accepted or any(
+            _casing_ok(text, start, matched, other.text) for _, other, _, _, _ in group
         ):
             continue
-        reported.add(span)
         findings.append(_casing_finding(entry, term, matched, start, end))
     return findings
 
