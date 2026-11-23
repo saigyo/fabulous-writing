@@ -694,15 +694,32 @@ more likely finding.
 
 `TerminologyChecker.check(text, language, domain_id, owner_id=…)` reads
 `store.list_sections(domain_id, owner_id=…, language=…)`, so visibility goes through the
-same store check as every other read; an invisible domain gives no findings. From each
-section it uses only enforced terms, and skips a section that has no enforced preferred
-term. It reports occurrences of the enforced `forbidden` terms; `admitted` and `deprecated`
-terms are not looked at yet. Sections are visited in the order of their preferred text,
-compared in Python, and the findings are then sorted by span. On SQLite this is the finding
-order of the old checker; on Postgres the old checker's order followed the database
-collation, so the two can differ, but only in the order of two findings on the same span.
-Findings are `terminology`/`error`, with the preferred term as the only suggestion, and the
-section's definition appended to the message.
+same store check as every other read; an invisible domain gives no findings. The store
+filters by language in SQL (`load_domain_sections` selects only the sections of that
+language, and only their terms), so a document in one language does not load the other
+languages of its concepts. The checker then keeps the enforced terms of each section;
+candidates are not matched, not checked for casing and never offered as a replacement.
+
+| Matched term (enforced) | Finding |
+|---|---|
+| `forbidden` | error |
+| `deprecated` | warning |
+| `preferred`, `admitted` | none, except a casing finding (below) |
+
+**Replacements** of a section are the texts of its enforced preferred terms; if there is
+none, the texts of its enforced admitted terms; otherwise none. Each list is sorted by
+`(text.casefold(), text)`. A deprecated or forbidden term is never a replacement. The
+replacements are the `suggestions` of the finding. A section with forbidden or deprecated
+terms but no preferred term is therefore reported, with the admitted terms as replacements
+or, without any, with none.
+
+The **message** of a status finding is built from these parts, joined by single spaces:
+
+1. With replacements, `Use 'A' instead of 'M'.`, or with several `Use 'A' or 'B' instead of
+   'M'.`; without, `'M' is forbidden.` or `'M' is deprecated.` `M` is the matched text as it
+   stands in the document.
+2. The matched term's status reason, unchanged, if it is not empty.
+3. The section's definition, unchanged, if it is not empty.
 
 The **rule id is `terminology.<uid of the matched term>`**, where it was
 `terminology.<numeric term id>`. A UUID cannot collide with an old numeric id, which a
@@ -712,15 +729,43 @@ the selection and cached suggestion of its terminology findings, once.
 
 Matching:
 
-- **Forbidden variants**: for Latin-script languages, word-boundary regexes per variant
-  (case-insensitive unless the term is case-sensitive). For ja/zh there are no `\b`
-  boundaries, so variants are matched with spaCy's `PhraseMatcher` over tokens
+- **Status findings**: for Latin-script languages, word-boundary regexes per forbidden or
+  deprecated term (case-insensitive unless the term is case-sensitive). For ja/zh there are
+  no `\b` boundaries, so terms are matched with spaCy's `PhraseMatcher` over tokens
   (`ORTH`/`LOWER` depending on case sensitivity), falling back to plain substring search
   when no tokenizer is available.
-- **Casing violations**: for case-sensitive preferred terms, an occurrence with the wrong
-  casing is flagged, except an initial capital at a conventional sentence start (text
-  start, after `.!?…` + closing quotes, after a newline with optional markdown structure
-  characters). Variant findings win over casing findings on overlapping spans.
+- **Casing findings**: for each case-sensitive enforced preferred or admitted term, an
+  occurrence in another casing is an error, except an initial capital at a conventional
+  sentence start (text start, after `.!?…` + closing quotes, after a newline with optional
+  markdown structure characters). The message is `Use 'T' instead of 'M'.` followed by the
+  definition, with the term's own text as the only suggestion, also for an admitted term. It
+  carries no status reason, because the reason explains a status, not a spelling. Three
+  limits keep it from reporting correct text:
+  - An occurrence whose text equals an enforced preferred or admitted term of the same
+    section is not a finding. The store allows two terms that differ only in case, so a
+    correctly written admitted variant is not reported as wrong casing of the preferred term.
+  - An occurrence that any cased term of the section accepts, the sentence-start exception
+    included, is not a finding.
+  - Otherwise there is one finding per section and span, for the first cased term in the
+    order preferred terms, then admitted terms, each sorted by `(text.casefold(), text)`.
+- **Overlaps within one domain**: a warning that overlaps an error is dropped. Two
+  overlapping status findings of the same severity are both kept. A casing finding that
+  overlaps any kept status finding is dropped, also when that status finding is a warning.
+  The test merges the intervals of the findings it compares against and looks each finding
+  up by bisection, so it is linear in the number of findings (sorting aside).
+
+**Order.** Sections with an enforced preferred term come first, sorted by the text of their
+first replacement, compared in Python; the other sections follow in store order. The
+findings are then sorted by span with a stable sort, so two findings on the same span keep
+the order of their sections. On SQLite this is the finding order of the old checker; on
+Postgres the old checker's order followed the database collation, so the two can differ,
+but only in the order of two findings on the same span.
+
+**Several domains.** `app/api/checks.py` runs the checker once per domain and passes the
+findings through `drop_duplicates`, which drops a later domain's finding that overlaps an
+earlier domain's finding, whatever their severities. A concept shared by two domains is
+therefore reported once. Since warnings exist, an error of a later domain can be hidden by an
+overlapping warning of an earlier one. This is left as it is and belongs to issue #211.
 
 ### Seeding
 
@@ -2894,7 +2939,8 @@ each API router, anchoring, vetting, providers, profiles, seeding, …). Convent
   findings. Both backends run the store and migration tests when `FW_TEST_DATABASE_URL` is
   set, and `test_terminology_concurrency.py` (Postgres only) checks the locks: one test
   races OS processes, four run a thread against a lock held on a raw connection (see
-  [Locks and their order](#locks-and-their-order)). Guard tests
+  [Locks and their order](#locks-and-their-order)). `test_terminology_checker_statuses.py` covers the checker's status, replacement,
+  message, casing and overlap rules. Guard tests
   are checked by deleting the guard and watching the test fail. `terminology_helpers.py` holds
   the shared builders.
 - Anchoring and vetting have dedicated edge-case suites (ambiguous quotes, fuzzy

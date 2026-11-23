@@ -423,14 +423,23 @@ offered as replacements.
   `case_sensitive`.
 - **Casing findings** are unchanged in kind: a case-sensitive preferred or
   admitted term written in the wrong case is an error, with the existing
-  sentence-start exception.
+  sentence-start exception. The suggestion is the term's own text, also for
+  an admitted term. A casing finding carries no status reason, because the
+  reason explains a status, not a spelling. A text that equals an enforced
+  preferred or admitted term of the same language section is not a casing
+  finding, since two terms of a section may differ only in case. A text
+  that any case-sensitive preferred or admitted term of the section accepts,
+  sentence-start exception included, is not one either. Otherwise there is
+  one casing finding per section and span, for the first such term, preferred
+  terms before admitted ones.
 - **Suggested replacements** come from the same language section: the
   active preferred term; if there is none, the active admitted terms; if
   there are none, the finding has no suggestion.
 - **Message:** as today ("Use … instead of …"), followed by the status
-  reason if there is one and the definition if there is one. Without a
-  replacement the message states that the wording is forbidden or
-  deprecated.
+  reason if there is one and the definition if there is one. With several
+  replacements it reads "Use 'A' or 'B' instead of 'M'."; without one it
+  reads "'M' is forbidden." or "'M' is deprecated.". `M` is the text as it
+  stands in the document.
 - **Rule id:** `terminology.<uid of the matched term>`, from the first
   pull request on. The globally unique identifier cannot collide with an
   old numeric rule id, which a new term id could. Saved findings keep the
@@ -442,7 +451,9 @@ offered as replacements.
   is accepted; saved findings are not rewritten.
 - **Overlapping findings within one domain:** as today, a status finding
   wins over a casing finding. Between two status findings the more severe
-  one is kept. The first pull request keeps today's rule unchanged.
+  one is kept; if both have the same severity, both are kept. A casing
+  finding is dropped when it overlaps any status finding that is kept,
+  also a warning. The first pull request keeps today's rule unchanged.
 - **Several domains: unchanged.** The checker runs per domain in the
   order the request gives, and a later domain's finding is dropped when
   an earlier domain already reported an overlapping span. A concept
