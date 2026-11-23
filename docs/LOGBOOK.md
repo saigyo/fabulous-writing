@@ -5139,8 +5139,8 @@ exactly as today. The wider rule from the first review round (any match
 in an earlier domain overrules later domains) is withdrawn, because the
 order of domains is not defined today; both questions moved to #211.
 
-## 2026-11-23 — Terminology T1, pull request 1: concept store, migration, change log
-PR: #213 (issue #205) · Commits: `79c882e`…`50b21c0`
+## 2026-11-23 — Terminology T1, pull request 1: concept store, migration, change log (PR #213)
+Issue #205 · Commits: `79c882e`…`50b21c0`
 
 First of three pull requests for the concept and status model. Terms are now
 stored as concepts with one language section per language; the current screen
