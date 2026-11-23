@@ -161,7 +161,7 @@ def test_create_in_a_global_domain_needs_admin(store, db):
     assert concept_count(db) == 0
 
 
-def test_get_and_list_respect_visibility(store):
+def test_get_and_list_respect_visibility(store, db):
     mine = store.create_domain("Mine", owner_id=1)
     g = store.create_domain("Global", owner_id=None)
     private = add_term(store, mine.id, language=Language.EN, preferred="a")
@@ -172,6 +172,14 @@ def test_get_and_list_respect_visibility(store):
     assert store.get_concept(shared.id, owner_id=2) == shared
     assert store.list_concepts(g.id, owner_id=2) == [shared]
     assert store.list_sections(mine.id, owner_id=2, language=Language.EN) is None
+    assert store.list_sections(999999, owner_id=1, language=Language.EN) is None
+    assert store.list_sections(g.id, owner_id=2, language=Language.EN) == shared.sections
+    with db.connect() as conn:
+        conn.execute(
+            "INSERT INTO concept_domains (concept_id, domain_id) VALUES (?, ?)", (private.id, g.id)
+        )
+    assert store.list_sections(g.id, owner_id=2, language=Language.EN) == shared.sections
+    assert len(store.list_sections(g.id, owner_id=1, language=Language.EN)) == 2
 
 
 def test_list_concepts_is_ordered_by_id(store):
@@ -183,21 +191,39 @@ def test_list_concepts_is_ordered_by_id(store):
 
 def test_list_sections_returns_one_language(store):
     d = store.create_domain("Cloud", owner_id=1)
-    store.create_concept(
+    first = store.create_concept(
         d.id,
         [
-            section(Language.EN, term("login"), term("signin", process=ProcessStatus.CANDIDATE)),
-            section(Language.DE, term("Anmeldung")),
+            section(
+                Language.EN,
+                term("login", case_sensitive=True),
+                term("signin", UsageStatus.ADMITTED, ProcessStatus.CANDIDATE, status_reason="why"),
+            ),
         ],
         actor=ME,
     )
-    add_term(store, d.id, language=Language.EN, preferred="logout")
-    add_term(store, d.id, language=Language.DE, preferred="Abmeldung")
-    sections = store.list_sections(d.id, owner_id=1, language=Language.EN)
-    assert len(sections) == 2
-    assert {s.language for s in sections} == {Language.EN}
-    assert [t.text for t in sections[0].terms] == ["login", "signin"]
-    assert [t.text for t in sections[1].terms] == ["logout"]
+    store.save_section(first.id, section(Language.DE, term("Anmeldung")), actor=ME)
+    second = add_term(store, d.id, language=Language.EN, preferred="logout")
+    third = add_term(store, d.id, language=Language.DE, preferred="Abmeldung")
+    first = store.get_concept(first.id, owner_id=1)
+    en = store.list_sections(d.id, owner_id=1, language=Language.EN)
+    assert en == [first.sections[0], second.sections[0]]
+    assert store.list_sections(d.id, owner_id=1, language=Language.DE) == [
+        first.sections[1],
+        third.sections[0],
+    ]
+    login, signin = en[0].terms
+    assert (login.usage_status, login.process_status, login.case_sensitive) == (
+        UsageStatus.PREFERRED,
+        ProcessStatus.ACTIVE,
+        True,
+    )
+    assert (signin.usage_status, signin.process_status, signin.status_reason) == (
+        UsageStatus.ADMITTED,
+        ProcessStatus.CANDIDATE,
+        "why",
+    )
+    assert login.uid and signin.uid and login.uid != signin.uid
 
 
 @pytest.mark.parametrize(

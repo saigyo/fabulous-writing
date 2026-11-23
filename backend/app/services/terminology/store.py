@@ -334,10 +334,12 @@ class TerminologyStore:
     def list_sections(
         self, domain_id: int, *, owner_id: int, language: Language
     ) -> list[LanguageSection] | None:
-        concepts = self.list_concepts(domain_id, owner_id=owner_id)
-        if concepts is None:
-            return None
-        return [s for c in concepts for s in c.sections if s.language == language]
+        with self._connect() as conn:
+            if self._visible_domain_row(conn, domain_id, owner_id) is None:
+                return None
+            return rows.load_domain_sections(
+                conn, domain_id, user_id=owner_id, language=language
+            )
 
     def create_concept(
         self, domain_id: int, sections: list[SectionInput], *, actor: Actor, comment: str = ""

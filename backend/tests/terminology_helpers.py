@@ -51,6 +51,30 @@ def add_term(
     return concept
 
 
+def add_concept(
+    store: TerminologyStore,
+    domain_id: int,
+    *,
+    language: Language,
+    terms: Sequence[tuple[str, UsageStatus, ProcessStatus] | TermInput],
+    definition: str = "",
+    actor: Actor = _ADMIN,
+) -> Concept:
+    inputs = [
+        entry
+        if isinstance(entry, TermInput)
+        else TermInput(text=entry[0], usage_status=entry[1], process_status=entry[2])
+        for entry in terms
+    ]
+    concept = store.create_concept(
+        domain_id,
+        [SectionInput(language=language, definition=definition, terms=inputs)],
+        actor=actor,
+    )
+    assert concept is not None
+    return concept
+
+
 _CHANGE_COLUMNS = (
     "id, batch, at, user_id, origin, action, concept_id, concept_uid, term_id, term_uid,"
     " term_text, term_language, concept_labels, changes, comment"

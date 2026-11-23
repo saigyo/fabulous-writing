@@ -42,6 +42,20 @@ def _term_from_row(row: Any) -> ConceptTerm:
     )
 
 
+def _section_from_row(row: Any, terms: list[ConceptTerm]) -> LanguageSection:
+    return LanguageSection(
+        id=row["id"],
+        language=Language(row["language"]),
+        definition=row["definition"],
+        revision=row["revision"],
+        created_at=row["created_at"],
+        created_by=row["created_by"],
+        modified_at=row["modified_at"],
+        modified_by=row["modified_by"],
+        terms=terms,
+    )
+
+
 def _load(conn: Any, where: str, params: tuple) -> list[Concept]:
     chosen = f"SELECT id FROM concepts WHERE {where}"
     concept_rows = conn.execute(
@@ -68,17 +82,7 @@ def _load(conn: Any, where: str, params: tuple) -> list[Concept]:
     sections_by_concept: dict[int, list[LanguageSection]] = {}
     for row in section_rows:
         sections_by_concept.setdefault(row["concept_id"], []).append(
-            LanguageSection(
-                id=row["id"],
-                language=Language(row["language"]),
-                definition=row["definition"],
-                revision=row["revision"],
-                created_at=row["created_at"],
-                created_by=row["created_by"],
-                modified_at=row["modified_at"],
-                modified_by=row["modified_by"],
-                terms=terms_by_section.get(row["id"], []),
-            )
+            _section_from_row(row, terms_by_section.get(row["id"], []))
         )
     links_by_concept: dict[int, list[int]] = {}
     for row in link_rows:
@@ -110,6 +114,32 @@ def load_domain_concepts(conn: Any, domain_id: int, *, user_id: int | None) -> l
         "id IN (SELECT concept_id FROM concept_domains WHERE domain_id = ?) AND " + visible_clause(),
         (domain_id, user_id),
     )
+
+
+def load_domain_sections(
+    conn: Any, domain_id: int, *, user_id: int | None, language: Language
+) -> list[LanguageSection]:
+    section_rows = conn.execute(
+        "SELECT s.* FROM concept_languages s JOIN concepts c ON c.id = s.concept_id"
+        " WHERE s.language = ?"
+        " AND c.id IN (SELECT concept_id FROM concept_domains WHERE domain_id = ?)"
+        f" AND {visible_clause('c.owner_id')} ORDER BY s.concept_id, s.id",
+        (language.value, domain_id, user_id),
+    ).fetchall()
+    if not section_rows:
+        return []
+    term_rows = conn.execute(
+        "SELECT t.* FROM concept_terms t JOIN concept_languages s ON s.id = t.section_id"
+        " JOIN concepts c ON c.id = s.concept_id"
+        " WHERE s.language = ?"
+        " AND c.id IN (SELECT concept_id FROM concept_domains WHERE domain_id = ?)"
+        f" AND {visible_clause('c.owner_id')} ORDER BY t.id",
+        (language.value, domain_id, user_id),
+    ).fetchall()
+    terms_by_section: dict[int, list[ConceptTerm]] = {}
+    for row in term_rows:
+        terms_by_section.setdefault(row["section_id"], []).append(_term_from_row(row))
+    return [_section_from_row(row, terms_by_section.get(row["id"], [])) for row in section_rows]
 
 
 def load_linked_concepts(conn: Any, domain_id: int) -> list[Concept]:
