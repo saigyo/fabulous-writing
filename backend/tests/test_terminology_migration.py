@@ -9,7 +9,7 @@ import pytest
 
 from app.checkers.terminology import TerminologyChecker
 from app.core.config import NlpSettings
-from app.core.models import Language
+from app.core.models import Language, Severity
 from app.nlp.registry import NlpRegistry
 from app.services.db import table_columns
 from app.services.db.sqlite import SqliteDatabase
@@ -318,6 +318,16 @@ def test_row_with_empty_preferred_keeps_its_forbidden_terms(sqlite_db):
     (concept,) = concepts_in(store, ids["Shared"])
     assert concept.sections[0].definition == "Enter."
     assert term_shape(concept) == [("login", F, A, False), ("log in", F, A, False)]
+
+
+def test_old_row_with_an_empty_preferred_wording_is_checked_again(sqlite_db):
+    ids = legacy(sqlite_db, [Old("Shared", L.EN, "", ["login"], "Enter.")])
+    store = TerminologyStore(sqlite_db)
+
+    findings = TerminologyChecker(store).check("Please login.", L.EN, ids["Shared"], owner_id=1)
+    assert [(f.severity, f.suggestions, f.message) for f in findings] == [
+        (Severity.ERROR, [], "'login' is forbidden. Enter."),
+    ]
 
 
 def test_row_without_any_usable_wording_is_skipped_with_a_warning(sqlite_db, caplog):

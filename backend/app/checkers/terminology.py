@@ -85,20 +85,78 @@ def _without_overlaps(
     ]
 
 
+_SEVERITY = {UsageStatus.FORBIDDEN: Severity.ERROR, UsageStatus.DEPRECATED: Severity.WARNING}
+
+
 @dataclass(frozen=True)
 class _Entry:
-    preferred: ConceptTerm
-    forbidden: list[ConceptTerm]
+    reported: list[ConceptTerm]
+    cased: list[ConceptTerm]
+    replacements: list[str]
     definition: str
+    order: tuple[bool, str]
+
+
+def _texts(terms: list[ConceptTerm]) -> list[str]:
+    return sorted((t.text for t in terms), key=lambda text: (text.casefold(), text))
 
 
 def _entry(section: LanguageSection) -> _Entry | None:
     enforced = [t for t in section.terms if is_enforced(t.process_status)]
-    preferred = next((t for t in enforced if t.usage_status == UsageStatus.PREFERRED), None)
-    if preferred is None:
+    preferred = [t for t in enforced if t.usage_status == UsageStatus.PREFERRED]
+    admitted = [t for t in enforced if t.usage_status == UsageStatus.ADMITTED]
+    reported = [t for t in enforced if t.usage_status in _SEVERITY]
+    cased = [t for t in preferred if t.case_sensitive]
+    if not reported and not cased:
         return None
-    forbidden = [t for t in enforced if t.usage_status == UsageStatus.FORBIDDEN]
-    return _Entry(preferred, forbidden, section.definition)
+    replacements = _texts(preferred) or _texts(admitted)
+    order = (not preferred, replacements[0] if preferred else "")
+    return _Entry(reported, cased, replacements, section.definition, order)
+
+
+def _finding(
+    term: ConceptTerm,
+    severity: Severity,
+    message: str,
+    suggestions: list[str],
+    matched: str,
+    start: int,
+    end: int,
+) -> Finding:
+    return Finding(
+        category=Category.TERMINOLOGY,
+        severity=severity,
+        source=Source.TERMINOLOGY,
+        rule_id=f"terminology.{term.uid}",
+        message=message,
+        span=Span(start=start, end=end, text=matched),
+        suggestions=suggestions,
+    )
+
+
+def _message(*parts: str) -> str:
+    return " ".join(part for part in parts if part)
+
+
+def _status_finding(
+    entry: _Entry, term: ConceptTerm, matched: str, start: int, end: int
+) -> Finding:
+    if entry.replacements:
+        quoted = " or ".join(f"'{text}'" for text in entry.replacements)
+        lead = f"Use {quoted} instead of '{matched}'."
+    else:
+        lead = f"'{matched}' is {term.usage_status.value}."
+    message = _message(lead, term.status_reason, entry.definition)
+    return _finding(
+        term, _SEVERITY[term.usage_status], message, list(entry.replacements), matched, start, end
+    )
+
+
+def _casing_finding(
+    entry: _Entry, term: ConceptTerm, matched: str, start: int, end: int
+) -> Finding:
+    message = _message(f"Use '{term.text}' instead of '{matched}'.", entry.definition)
+    return _finding(term, Severity.ERROR, message, [term.text], matched, start, end)
 
 
 class TerminologyChecker:
@@ -117,7 +175,7 @@ class TerminologyChecker:
             return []
         entries = sorted(
             (entry for entry in map(_entry, sections) if entry is not None),
-            key=lambda entry: entry.preferred.text,
+            key=lambda entry: entry.order,
         )
         if language in CJK_LANGUAGES:
             variants = self._check_cjk(text, language, entries)
@@ -132,28 +190,26 @@ class TerminologyChecker:
     def _check_regex(self, text: str, entries: list[_Entry]) -> list[Finding]:
         findings: list[Finding] = []
         for entry in entries:
-            for term in entry.forbidden:
+            for term in entry.reported:
                 flags = 0 if term.case_sensitive else re.IGNORECASE
                 pattern = rf"\b{re.escape(term.text)}\b"
                 for match in re.finditer(pattern, text, flags):
                     findings.append(
-                        self._finding(entry, term, match.group(), match.start(), match.end())
+                        _status_finding(entry, term, match.group(), match.start(), match.end())
                     )
         return findings
 
     def _casing_regex(self, text: str, entries: list[_Entry]) -> list[Finding]:
         findings: list[Finding] = []
         for entry in entries:
-            preferred = entry.preferred
-            if not preferred.case_sensitive:
-                continue
-            pattern = rf"\b{re.escape(preferred.text)}\b"
-            for match in re.finditer(pattern, text, re.IGNORECASE):
-                if _casing_ok(text, match.start(), match.group(), preferred.text):
-                    continue
-                findings.append(
-                    self._finding(entry, preferred, match.group(), match.start(), match.end())
-                )
+            for term in entry.cased:
+                pattern = rf"\b{re.escape(term.text)}\b"
+                for match in re.finditer(pattern, text, re.IGNORECASE):
+                    if _casing_ok(text, match.start(), match.group(), term.text):
+                        continue
+                    findings.append(
+                        _casing_finding(entry, term, match.group(), match.start(), match.end())
+                    )
         return findings
 
     def _casing_cjk(
@@ -161,7 +217,7 @@ class TerminologyChecker:
     ) -> list[Finding]:
         # Only meaningful for Latin terms embedded in CJK text: pure CJK
         # strings have no case, so lowercasing never changes them.
-        cased = [e for e in entries if e.preferred.case_sensitive]
+        cased = [(entry, term) for entry in entries for term in entry.cased]
         if not cased:
             return []
         pipeline = self.nlp.get(language.value) if self.nlp else None
@@ -171,30 +227,32 @@ class TerminologyChecker:
 
         doc = pipeline.make_doc(text)  # tokenization only
         matcher = PhraseMatcher(pipeline.vocab, attr="LOWER")
-        for index, entry in enumerate(cased):
-            matcher.add(str(index), [pipeline.make_doc(entry.preferred.text)])
+        for index, (_, term) in enumerate(cased):
+            matcher.add(str(index), [pipeline.make_doc(term.text)])
         findings: list[Finding] = []
         for match_id, start, end in matcher(doc):
-            entry = cased[int(pipeline.vocab.strings[match_id])]
+            entry, term = cased[int(pipeline.vocab.strings[match_id])]
             span = doc[start:end]
-            if _casing_ok(text, span.start_char, span.text, entry.preferred.text):
+            if _casing_ok(text, span.start_char, span.text, term.text):
                 continue
             findings.append(
-                self._finding(entry, entry.preferred, span.text, span.start_char, span.end_char)
+                _casing_finding(entry, term, span.text, span.start_char, span.end_char)
             )
         return findings
 
-    def _casing_substring(self, text: str, cased: list[_Entry]) -> list[Finding]:
+    def _casing_substring(
+        self, text: str, cased: list[tuple[_Entry, ConceptTerm]]
+    ) -> list[Finding]:
         haystack = text.lower()
         findings: list[Finding] = []
-        for entry in cased:
-            needle = entry.preferred.text.lower()
+        for entry, term in cased:
+            needle = term.text.lower()
             pos = haystack.find(needle)
             while pos != -1:
                 end = pos + len(needle)
                 matched = text[pos:end]
-                if not _casing_ok(text, pos, matched, entry.preferred.text):
-                    findings.append(self._finding(entry, entry.preferred, matched, pos, end))
+                if not _casing_ok(text, pos, matched, term.text):
+                    findings.append(_casing_finding(entry, term, matched, pos, end))
                 pos = haystack.find(needle, pos + 1)
         return findings
 
@@ -214,7 +272,7 @@ class TerminologyChecker:
             group = [
                 (entry, term)
                 for entry in entries
-                for term in entry.forbidden
+                for term in entry.reported
                 if term.case_sensitive is case_sensitive
             ]
             if not group:
@@ -226,36 +284,19 @@ class TerminologyChecker:
                 entry, term = group[int(pipeline.vocab.strings[match_id])]
                 span = doc[start:end]
                 findings.append(
-                    self._finding(entry, term, span.text, span.start_char, span.end_char)
+                    _status_finding(entry, term, span.text, span.start_char, span.end_char)
                 )
         return findings
 
     def _check_substring(self, text: str, entries: list[_Entry]) -> list[Finding]:
         findings: list[Finding] = []
         for entry in entries:
-            for term in entry.forbidden:
+            for term in entry.reported:
                 haystack = text if term.case_sensitive else text.lower()
                 needle = term.text if term.case_sensitive else term.text.lower()
                 pos = haystack.find(needle)
                 while pos != -1:
                     end = pos + len(needle)
-                    findings.append(self._finding(entry, term, text[pos:end], pos, end))
+                    findings.append(_status_finding(entry, term, text[pos:end], pos, end))
                     pos = haystack.find(needle, pos + 1)
         return findings
-
-    def _finding(
-        self, entry: _Entry, term: ConceptTerm, matched: str, start: int, end: int
-    ) -> Finding:
-        preferred = entry.preferred.text
-        message = f"Use '{preferred}' instead of '{matched}'."
-        if entry.definition:
-            message += f" {entry.definition}"
-        return Finding(
-            category=Category.TERMINOLOGY,
-            severity=Severity.ERROR,
-            source=Source.TERMINOLOGY,
-            rule_id=f"terminology.{term.uid}",
-            message=message,
-            span=Span(start=start, end=end, text=matched),
-            suggestions=[preferred],
-        )
