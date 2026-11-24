@@ -5280,3 +5280,5 @@ machine, committed afterwards.
 
 Verified: single machine, started, checks 1/1, image 0.7.6, `/api/health`
 200 reporting 0.7.6.
+The owner logged in to the live app and ran a check with a terminology
+domain; it worked as expected.
