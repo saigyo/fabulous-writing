@@ -1150,6 +1150,27 @@ span.score-badge {
   cursor: default;
 }
 
+/* The three text buttons share size and shape; they differ in colour only. */
+.plain-button,
+.primary-button,
+.danger-button {
+  padding: 0.3rem 0.6rem;
+  white-space: nowrap;
+}
+
+.plain-button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.plain-button:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+
 .primary-button {
   border: 1px solid var(--accent);
   border-radius: 6px;

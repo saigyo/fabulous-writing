@@ -66,7 +66,7 @@ export function ConceptList({
           onChange={(event) => setQuery(event.target.value)}
         />
         {!readOnly && canCreate && (
-          <button type="button" onClick={() => onCreate(language)}>
+          <button type="button" className="plain-button" onClick={() => onCreate(language)}>
             {m.newConcept}
           </button>
         )}

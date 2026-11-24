@@ -84,7 +84,7 @@ export function LanguageSectionEditor({
                 {m.removeLanguage}
               </button>
             )}
-            <button type="button" disabled={saving || changes === 0} onClick={onDiscard}>
+            <button type="button" className="plain-button" disabled={saving || changes === 0} onClick={onDiscard}>
               {m.discard}
             </button>
             <button
@@ -102,7 +102,7 @@ export function LanguageSectionEditor({
         <p className="entry-error" role="alert">
           <span>{error}</span>
           {conflict && !readOnly && (
-            <button type="button" disabled={saving} onClick={onReload}>
+            <button type="button" className="plain-button" disabled={saving} onClick={onReload}>
               {m.loadCurrentVersion}
             </button>
           )}
