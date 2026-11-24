@@ -178,6 +178,13 @@ describe('sectionChanges', () => {
   it('counts a removed section as 1', () => {
     expect(sectionChanges({ ...en(), removed: true })).toBe(1)
   })
+  it('counts a removed section that was never saved as 0 and sends it nowhere', () => {
+    const typed = rename(addLanguage(entryFromConcept(concept()), 'fr'), 'fr', 'pomme')
+    const state = editSection(typed, 'fr', (s) => ({ ...s, removed: true }))
+    expect(sectionChanges(sectionOf(state, 'fr'))).toBe(0)
+    expect(saveAllBody(state, '').sections).toEqual([])
+    expect(createBody(state, '').sections).toEqual([])
+  })
   it('counts the definition and every term of a new language', () => {
     const fr = sectionOf(addLanguage(entryFromConcept(concept()), 'fr'), 'fr')
     const terms = [{ ...fr.terms[0], text: 'pomme' }, { ...newTerm(), text: 'fruit' }]
@@ -305,7 +312,7 @@ describe('saveAllBody', () => {
 })
 
 describe('createBody', () => {
-  it('sends every section that has terms and no links, also when the links were edited', () => {
+  it('sends every unsaved section and no links, also when the links were edited', () => {
     let state = newEntry(1, false, 'en')
     state = rename(state, 'en', 'apple')
     state = rename(addLanguage(state, 'de'), 'de', 'Apfel')
@@ -428,6 +435,35 @@ describe('applySaved', () => {
     })
     expect(state.sections.map((s) => s.language)).toEqual(['en', 'de', 'fr'])
     expect(sectionOf(state, 'fr').saved).toEqual(FR)
+  })
+
+  it('keeps an added, still blank language the server does not have', () => {
+    const edited = rename(addLanguage(entryFromConcept(concept()), 'fr'), 'de', 'Birne')
+    const storedDe = section(20, 'de', [term(200, 'Birne', { usage_status: 'preferred' })], { revision: 2 })
+    const state = applySaved(edited, concept([EN, storedDe]), { languages: ['de'], links: false })
+    expect(state.sections.map((s) => s.language)).toEqual(['en', 'de', 'fr'])
+    expect(sectionOf(state, 'fr').saved).toBeNull()
+    expect(sectionOf(state, 'fr').terms.map((t) => t.text)).toEqual([''])
+    expect(sectionChanges(sectionOf(state, 'fr'))).toBe(0)
+  })
+
+  it('keeps an added, still blank language through the first save of a new concept', () => {
+    const state = addLanguage(rename(newEntry(1, false, 'en'), 'en', 'apple'), 'de')
+    const created = concept([section(40, 'en', [term(400, 'apple', { usage_status: 'preferred' })])], {
+      id: 9,
+      revision: 1,
+    })
+    const after = applySaved(state, created, { languages: ['en'], links: false })
+    expect(after.sections.map((s) => s.language)).toEqual(['en', 'de'])
+    expect(sectionOf(after, 'de').saved).toBeNull()
+    expect(sectionChanges(sectionOf(after, 'de'))).toBe(0)
+  })
+
+  it('replaces an added, still blank language by the one someone else added', () => {
+    const edited = rename(addLanguage(entryFromConcept(concept()), 'fr'), 'en', 'pear')
+    const state = applySaved(edited, concept([EN3, DE, FR]), { languages: ['en'], links: false })
+    expect(sectionOf(state, 'fr').saved).toEqual(FR)
+    expect(sectionOf(state, 'fr').terms.map((t) => t.text)).toEqual(['pomme'])
   })
 
   it('drops an untouched language someone else removed', () => {

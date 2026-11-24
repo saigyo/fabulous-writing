@@ -74,6 +74,21 @@ describe('conceptLabel', () => {
     expect(conceptLabel(c, 'en', ORDER).text).toBe('Alpha')
   })
 
+  it('compares without regard to case before comparing plainly', () => {
+    const c = concept(section('en', [term('Zeta'), term('beta')]))
+    expect(conceptLabel(c, 'en', ORDER).text).toBe('beta')
+  })
+
+  it('breaks a tie of the case-blind comparison by plain comparison', () => {
+    const c = concept(section('en', [term('apple'), term('Apple')]))
+    expect(conceptLabel(c, 'en', ORDER).text).toBe('Apple')
+  })
+
+  it('takes the first term alphabetically when every term is a candidate', () => {
+    const c = concept(section('en', [term('Beta', 'preferred', 'candidate'), term('zeta', 'admitted', 'candidate')]))
+    expect(conceptLabel(c, 'en', ORDER)).toEqual({ text: 'Beta', language: 'en', fallback: false })
+  })
+
   it('takes the first term alphabetically when there are only forbidden terms', () => {
     const c = concept(section('en', [term('yyy', 'forbidden'), term('bbb', 'forbidden')]))
     expect(conceptLabel(c, 'en', ORDER)).toEqual({ text: 'bbb', language: 'en', fallback: false })

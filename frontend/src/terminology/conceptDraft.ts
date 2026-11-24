@@ -261,9 +261,11 @@ export function applySaved(
   concept: Concept,
   sent: { languages: Language[]; links: boolean },
 ): EntryState {
-  const kept = state.sections.flatMap((s) =>
-    sent.languages.includes(s.language) || !isUnsaved(s) ? serverSection(concept, s.language) : [s],
-  )
+  const kept = state.sections.flatMap((s) => {
+    if (!sent.languages.includes(s.language) && isUnsaved(s)) return [s]
+    const fresh = serverSection(concept, s.language)
+    return fresh.length > 0 || s.saved ? fresh : [s]
+  })
   const known = new Set(state.sections.map((s) => s.language))
   const added = concept.sections.filter((s) => !known.has(s.language)).map(sectionFromSaved)
   return {
