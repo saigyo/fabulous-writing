@@ -130,7 +130,39 @@ const standardProfile = (await api('/api/profiles?language=en')).find(
 // folders (abort on 409 — never reuse or delete the owner's folders), and
 // the LAST-created document is the most recent one, which the app opens.
 
-const scratch = { folderIds: [], docIds: [] }
+const scratch = { folderIds: [], docIds: [], conceptId: null }
+
+// One concept with several statuses in two languages, so that the terminology
+// shot shows more than the seed's preferred and forbidden terms. It exists
+// only around that shot: other shots check text against Product docs.
+const term = (text, usage_status, extra = {}) => ({ text, usage_status, ...extra })
+const SCRATCH_CONCEPT = {
+  sections: [
+    {
+      language: 'en',
+      definition: 'The shared area in which a team keeps its documents.',
+      terms: [
+        term('workspace', 'preferred'),
+        term('work area', 'admitted'),
+        term('work space', 'deprecated', { status_reason: 'Written as one word.' }),
+        term('team room', 'forbidden'),
+        term('team space', 'admitted', { process_status: 'candidate' }),
+      ],
+    },
+    {
+      language: 'de',
+      terms: [term('Arbeitsbereich', 'preferred'), term('Workspace', 'deprecated')],
+    },
+  ],
+}
+
+async function removeScratchConcept() {
+  if (scratch.conceptId === null) return
+  await api(`/api/concepts/${scratch.conceptId}`, { method: 'DELETE' }).catch((e) =>
+    console.log(`cleanup: concept ${scratch.conceptId}: ${e.message}`),
+  )
+  scratch.conceptId = null
+}
 
 async function makeFolder(name) {
   const res = await api(
@@ -196,6 +228,7 @@ async function stageScratchContent() {
 }
 
 async function cleanupScratchContent() {
+  await removeScratchConcept()
   for (const id of scratch.docIds) {
     await api(`/api/documents/${id}`, { method: 'DELETE' }).catch((e) =>
       console.log(`cleanup: document ${id}: ${e.message}`),
@@ -265,13 +298,22 @@ try {
   console.log('rules.png captured, cards:', await page.locator('.rule-card').count())
 
   // Shot 2: terminology view with the seeded Product docs domain (the fuller
-  // of the seeded domains).
+  // of the seeded domains), plus the scratch concept.
+  const productDocs = (await api('/api/domains')).find((d) => d.name === 'Product docs')
+  if (productDocs) {
+    const concept = await api(`/api/domains/${productDocs.id}/concepts`, {
+      method: 'POST',
+      body: JSON.stringify(SCRATCH_CONCEPT),
+    })
+    scratch.conceptId = concept.id
+  }
   await page.locator('.view-switch button', { hasText: 'Terminology' }).click()
   await page.waitForTimeout(600)
   await page.locator('.domain-row', { hasText: 'Product docs' }).click()
   await page.waitForTimeout(600)
   await page.screenshot({ path: `${outDir}/terminology.png` })
   console.log('terminology.png captured')
+  await removeScratchConcept()
 
   // Shot 3: profiles view with the seeded EN profiles (Standard selected).
   // Scroll so the Marketing card's rule-pack chips are fully in view (it sits
