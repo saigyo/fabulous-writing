@@ -200,7 +200,7 @@ export function toSectionInput(section: SectionState): SectionInput {
   }
 }
 
-function withComment(comment: string): { comment?: string } {
+export function withComment(comment: string): { comment?: string } {
   return comment.trim() ? { comment } : {}
 }
 

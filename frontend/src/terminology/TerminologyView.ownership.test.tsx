@@ -16,6 +16,7 @@ vi.mock('../api/client', async (importOriginal) => ({
   deleteDomain: vi.fn(),
   updateDomain: vi.fn(),
   saveConceptLanguage: vi.fn(),
+  getConcept: vi.fn(),
   removeConceptFromDomain: vi.fn(),
   // This file renders TerminologyView directly, not LoginGate, so nothing
   // here would actually call getHealth — mocked anyway (Task 7) so a real
@@ -38,8 +39,10 @@ vi.mock('../documents/documents', () => ({
 import {
   createDomain,
   deleteDomain,
+  getConcept,
   getConcepts,
   getDomains,
+  HttpError,
   postLogin,
   removeConceptFromDomain,
   saveConceptLanguage,
@@ -467,6 +470,30 @@ describe('TerminologyView leaving an entry with unsaved changes', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
+  it('asks before deleting the active domain, after the delete question', async () => {
+    vi.mocked(deleteDomain).mockResolvedValue(undefined)
+    await editAlpha()
+    const rowA = rowOf('Private A').closest('.domain-row') as HTMLElement
+    await userEvent.click(within(rowA).getByTitle(en.deleteDomainTitle))
+    await answerLeave(en.deleteDomainTitle)
+    within(await screen.findByRole('dialog')).getByText(en.leaveUnsavedConfirm)
+    expect(deleteDomain).not.toHaveBeenCalled()
+
+    await answerLeave(en.leaveUnsaved)
+    await waitFor(() => expect(deleteDomain).toHaveBeenCalledWith(privateA.id))
+  })
+
+  it('deletes another domain without the leave question', async () => {
+    vi.mocked(deleteDomain).mockResolvedValue(undefined)
+    await editAlpha()
+    const rowB = rowOf('Private B').closest('.domain-row') as HTMLElement
+    await userEvent.click(within(rowB).getByTitle(en.deleteDomainTitle))
+    await answerLeave(en.deleteDomainTitle)
+    await waitFor(() => expect(deleteDomain).toHaveBeenCalledWith(privateB.id))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(back()).not.toBeNull()
+  })
+
   it('is clear after saving', async () => {
     const saved = conceptOf(201, 'alpha', [2])
     saved.sections[0].definition = 'A letter'
@@ -498,6 +525,69 @@ describe('TerminologyView leaving an entry with unsaved changes', () => {
     expect(unload()).toBe(true)
     await userEvent.click(screen.getByRole('button', { name: en.discard }))
     expect(unload()).toBe(false)
+  })
+})
+
+describe('TerminologyView keeps the list behind the entry current', () => {
+  const privateA: Domain = { id: 2, name: 'Private A', description: '', is_global: false }
+  const back = () => screen.queryByRole('button', { name: `← ${privateA.name}` })
+
+  beforeEach(() => {
+    useStore.setState({ domains: [privateA] })
+    vi.mocked(getDomains).mockResolvedValue([privateA])
+  })
+
+  it('shows the list again and fetches it once more after a removal from this domain', async () => {
+    let calls = 0
+    vi.mocked(getConcepts).mockImplementation(async () => {
+      calls += 1
+      return calls === 1 ? [conceptOf(201, 'alpha', [2, 9])] : []
+    })
+    vi.mocked(removeConceptFromDomain).mockResolvedValue(undefined)
+    render(<TerminologyView />)
+    await userEvent.click(await screen.findByRole('button', { name: 'alpha' }))
+    await userEvent.click(screen.getByRole('button', { name: en.removeFromDomain }))
+
+    await waitFor(() => expect(calls).toBe(2))
+    expect(back()).toBeNull()
+    screen.getByRole('heading', { name: en.concepts })
+  })
+
+  it('shows the saved label after a language save and the way back', async () => {
+    vi.mocked(getConcepts).mockResolvedValue([conceptOf(201, 'alpha', [2])])
+    vi.mocked(saveConceptLanguage).mockResolvedValue(conceptOf(201, 'omega', [2]))
+    render(<TerminologyView />)
+    await userEvent.click(await screen.findByRole('button', { name: 'alpha' }))
+    const text = screen.getByRole('textbox', { name: en.termLabel })
+    await userEvent.clear(text)
+    await userEvent.type(text, 'omega')
+    await userEvent.click(screen.getByRole('button', { name: en.saveLanguage('English') }))
+    await screen.findByText(`✓ ${en.sectionSaved}`)
+
+    await userEvent.click(back()!)
+    screen.getByRole('button', { name: 'omega' })
+    expect(screen.queryByRole('button', { name: 'alpha' })).toBeNull()
+  })
+
+  it('shows the loaded version in the list and opens the entry from it', async () => {
+    vi.mocked(getConcepts).mockResolvedValue([conceptOf(201, 'alpha', [2])])
+    vi.mocked(saveConceptLanguage).mockRejectedValue(
+      new HttpError(409, 'PUT failed', 'conflict', { part: 'en' }),
+    )
+    vi.mocked(getConcept).mockResolvedValue(conceptOf(201, 'from server', [2]))
+    render(<TerminologyView />)
+    await userEvent.click(await screen.findByRole('button', { name: 'alpha' }))
+    await userEvent.type(screen.getByRole('textbox', { name: en.definitionLabel }), 'A letter')
+    await userEvent.click(screen.getByRole('button', { name: en.saveLanguage('English') }))
+    await userEvent.click(await screen.findByRole('button', { name: en.loadCurrentVersion }))
+    await userEvent.click(
+      within(await screen.findByRole('dialog')).getByRole('button', { name: en.loadCurrentVersion }),
+    )
+    await screen.findByText(`✓ ${en.sectionSaved}`)
+
+    await userEvent.click(back()!)
+    await userEvent.click(screen.getByRole('button', { name: 'from server' }))
+    expect((screen.getByRole('textbox', { name: en.termLabel }) as HTMLInputElement).value).toBe('from server')
   })
 })
 

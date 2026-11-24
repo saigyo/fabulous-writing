@@ -153,6 +153,7 @@ export const fr: Messages = {
   deleteDomainTitle: 'Supprimer le domaine',
   concepts: 'Concepts',
   searchConceptsPlaceholder: 'Rechercher des concepts…',
+  searchConceptsLabel: 'Rechercher des concepts',
   conceptLanguageTitle: 'Langue des libellés',
   newConcept: '+ Concept',
   labelHeader: 'Concept',
@@ -189,6 +190,7 @@ export const fr: Messages = {
   statusActive: 'actif',
   reasonLabel: 'Motif',
   termDetails: 'Détails',
+  termDetailsOf: (text) => `Détails de ${text}`,
   contextLabel: 'Contexte',
   sourceLabel: 'Source',
   partOfSpeechLabel: 'Catégorie grammaticale',
@@ -205,6 +207,7 @@ export const fr: Messages = {
   matchCaseLabel: 'Respecter la casse',
   addTerm: '+ Terme',
   removeTerm: 'Retirer le terme',
+  removeTermNamed: (text) => `Retirer le terme ${text}`,
   removeLanguage: 'Retirer la langue',
   languageRemovedNote: 'Cette langue sera retirée au prochain enregistrement.',
   baseFormHint:

@@ -141,6 +141,7 @@ export const ja: Messages = {
   deleteDomainTitle: 'ドメインを削除',
   concepts: '概念',
   searchConceptsPlaceholder: '概念を検索…',
+  searchConceptsLabel: '概念を検索',
   conceptLanguageTitle: 'ラベルの言語',
   newConcept: '+ 概念',
   labelHeader: '概念',
@@ -174,6 +175,7 @@ export const ja: Messages = {
   statusActive: '有効',
   reasonLabel: '理由',
   termDetails: '詳細',
+  termDetailsOf: (text) => `${text}の詳細`,
   contextLabel: '文脈',
   sourceLabel: '出典',
   partOfSpeechLabel: '品詞',
@@ -190,6 +192,7 @@ export const ja: Messages = {
   matchCaseLabel: '大文字と小文字を区別',
   addTerm: '+ 用語',
   removeTerm: '用語を削除',
+  removeTermNamed: (text) => `用語「${text}」を削除`,
   removeLanguage: '言語を削除',
   languageRemovedNote: 'この言語は次の保存で削除されます。',
   baseFormHint:

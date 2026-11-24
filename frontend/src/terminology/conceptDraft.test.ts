@@ -17,6 +17,7 @@ import {
   sectionProblems,
   toSectionInput,
   unsavedLanguages,
+  withComment,
   type EntryState,
   type SectionState,
   type TermDraft,
@@ -308,6 +309,14 @@ describe('saveAllBody', () => {
   it('leaves out an empty comment and sends a given one', () => {
     expect(saveAllBody(rename(read(), 'de', 'Äpfel'), '')).not.toHaveProperty('comment')
     expect(saveAllBody(rename(read(), 'de', 'Äpfel'), 'typo')).toMatchObject({ comment: 'typo' })
+  })
+})
+
+describe('withComment', () => {
+  it('carries a reason that is not blank, and nothing for a blank one', () => {
+    expect(withComment('typo')).toEqual({ comment: 'typo' })
+    expect(withComment('  ')).toEqual({})
+    expect(withComment('')).toEqual({})
   })
 })
 

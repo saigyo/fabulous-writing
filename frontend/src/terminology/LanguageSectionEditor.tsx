@@ -178,6 +178,9 @@ function TermRow({
   const m = useMessages()
   const [open, setOpen] = useState(false)
   const locked = saving || readOnly
+  const text = term.text.trim()
+  const detailsName = text ? m.termDetailsOf(text) : m.termDetails
+  const removeName = text ? m.removeTermNamed(text) : m.removeTerm
 
   return (
     <div className="term-row">
@@ -219,6 +222,7 @@ function TermRow({
         <button
           type="button"
           className="link-button"
+          aria-label={detailsName}
           aria-expanded={open}
           disabled={saving}
           onClick={() => setOpen(!open)}
@@ -229,8 +233,8 @@ function TermRow({
           <button
             type="button"
             className="icon-button"
-            aria-label={m.removeTerm}
-            title={m.removeTerm}
+            aria-label={removeName}
+            title={removeName}
             disabled={saving}
             onClick={onRemove}
           >

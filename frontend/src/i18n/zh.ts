@@ -139,6 +139,7 @@ export const zh: Messages = {
   deleteDomainTitle: '删除领域',
   concepts: '概念',
   searchConceptsPlaceholder: '搜索概念…',
+  searchConceptsLabel: '搜索概念',
   conceptLanguageTitle: '标签语言',
   newConcept: '+ 概念',
   labelHeader: '概念',
@@ -172,6 +173,7 @@ export const zh: Messages = {
   statusActive: '有效',
   reasonLabel: '理由',
   termDetails: '详情',
+  termDetailsOf: (text) => `${text}的详情`,
   contextLabel: '上下文',
   sourceLabel: '来源',
   partOfSpeechLabel: '词性',
@@ -188,6 +190,7 @@ export const zh: Messages = {
   matchCaseLabel: '区分大小写',
   addTerm: '+ 术语',
   removeTerm: '移除术语',
+  removeTermNamed: (text) => `移除术语“${text}”`,
   removeLanguage: '移除语言',
   languageRemovedNote: '下次保存时将移除此语言。',
   baseFormHint:

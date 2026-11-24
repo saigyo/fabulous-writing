@@ -230,6 +230,12 @@ describe('leaving the terminology view with unsaved changes', () => {
     expect(useStore.getState().terminologyUnsaved).toBe(true)
   })
 
+  it('stores no wish for the view already shown', () => {
+    useStore.getState().setTerminologyUnsaved(true)
+    useStore.getState().setActiveView('terminology')
+    expect(useStore.getState().pendingView).toBeNull()
+  })
+
   it('switches on confirm although the flag is still set', () => {
     useStore.getState().setTerminologyUnsaved(true)
     useStore.getState().setActiveView('activity')
