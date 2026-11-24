@@ -1,0 +1,769 @@
+// @vitest-environment happy-dom
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
+import type { MeResponse } from '../api/client'
+import { en } from '../i18n/en'
+import { FALLBACK_LANGUAGES } from '../languages'
+import { useStore } from '../state/store'
+import type { Concept, ConceptTerm, Domain, Language, LanguageSection } from '../types'
+import { ConceptEntry } from './ConceptEntry'
+import { TerminologyView } from './TerminologyView'
+
+const docs: Domain = { id: 2, name: 'Product docs', description: '', is_global: false }
+const support: Domain = { id: 3, name: 'Support', description: '', is_global: false }
+const legal: Domain = { id: 4, name: 'Legal', description: '', is_global: false }
+const builtIn: Domain = { id: 1, name: 'Built-in', description: '', is_global: true }
+const DOMAINS = [builtIn, docs, support, legal]
+
+function term(id: number, text: string, over: Partial<ConceptTerm> = {}): ConceptTerm {
+  return {
+    id,
+    uid: `t${id}`,
+    text,
+    usage_status: 'admitted',
+    process_status: 'active',
+    status_reason: '',
+    context: '',
+    source: '',
+    part_of_speech: null,
+    case_sensitive: false,
+    revision: 1,
+    created_at: null,
+    created_by: null,
+    modified_at: null,
+    modified_by: null,
+    ...over,
+  }
+}
+
+function section(
+  id: number,
+  language: Language,
+  terms: ConceptTerm[],
+  over: Partial<LanguageSection> = {},
+): LanguageSection {
+  return {
+    id,
+    language,
+    definition: '',
+    revision: 1,
+    created_at: null,
+    created_by: null,
+    modified_at: null,
+    modified_by: null,
+    terms,
+    ...over,
+  }
+}
+
+const DE = section(
+  70,
+  'de',
+  [
+    term(701, 'Anmeldung', { usage_status: 'preferred' }),
+    term(702, 'Login', { usage_status: 'deprecated' }),
+  ],
+  { revision: 2 },
+)
+const EN = section(71, 'en', [term(711, 'sign-in', { usage_status: 'preferred' })], { revision: 5 })
+
+function conceptOf(over: Partial<Concept> = {}): Concept {
+  return {
+    id: 7,
+    uid: 'c7',
+    domain_ids: [2],
+    is_global: false,
+    sections: [DE, EN],
+    revision: 3,
+    created_at: null,
+    created_by: null,
+    modified_at: null,
+    modified_by: null,
+    ...over,
+  }
+}
+
+let fetchMock: MockInstance<typeof fetch>
+
+function json(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+function answer(...responses: Response[]) {
+  for (const response of responses) fetchMock.mockResolvedValueOnce(response)
+}
+
+function pending(): (response: Response) => void {
+  let resolve!: (response: Response) => void
+  fetchMock.mockReturnValueOnce(
+    new Promise<Response>((r) => {
+      resolve = r
+    }),
+  )
+  return resolve
+}
+
+interface Sent {
+  method: string
+  path: string
+  body: Record<string, unknown> | undefined
+}
+
+function requests(): Sent[] {
+  return fetchMock.mock.calls.map(([url, init]) => ({
+    method: init?.method ?? 'GET',
+    path: new URL(String(url)).pathname,
+    body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
+  }))
+}
+
+function writes(): Sent[] {
+  return requests().filter((r) => r.method !== 'GET')
+}
+
+function renderEntry(props: Partial<Parameters<typeof ConceptEntry>[0]> = {}) {
+  const handlers = {
+    onBack: vi.fn(),
+    onSaved: vi.fn(),
+    onGone: vi.fn(),
+    onUnsavedChange: vi.fn(),
+  }
+  render(
+    <ConceptEntry
+      domain={docs}
+      domains={DOMAINS}
+      concept={conceptOf()}
+      newLanguage="de"
+      readOnly={false}
+      {...handlers}
+      {...props}
+    />,
+  )
+  return handlers
+}
+
+const region = (name: string) => screen.getByRole('region', { name })
+const deSection = () => region('Deutsch')
+const enSection = () => region('English')
+const button = (name: string, scope: HTMLElement = document.body) =>
+  within(scope).getByRole('button', { name }) as HTMLButtonElement
+const termTexts = (scope: HTMLElement) =>
+  within(scope).getAllByRole('textbox', { name: en.termLabel }) as HTMLInputElement[]
+const definition = (scope: HTMLElement) =>
+  within(scope).getByRole('textbox', { name: en.definitionLabel }) as HTMLTextAreaElement
+const newTitle = () => screen.queryByRole('heading', { name: `← ${docs.name} / ${en.newConceptTitle}` })
+const reason = () => screen.getByRole('textbox', { name: en.changeReason }) as HTMLInputElement
+
+async function replace(user: ReturnType<typeof userEvent.setup>, input: HTMLElement, text: string) {
+  await user.clear(input)
+  if (text) await user.type(input, text)
+}
+
+beforeEach(() => {
+  fetchMock = vi.spyOn(globalThis, 'fetch')
+  useStore.setState({
+    uiLocale: 'en',
+    languages: FALLBACK_LANGUAGES,
+    domains: DOMAINS,
+    token: 'token',
+  })
+})
+
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+})
+
+describe('ConceptEntry saving one language', () => {
+  it('sends only that section with its id and version number and keeps the other edit unsaved', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    await replace(user, termTexts(deSection())[1], 'Log-in')
+    await user.type(definition(enSection()), 'The step of proving who you are.')
+
+    const savedDe = section(70, 'de', [DE.terms[0], term(702, 'Log-in', { usage_status: 'deprecated', revision: 2 })], {
+      revision: 3,
+    })
+    answer(json(200, conceptOf({ sections: [savedDe, EN], revision: 3 })))
+    await user.click(button(en.saveLanguage('Deutsch')))
+
+    await waitFor(() => expect(writes()).toHaveLength(1))
+    const [sent] = writes()
+    expect(sent.method).toBe('PUT')
+    expect(sent.path).toBe('/api/concepts/7/languages/de')
+    expect(sent.body).toMatchObject({ id: 70, revision: 2 })
+    expect(sent.body).not.toHaveProperty('language')
+    expect((sent.body!.terms as { text: string }[]).map((t) => t.text)).toEqual(['Anmeldung', 'Log-in'])
+    expect(JSON.stringify(sent.body)).not.toContain('sign-in')
+
+    await within(deSection()).findByText(`✓ ${en.sectionSaved}`)
+    expect(definition(enSection()).value).toBe('The step of proving who you are.')
+    within(enSection()).getByText(`● ${en.unsavedChanges(1)}`)
+  })
+})
+
+describe('ConceptEntry "Save all"', () => {
+  it('sends exactly the two edited sections and no links when the links are untouched', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    await user.type(definition(deSection()), 'Vorgang')
+    await user.type(definition(enSection()), 'Step')
+    answer(json(200, conceptOf({ revision: 4 })))
+    await user.click(button(en.saveAll))
+
+    await waitFor(() => expect(writes()).toHaveLength(1))
+    const [sent] = writes()
+    expect(sent.method).toBe('PUT')
+    expect(sent.path).toBe('/api/concepts/7')
+    expect((sent.body!.sections as { language: string }[]).map((s) => s.language)).toEqual(['de', 'en'])
+    expect(sent.body).not.toHaveProperty('domain_ids')
+    expect(sent.body).not.toHaveProperty('revision')
+  })
+
+  it('sends the domain ids and the revision when a link was edited', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    await user.selectOptions(screen.getByRole('combobox', { name: en.addConceptDomain }), 'Support')
+    answer(json(200, conceptOf({ domain_ids: [2, 3], revision: 4 })))
+    await user.click(button(en.saveAll))
+
+    await waitFor(() => expect(writes()).toHaveLength(1))
+    expect(writes()[0].body).toEqual({ sections: [], domain_ids: [2, 3], revision: 3 })
+  })
+
+  it('treats the links as saved afterwards and sends the new revision with the next link change', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    await user.selectOptions(screen.getByRole('combobox', { name: en.addConceptDomain }), 'Support')
+    answer(json(200, conceptOf({ domain_ids: [2, 3], revision: 4 })))
+    await user.click(button(en.saveAll))
+    await waitFor(() => expect(button(en.saveAll).disabled).toBe(true))
+    expect(screen.queryByText(en.unsavedList(en.unsavedLinks))).toBeNull()
+
+    await user.selectOptions(screen.getByRole('combobox', { name: en.addConceptDomain }), 'Legal')
+    answer(json(200, conceptOf({ domain_ids: [2, 3, 4], revision: 5 })))
+    await user.click(button(en.saveAll))
+    await waitFor(() => expect(writes()).toHaveLength(2))
+    expect(writes()[1].body).toMatchObject({ domain_ids: [2, 3, 4], revision: 4 })
+  })
+})
+
+describe('ConceptEntry checks before sending', () => {
+  it('disables both save buttons while nothing is unsaved', () => {
+    renderEntry()
+    expect(button(en.saveLanguage('Deutsch')).disabled).toBe(true)
+    expect(button(en.saveLanguage('English')).disabled).toBe(true)
+    expect(button(en.saveAll).disabled).toBe(true)
+  })
+
+  it('disables the section save and shows the reason for an empty term text', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    await replace(user, termTexts(deSection())[1], '')
+    within(deSection()).getByText(en.problemEmptyText)
+    expect(button(en.saveLanguage('Deutsch')).disabled).toBe(true)
+    expect(button(en.saveAll).disabled).toBe(true)
+  })
+
+  it('disables the section save and shows the reason for the same text twice', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    await replace(user, termTexts(deSection())[1], 'Anmeldung')
+    within(deSection()).getByText(en.problemDuplicateText)
+    expect(button(en.saveLanguage('Deutsch')).disabled).toBe(true)
+    expect(button(en.saveAll).disabled).toBe(true)
+  })
+
+  it('disables the section save and shows the reason for a second active preferred term', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    const statuses = within(deSection()).getAllByRole('combobox', { name: en.usageStatusLabel })
+    await user.selectOptions(statuses[1], 'preferred')
+    within(deSection()).getByText(en.problemSecondPreferred)
+    expect(button(en.saveLanguage('Deutsch')).disabled).toBe(true)
+    expect(button(en.saveAll).disabled).toBe(true)
+  })
+
+  it('disables the section save and shows the reason for a language without terms', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    await user.click(within(enSection()).getByRole('button', { name: en.removeTerm }))
+    within(enSection()).getByText(en.problemNoTerms)
+    expect(button(en.saveLanguage('English')).disabled).toBe(true)
+    expect(button(en.saveAll).disabled).toBe(true)
+  })
+
+  it('keeps the other section saveable on an existing concept', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    await replace(user, termTexts(deSection())[1], '')
+    await user.type(definition(enSection()), 'Step')
+    expect(button(en.saveLanguage('English')).disabled).toBe(false)
+  })
+})
+
+describe('ConceptEntry for a new concept', () => {
+  it('sends one POST with every section that has terms, then continues with PUT', async () => {
+    const user = userEvent.setup()
+    const { onSaved } = renderEntry({ concept: null, newLanguage: 'de' })
+    expect(newTitle()).not.toBeNull()
+    await user.type(termTexts(deSection())[0], 'Anmeldung')
+    await user.selectOptions(screen.getByRole('combobox', { name: en.addLanguage }), 'English')
+    await user.type(termTexts(enSection())[0], 'sign-in')
+
+    const created = conceptOf({
+      id: 9,
+      revision: 1,
+      sections: [
+        section(90, 'de', [term(901, 'Anmeldung', { usage_status: 'preferred' })]),
+        section(91, 'en', [term(911, 'sign-in', { usage_status: 'preferred' })]),
+      ],
+    })
+    answer(json(201, created))
+    await user.click(button(en.saveLanguage('Deutsch')))
+
+    await waitFor(() => expect(writes()).toHaveLength(1))
+    const [post] = writes()
+    expect(post.method).toBe('POST')
+    expect(post.path).toBe('/api/domains/2/concepts')
+    const sections = post.body!.sections as { language: string; id?: number; terms: { text: string }[] }[]
+    expect(sections.map((s) => s.language)).toEqual(['de', 'en'])
+    expect(sections.map((s) => s.terms.map((t) => t.text))).toEqual([['Anmeldung'], ['sign-in']])
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(created))
+    expect(newTitle()).toBeNull()
+
+    await user.type(definition(deSection()), 'Vorgang')
+    answer(json(200, created))
+    await user.click(button(en.saveLanguage('Deutsch')))
+    await waitFor(() => expect(writes()).toHaveLength(2))
+    expect(writes()[1]).toMatchObject({ method: 'PUT', path: '/api/concepts/9/languages/de' })
+    expect(writes()[1].body).toMatchObject({ id: 90, revision: 1, definition: 'Vorgang' })
+  })
+
+  it('disables both save buttons while a second language still has an empty term', async () => {
+    const user = userEvent.setup()
+    renderEntry({ concept: null, newLanguage: 'de' })
+    await user.type(termTexts(deSection())[0], 'Anmeldung')
+    await user.selectOptions(screen.getByRole('combobox', { name: en.addLanguage }), 'English')
+    await user.type(definition(enSection()), 'Step')
+
+    expect(button(en.saveLanguage('Deutsch')).disabled).toBe(true)
+    expect(button(en.saveLanguage('English')).disabled).toBe(true)
+    expect(button(en.saveAll).disabled).toBe(true)
+  })
+
+  it('leaves without asking on "Discard all" and on "Discard" of its last section', async () => {
+    const user = userEvent.setup()
+    const { onBack } = renderEntry({ concept: null, newLanguage: 'de' })
+    await user.type(termTexts(deSection())[0], 'Anmeldung')
+    await user.click(button(en.discardAll))
+    expect(onBack).toHaveBeenCalledTimes(1)
+    await user.click(button(en.discard, deSection()))
+    expect(onBack).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
+
+describe('ConceptEntry inside TerminologyView', () => {
+  const me: MeResponse = {
+    id: 1,
+    email: 'ada@example.com',
+    display_name: null,
+    tier: 'basic',
+    is_admin: false,
+    policy: { llm: { tiers: null, providers: null, models: null }, features: ['custom_domains'] },
+    usage: { label: 'Basic', windows: [{ window: 'day', used_percent: 0 }] },
+    limits: { max_document_chars: 200000, max_llm_document_chars: 200000, concurrent_llm_runs: 5 },
+    allow_additional_admins: false,
+    db_backend: 'sqlite',
+  }
+
+  it('keeps a link added before the first save unsaved and sends it with the new revision', async () => {
+    const created = conceptOf({
+      id: 9,
+      revision: 1,
+      sections: [section(90, 'en', [term(901, 'widget', { usage_status: 'preferred' })])],
+    })
+    fetchMock.mockImplementation(async (url, init) => {
+      const path = new URL(String(url)).pathname
+      const method = init?.method ?? 'GET'
+      if (method === 'GET' && path === '/api/domains') return json(200, [docs, support])
+      if (method === 'GET' && path === '/api/domains/2/concepts') return json(200, [])
+      if (method === 'POST' && path === '/api/domains/2/concepts') return json(201, created)
+      if (method === 'PUT' && path === '/api/concepts/9') {
+        return json(200, { ...created, domain_ids: [2, 3], revision: 2 })
+      }
+      return json(404, {})
+    })
+    useStore.setState({ domains: [docs, support], user: me })
+    const user = userEvent.setup()
+    render(<TerminologyView />)
+
+    await user.click(await screen.findByRole('button', { name: en.newConcept }))
+    await user.type(termTexts(enSection())[0], 'widget')
+    await user.selectOptions(screen.getByRole('combobox', { name: en.addConceptDomain }), 'Support')
+    await user.click(button(en.saveLanguage('English')))
+
+    await waitFor(() => expect(writes()).toHaveLength(1))
+    expect(writes()[0].method).toBe('POST')
+    expect(writes()[0].body).not.toHaveProperty('domain_ids')
+    await waitFor(() => expect(newTitle()).toBeNull())
+    screen.getByRole('button', { name: en.removeDomainLink('Support') })
+    screen.getByText(en.unsavedList(en.unsavedLinks))
+
+    await user.click(button(en.saveAll))
+    await waitFor(() => expect(writes()).toHaveLength(2))
+    expect(writes()[1]).toMatchObject({ method: 'PUT', path: '/api/concepts/9' })
+    expect(writes()[1].body).toMatchObject({ domain_ids: [2, 3], revision: 1 })
+  })
+})
+
+describe('ConceptEntry while a save is pending', () => {
+  it('enables no field and no button, and a second save cannot be sent', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    await user.click(within(deSection()).getAllByRole('button', { name: en.termDetails })[0])
+    await user.type(definition(deSection()), 'Vorgang')
+    await user.type(definition(enSection()), 'Step')
+    const resolve = pending()
+    await user.click(button(en.saveLanguage('Deutsch')))
+
+    const controls = [
+      ...screen.getAllByRole('button'),
+      ...screen.getAllByRole('textbox'),
+      ...screen.getAllByRole('combobox'),
+      ...screen.getAllByRole('checkbox'),
+    ] as HTMLButtonElement[]
+    expect(controls.filter((c) => !c.disabled).map((c) => c.getAttribute('aria-label') ?? c.textContent)).toEqual([])
+
+    await user.click(button(en.saveAll))
+    expect(writes()).toHaveLength(1)
+
+    resolve(json(200, conceptOf({ sections: [section(70, 'de', DE.terms, { definition: 'Vorgang', revision: 3 }), EN] })))
+    await waitFor(() => expect(button(en.saveAll).disabled).toBe(false))
+    expect(writes()).toHaveLength(1)
+  })
+})
+
+describe('ConceptEntry discard and links', () => {
+  it('disables "Discard" for a section without unsaved changes', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    expect(button(en.discard, deSection()).disabled).toBe(true)
+    await user.type(definition(deSection()), 'Vorgang')
+    expect(button(en.discard, deSection()).disabled).toBe(false)
+    expect(button(en.discard, enSection()).disabled).toBe(true)
+    await user.click(button(en.discard, deSection()))
+    expect(definition(deSection()).value).toBe('')
+  })
+
+  it('offers only the other domains with the concept\'s is_global value', () => {
+    renderEntry()
+    const select = screen.getByRole('combobox', { name: en.addConceptDomain })
+    const offered = within(select)
+      .getAllByRole('option')
+      .map((o) => o.textContent)
+      .slice(1)
+    expect(offered).toEqual(['Support', 'Legal'])
+  })
+
+  it('"Discard all" returns every section and the links to what was read', async () => {
+    const user = userEvent.setup()
+    const { onBack } = renderEntry()
+    await user.type(definition(deSection()), 'Vorgang')
+    await user.click(button(en.removeLanguage, enSection()))
+    await user.selectOptions(screen.getByRole('combobox', { name: en.addConceptDomain }), 'Support')
+    await user.click(button(en.discardAll))
+    expect(definition(deSection()).value).toBe('')
+    expect(termTexts(enSection()).map((i) => i.value)).toEqual(['sign-in'])
+    expect(screen.queryByRole('button', { name: en.removeDomainLink('Support') })).toBeNull()
+    expect(button(en.saveAll).disabled).toBe(true)
+    expect(onBack).not.toHaveBeenCalled()
+  })
+
+  it('lists the concept\'s other domains and removes one from the draft', async () => {
+    const user = userEvent.setup()
+    renderEntry({ concept: conceptOf({ domain_ids: [2, 3] }) })
+    await user.click(button(en.removeDomainLink('Support')))
+    screen.getByText(en.unsavedList(en.unsavedLinks))
+    answer(json(200, conceptOf({ domain_ids: [2], revision: 4 })))
+    await user.click(button(en.saveAll))
+    await waitFor(() => expect(writes()).toHaveLength(1))
+    expect(writes()[0].body).toMatchObject({ domain_ids: [2], revision: 3 })
+  })
+})
+
+describe('ConceptEntry languages', () => {
+  it('sends a new language without id and version number', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    await user.selectOptions(screen.getByRole('combobox', { name: en.addLanguage }), 'Français')
+    await user.type(termTexts(region('Français'))[0], 'connexion')
+    answer(json(200, conceptOf()))
+    await user.click(button(en.saveLanguage('Français')))
+    await waitFor(() => expect(writes()).toHaveLength(1))
+    expect(writes()[0].path).toBe('/api/concepts/7/languages/fr')
+    expect(writes()[0].body).not.toHaveProperty('id')
+    expect(writes()[0].body).not.toHaveProperty('revision')
+  })
+
+  it('offers only the languages the concept does not have', () => {
+    renderEntry()
+    const options = within(screen.getByRole('combobox', { name: en.addLanguage }))
+      .getAllByRole('option')
+      .slice(1)
+      .map((o) => o.textContent)
+    expect(options).toEqual(['Français', 'Español', 'Italiano', '日本語', '中文'])
+  })
+
+  it('sends a removed language with an empty term list', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    await user.click(button(en.removeLanguage, enSection()))
+    within(enSection()).getByText(en.languageRemovedNote)
+    answer(json(200, conceptOf({ sections: [DE] })))
+    await user.click(button(en.saveLanguage('English')))
+    await waitFor(() => expect(writes()).toHaveLength(1))
+    expect(writes()[0].path).toBe('/api/concepts/7/languages/en')
+    expect(writes()[0].body).toMatchObject({ id: 71, revision: 5, terms: [] })
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'English' })).toBeNull())
+  })
+
+  it('restores a removed language on "Discard"', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    await user.click(button(en.removeLanguage, enSection()))
+    await user.click(button(en.discard, enSection()))
+    expect(termTexts(enSection()).map((i) => i.value)).toEqual(['sign-in'])
+    expect(within(enSection()).queryByText(en.languageRemovedNote)).toBeNull()
+  })
+
+  it('drops a language that was never saved on "Remove language"', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    await user.selectOptions(screen.getByRole('combobox', { name: en.addLanguage }), 'Français')
+    await user.click(button(en.removeLanguage, region('Français')))
+    expect(screen.queryByRole('region', { name: 'Français' })).toBeNull()
+  })
+
+  it('shows the base-form hint in each section', () => {
+    renderEntry()
+    within(deSection()).getByText(en.baseFormHint)
+    within(enSection()).getByText(en.baseFormHint)
+  })
+})
+
+describe('ConceptEntry reason field', () => {
+  it('is sent as comment once and is empty after a successful save', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    await user.type(definition(deSection()), 'Vorgang')
+    await user.type(reason(), 'typo')
+    answer(json(200, conceptOf({ sections: [section(70, 'de', DE.terms, { definition: 'Vorgang', revision: 3 }), EN] })))
+    await user.click(button(en.saveLanguage('Deutsch')))
+    await waitFor(() => expect(reason().value).toBe(''))
+    expect(writes()[0].body).toMatchObject({ comment: 'typo' })
+
+    await user.type(definition(enSection()), 'Step')
+    answer(json(200, conceptOf()))
+    await user.click(button(en.saveAll))
+    await waitFor(() => expect(writes()).toHaveLength(2))
+    expect(writes()[1].body).not.toHaveProperty('comment')
+  })
+
+  it('is still filled after a failed save', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    await user.type(definition(deSection()), 'Vorgang')
+    await user.type(reason(), 'typo')
+    answer(json(500, { detail: 'boom' }))
+    await user.click(button(en.saveAll))
+    await screen.findByText(en.changeFailed('boom'))
+    expect(reason().value).toBe('typo')
+  })
+})
+
+describe('ConceptEntry failed saves', () => {
+  it('keeps every edit and shows the error only next to the button used', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    await replace(user, termTexts(deSection())[1], 'Log-in')
+    await user.type(definition(enSection()), 'Step')
+    answer(json(500, { detail: 'boom' }))
+    await user.click(button(en.saveLanguage('Deutsch')))
+
+    const errors = await screen.findAllByText(en.changeFailed('boom'))
+    expect(errors).toHaveLength(1)
+    expect(deSection().contains(errors[0])).toBe(true)
+    expect(termTexts(deSection())[1].value).toBe('Log-in')
+    expect(definition(enSection()).value).toBe('Step')
+    within(deSection()).getByText(`● ${en.unsavedChanges(1)}`)
+  })
+
+  it('shows a failed "Save all" at "Save all" and not in a section', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    await user.type(definition(deSection()), 'Vorgang')
+    answer(json(500, {}))
+    await user.click(button(en.saveAll))
+    const errors = await screen.findAllByText(en.changeFailed('PUT /api/concepts/7 failed: 500'))
+    expect(errors).toHaveLength(1)
+    expect(deSection().contains(errors[0])).toBe(false)
+    expect(enSection().contains(errors[0])).toBe(false)
+  })
+
+  it.each([
+    ['second_preferred', en.problemSecondPreferred],
+    ['duplicate_text', en.problemDuplicateText],
+  ])('translates a save refused with %s', async (code, text) => {
+    const user = userEvent.setup()
+    renderEntry()
+    await user.type(definition(deSection()), 'Vorgang')
+    answer(json(409, { detail: { code, message: 'store text' } }))
+    await user.click(button(en.saveLanguage('Deutsch')))
+    await within(deSection()).findByText(text)
+    expect(screen.queryByText('store text', { exact: false })).toBeNull()
+  })
+
+  it('names the changed part of a refused out-of-date save and offers to load it', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    await user.type(definition(deSection()), 'Vorgang')
+    answer(json(409, { detail: { code: 'conflict', message: 'out of date', part: 'de' } }))
+    await user.click(button(en.saveLanguage('Deutsch')))
+    await within(deSection()).findByText(en.conceptConflict('Deutsch'))
+    within(deSection()).getByRole('button', { name: en.loadCurrentVersion })
+    expect(definition(deSection()).value).toBe('Vorgang')
+  })
+})
+
+describe('ConceptEntry removal actions', () => {
+  it('disables "Remove from this domain" while the concept is in no other domain', () => {
+    renderEntry()
+    expect(button(en.removeFromDomain).disabled).toBe(true)
+  })
+
+  it('disables "Remove from this domain" while anything is unsaved', async () => {
+    const user = userEvent.setup()
+    renderEntry({ concept: conceptOf({ domain_ids: [2, 3] }) })
+    expect(button(en.removeFromDomain).disabled).toBe(false)
+    await user.type(definition(deSection()), 'Vorgang')
+    expect(button(en.removeFromDomain).disabled).toBe(true)
+  })
+
+  it('removes the concept from this domain and reports it gone', async () => {
+    const user = userEvent.setup()
+    const { onGone } = renderEntry({ concept: conceptOf({ domain_ids: [2, 3] }) })
+    answer(new Response(null, { status: 204 }))
+    await user.click(button(en.removeFromDomain))
+    await waitFor(() => expect(onGone).toHaveBeenCalledTimes(1))
+    expect(writes()).toEqual([{ method: 'DELETE', path: '/api/domains/2/concepts/7', body: undefined }])
+  })
+
+  it('asks before deleting the concept', async () => {
+    const user = userEvent.setup()
+    const { onGone } = renderEntry()
+    await user.click(button(en.deleteConcept))
+    const dialog = await screen.findByRole('dialog')
+    expect(writes()).toEqual([])
+
+    answer(new Response(null, { status: 204 }))
+    await user.click(within(dialog).getByRole('button', { name: en.deleteConcept }))
+    await waitFor(() => expect(onGone).toHaveBeenCalledTimes(1))
+    expect(writes()).toEqual([{ method: 'DELETE', path: '/api/concepts/7', body: undefined }])
+  })
+
+  it('does not delete when the question is cancelled', async () => {
+    const user = userEvent.setup()
+    const { onGone } = renderEntry()
+    await user.click(button(en.deleteConcept))
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: en.dialogCancel }))
+    expect(writes()).toEqual([])
+    expect(onGone).not.toHaveBeenCalled()
+  })
+
+  it('offers neither action for a new concept', () => {
+    renderEntry({ concept: null })
+    expect(screen.queryByRole('button', { name: en.removeFromDomain })).toBeNull()
+    expect(screen.queryByRole('button', { name: en.deleteConcept })).toBeNull()
+  })
+})
+
+describe('ConceptEntry read-only', () => {
+  it('has no enabled field and no save, discard, add, remove or delete control', async () => {
+    const user = userEvent.setup()
+    renderEntry({ readOnly: true, concept: conceptOf({ domain_ids: [2, 3] }) })
+    await user.click(within(deSection()).getAllByRole('button', { name: en.termDetails })[0])
+
+    const fields = [
+      ...screen.getAllByRole('textbox'),
+      ...screen.getAllByRole('combobox'),
+      ...screen.getAllByRole('checkbox'),
+    ] as HTMLInputElement[]
+    expect(fields.length).toBeGreaterThan(0)
+    expect(fields.filter((f) => !f.disabled)).toEqual([])
+    for (const name of [
+      en.saveLanguage('Deutsch'),
+      en.discard,
+      en.saveAll,
+      en.discardAll,
+      en.addTerm,
+      en.removeTerm,
+      en.removeLanguage,
+      en.removeFromDomain,
+      en.deleteConcept,
+      en.removeDomainLink('Support'),
+    ]) {
+      expect(screen.queryByRole('button', { name }), name).toBeNull()
+    }
+    expect(screen.queryByRole('combobox', { name: en.addLanguage })).toBeNull()
+    expect(screen.queryByRole('combobox', { name: en.addConceptDomain })).toBeNull()
+    screen.getByText('Support')
+  })
+})
+
+describe('ConceptEntry term details', () => {
+  it('open and close, and an edit there marks the section unsaved', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    const toggle = within(deSection()).getAllByRole('button', { name: en.termDetails })[1]
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(within(deSection()).queryByRole('textbox', { name: en.contextLabel })).toBeNull()
+
+    await user.click(toggle)
+    expect(toggle.getAttribute('aria-expanded')).toBe('true')
+    await user.type(within(deSection()).getByRole('textbox', { name: en.contextLabel }), 'Nach dem Login')
+    within(deSection()).getByText(`● ${en.unsavedChanges(1)}`)
+    await user.click(within(deSection()).getByRole('checkbox', { name: en.matchCaseLabel }))
+    within(deSection()).getByText(`● ${en.unsavedChanges(2)}`)
+
+    await user.click(toggle)
+    expect(within(deSection()).queryByRole('textbox', { name: en.contextLabel })).toBeNull()
+  })
+
+  it('adds and removes a term', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    await user.click(button(en.addTerm, enSection()))
+    expect(termTexts(enSection())).toHaveLength(2)
+    within(enSection()).getByText(`✓ ${en.sectionSaved}`)
+    await user.type(termTexts(enSection())[1], 'login')
+    within(enSection()).getByText(`● ${en.unsavedChanges(1)}`)
+    await user.click(within(enSection()).getAllByRole('button', { name: en.removeTerm })[0])
+    expect(termTexts(enSection()).map((i) => i.value)).toEqual(['login'])
+  })
+})
+
+describe('ConceptEntry heading', () => {
+  it('shows the way back with the domain and the label in the chosen language', async () => {
+    const user = userEvent.setup()
+    const { onBack } = renderEntry({ newLanguage: 'en' })
+    screen.getByRole('heading', { name: `← ${docs.name} / sign-in` })
+    await user.click(screen.getByRole('button', { name: `← ${docs.name}` }))
+    expect(onBack).toHaveBeenCalledTimes(1)
+  })
+})

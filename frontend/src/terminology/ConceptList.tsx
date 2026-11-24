@@ -12,7 +12,7 @@ interface ConceptListProps {
   domains: Domain[]
   readOnly: boolean
   canCreate: boolean
-  onOpen: (conceptId: number) => void
+  onOpen: (conceptId: number, language: Language) => void
   onCreate: (language: Language) => void
 }
 
@@ -90,7 +90,7 @@ export function ConceptList({
               .map((id) => domains.find((d) => d.id === id)?.name)
               .filter((name): name is string => name !== undefined)
             return (
-              <tr key={concept.id} className="concept-row" onClick={() => onOpen(concept.id)}>
+              <tr key={concept.id} className="concept-row" onClick={() => onOpen(concept.id, language)}>
                 <td className="concept-label">
                   {label.fallback && (
                     <span className="language-marker" title={languageName(label.language, languages)}>

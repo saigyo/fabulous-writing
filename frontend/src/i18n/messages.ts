@@ -1,6 +1,6 @@
 import type { SourceGroup } from '../findings/source'
 import type { Dimension } from '../scoring/score'
-import type { Category, Severity, Tier, UsageStatus } from '../types'
+import type { Category, PartOfSpeech, Severity, Tier, UsageStatus } from '../types'
 
 export const LOCALES = ['en', 'de', 'fr', 'es', 'it', 'ja', 'zh'] as const
 export type Locale = (typeof LOCALES)[number]
@@ -144,6 +144,50 @@ export interface Messages {
   deleteDomainConfirm: (name: string, n: number) => string
   renameDomainTitle: string
   changeFailed: (error: string) => string
+
+  // Concept entry
+  newConceptTitle: string
+  alsoInDomains: string
+  addConceptDomain: string
+  removeDomainLink: (domain: string) => string
+  removeFromDomain: string
+  deleteConcept: string
+  deleteConceptConfirm: string
+  definitionLabel: string
+  termLabel: string
+  usageStatusLabel: string
+  processStatusLabel: string
+  statusActive: string
+  reasonLabel: string
+  termDetails: string
+  contextLabel: string
+  sourceLabel: string
+  partOfSpeechLabel: string
+  partOfSpeechName: (pos: PartOfSpeech) => string
+  partOfSpeechNone: string
+  matchCaseLabel: string
+  addTerm: string
+  removeTerm: string
+  removeLanguage: string
+  languageRemovedNote: string
+  baseFormHint: string
+  addLanguage: string
+  saveLanguage: (language: string) => string
+  discard: string
+  unsavedChanges: (n: number) => string
+  sectionSaved: string
+  problemEmptyText: string
+  problemDuplicateText: string
+  problemSecondPreferred: string
+  problemNoTerms: string
+  changeReason: string
+  unsavedList: (parts: string) => string
+  unsavedLinks: string
+  discardAll: string
+  saveAll: string
+  conceptConflict: (language: string) => string
+  conceptConflictLinks: string
+  loadCurrentVersion: string
 
   // Profiles view
   profilesTitle: string

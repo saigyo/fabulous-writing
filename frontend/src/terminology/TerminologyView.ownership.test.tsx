@@ -15,6 +15,8 @@ vi.mock('../api/client', async (importOriginal) => ({
   createDomain: vi.fn(),
   deleteDomain: vi.fn(),
   updateDomain: vi.fn(),
+  saveConceptLanguage: vi.fn(),
+  removeConceptFromDomain: vi.fn(),
   // This file renders TerminologyView directly, not LoginGate, so nothing
   // here would actually call getHealth — mocked anyway (Task 7) so a real
   // fetch is never one accidental render away.
@@ -33,7 +35,14 @@ vi.mock('../documents/documents', () => ({
   clearLegacyText: vi.fn(),
 }))
 
-import { deleteDomain, getConcepts, getDomains, postLogin } from '../api/client'
+import {
+  deleteDomain,
+  getConcepts,
+  getDomains,
+  postLogin,
+  removeConceptFromDomain,
+  saveConceptLanguage,
+} from '../api/client'
 import { login, logout } from '../auth/session'
 import { TerminologyView } from './TerminologyView'
 
@@ -181,13 +190,13 @@ describe('TerminologyView ownership affordances (non-admin)', () => {
   })
 })
 
-describe('TerminologyView concept list opens a placeholder', () => {
+describe('TerminologyView concept list opens the concept entry', () => {
   it('opens a concept from its row and comes back to the list', async () => {
     vi.mocked(getConcepts).mockResolvedValue([concept])
     render(<TerminologyView />)
     await userEvent.click(await screen.findByRole('button', { name: 'widget' }))
     expect(screen.queryByRole('button', { name: 'widget' })).toBeNull()
-    await userEvent.click(screen.getByRole('button', { name: `← ${en.concepts}` }))
+    await userEvent.click(screen.getByRole('button', { name: `← ${globalDomain.name}` }))
     screen.getByRole('button', { name: 'widget' })
   })
 
@@ -197,7 +206,7 @@ describe('TerminologyView concept list opens a placeholder', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'widget' }))
     const privateRow = screen.getByText('Private Domain').closest('.domain-row') as HTMLElement
     await userEvent.click(within(privateRow).getByText('Private Domain'))
-    expect(screen.queryByRole('button', { name: `← ${en.concepts}` })).toBeNull()
+    expect(screen.queryByRole('button', { name: `← ${globalDomain.name}` })).toBeNull()
   })
 })
 
@@ -306,6 +315,73 @@ describe('TerminologyView concepts fetch: latest-request-wins on domain switch',
 
     expect(screen.queryByRole('button', { name: 'old' })).toBeNull()
     screen.getByRole('button', { name: 'fresh' })
+  })
+})
+
+describe('TerminologyView answers from an entry the writer has left', () => {
+  const privateA: Domain = { id: 2, name: 'Private A', description: '', is_global: false }
+  const privateB: Domain = { id: 3, name: 'Private B', description: '', is_global: false }
+
+  beforeEach(() => {
+    useStore.setState({ domains: [privateA, privateB] })
+    vi.mocked(getDomains).mockResolvedValue([privateA, privateB])
+  })
+
+  it('does not put a concept saved for the previous domain into the list shown', async () => {
+    vi.mocked(getConcepts).mockImplementation(async (domainId: number) =>
+      domainId === privateA.id ? [conceptOf(201, 'alpha', [2])] : [conceptOf(202, 'beta', [3])],
+    )
+    let resolveSave!: (concept: Concept) => void
+    vi.mocked(saveConceptLanguage).mockReturnValue(
+      new Promise<Concept>((resolve) => {
+        resolveSave = resolve
+      }),
+    )
+    render(<TerminologyView />)
+    await userEvent.click(await screen.findByRole('button', { name: 'alpha' }))
+    await userEvent.type(screen.getByRole('textbox', { name: en.definitionLabel }), 'A letter')
+    await userEvent.click(screen.getByRole('button', { name: en.saveLanguage('English') }))
+    expect(saveConceptLanguage).toHaveBeenCalledTimes(1)
+
+    const rowB = screen.getAllByText('Private B').find((el) => el.closest('.domain-row')) as HTMLElement
+    await userEvent.click(rowB)
+    await screen.findByRole('button', { name: 'beta' })
+
+    resolveSave(conceptOf(201, 'alpha saved', [2]))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(screen.queryByRole('button', { name: 'alpha saved' })).toBeNull()
+    screen.getByRole('button', { name: 'beta' })
+  })
+
+  it('does not reload the previous domain when a removal answers after the switch', async () => {
+    let callsA = 0
+    vi.mocked(getConcepts).mockImplementation(async (domainId: number) => {
+      if (domainId !== privateA.id) return [conceptOf(202, 'beta', [3])]
+      callsA += 1
+      return callsA === 1 ? [conceptOf(201, 'alpha', [2, 9])] : [conceptOf(205, 'alpha reloaded', [2])]
+    })
+    let resolveRemove!: () => void
+    vi.mocked(removeConceptFromDomain).mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveRemove = resolve
+      }),
+    )
+    render(<TerminologyView />)
+    await userEvent.click(await screen.findByRole('button', { name: 'alpha' }))
+    await userEvent.click(screen.getByRole('button', { name: en.removeFromDomain }))
+    expect(removeConceptFromDomain).toHaveBeenCalledWith(2, 201)
+
+    const rowB = screen.getAllByText('Private B').find((el) => el.closest('.domain-row')) as HTMLElement
+    await userEvent.click(rowB)
+    await screen.findByRole('button', { name: 'beta' })
+
+    resolveRemove()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(callsA).toBe(1)
+    expect(screen.queryByRole('button', { name: 'alpha reloaded' })).toBeNull()
+    screen.getByRole('button', { name: 'beta' })
   })
 })
 
