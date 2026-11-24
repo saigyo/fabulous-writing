@@ -147,24 +147,27 @@ export const it: Messages = {
   newDomainPlaceholder: 'Nuovo dominio…',
   add: 'Aggiungi',
   deleteDomainTitle: 'Elimina dominio',
-  terms: 'Termini',
-  searchTermsPlaceholder: 'Cerca termini…',
-  allLanguages: 'Tutte le lingue',
-  langHeader: 'Lingua',
-  preferredHeader: 'Preferito',
-  doNotUseHeader: 'Da evitare',
-  definitionHeader: 'Definizione',
-  sortHeaderTitle: 'Fai clic per ordinare: crescente → decrescente → disattivato',
-  languageFilterTitle: 'Mostra solo i termini di una lingua',
-  noTermsMatch: 'Nessun termine corrisponde al filtro attuale.',
-  preferredPlaceholder: 'termine preferito',
-  forbiddenPlaceholder: 'vietati, separati da virgole',
-  definitionPlaceholder: 'definizione (facoltativa)',
-  deleteTermTitle: 'Elimina termine',
-  caseSensitiveTitle: 'Distingui maiuscole e minuscole',
-  editTermTitle: 'Modifica termine',
-  saveEditTitle: 'Salva le modifiche',
-  cancelEditTitle: 'Annulla le modifiche',
+  concepts: 'Concetti',
+  searchConceptsPlaceholder: 'Cerca concetti…',
+  conceptLanguageTitle: 'Lingua delle etichette',
+  newConcept: '+ Concetto',
+  labelHeader: 'Concetto',
+  wordingsHeader: 'Altre formulazioni',
+  languagesHeader: 'Lingue',
+  alsoInHeader: 'Anche in',
+  noConceptsMatch: 'Nessun concetto corrisponde al filtro attuale.',
+  noTermIn: (language) => `nessun termine in ${language}`,
+  statusName: (status) =>
+    ({ preferred: 'preferito', admitted: 'ammesso', deprecated: 'sconsigliato', forbidden: 'vietato' })[status],
+  statusCandidate: 'candidato',
+  statusLegend: 'Stato',
+  deleteDomainConfirm: (name, n) =>
+    `Eliminare il dominio «${name}»? ` +
+    (n === 0
+      ? 'Nessun concetto viene eliminato con esso.'
+      : n === 1
+        ? 'Viene eliminato 1 concetto che non è in nessun altro dominio.'
+        : `Vengono eliminati ${n} concetti che non sono in nessun altro dominio.`),
   renameDomainTitle: 'Rinomina dominio',
   changeFailed: (error) => `Modifica non riuscita: ${error}`,
 

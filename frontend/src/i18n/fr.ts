@@ -151,24 +151,27 @@ export const fr: Messages = {
   newDomainPlaceholder: 'Nouveau domaine…',
   add: 'Ajouter',
   deleteDomainTitle: 'Supprimer le domaine',
-  terms: 'Termes',
-  searchTermsPlaceholder: 'Rechercher des termes…',
-  allLanguages: 'Toutes les langues',
-  langHeader: 'Langue',
-  preferredHeader: 'Préféré',
-  doNotUseHeader: 'À éviter',
-  definitionHeader: 'Définition',
-  sortHeaderTitle: 'Clique pour trier : croissant → décroissant → désactivé',
-  languageFilterTitle: "Afficher les termes d'une seule langue",
-  noTermsMatch: 'Aucun terme ne correspond au filtre actuel.',
-  preferredPlaceholder: 'terme préféré',
-  forbiddenPlaceholder: 'interdits, séparés par des virgules',
-  definitionPlaceholder: 'définition (facultative)',
-  deleteTermTitle: 'Supprimer le terme',
-  caseSensitiveTitle: 'Respecter la casse',
-  editTermTitle: 'Modifier le terme',
-  saveEditTitle: 'Enregistrer les modifications',
-  cancelEditTitle: 'Annuler les modifications',
+  concepts: 'Concepts',
+  searchConceptsPlaceholder: 'Rechercher des concepts…',
+  conceptLanguageTitle: 'Langue des libellés',
+  newConcept: '+ Concept',
+  labelHeader: 'Concept',
+  wordingsHeader: 'Autres formulations',
+  languagesHeader: 'Langues',
+  alsoInHeader: 'Aussi dans',
+  noConceptsMatch: 'Aucun concept ne correspond au filtre actuel.',
+  noTermIn: (language) => `pas de terme en ${language}`,
+  statusName: (status) =>
+    ({ preferred: 'préféré', admitted: 'admis', deprecated: 'déconseillé', forbidden: 'interdit' })[status],
+  statusCandidate: 'candidat',
+  statusLegend: 'Statut',
+  deleteDomainConfirm: (name, n) =>
+    `Supprimer le domaine « ${name} » ? ` +
+    (n === 0
+      ? 'Aucun concept n’est supprimé avec lui.'
+      : n === 1
+        ? '1 concept qui n’est dans aucun autre domaine est supprimé avec lui.'
+        : `${n} concepts qui ne sont dans aucun autre domaine sont supprimés avec lui.`),
   renameDomainTitle: 'Renommer le domaine',
   changeFailed: (error) => `Échec de la modification : ${error}`,
 

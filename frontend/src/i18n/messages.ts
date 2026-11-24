@@ -1,6 +1,6 @@
 import type { SourceGroup } from '../findings/source'
 import type { Dimension } from '../scoring/score'
-import type { Category, Severity, Tier } from '../types'
+import type { Category, Severity, Tier, UsageStatus } from '../types'
 
 export const LOCALES = ['en', 'de', 'fr', 'es', 'it', 'ja', 'zh'] as const
 export type Locale = (typeof LOCALES)[number]
@@ -128,24 +128,20 @@ export interface Messages {
   newDomainPlaceholder: string
   add: string
   deleteDomainTitle: string
-  terms: string
-  searchTermsPlaceholder: string
-  allLanguages: string
-  langHeader: string
-  preferredHeader: string
-  doNotUseHeader: string
-  definitionHeader: string
-  sortHeaderTitle: string
-  languageFilterTitle: string
-  noTermsMatch: string
-  preferredPlaceholder: string
-  forbiddenPlaceholder: string
-  definitionPlaceholder: string
-  deleteTermTitle: string
-  caseSensitiveTitle: string
-  editTermTitle: string
-  saveEditTitle: string
-  cancelEditTitle: string
+  concepts: string
+  searchConceptsPlaceholder: string
+  conceptLanguageTitle: string
+  newConcept: string
+  labelHeader: string
+  wordingsHeader: string
+  languagesHeader: string
+  alsoInHeader: string
+  noConceptsMatch: string
+  noTermIn: (language: string) => string
+  statusName: (status: UsageStatus) => string
+  statusCandidate: string
+  statusLegend: string
+  deleteDomainConfirm: (name: string, n: number) => string
   renameDomainTitle: string
   changeFailed: (error: string) => string
 

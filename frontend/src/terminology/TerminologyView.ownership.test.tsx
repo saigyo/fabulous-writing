@@ -6,18 +6,15 @@ import type { MeResponse } from '../api/client'
 import { en } from '../i18n/en'
 import { FALLBACK_LANGUAGES } from '../languages'
 import { useStore } from '../state/store'
-import type { Domain, Term } from '../types'
+import type { Concept, Domain } from '../types'
 
 vi.mock('../api/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api/client')>()),
   getDomains: vi.fn(),
-  getTerms: vi.fn().mockResolvedValue([]),
+  getConcepts: vi.fn().mockResolvedValue([]),
   createDomain: vi.fn(),
   deleteDomain: vi.fn(),
   updateDomain: vi.fn(),
-  createTerm: vi.fn(),
-  updateTerm: vi.fn(),
-  deleteTerm: vi.fn(),
   // This file renders TerminologyView directly, not LoginGate, so nothing
   // here would actually call getHealth — mocked anyway (Task 7) so a real
   // fetch is never one accidental render away.
@@ -36,7 +33,7 @@ vi.mock('../documents/documents', () => ({
   clearLegacyText: vi.fn(),
 }))
 
-import { deleteTerm, getDomains, getTerms, postLogin, updateTerm } from '../api/client'
+import { deleteDomain, getConcepts, getDomains, postLogin } from '../api/client'
 import { login, logout } from '../auth/session'
 import { TerminologyView } from './TerminologyView'
 
@@ -63,15 +60,52 @@ function user(overrides: Partial<MeResponse> = {}): MeResponse {
 const globalDomain: Domain = { id: 1, name: 'Global Domain', description: '', is_global: true }
 const privateDomain: Domain = { id: 2, name: 'Private Domain', description: '', is_global: false }
 
-const term: Term = {
-  id: 100,
-  domain_id: 1,
-  language: 'en',
-  preferred: 'widget',
-  forbidden_variants: ['thingamajig'],
-  definition: '',
-  case_sensitive: false,
+function conceptOf(id: number, text: string, domainIds: number[]): Concept {
+  return {
+    id,
+    uid: `c${id}`,
+    domain_ids: domainIds,
+    is_global: false,
+    revision: 1,
+    created_at: null,
+    created_by: null,
+    modified_at: null,
+    modified_by: null,
+    sections: [
+      {
+        id: id * 10,
+        language: 'en',
+        definition: '',
+        revision: 1,
+        created_at: null,
+        created_by: null,
+        modified_at: null,
+        modified_by: null,
+        terms: [
+          {
+            id: id * 100,
+            uid: `t${id}`,
+            text,
+            usage_status: 'preferred',
+            process_status: 'active',
+            status_reason: '',
+            context: '',
+            source: '',
+            part_of_speech: null,
+            case_sensitive: false,
+            revision: 1,
+            created_at: null,
+            created_by: null,
+            modified_at: null,
+            modified_by: null,
+          },
+        ],
+      },
+    ],
+  }
 }
+
+const concept = conceptOf(100, 'widget', [1])
 
 afterEach(() => {
   cleanup()
@@ -80,7 +114,7 @@ afterEach(() => {
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(getDomains).mockResolvedValue([globalDomain, privateDomain])
-  vi.mocked(getTerms).mockResolvedValue([])
+  vi.mocked(getConcepts).mockResolvedValue([])
   useStore.setState({
     uiLocale: 'en',
     languages: FALLBACK_LANGUAGES,
@@ -110,19 +144,22 @@ describe('TerminologyView ownership affordances (non-admin)', () => {
     within(privateRow).getByTitle(en.deleteDomainTitle)
   })
 
-  it('renders no add-term row and no per-term edit/delete buttons when a global domain is active', async () => {
-    vi.mocked(getTerms).mockResolvedValue([term])
+  it('renders no new-concept button when a global domain is active', async () => {
+    vi.mocked(getConcepts).mockResolvedValue([concept])
+    useStore.setState({
+      user: user({
+        policy: { llm: { tiers: null, providers: null, models: null }, features: ['custom_domains'] },
+      }),
+    })
     render(<TerminologyView />)
     // The first domain (global) auto-selects as active.
-    await screen.findByText('widget')
-    expect(screen.queryByPlaceholderText(en.preferredPlaceholder)).toBeNull()
-    expect(screen.queryByTitle(en.editTermTitle)).toBeNull()
-    expect(screen.queryByTitle(en.deleteTermTitle)).toBeNull()
+    await screen.findByRole('button', { name: 'widget' })
+    expect(screen.queryByRole('button', { name: en.newConcept })).toBeNull()
   })
 
-  it('restores every control once is_admin flips to true, on the same fixtures', async () => {
+  it('restores the new-concept button once is_admin flips to true, on the same fixtures', async () => {
     // An admin's /me policy already carries every feature (M4 §8) — the
-    // add-term row is gated on custom_domains, not on is_admin itself.
+    // button is gated on custom_domains, not on is_admin itself.
     useStore.setState({
       user: user({
         is_admin: true,
@@ -132,172 +169,143 @@ describe('TerminologyView ownership affordances (non-admin)', () => {
         },
       }),
     })
-    vi.mocked(getTerms).mockResolvedValue([term])
+    vi.mocked(getConcepts).mockResolvedValue([concept])
     render(<TerminologyView />)
 
     const globalRow = (await screen.findByText('Global Domain')).closest('.domain-row') as HTMLElement
     within(globalRow).getByTitle(en.renameDomainTitle)
     within(globalRow).getByTitle(en.deleteDomainTitle)
 
-    await screen.findByText('widget')
-    screen.getByPlaceholderText(en.preferredPlaceholder)
-    screen.getByTitle(en.editTermTitle)
-    screen.getByTitle(en.deleteTermTitle)
-  })
-
-  it('exits edit mode when the selected domain changes mid-edit, so the stale Save button cannot fire', async () => {
-    // domains[0] is the global domain, so start on the private one to get
-    // an editable row in the first place.
-    vi.mocked(getTerms).mockResolvedValue([term])
-    render(<TerminologyView />)
-
-    const privateRow = (await screen.findByText('Private Domain')).closest('.domain-row') as HTMLElement
-    await userEvent.click(within(privateRow).getByText('Private Domain'))
-    await screen.findByText('widget')
-
-    await userEvent.click(screen.getByTitle(en.editTermTitle))
-    screen.getByDisplayValue('widget') // now editing: the row's input carries the term's value
-    screen.getByTitle(en.saveEditTitle)
-
-    // Switch to the global domain while still "editing" — terms haven't
-    // been refetched yet, so without a reset the same edit row (and its
-    // live Save button, wired to the private term's id) would still render.
-    const globalRow = (await screen.findByText('Global Domain')).closest('.domain-row') as HTMLElement
-    await userEvent.click(within(globalRow).getByText('Global Domain'))
-
-    expect(screen.queryByTitle(en.saveEditTitle)).toBeNull()
-    expect(screen.queryByDisplayValue('widget')).toBeNull()
-    expect(updateTerm).not.toHaveBeenCalled()
+    await screen.findByRole('button', { name: 'widget' })
+    screen.getByRole('button', { name: en.newConcept })
   })
 })
 
-describe('TerminologyView terms fetch: latest-request-wins on domain switch', () => {
+describe('TerminologyView concept list opens a placeholder', () => {
+  it('opens a concept from its row and comes back to the list', async () => {
+    vi.mocked(getConcepts).mockResolvedValue([concept])
+    render(<TerminologyView />)
+    await userEvent.click(await screen.findByRole('button', { name: 'widget' }))
+    expect(screen.queryByRole('button', { name: 'widget' })).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: `← ${en.concepts}` }))
+    screen.getByRole('button', { name: 'widget' })
+  })
+
+  it('leaves an open concept when the domain changes', async () => {
+    vi.mocked(getConcepts).mockResolvedValue([concept])
+    render(<TerminologyView />)
+    await userEvent.click(await screen.findByRole('button', { name: 'widget' }))
+    const privateRow = screen.getByText('Private Domain').closest('.domain-row') as HTMLElement
+    await userEvent.click(within(privateRow).getByText('Private Domain'))
+    expect(screen.queryByRole('button', { name: `← ${en.concepts}` })).toBeNull()
+  })
+})
+
+describe('TerminologyView deleting a domain asks first', () => {
+  it('names the concepts that are in no other domain and deletes only after confirming', async () => {
+    useStore.setState({ domains: [privateDomain], user: user() })
+    vi.mocked(getDomains).mockResolvedValue([privateDomain])
+    vi.mocked(getConcepts).mockResolvedValue([
+      conceptOf(1, 'alone', [2]),
+      conceptOf(2, 'also alone', [2]),
+      conceptOf(3, 'shared', [2, 3]),
+    ])
+    vi.mocked(deleteDomain).mockResolvedValue(undefined)
+    render(<TerminologyView />)
+    await screen.findByRole('button', { name: 'alone' })
+
+    await userEvent.click(screen.getByTitle(en.deleteDomainTitle))
+    const dialog = await screen.findByRole('dialog')
+    within(dialog).getByText(en.deleteDomainConfirm('Private Domain', 2))
+    expect(deleteDomain).not.toHaveBeenCalled()
+
+    await userEvent.click(within(dialog).getByRole('button', { name: en.deleteDomainTitle }))
+    await waitFor(() => expect(deleteDomain).toHaveBeenCalledWith(2))
+  })
+
+  it('does not delete when the question is cancelled', async () => {
+    useStore.setState({ domains: [privateDomain], user: user() })
+    vi.mocked(getDomains).mockResolvedValue([privateDomain])
+    render(<TerminologyView />)
+    await userEvent.click(await screen.findByTitle(en.deleteDomainTitle))
+    const dialog = await screen.findByRole('dialog')
+    within(dialog).getByText(en.deleteDomainConfirm('Private Domain', 0))
+    await userEvent.click(within(dialog).getByRole('button', { name: en.dialogCancel }))
+    expect(deleteDomain).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
+
+describe('TerminologyView concepts fetch: latest-request-wins on domain switch', () => {
+  const privateA: Domain = { id: 2, name: 'Private A', description: '', is_global: false }
+  const privateB: Domain = { id: 3, name: 'Private B', description: '', is_global: false }
+
   it('clears rows immediately on switch and discards an out-of-order stale fetch from the previous domain', async () => {
-    const privateA: Domain = { id: 2, name: 'Private A', description: '', is_global: false }
-    const privateB: Domain = { id: 3, name: 'Private B', description: '', is_global: false }
     useStore.setState({ domains: [privateA, privateB] })
     vi.mocked(getDomains).mockResolvedValue([privateA, privateB])
 
-    const termA: Term = { ...term, id: 201, domain_id: privateA.id, preferred: 'alpha' }
-    const termB: Term = { ...term, id: 202, domain_id: privateB.id, preferred: 'beta' }
-
-    let resolveA!: (terms: Term[]) => void
-    let resolveB!: (terms: Term[]) => void
-    const fetchA = new Promise<Term[]>((resolve) => {
+    let resolveA!: (concepts: Concept[]) => void
+    let resolveB!: (concepts: Concept[]) => void
+    const fetchA = new Promise<Concept[]>((resolve) => {
       resolveA = resolve
     })
-    const fetchB = new Promise<Term[]>((resolve) => {
+    const fetchB = new Promise<Concept[]>((resolve) => {
       resolveB = resolve
     })
-    vi.mocked(getTerms).mockImplementation((domainId: number) => {
+    vi.mocked(getConcepts).mockImplementation((domainId: number) => {
       if (domainId === privateA.id) return fetchA
       if (domainId === privateB.id) return fetchB
       return Promise.resolve([])
     })
 
     render(<TerminologyView />)
-    // domains[0] (Private A) auto-selects as the active domain on mount;
-    // its fetch is still in flight (deferred).
-    await waitFor(() => expect(getTerms).toHaveBeenCalledWith(privateA.id))
+    await waitFor(() => expect(getConcepts).toHaveBeenCalledWith(privateA.id))
 
-    // Switch to Private B before A's fetch resolves.
     const rowB = (await screen.findByText('Private B')).closest('.domain-row') as HTMLElement
     await userEvent.click(within(rowB).getByText('Private B'))
+    expect(screen.queryByRole('button', { name: 'alpha' })).toBeNull()
 
-    // Immediately after the switch — before either fetch has resolved — there
-    // must be no interactive rows left over from the previous domain.
-    expect(screen.queryByTitle(en.editTermTitle)).toBeNull()
-    expect(screen.queryByText('alpha')).toBeNull()
+    resolveB([conceptOf(202, 'beta', [3])])
+    await screen.findByRole('button', { name: 'beta' })
 
-    // B's fetch (the current selection) resolves first.
-    resolveB([termB])
-    await screen.findByText('beta')
-
-    // A's fetch (now stale — selection has moved on) resolves after B's.
-    // Out-of-order completion must not let it overwrite the current view.
-    resolveA([termA])
+    resolveA([conceptOf(201, 'alpha', [2])])
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(screen.queryByText('alpha')).toBeNull()
-    expect(screen.getByText('beta')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'alpha' })).toBeNull()
+    screen.getByRole('button', { name: 'beta' })
   })
 
-  it('discards a stale onChanged refetch from a mutation started on the previous domain', async () => {
-    // Reproduces the round-7 finding: a mutation's onChanged closure captures
-    // the domain id at the time it was wired (render time), not at the time
-    // it fires. If that mutation's own request (deleteTerm here) resolves
-    // *after* the user has switched domains, its onChanged() call still
-    // refetches the OLD domain — and that refetch takes a newer counter
-    // value than the new domain's own in-flight/completed fetch, so it must
-    // be rejected by domain identity, not just request ordering.
-    const privateA: Domain = { id: 2, name: 'Private A', description: '', is_global: false }
-    const privateB: Domain = { id: 3, name: 'Private B', description: '', is_global: false }
+  it('discards an older fetch of the same domain that resolves after a newer one', async () => {
     useStore.setState({ domains: [privateA, privateB] })
     vi.mocked(getDomains).mockResolvedValue([privateA, privateB])
 
-    const termA: Term = { ...term, id: 201, domain_id: privateA.id, preferred: 'alpha' }
-    const staleTermA: Term = { ...term, id: 301, domain_id: privateA.id, preferred: 'stale-alpha' }
-    const termB: Term = { ...term, id: 202, domain_id: privateB.id, preferred: 'beta' }
-
-    let resolveB!: (terms: Term[]) => void
-    const fetchB = new Promise<Term[]>((resolve) => {
-      resolveB = resolve
-    })
-    let resolveStaleA!: (terms: Term[]) => void
-    const fetchStaleA = new Promise<Term[]>((resolve) => {
-      resolveStaleA = resolve
-    })
-    let getTermsACalls = 0
-    vi.mocked(getTerms).mockImplementation((domainId: number) => {
-      if (domainId === privateA.id) {
-        getTermsACalls += 1
-        // First call: TerminologyView's mount-time fetch for the initial
-        // domain. Resolves immediately so the row is on screen to delete.
-        return getTermsACalls === 1 ? Promise.resolve([termA]) : fetchStaleA
+    let resolveOldA!: (concepts: Concept[]) => void
+    let callsA = 0
+    vi.mocked(getConcepts).mockImplementation((domainId: number) => {
+      if (domainId !== privateA.id) return Promise.resolve([])
+      callsA += 1
+      if (callsA === 1) {
+        return new Promise<Concept[]>((resolve) => {
+          resolveOldA = resolve
+        })
       }
-      if (domainId === privateB.id) return fetchB
-      return Promise.resolve([])
+      return Promise.resolve([conceptOf(203, 'fresh', [2])])
     })
-
-    let resolveDelete!: () => void
-    vi.mocked(deleteTerm).mockReturnValue(
-      new Promise((resolve) => {
-        resolveDelete = () => resolve(undefined)
-      }),
-    )
 
     render(<TerminologyView />)
-    // domains[0] (Private A) auto-selects; its initial fetch resolves eagerly.
-    await screen.findByText('alpha')
+    await waitFor(() => expect(callsA).toBe(1))
 
-    // Start a delete on the current domain (A). deleteTerm() is deferred, so
-    // the mutation's onChanged() call (closing over domain A) has not fired
-    // yet by the time the user switches domains below.
-    await userEvent.click(screen.getByTitle(en.deleteTermTitle))
-
-    // Switch to Private B before the delete resolves.
     const rowB = (await screen.findByText('Private B')).closest('.domain-row') as HTMLElement
     await userEvent.click(within(rowB).getByText('Private B'))
+    const rowA = screen.getByText('Private A').closest('.domain-row') as HTMLElement
+    await userEvent.click(within(rowA).getByText('Private A'))
+    await screen.findByRole('button', { name: 'fresh' })
 
-    // B's own switch-triggered fetch resolves and is displayed.
-    resolveB([termB])
-    await screen.findByText('beta')
-
-    // Now the stale delete-on-A resolves: its onChanged() closure still
-    // targets domain A, firing a refetch for A *after* B is the active
-    // domain and after B's fetch already landed.
-    resolveDelete()
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    resolveStaleA([staleTermA])
+    resolveOldA([conceptOf(204, 'old', [2])])
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    // The stale A refetch must never overwrite B's rows.
-    expect(screen.queryByText('stale-alpha')).toBeNull()
-    expect(screen.getByText('beta')).toBeTruthy()
-    // The onChanged closure must be rejected at the START too (not merely
-    // have its result discarded on completion): once the domain has moved
-    // on, it must never even issue the redundant getTerms(A) call.
-    expect(getTermsACalls).toBe(1)
+    expect(screen.queryByRole('button', { name: 'old' })).toBeNull()
+    screen.getByRole('button', { name: 'fresh' })
   })
 })
 

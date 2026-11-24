@@ -1,31 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  createDomain,
-  createTerm,
-  deleteDomain,
-  deleteTerm,
-  getDomains,
-  getTerms,
-  updateDomain,
-  updateTerm,
-} from '../api/client'
+import { createDomain, deleteDomain, getConcepts, getDomains, updateDomain } from '../api/client'
 import { hasFeature } from '../auth/policy'
 import { sessionGeneration } from '../auth/session'
 import { useCrudError } from '../hooks/useCrudError'
-import { useMessages } from '../i18n'
-import { languageName } from '../languages'
+import { ConfirmDialog } from '../ui/ConfirmDialog'
+import { useLocale, useMessages } from '../i18n'
 import { useStore } from '../state/store'
-import type { Domain, Language, Term } from '../types'
-import {
-  draftToTermPayload,
-  filterTerms,
-  sortTerms,
-  termToDraft,
-  toggleSort,
-  type SortCriterion,
-  type SortKey,
-  type TermDraft,
-} from './termTable'
+import type { Concept, Language } from '../types'
+import { ConceptList } from './ConceptList'
+
+interface OpenConcept {
+  conceptId: number | null
+  language: Language
+}
 
 export function TerminologyView() {
   const domains = useStore((s) => s.domains)
@@ -42,7 +29,10 @@ export function TerminologyView() {
   // U2, same mechanism as Header's domains fetch in App.tsx).
   const authGeneration = useStore((s) => s.authGeneration)
   const [activeDomainId, setActiveDomainId] = useState<number | null>(null)
-  const [terms, setTerms] = useState<Term[]>([])
+  const [concepts, setConcepts] = useState<Concept[]>([])
+  const [open, setOpen] = useState<OpenConcept | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<{ id: number; name: string; count: number } | null>(null)
+  const locale = useLocale()
   const [newDomain, setNewDomain] = useState('')
   const m = useMessages()
   const { error, run } = useCrudError(m.changeFailed)
@@ -75,13 +65,13 @@ export function TerminologyView() {
   //   later would otherwise "win" the counter race against the domain the
   //   user is actually looking at).
   const activeDomainRef = useRef<number | null>(null)
-  const termsRequestRef = useRef(0)
-  const loadTerms = useCallback((domainId: number) => {
+  const conceptsRequestRef = useRef(0)
+  const loadConcepts = useCallback((domainId: number) => {
     if (activeDomainRef.current !== domainId) return Promise.resolve()
-    const requestId = ++termsRequestRef.current
-    return getTerms(domainId).then((fetched) => {
-      if (termsRequestRef.current === requestId && activeDomainRef.current === domainId) {
-        setTerms(fetched)
+    const requestId = ++conceptsRequestRef.current
+    return getConcepts(domainId).then((fetched) => {
+      if (conceptsRequestRef.current === requestId && activeDomainRef.current === domainId) {
+        setConcepts(fetched)
       }
     })
   }, [])
@@ -90,11 +80,12 @@ export function TerminologyView() {
     // Clear immediately on domain change so the previous domain's rows never
     // stay interactive (or visible) while the new domain's fetch is in flight.
     activeDomainRef.current = activeDomainId
-    setTerms([])
+    setConcepts([])
+    setOpen(null)
     if (activeDomainId !== null) {
-      void loadTerms(activeDomainId)
+      void loadConcepts(activeDomainId)
     }
-  }, [activeDomainId, loadTerms])
+  }, [activeDomainId, loadConcepts])
 
   async function addDomain() {
     if (!newDomain.trim()) return
@@ -104,6 +95,13 @@ export function TerminologyView() {
       await refreshDomains()
       setActiveDomainId(domain.id)
     })
+  }
+
+  async function askRemoveDomain(domain: { id: number; name: string }) {
+    await run(async () => {
+      const inDomain = await getConcepts(domain.id)
+      const count = inDomain.filter((c) => c.domain_ids.length === 1).length
+      setPendingDelete({ id: domain.id, name: domain.name, count })    })
   }
 
   async function removeDomain(id: number) {
@@ -184,7 +182,7 @@ export function TerminologyView() {
                     title={m.deleteDomainTitle}
                     onClick={(event) => {
                       event.stopPropagation()
-                      void removeDomain(domain.id)
+                      void askRemoveDomain(domain)
                     }}
                   >
                     ✕
@@ -206,316 +204,37 @@ export function TerminologyView() {
           </div>
         )}
       </aside>
-      {activeDomain !== null && (
-        <TermTable
+      {pendingDelete !== null && (
+        <ConfirmDialog
+          title={m.deleteDomainTitle}
+          message={m.deleteDomainConfirm(pendingDelete.name, pendingDelete.count)}
+          confirmLabel={m.deleteDomainTitle}
+          onCancel={() => setPendingDelete(null)}
+          onConfirm={() => {
+            const { id } = pendingDelete
+            setPendingDelete(null)
+            void removeDomain(id)
+          }}
+        />
+      )}
+      {activeDomain !== null && open === null && (
+        <ConceptList
           domain={activeDomain}
-          terms={terms}
-          onChanged={() => void loadTerms(activeDomain.id)}
-          run={run}
+          concepts={concepts}
+          domains={domains}
           readOnly={activeDomain.is_global && !isAdmin}
           canCreate={canCreate}
+          onOpen={(conceptId) => setOpen({ conceptId, language: locale })}
+          onCreate={(language) => setOpen({ conceptId: null, language })}
         />
+      )}
+      {activeDomain !== null && open !== null && (
+        <section className="concept-list">
+          <button type="button" onClick={() => setOpen(null)}>
+            ← {m.concepts}
+          </button>
+        </section>
       )}
     </div>
-  )
-}
-
-interface TermTableProps {
-  domain: Domain
-  terms: Term[]
-  onChanged: () => void
-  run: (action: () => Promise<void>) => Promise<void>
-  readOnly: boolean
-  canCreate: boolean
-}
-
-function TermTable({ domain, terms, onChanged, run, readOnly, canCreate }: TermTableProps) {
-  const domainId = domain.id
-  const languages = useStore((s) => s.languages)
-  const m = useMessages()
-  const [addDraft, setAddDraft] = useState<TermDraft>({
-    language: 'en',
-    preferred: '',
-    variants: '',
-    definition: '',
-    caseSensitive: false,
-  })
-  const [editingId, setEditingId] = useState<number | null>(null)
-  const [editDraft, setEditDraft] = useState<TermDraft | null>(null)
-  const [sortCriteria, setSortCriteria] = useState<SortCriterion[]>([])
-  const [languageFilter, setLanguageFilter] = useState<Language | null>(null)
-  const [query, setQuery] = useState('')
-
-  // TermTable is reused across domain switches (no `key` prop), so without
-  // this the previous domain's edit row (and its live Save button) stayed
-  // mounted against `terms` that hadn't been refetched yet — letting a save
-  // land on the domain the user just navigated away from. Resetting on
-  // `readOnly` too closes edit mode the instant a domain becomes read-only
-  // for any other reason.
-  useEffect(() => {
-    setEditingId(null)
-    setEditDraft(null)
-  }, [domainId, readOnly])
-
-  const visibleTerms = sortTerms(filterTerms(terms, languageFilter, query), sortCriteria)
-
-  function onToggleSort(key: SortKey) {
-    setSortCriteria((old) => toggleSort(old, key))
-  }
-
-  async function addTerm() {
-    const payload = draftToTermPayload(addDraft)
-    if (!payload) return
-    await run(async () => {
-      await createTerm(domainId, payload)
-      setAddDraft((d) => ({ ...d, preferred: '', variants: '', definition: '' }))
-      onChanged()
-    })
-  }
-
-  function startEdit(term: Term) {
-    setEditingId(term.id)
-    setEditDraft(termToDraft(term))
-  }
-
-  function cancelEdit() {
-    setEditingId(null)
-    setEditDraft(null)
-  }
-
-  async function saveEdit() {
-    if (editingId === null || editDraft === null) return
-    const payload = draftToTermPayload(editDraft)
-    if (!payload) return
-    await run(async () => {
-      await updateTerm(editingId, payload)
-      cancelEdit()
-      onChanged()
-    })
-  }
-
-  return (
-    <section className="term-table">
-      <h2>{m.terms}</h2>
-      <table>
-        <thead>
-          <tr className="term-controls-row">
-            <td>
-              <select
-                className="term-language-filter"
-                value={languageFilter ?? ''}
-                title={m.languageFilterTitle}
-                onChange={(event) =>
-                  setLanguageFilter(
-                    event.target.value === '' ? null : (event.target.value as Language),
-                  )
-                }
-              >
-                <option value="">{m.allLanguages}</option>
-                {languages.map((info) => (
-                  <option key={info.code} value={info.code}>
-                    {info.name}
-                  </option>
-                ))}
-              </select>
-            </td>
-            <td>
-              <input
-                type="search"
-                className="term-search"
-                value={query}
-                placeholder={m.searchTermsPlaceholder}
-                onChange={(event) => setQuery(event.target.value)}
-              />
-            </td>
-            <td colSpan={3}></td>
-          </tr>
-          <tr>
-            <SortableHeader label={m.langHeader} sortKey="language" criteria={sortCriteria} onToggle={onToggleSort} />
-            <SortableHeader label={m.preferredHeader} sortKey="preferred" criteria={sortCriteria} onToggle={onToggleSort} />
-            <SortableHeader label={m.doNotUseHeader} sortKey="forbidden" criteria={sortCriteria} onToggle={onToggleSort} />
-            <th>{m.definitionHeader}</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {visibleTerms.length === 0 && terms.length > 0 && (
-            <tr className="no-terms-row">
-              <td colSpan={5}>{m.noTermsMatch}</td>
-            </tr>
-          )}
-          {visibleTerms.map((term) =>
-            term.id === editingId && editDraft ? (
-              <tr key={term.id} className="term-edit-row">
-                <TermFieldCells
-                  draft={editDraft}
-                  onChange={setEditDraft}
-                  onSubmit={() => void saveEdit()}
-                  onCancel={cancelEdit}
-                />
-                <td>
-                  <button
-                    className="icon-button"
-                    title={m.saveEditTitle}
-                    onClick={() => void saveEdit()}
-                  >
-                    ✓
-                  </button>
-                  <button className="icon-button" title={m.cancelEditTitle} onClick={cancelEdit}>
-                    ✕
-                  </button>
-                </td>
-              </tr>
-            ) : (
-              <tr key={term.id}>
-                <td>{languageName(term.language, languages)}</td>
-                <td className="term-preferred">{term.preferred}</td>
-                <td>
-                  {term.forbidden_variants.join(', ')}
-                  {term.case_sensitive && (
-                    <span className="case-badge" title={m.caseSensitiveTitle}>
-                      Aa
-                    </span>
-                  )}
-                </td>
-                <td>{term.definition}</td>
-                <td>
-                  {!readOnly && (
-                    <>
-                      <button
-                        className="icon-button"
-                        title={m.editTermTitle}
-                        onClick={() => startEdit(term)}
-                      >
-                        ✎
-                      </button>
-                      <button
-                        className="icon-button"
-                        title={m.deleteTermTitle}
-                        onClick={() =>
-                          void run(async () => {
-                            await deleteTerm(term.id)
-                            onChanged()
-                          })
-                        }
-                      >
-                        ✕
-                      </button>
-                    </>
-                  )}
-                </td>
-              </tr>
-            ),
-          )}
-          {!readOnly && canCreate && (
-            <tr className="add-term">
-              <TermFieldCells draft={addDraft} onChange={setAddDraft} onSubmit={() => void addTerm()} />
-              <td>
-                <button onClick={() => void addTerm()}>{m.add}</button>
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </section>
-  )
-}
-
-interface TermFieldCellsProps {
-  draft: TermDraft
-  onChange: (draft: TermDraft) => void
-  onSubmit: () => void
-  /** Absent on the add row: Escape only applies to row edit mode. */
-  onCancel?: () => void
-}
-
-// The four input cells shared by the add-term row and a row in edit mode.
-function TermFieldCells({ draft, onChange, onSubmit, onCancel }: TermFieldCellsProps) {
-  const languages = useStore((s) => s.languages)
-  const m = useMessages()
-
-  function onKeyDown(event: React.KeyboardEvent) {
-    if (event.key === 'Enter') onSubmit()
-    if (event.key === 'Escape') onCancel?.()
-  }
-
-  return (
-    <>
-      <td>
-        <select
-          value={draft.language}
-          onChange={(event) => onChange({ ...draft, language: event.target.value as Language })}
-        >
-          {languages.map((info) => (
-            <option key={info.code} value={info.code}>
-              {info.name}
-            </option>
-          ))}
-        </select>
-      </td>
-      <td>
-        <input
-          value={draft.preferred}
-          placeholder={m.preferredPlaceholder}
-          onKeyDown={onKeyDown}
-          onChange={(event) => onChange({ ...draft, preferred: event.target.value })}
-        />
-      </td>
-      <td>
-        <div className="input-with-toggle">
-          <input
-            value={draft.variants}
-            placeholder={m.forbiddenPlaceholder}
-            onKeyDown={onKeyDown}
-            onChange={(event) => onChange({ ...draft, variants: event.target.value })}
-          />
-          <button
-            type="button"
-            className="match-case-toggle"
-            aria-pressed={draft.caseSensitive}
-            title={m.caseSensitiveTitle}
-            onClick={() => onChange({ ...draft, caseSensitive: !draft.caseSensitive })}
-          >
-            Aa
-          </button>
-        </div>
-      </td>
-      <td>
-        <input
-          value={draft.definition}
-          placeholder={m.definitionPlaceholder}
-          onKeyDown={onKeyDown}
-          onChange={(event) => onChange({ ...draft, definition: event.target.value })}
-        />
-      </td>
-    </>
-  )
-}
-
-interface SortableHeaderProps {
-  label: string
-  sortKey: SortKey
-  criteria: SortCriterion[]
-  onToggle: (key: SortKey) => void
-}
-
-function SortableHeader({ label, sortKey, criteria, onToggle }: SortableHeaderProps) {
-  const m = useMessages()
-  const index = criteria.findIndex((c) => c.key === sortKey)
-  const direction = index >= 0 ? criteria[index].direction : null
-  return (
-    <th
-      className={`sortable${direction ? ' sorted' : ''}`}
-      title={m.sortHeaderTitle}
-      onClick={() => onToggle(sortKey)}
-    >
-      {label}
-      {direction && (
-        <span className="sort-indicator">
-          {direction === 'asc' ? '▲' : '▼'}
-          {criteria.length > 1 && <sup>{index + 1}</sup>}
-        </span>
-      )}
-    </th>
   )
 }

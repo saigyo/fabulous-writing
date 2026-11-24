@@ -16,7 +16,6 @@ import type {
   Scorecard,
   SectionInput,
   Tier,
-  Term,
   UsagePayload,
 } from '../types'
 // store.ts only imports this module's *types* (`import type`), which are
@@ -676,21 +675,6 @@ export const updateDomain = (id: number, name: string) =>
   })
 export const deleteDomain = (id: number) =>
   request<void>(`/api/domains/${id}`, { method: 'DELETE' })
-
-export const getTerms = (domainId: number) =>
-  request<Term[]>(`/api/domains/${domainId}/terms`)
-export const createTerm = (domainId: number, term: Omit<Term, 'id' | 'domain_id'>) =>
-  request<Term>(`/api/domains/${domainId}/terms`, {
-    method: 'POST',
-    body: JSON.stringify(term),
-  })
-export const updateTerm = (termId: number, term: Partial<Omit<Term, 'id' | 'domain_id'>>) =>
-  request<Term>(`/api/terms/${termId}`, {
-    method: 'PUT',
-    body: JSON.stringify(term),
-  })
-export const deleteTerm = (termId: number) =>
-  request<void>(`/api/terms/${termId}`, { method: 'DELETE' })
 
 export const getConcepts = (domainId: number) =>
   request<Concept[]>(`/api/domains/${domainId}/concepts`)

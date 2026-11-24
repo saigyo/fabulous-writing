@@ -5,21 +5,18 @@ import type { MeResponse } from '../api/client'
 import { en } from '../i18n/en'
 import { FALLBACK_LANGUAGES } from '../languages'
 import { useStore } from '../state/store'
-import type { Domain, Term } from '../types'
+import type { Concept, Domain } from '../types'
 
 vi.mock('../api/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api/client')>()),
   getDomains: vi.fn(),
-  getTerms: vi.fn().mockResolvedValue([]),
+  getConcepts: vi.fn().mockResolvedValue([]),
   createDomain: vi.fn(),
   deleteDomain: vi.fn(),
   updateDomain: vi.fn(),
-  createTerm: vi.fn(),
-  updateTerm: vi.fn(),
-  deleteTerm: vi.fn(),
 }))
 
-import { getDomains, getTerms } from '../api/client'
+import { getConcepts, getDomains } from '../api/client'
 import { TerminologyView } from './TerminologyView'
 
 function user(policy: MeResponse['policy'], overrides: Partial<MeResponse> = {}): MeResponse {
@@ -59,14 +56,47 @@ const ADMIN_POLICY: MeResponse['policy'] = {
 
 const privateDomain: Domain = { id: 2, name: 'Private Domain', description: '', is_global: false }
 
-const term: Term = {
+const concept: Concept = {
   id: 100,
-  domain_id: 2,
-  language: 'en',
-  preferred: 'widget',
-  forbidden_variants: ['thingamajig'],
-  definition: '',
-  case_sensitive: false,
+  uid: 'c100',
+  domain_ids: [2],
+  is_global: false,
+  revision: 1,
+  created_at: null,
+  created_by: null,
+  modified_at: null,
+  modified_by: null,
+  sections: [
+    {
+      id: 1,
+      language: 'en',
+      definition: '',
+      revision: 1,
+      created_at: null,
+      created_by: null,
+      modified_at: null,
+      modified_by: null,
+      terms: [
+        {
+          id: 1,
+          uid: 't1',
+          text: 'widget',
+          usage_status: 'preferred',
+          process_status: 'active',
+          status_reason: '',
+          context: '',
+          source: '',
+          part_of_speech: null,
+          case_sensitive: false,
+          revision: 1,
+          created_at: null,
+          created_by: null,
+          modified_at: null,
+          modified_by: null,
+        },
+      ],
+    },
+  ],
 }
 
 afterEach(() => {
@@ -76,7 +106,7 @@ afterEach(() => {
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(getDomains).mockResolvedValue([privateDomain])
-  vi.mocked(getTerms).mockResolvedValue([])
+  vi.mocked(getConcepts).mockResolvedValue([])
   useStore.setState({
     uiLocale: 'en',
     languages: FALLBACK_LANGUAGES,
@@ -87,38 +117,36 @@ beforeEach(() => {
 })
 
 describe('TerminologyView create affordances (custom_domains feature gate)', () => {
-  it('hides the add-domain row and the add-term row without the feature', async () => {
-    vi.mocked(getTerms).mockResolvedValue([term])
+  it('hides the add-domain row and the new-concept button without the feature', async () => {
+    vi.mocked(getConcepts).mockResolvedValue([concept])
     useStore.setState({ user: user(NO_FEATURES) })
     render(<TerminologyView />)
 
-    await screen.findByText('widget')
+    await screen.findByRole('button', { name: 'widget' })
     expect(screen.queryByPlaceholderText(en.newDomainPlaceholder)).toBeNull()
-    expect(screen.queryByPlaceholderText(en.preferredPlaceholder)).toBeNull()
+    expect(screen.queryByRole('button', { name: en.newConcept })).toBeNull()
 
-    // Existing terms stay editable — only the ADD affordance hides (M3
-    // ownership convention: don't regress edit/delete for a private domain).
-    screen.getByTitle(en.editTermTitle)
-    screen.getByTitle(en.deleteTermTitle)
+    // Existing concepts stay openable — only the ADD affordance hides.
+    screen.getByRole('button', { name: 'widget' })
   })
 
-  it('shows the add-domain row and the add-term row with the feature', async () => {
-    vi.mocked(getTerms).mockResolvedValue([term])
+  it('shows the add-domain row and the new-concept button with the feature', async () => {
+    vi.mocked(getConcepts).mockResolvedValue([concept])
     useStore.setState({ user: user(WITH_CUSTOM_DOMAINS) })
     render(<TerminologyView />)
 
-    await screen.findByText('widget')
+    await screen.findByRole('button', { name: 'widget' })
     screen.getByPlaceholderText(en.newDomainPlaceholder)
-    screen.getByPlaceholderText(en.preferredPlaceholder)
+    screen.getByRole('button', { name: en.newConcept })
   })
 
   it('admin-shaped user (is_admin true, both features) sees every create affordance', async () => {
-    vi.mocked(getTerms).mockResolvedValue([term])
+    vi.mocked(getConcepts).mockResolvedValue([concept])
     useStore.setState({ user: user(ADMIN_POLICY, { is_admin: true }) })
     render(<TerminologyView />)
 
-    await screen.findByText('widget')
+    await screen.findByRole('button', { name: 'widget' })
     screen.getByPlaceholderText(en.newDomainPlaceholder)
-    screen.getByPlaceholderText(en.preferredPlaceholder)
+    screen.getByRole('button', { name: en.newConcept })
   })
 })
