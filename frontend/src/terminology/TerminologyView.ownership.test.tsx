@@ -3,6 +3,7 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MeResponse } from '../api/client'
+import { de } from '../i18n/de'
 import { en } from '../i18n/en'
 import { FALLBACK_LANGUAGES } from '../languages'
 import { useStore } from '../state/store'
@@ -483,6 +484,21 @@ describe('TerminologyView leaving an entry with unsaved changes', () => {
     await waitFor(() => expect(deleteDomain).toHaveBeenCalledWith(privateA.id))
   })
 
+  it('deletes nothing and keeps the entry when the leave question is cancelled', async () => {
+    vi.mocked(deleteDomain).mockResolvedValue(undefined)
+    await editAlpha()
+    const rowA = rowOf('Private A').closest('.domain-row') as HTMLElement
+    await userEvent.click(within(rowA).getByTitle(en.deleteDomainTitle))
+    await answerLeave(en.deleteDomainTitle)
+    await answerLeave(en.dialogCancel)
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(deleteDomain).not.toHaveBeenCalled()
+    expect(back()).not.toBeNull()
+    expect((screen.getByRole('textbox', { name: en.definitionLabel }) as HTMLTextAreaElement).value).toBe('A letter')
+    expect(unsaved()).toBe(true)
+  })
+
   it('deletes another domain without the leave question', async () => {
     vi.mocked(deleteDomain).mockResolvedValue(undefined)
     await editAlpha()
@@ -535,6 +551,35 @@ describe('TerminologyView keeps the list behind the entry current', () => {
   beforeEach(() => {
     useStore.setState({ domains: [privateA] })
     vi.mocked(getDomains).mockResolvedValue([privateA])
+  })
+
+  it('starts the list on the interface language', async () => {
+    useStore.setState({ uiLocale: 'de' })
+    vi.mocked(getConcepts).mockResolvedValue([conceptOf(201, 'alpha', [2])])
+    render(<TerminologyView />)
+    await screen.findByRole('button', { name: 'alpha' })
+    const selector = screen.getByRole('combobox', { name: de.conceptLanguageTitle }) as HTMLSelectElement
+    expect(selector.value).toBe('de')
+  })
+
+  it('keeps the chosen language of the list after an entry was open', async () => {
+    const bilingual = conceptOf(201, 'widget', [2])
+    bilingual.sections.push({
+      ...bilingual.sections[0],
+      id: 2011,
+      language: 'de',
+      terms: [{ ...bilingual.sections[0].terms[0], id: 20111, uid: 'tde', text: 'Bauteil' }],
+    })
+    vi.mocked(getConcepts).mockResolvedValue([bilingual])
+    render(<TerminologyView />)
+    await screen.findByRole('button', { name: 'widget' })
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: en.conceptLanguageTitle }), 'de')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Bauteil' }))
+    await userEvent.click(back()!)
+    const selector = screen.getByRole('combobox', { name: en.conceptLanguageTitle }) as HTMLSelectElement
+    expect(selector.value).toBe('de')
+    screen.getByRole('button', { name: 'Bauteil' })
   })
 
   it('shows the list again and fetches it once more after a removal from this domain', async () => {
