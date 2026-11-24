@@ -107,6 +107,8 @@ def test_save_and_delete_stay_allowed_without_the_feature(tmp_path: Path) -> Non
 
     app_b = _app(tmp_path, db_path=db_path, tiers=NO_FEATURES)
     headers_b = second_user_headers(app_b)
+    assert app_b.get(f"/api/domains/{first}/concepts", headers=headers_b).status_code == 200
+    assert app_b.get(f"/api/concepts/{kept['id']}", headers=headers_b).status_code == 200
     saved_language = app_b.put(
         f"/api/concepts/{kept['id']}/languages/en",
         json=_en_body(kept, [_term("sign in", "preferred")], definition="x"),
@@ -379,21 +381,38 @@ def test_global_concept_is_read_only_for_non_admin(client: TestClient) -> None:
     assert admin.status_code == 200
 
 
-def test_comment_reaches_the_change_log(client: TestClient) -> None:
-    concept = _concept(client, _domain(client), preferred="sign in")
-    body = _en_body(concept, [_term("log on", "preferred")], comment="Style guide 2026")
-    assert _save_language(client, concept, "en", body).status_code == 200
-    assert changes(client.app.state.db)[-1]["comment"] == "Style guide 2026"
+def _comment_on_create(client, concept, comment):
+    return client.post(
+        f"/api/domains/{concept['domain_ids'][0]}/concepts",
+        json={
+            "sections": [{"language": "en", "terms": [_term("log on", "preferred")]}],
+            "comment": comment,
+        },
+    )
+
+
+def _comment_on_save_concept(client, concept, comment):
+    section = _en_body(concept, [_term("log on", "preferred")])
+    return client.put(
+        f"/api/concepts/{concept['id']}",
+        json={"sections": [{"language": "en", **section}], "comment": comment},
+    )
+
+
+def _comment_on_save_language(client, concept, comment):
+    body = _en_body(concept, [_term("log on", "preferred")], comment=comment)
+    return _save_language(client, concept, "en", body)
 
 
 @pytest.mark.parametrize(
-    ("method", "path"),
-    [
-        ("GET", "/api/domains/1/terms"),
-        ("POST", "/api/domains/1/terms"),
-        ("PUT", "/api/terms/1"),
-        ("DELETE", "/api/terms/1"),
-    ],
+    "write", [_comment_on_create, _comment_on_save_concept, _comment_on_save_language]
 )
-def test_term_endpoints_are_gone(client: TestClient, method: str, path: str) -> None:
-    assert client.request(method, path, json={"language": "en", "preferred": "x"}).status_code in (404, 405)
+def test_comment_reaches_the_change_log(client: TestClient, write) -> None:
+    concept = _concept(client, _domain(client), preferred="sign in")
+    response = write(client, concept, "Style guide 2026")
+    assert response.status_code in (200, 201), response.text
+    assert changes(client.app.state.db)[-1]["comment"] == "Style guide 2026"
+
+
+def test_term_endpoints_are_gone(client: TestClient) -> None:
+    assert [path for path in client.app.openapi()["paths"] if "/terms" in path] == []
