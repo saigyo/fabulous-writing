@@ -1,6 +1,6 @@
 import re
 from bisect import bisect_right
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -181,14 +181,13 @@ def _casing_findings(
 ) -> list[Finding]:
     groups: dict[tuple[int, int, int], list[tuple[_Entry, ConceptTerm, str, int, int]]] = {}
     for match in matches:
-        entry, _, _, start, end = match
-        groups.setdefault((id(entry), start, end), []).append(match)
+        entry, _, matched, start, end = match
+        if matched not in entry.accepted:
+            groups.setdefault((id(entry), start, end), []).append(match)
     findings: list[Finding] = []
     for group in groups.values():
         entry, term, matched, start, end = group[0]
-        if matched in entry.accepted or any(
-            _casing_ok(text, start, matched, other.text) for _, other, _, _, _ in group
-        ):
+        if any(_casing_ok(text, start, matched, other.text) for _, other, _, _, _ in group):
             continue
         findings.append(_casing_finding(entry, term, matched, start, end))
     return findings
@@ -276,15 +275,17 @@ class TerminologyChecker:
         self, text: str, cased: list[tuple[_Entry, ConceptTerm]]
     ) -> list[Finding]:
         haystack = text.lower()
-        matches: list[tuple[_Entry, ConceptTerm, str, int, int]] = []
-        for entry, term in cased:
-            needle = term.text.lower()
-            pos = haystack.find(needle)
-            while pos != -1:
-                end = pos + len(needle)
-                matches.append((entry, term, text[pos:end], pos, end))
-                pos = haystack.find(needle, pos + 1)
-        return _casing_findings(text, matches)
+
+        def matches() -> Iterator[tuple[_Entry, ConceptTerm, str, int, int]]:
+            for entry, term in cased:
+                needle = term.text.lower()
+                pos = haystack.find(needle)
+                while pos != -1:
+                    end = pos + len(needle)
+                    yield entry, term, text[pos:end], pos, end
+                    pos = haystack.find(needle, pos + 1)
+
+        return _casing_findings(text, matches())
 
     def _check_cjk(
         self, text: str, language: Language, entries: list[_Entry]
