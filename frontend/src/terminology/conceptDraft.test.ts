@@ -559,6 +559,16 @@ describe('reloadPart', () => {
   const EN3 = section(10, 'en', [term(100, 'pear', { usage_status: 'preferred' })], { revision: 3 })
   const DE2 = section(20, 'de', [term(200, 'Birne', { usage_status: 'preferred' })], { revision: 2 })
 
+  it('adds the languages the server has and the entry does not, and leaves an unsaved one alone', () => {
+    const FR = section(30, 'fr', [term(300, 'pomme', { usage_status: 'preferred' })], { revision: 4 })
+    const edited = rename(entryFromConcept(concept([EN, DE])), 'en', 'pear')
+    const state = reloadPart(edited, concept([FR], { revision: 5 }), 'de')
+    expect(state.sections.map((s) => s.language)).toEqual(['en', 'fr'])
+    expect(sectionOf(state, 'fr').saved).toEqual(FR)
+    expect(toSectionInput(sectionOf(state, 'fr'))).toMatchObject({ id: 30, revision: 4 })
+    expect(sectionOf(state, 'en')).toBe(sectionOf(edited, 'en'))
+  })
+
   it('replaces exactly the named language and leaves an unsaved other section as it is', () => {
     const edited = rename(rename(entryFromConcept(concept()), 'en', 'plum'), 'de', 'Pflaume')
     const state = reloadPart(edited, concept([EN3, DE2], { revision: 3 }), 'en')
