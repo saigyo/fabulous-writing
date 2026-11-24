@@ -25,6 +25,7 @@ from app.main import create_app
 from app.services.terminology import Actor, ProcessStatus, SectionInput, TermInput, UsageStatus
 from app.services.credits import estimate_cost
 from tests.conftest import auth_headers, second_user_headers
+from tests.terminology_helpers import post_concept
 
 RULES_DIR = Path(__file__).parent.parent / "rules"
 
@@ -102,10 +103,7 @@ def test_check_with_llm_completes_and_merges(client: TestClient) -> None:
 
 def test_terminology_checker_requires_domain(client: TestClient) -> None:
     domain = client.post("/api/domains", json={"name": "Docs"}).json()
-    client.post(
-        f"/api/domains/{domain['id']}/terms",
-        json={"language": "en", "preferred": "sign in", "forbidden_variants": ["login"]},
-    )
+    post_concept(client, domain["id"], preferred="sign in", forbidden=["login"])
     response = client.post(
         "/api/checks",
         json={
@@ -167,11 +165,7 @@ def test_check_request_ignores_foreign_domain_ids(tmp_path: Path) -> None:
     admin = auth_headers(client)
     other = second_user_headers(client)
     domain = client.post("/api/domains", json={"name": "Private"}, headers=admin).json()
-    client.post(
-        f"/api/domains/{domain['id']}/terms",
-        json={"language": "en", "preferred": "sign in", "forbidden_variants": ["login"]},
-        headers=admin,
-    )
+    post_concept(client, domain["id"], preferred="sign in", forbidden=["login"], headers=admin)
     # The owner's check flags the forbidden variant...
     owner_check = client.post(
         "/api/checks",
@@ -203,11 +197,7 @@ def client_with_two_domains(tmp_path: Path):
         ("Style", "email", ["e-mail"]),
     ]:
         domain = client.post("/api/domains", json={"name": name}).json()
-        client.post(
-            f"/api/domains/{domain['id']}/terms",
-            json={"language": "en", "preferred": preferred,
-                  "forbidden_variants": forbidden},
-        )
+        post_concept(client, domain["id"], preferred=preferred, forbidden=forbidden)
         ids.append(domain["id"])
     return client, ids
 
@@ -229,11 +219,7 @@ def test_check_overlapping_domains_deduped(tmp_path: Path) -> None:
     ids = []
     for name, preferred in [("Docs", "sign in"), ("Style", "log in")]:
         domain = client.post("/api/domains", json={"name": name}).json()
-        client.post(
-            f"/api/domains/{domain['id']}/terms",
-            json={"language": "en", "preferred": preferred,
-                  "forbidden_variants": ["login"]},
-        )
+        post_concept(client, domain["id"], preferred=preferred, forbidden=["login"])
         ids.append(domain["id"])
     body = {"text": "Use login here.", "language": "en",
             "domain_ids": ids, "checkers": ["terminology"]}

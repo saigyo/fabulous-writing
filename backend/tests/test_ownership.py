@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from app.core.config import Settings
 from app.main import create_app
 from tests.conftest import auth_headers, second_user_headers
+from tests.terminology_helpers import post_concept
 
 
 @pytest.fixture()
@@ -31,11 +32,7 @@ def two_users(tmp_path):
     }
     profile = client.post("/api/profiles", json=profile_body, headers=admin).json()
     domain = client.post("/api/domains", json={"name": "Dom"}, headers=admin).json()
-    term = client.post(
-        f"/api/domains/{domain['id']}/terms",
-        json={"language": "en", "preferred": "t"},
-        headers=admin,
-    ).json()
+    concept = post_concept(client, domain["id"], preferred="t", headers=admin).json()
     check = client.post(
         "/api/checks",
         json={"text": "hello", "language": "en", "checkers": ["rules"]},
@@ -43,10 +40,13 @@ def two_users(tmp_path):
     ).json()
     return client, admin, other, {
         "doc": doc, "folder": folder, "profile": profile,
-        "domain": domain, "term": term, "check": check,
+        "domain": domain, "concept": concept, "check": check,
         "profile_body": profile_body,
     }
 
+
+_TERM = {"text": "x", "usage_status": "preferred"}
+_NEW_CONCEPT = {"sections": [{"language": "en", "terms": [_TERM]}]}
 
 # (method, path-template, json-body-or-None) for every id-addressable
 # endpoint over an ownable resource. Adding an endpoint without adding a
@@ -67,10 +67,13 @@ FOREIGN_404 = [
     ("POST",   "/api/profiles/{profile}/reset", None),
     ("PUT",    "/api/domains/{domain}", {"name": "X"}),
     ("DELETE", "/api/domains/{domain}", None),
-    ("GET",    "/api/domains/{domain}/terms", None),
-    ("POST",   "/api/domains/{domain}/terms", {"language": "en", "preferred": "x"}),
-    ("PUT",    "/api/terms/{term}", {"preferred": "x"}),
-    ("DELETE", "/api/terms/{term}", None),
+    ("GET",    "/api/domains/{domain}/concepts", None),
+    ("POST",   "/api/domains/{domain}/concepts", "new_concept"),
+    ("GET",    "/api/concepts/{concept}", None),
+    ("PUT",    "/api/concepts/{concept}", {"sections": []}),
+    ("PUT",    "/api/concepts/{concept}/languages/en", {"terms": [_TERM]}),
+    ("DELETE", "/api/concepts/{concept}", None),
+    ("DELETE", "/api/domains/{domain}/concepts/{concept}", None),
     ("GET",    "/api/checks/{check}", None),
     ("GET",    "/api/checks/{check}/events", None),
 ]
@@ -82,10 +85,11 @@ def test_foreign_id_is_404(two_users, method, template, body):
     ids = {
         "doc": items["doc"]["id"], "folder": items["folder"]["id"],
         "profile": items["profile"]["id"], "domain": items["domain"]["id"],
-        "term": items["term"]["id"], "check": items["check"]["check_id"],
+        "concept": items["concept"]["id"], "check": items["check"]["check_id"],
     }
     path = template.format(**ids)
-    json_body = items["profile_body"] if body == "profile_body" else body
+    named = {"profile_body": items["profile_body"], "new_concept": _NEW_CONCEPT}
+    json_body = named[body] if isinstance(body, str) else body
     response = client.request(method, path, json=json_body, headers=other)
     assert response.status_code == 404, (method, path, response.status_code)
 
@@ -106,7 +110,7 @@ def test_listings_never_leak(two_users):
 
 def test_global_mutation_as_non_admin_is_403_everywhere(two_users):
     """Every global-mutation route, not a sample: profile PUT/DELETE/reset,
-    domain PUT/DELETE, term POST/PUT/DELETE. The two pinned exceptions are
+    domain PUT/DELETE, the five concept mutations. The two pinned exceptions are
     below the loop."""
     client, admin, other, items = two_users
     g_profiles = {
@@ -119,11 +123,8 @@ def test_global_mutation_as_non_admin_is_403_everywhere(two_users):
     g_domain = next(
         d for d in client.get("/api/domains", headers=other).json() if d["is_global"]
     )
-    g_term = client.post(
-        f"/api/domains/{g_domain['id']}/terms",
-        json={"language": "en", "preferred": "gterm"},
-        headers=admin,
-    ).json()
+    g_concept = post_concept(client, g_domain["id"], preferred="gterm", headers=admin).json()
+    g_section = g_concept["sections"][0]
     same_name_edit = dict(items["profile_body"], name=standard["name"])
     cases = [
         # (method, path, body) — every route that can mutate a global row.
@@ -137,10 +138,12 @@ def test_global_mutation_as_non_admin_is_403_everywhere(two_users):
         ("POST",   f"/api/profiles/{marketing['id']}/reset", None),
         ("PUT",    f"/api/domains/{g_domain['id']}", {"name": "X"}),
         ("DELETE", f"/api/domains/{g_domain['id']}", None),
-        ("POST",   f"/api/domains/{g_domain['id']}/terms",
-                   {"language": "en", "preferred": "x"}),
-        ("PUT",    f"/api/terms/{g_term['id']}", {"preferred": "x"}),
-        ("DELETE", f"/api/terms/{g_term['id']}", None),
+        ("POST",   f"/api/domains/{g_domain['id']}/concepts", _NEW_CONCEPT),
+        ("PUT",    f"/api/concepts/{g_concept['id']}", {"sections": []}),
+        ("PUT",    f"/api/concepts/{g_concept['id']}/languages/en",
+                   {"id": g_section["id"], "revision": g_section["revision"], "terms": [_TERM]}),
+        ("DELETE", f"/api/concepts/{g_concept['id']}", None),
+        ("DELETE", f"/api/domains/{g_domain['id']}/concepts/{g_concept['id']}", None),
     ]
     for method, path, body in cases:
         response = client.request(method, path, json=body, headers=other)
@@ -169,7 +172,9 @@ def test_global_mutation_as_non_admin_is_403_everywhere(two_users):
     ).status_code == 409
     # And the same mutations as admin are permitted, not 403.
     assert client.put(
-        f"/api/terms/{g_term['id']}", json={"preferred": "y"}, headers=admin
+        f"/api/concepts/{g_concept['id']}/languages/en",
+        json={"id": g_section["id"], "revision": g_section["revision"], "terms": [_TERM]},
+        headers=admin,
     ).status_code == 200
     assert client.put(
         f"/api/domains/{g_domain['id']}", json={"name": "Renamed"}, headers=admin

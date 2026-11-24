@@ -20,6 +20,7 @@ from app.schema import init_stores
 from app.services.db.postgres import PostgresDatabase
 from app.services.documents import DocumentStore
 from tests.conftest import auth_headers
+from tests.terminology_helpers import post_concept
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("FW_TEST_DATABASE_URL", "").strip(),
@@ -158,15 +159,23 @@ def test_api_smoke_under_restricted_role(restricted, tmp_path, monkeypatch):
         )
         assert domain.status_code == 201, domain.text
         before = _terminology_counts(restricted.restricted_dsn)
-        term = client.post(
-            f"/api/domains/{domain.json()['id']}/terms",
-            json={"language": "en", "preferred": "Fabulous"},
+        created = post_concept(client, domain.json()["id"], preferred="Fabulous")
+        assert created.status_code == 201, created.text
+        concept = created.json()
+        section = concept["sections"][0]
+        term = section["terms"][0]
+        updated = client.put(
+            f"/api/concepts/{concept['id']}/languages/en",
+            json={
+                "id": section["id"],
+                "revision": section["revision"],
+                "terms": [
+                    {"id": term["id"], "text": "Wonderful", "usage_status": "preferred"}
+                ],
+            },
         )
-        assert term.status_code == 201, term.text
-        term_id = term.json()["id"]
-        updated = client.put(f"/api/terms/{term_id}", json={"preferred": "Wonderful"})
         assert updated.status_code == 200, updated.text
-        deleted = client.delete(f"/api/terms/{term_id}")
+        deleted = client.delete(f"/api/concepts/{concept['id']}")
         assert deleted.status_code == 204, deleted.text
 
     after = _terminology_counts(restricted.restricted_dsn)

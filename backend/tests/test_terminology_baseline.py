@@ -8,6 +8,7 @@ from app.core.config import Settings
 from app.core.models import Language
 from app.main import create_app
 from tests.conftest import auth_headers
+from tests.terminology_helpers import post_concept
 from tests.terminology_baseline import (
     BASELINE_DOMAINS,
     BASELINE_TEXTS,
@@ -35,15 +36,14 @@ def _create_through_api(client: TestClient) -> dict[str, int]:
         assert created.status_code == 201
         ids[domain.name] = created.json()["id"]
         for term in domain.terms:
-            response = client.post(
-                f"/api/domains/{ids[domain.name]}/terms",
-                json={
-                    "language": term.language.value,
-                    "preferred": term.preferred,
-                    "forbidden_variants": term.forbidden_variants,
-                    "definition": term.definition,
-                    "case_sensitive": term.case_sensitive,
-                },
+            response = post_concept(
+                client,
+                ids[domain.name],
+                language=term.language.value,
+                preferred=term.preferred,
+                forbidden=term.forbidden_variants,
+                definition=term.definition,
+                case_sensitive=term.case_sensitive,
             )
             assert response.status_code == 201
     return ids
