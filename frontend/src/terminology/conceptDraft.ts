@@ -131,7 +131,7 @@ export function sectionChanges(section: SectionState): number {
     if (before) {
       matched += 1
       count += TERM_FIELDS.filter((field) => draft[field] !== before[field]).length
-    } else {
+    } else if (draft.text.trim() !== '') {
       count += 1
     }
   }
@@ -217,7 +217,7 @@ export function saveAllBody(
 
 export function createBody(state: EntryState, comment: string): { sections: SectionInput[]; comment?: string } {
   return {
-    sections: state.sections.filter((s) => !s.removed && s.terms.length > 0).map(toSectionInput),
+    sections: state.sections.filter(isUnsaved).map(toSectionInput),
     ...withComment(comment),
   }
 }

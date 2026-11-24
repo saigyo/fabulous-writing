@@ -180,7 +180,41 @@ describe('sectionChanges', () => {
   })
   it('counts the definition and every term of a new language', () => {
     const fr = sectionOf(addLanguage(entryFromConcept(concept()), 'fr'), 'fr')
-    expect(sectionChanges({ ...fr, definition: 'Un fruit', terms: [...fr.terms, newTerm()] })).toBe(3)
+    const terms = [{ ...fr.terms[0], text: 'pomme' }, { ...newTerm(), text: 'fruit' }]
+    expect(sectionChanges({ ...fr, definition: 'Un fruit', terms })).toBe(3)
+  })
+  it('does not count an added term whose text is blank, whatever its other fields', () => {
+    const s = en()
+    const blank = { ...newTerm(), text: '  ', context: 'later', usage_status: 'deprecated' as const }
+    expect(sectionChanges({ ...s, terms: [...s.terms, blank] })).toBe(0)
+  })
+  it('counts 1 for a real added term next to a blank one, which is still a problem', () => {
+    const s = en()
+    const added = { ...s, terms: [...s.terms, { ...newTerm(), text: 'pome' }, newTerm()] }
+    expect(sectionChanges(added)).toBe(1)
+    expect(sectionProblems(added)).toEqual(['empty_text'])
+  })
+})
+
+describe('a blank added term', () => {
+  it('leaves an untouched new entry with nothing unsaved', () => {
+    const state = newEntry(1, false, 'en')
+    expect(sectionChanges(state.sections[0])).toBe(0)
+    expect(hasUnsaved(state)).toBe(false)
+  })
+  it('becomes an unsaved change of 1 once a text is typed', () => {
+    const state = rename(newEntry(1, false, 'en'), 'en', 'apple')
+    expect(sectionChanges(state.sections[0])).toBe(1)
+    expect(hasUnsaved(state)).toBe(true)
+  })
+  it('leaves a blank added language out of what is unsaved and of "Save all"', () => {
+    const state = addLanguage(entryFromConcept(concept()), 'fr')
+    expect(unsavedLanguages(state)).toEqual([])
+    expect(saveAllBody(state, '').sections).toEqual([])
+  })
+  it('leaves a blank added language out of the first save', () => {
+    const state = addLanguage(rename(newEntry(1, false, 'en'), 'en', 'apple'), 'de')
+    expect(createBody(state, '').sections.map((s) => s.language)).toEqual(['en'])
   })
 })
 
@@ -193,7 +227,7 @@ describe('what is unsaved', () => {
   })
 
   it('lists the languages with unsaved changes', () => {
-    const state = addLanguage(rename(entryFromConcept(concept()), 'de', 'Äpfel'), 'fr')
+    const state = rename(addLanguage(rename(entryFromConcept(concept()), 'de', 'Äpfel'), 'fr'), 'fr', 'pomme')
     expect(unsavedLanguages(state)).toEqual(['de', 'fr'])
   })
 
