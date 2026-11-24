@@ -2,7 +2,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.api.deps import CurrentUser, get_current_user
 from app.api.validation import validate_name
@@ -18,6 +18,7 @@ from app.services.terminology import (
     ProcessStatus,
     SectionInput,
     TermInput,
+    TerminologyConflictError,
     TerminologyRuleError,
     TerminologyStore,
     UsageStatus,
@@ -65,6 +66,32 @@ class Term(BaseModel):
     case_sensitive: bool = False
 
 
+class ConceptCreate(BaseModel):
+    sections: list[SectionInput]
+    comment: str = ""
+
+
+class ConceptSave(BaseModel):
+    sections: list[SectionInput] = Field(default_factory=list)
+    domain_ids: list[int] | None = None
+    revision: int | None = None
+    comment: str = ""
+
+    @model_validator(mode="after")
+    def _links_need_a_revision(self) -> "ConceptSave":
+        if self.domain_ids is not None and self.revision is None:
+            raise ValueError("domain_ids needs the revision that was read")
+        return self
+
+
+class SectionSave(BaseModel):
+    id: int | None = None
+    revision: int | None = None
+    definition: str = ""
+    terms: list[TermInput]
+    comment: str = ""
+
+
 def _store(request: Request) -> TerminologyStore:
     return request.app.state.terminology_store
 
@@ -81,6 +108,19 @@ def _store_errors() -> Iterator[None]:
         raise HTTPException(403, "Only admins can change built-in items") from None
     except TerminologyRuleError as exc:
         raise HTTPException(409, str(exc)) from exc
+
+
+@contextmanager
+def _concept_errors() -> Iterator[None]:
+    try:
+        yield
+    except GlobalReadOnlyError:
+        raise HTTPException(403, "Only admins can change built-in items") from None
+    except TerminologyRuleError as exc:
+        detail = {"code": exc.rule, "message": str(exc)}
+        if isinstance(exc, TerminologyConflictError):
+            detail["part"] = exc.part
+        raise HTTPException(409, detail) from exc
 
 
 def _clean(variants: list[str], preferred: str) -> list[str]:
@@ -380,4 +420,120 @@ def delete_term(
             )
     if not deleted:
         raise HTTPException(404, "Term not found")
+    return Response(status_code=204)
+
+
+def _require_custom_domains(request: Request, user: CurrentUser) -> None:
+    if "custom_domains" not in features_for(
+        tier=user.tier, is_admin=user.is_admin, settings=request.app.state.settings
+    ):
+        raise HTTPException(403, "Your plan does not include custom terminology domains")
+
+
+@router.get("/domains/{domain_id}/concepts")
+def list_concepts(
+    request: Request, domain_id: int, user: CurrentUser = Depends(get_current_user)
+) -> list[Concept]:
+    concepts = _store(request).list_concepts(domain_id, owner_id=user.id)
+    if concepts is None:
+        raise HTTPException(404, "Domain not found")
+    return concepts
+
+
+@router.post("/domains/{domain_id}/concepts", status_code=201)
+def create_concept(
+    request: Request,
+    domain_id: int,
+    body: ConceptCreate,
+    user: CurrentUser = Depends(get_current_user),
+) -> Concept:
+    _require_custom_domains(request, user)
+    with _concept_errors():
+        concept = _store(request).create_concept(
+            domain_id, body.sections, actor=_actor(user), comment=body.comment
+        )
+    if concept is None:
+        raise HTTPException(404, "Domain not found")
+    return concept
+
+
+@router.get("/concepts/{concept_id}")
+def get_concept(
+    request: Request, concept_id: int, user: CurrentUser = Depends(get_current_user)
+) -> Concept:
+    concept = _store(request).get_concept(concept_id, owner_id=user.id)
+    if concept is None:
+        raise HTTPException(404, "Concept not found")
+    return concept
+
+
+@router.put("/concepts/{concept_id}")
+def save_concept(
+    request: Request,
+    concept_id: int,
+    body: ConceptSave,
+    user: CurrentUser = Depends(get_current_user),
+) -> Concept:
+    with _concept_errors():
+        concept = _store(request).save_concept(
+            concept_id,
+            sections=body.sections,
+            domain_ids=body.domain_ids,
+            revision=body.revision,
+            actor=_actor(user),
+            comment=body.comment,
+        )
+    if concept is None:
+        raise HTTPException(404, "Concept not found")
+    return concept
+
+
+@router.put("/concepts/{concept_id}/languages/{language}")
+def save_language(
+    request: Request,
+    concept_id: int,
+    language: Language,
+    body: SectionSave,
+    user: CurrentUser = Depends(get_current_user),
+) -> Concept:
+    section = SectionInput(
+        language=language,
+        id=body.id,
+        revision=body.revision,
+        definition=body.definition,
+        terms=body.terms,
+    )
+    with _concept_errors():
+        concept = _store(request).save_section(
+            concept_id, section, actor=_actor(user), comment=body.comment
+        )
+    if concept is None:
+        raise HTTPException(404, "Concept not found")
+    return concept
+
+
+@router.delete("/concepts/{concept_id}", status_code=204)
+def delete_concept(
+    request: Request, concept_id: int, user: CurrentUser = Depends(get_current_user)
+) -> Response:
+    with _concept_errors():
+        deleted = _store(request).delete_concept(concept_id, actor=_actor(user))
+    if not deleted:
+        raise HTTPException(404, "Concept not found")
+    return Response(status_code=204)
+
+
+@router.delete("/domains/{domain_id}/concepts/{concept_id}", status_code=204)
+def remove_concept_from_domain(
+    request: Request,
+    domain_id: int,
+    concept_id: int,
+    user: CurrentUser = Depends(get_current_user),
+) -> Response:
+    with _concept_errors():
+        removed = _store(request).remove_concept_from_domain(
+            concept_id, domain_id, actor=_actor(user)
+        )
+    if not removed:
+        raise HTTPException(404, "Concept not found")
     return Response(status_code=204)
