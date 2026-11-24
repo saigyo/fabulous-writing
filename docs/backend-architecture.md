@@ -1175,8 +1175,8 @@ running `init-db` and gets no startup failure if that step is skipped.
 serving while it runs. The terminology concept model is the exception: its
 migration renames `terms`, which the previous release reads, so the app is
 stopped first (upgrade note in [fly-deployment.md](fly-deployment.md#3-updating)).
-A store start that refuses the data (both `terms` and `terms_legacy` at the moment
-the migration would rename, or a row that cannot be converted) makes `init-db` print the message and return 1.
+A store start that refuses the data (both `terms` and `terms_legacy` exist,
+or a row that cannot be converted) makes `init-db` print the message and return 1.
 
 **The Postgres pool** (`PostgresDatabase`, wrapping `psycopg_pool.ConnectionPool`) is
 fixed-size, 1–5 connections, with no config knobs: a syntactically malformed DSN is
@@ -2494,9 +2494,9 @@ actually enforces the policy server-side regardless of what a client sends.
 ### Feature gates are creation-only
 
 `custom_profiles`/`custom_domains` (checked via `features_for`) gate
-**creating** a private profile or domain/term — `POST /api/profiles`
+**creating** a private profile or domain — `POST /api/profiles`
 (`app/api/profiles.py`), `POST /api/domains` and `POST
-/api/domains/{id}/terms` (`app/api/terminology.py`). They do **not** gate
+/api/domains/{id}/concepts` (`app/api/terminology.py`). They do **not** gate
 reading, editing, or deleting anything a caller already owns or any global
 row: a tier that loses `custom_profiles` after a user has already created
 private profiles does not retroactively lock them out of those profiles —
@@ -2904,7 +2904,7 @@ Every endpoint below requires a valid `Authorization: Bearer <token>` caller **e
 | `POST /api/checks` → `GET /api/checks/{id}[/events]` | run a check; poll or stream results |
 | `POST /api/suggestions` | on-demand LLM fix (span) or sentence rewrite |
 | `GET /api/rules`, `POST /api/rules/reload` | rule catalog + validation errors; hot reload |
-| `GET/POST/PUT/DELETE /api/domains`, `/api/domains/{id}/terms`, `/api/terms/{id}` | domain CRUD; term endpoints kept as a temporary layer over concepts |
+| `GET/POST/PUT/DELETE /api/domains`, `/api/domains/{id}/concepts`, `/api/concepts/{id}`, `/api/concepts/{id}/languages/{language}` | domain CRUD and the seven concept endpoints (see [Endpoints](#endpoints)) |
 | `GET/POST/PUT/DELETE /api/profiles`, `POST /api/profiles/{id}/reset` | profile CRUD |
 | `GET/POST/PUT/DELETE /api/documents`, `POST /api/documents/{id}/generate-name` | revision-guarded document CRUD + auto-titling (see [Documents](#documents)) |
 | `GET/POST/PUT/DELETE /api/folders` | folder CRUD, lossless delete, read-time defaults pruning (see [Folders](#folders)) |
