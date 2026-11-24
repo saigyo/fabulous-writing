@@ -384,3 +384,16 @@ def test_comment_reaches_the_change_log(client: TestClient) -> None:
     body = _en_body(concept, [_term("log on", "preferred")], comment="Style guide 2026")
     assert _save_language(client, concept, "en", body).status_code == 200
     assert changes(client.app.state.db)[-1]["comment"] == "Style guide 2026"
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/api/domains/1/terms"),
+        ("POST", "/api/domains/1/terms"),
+        ("PUT", "/api/terms/1"),
+        ("DELETE", "/api/terms/1"),
+    ],
+)
+def test_term_endpoints_are_gone(client: TestClient, method: str, path: str) -> None:
+    assert client.request(method, path, json={"language": "en", "preferred": "x"}).status_code in (404, 405)

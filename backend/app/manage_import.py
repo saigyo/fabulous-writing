@@ -27,8 +27,8 @@ from app.services.db.sqlite import SqliteDatabase
 # concept_languages reference concepts, concept_terms references
 # concept_languages. Everything else is logical-reference only, ordered
 # parents-first for sanity. profile_seed_markers and concept_domains have no
-# identity column. terms_legacy, which the store migration leaves in the
-# source, is not copied.
+# identity column. The store migration drops terms_legacy from the source
+# before the copy starts.
 _TABLES = (
     "users",
     "admin_audit",

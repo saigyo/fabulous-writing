@@ -154,3 +154,10 @@ def migrate_legacy_terms(conn: Any, *, now: str) -> int:
     _reserve_legacy_ids(conn)
     conn.execute("ALTER TABLE terms RENAME TO terms_legacy")
     return created
+
+
+def drop_legacy_terms(conn: Any) -> None:
+    """Drop `terms_legacy`, which the term migration (this start or the previous
+    release's) left behind. Its rows are in the concept tables by now."""
+    if table_columns(conn, "terms_legacy"):
+        conn.execute("DROP TABLE terms_legacy")
