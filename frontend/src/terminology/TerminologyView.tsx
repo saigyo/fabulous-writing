@@ -241,7 +241,7 @@ export function TerminologyView() {
               onChange={(event) => setNewDomain(event.target.value)}
               onKeyDown={(event) => event.key === 'Enter' && addDomain()}
             />
-            <button onClick={addDomain}>{m.add}</button>
+            <button className="plain-button" onClick={addDomain}>{m.add}</button>
           </div>
         )}
       </aside>

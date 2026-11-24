@@ -227,7 +227,7 @@ export function ConceptEntry({
       <p className="entry-error" role="alert">
         <span>{error.message}</span>
         {error.conflict && (
-          <button type="button" disabled={busy} onClick={() => setConfirmingReload(true)}>
+          <button type="button" className="plain-button" disabled={busy} onClick={() => setConfirmingReload(true)}>
             {m.loadCurrentVersion}
           </button>
         )}
@@ -248,6 +248,7 @@ export function ConceptEntry({
           <>
             <button
               type="button"
+              className="plain-button"
               disabled={busy || unsaved || !inOtherDomain}
               onClick={() =>
                 void attempt('header', async () => {
@@ -354,7 +355,7 @@ export function ConceptEntry({
               )}
             </span>
           )}
-          <button type="button" disabled={busy || !unsaved} onClick={discardEverything}>
+          <button type="button" className="plain-button" disabled={busy || !unsaved} onClick={discardEverything}>
             {m.discardAll}
           </button>
           <button
