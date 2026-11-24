@@ -34,8 +34,23 @@ export function TerminologyView() {
   const [open, setOpen] = useState<OpenConcept | null>(null)
   const [pendingDelete, setPendingDelete] = useState<{ id: number; name: string; count: number } | null>(null)
   const [newDomain, setNewDomain] = useState('')
+  const unsaved = useStore((s) => s.terminologyUnsaved)
+  const setUnsaved = useStore((s) => s.setTerminologyUnsaved)
+  const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null)
   const m = useMessages()
   const { error, run } = useCrudError(m.changeFailed)
+
+  useEffect(() => {
+    if (!unsaved) return
+    const hold = (event: BeforeUnloadEvent) => event.preventDefault()
+    window.addEventListener('beforeunload', hold)
+    return () => window.removeEventListener('beforeunload', hold)
+  }, [unsaved])
+
+  function leaveEntry(action: () => void) {
+    if (unsaved) setPendingLeave(() => action)
+    else action()
+  }
 
   const refreshDomains = useCallback(() => {
     const gen = sessionGeneration()
@@ -87,14 +102,17 @@ export function TerminologyView() {
     }
   }, [activeDomainId, loadConcepts])
 
-  async function addDomain() {
-    if (!newDomain.trim()) return
-    await run(async () => {
-      const domain = await createDomain(newDomain.trim())
-      setNewDomain('')
-      await refreshDomains()
-      setActiveDomainId(domain.id)
-    })
+  function addDomain() {
+    const name = newDomain.trim()
+    if (!name) return
+    leaveEntry(() =>
+      void run(async () => {
+        const domain = await createDomain(name)
+        setNewDomain('')
+        await refreshDomains()
+        setActiveDomainId(domain.id)
+      }),
+    )
   }
 
   async function askRemoveDomain(domain: { id: number; name: string }) {
@@ -164,7 +182,7 @@ export function TerminologyView() {
             <div
               key={domain.id}
               className={`domain-row${domain.id === activeDomainId ? ' selected' : ''}`}
-              onClick={() => setActiveDomainId(domain.id)}
+              onClick={() => domain.id !== activeDomainId && leaveEntry(() => setActiveDomainId(domain.id))}
             >
               {domain.id === renamingId ? (
                 <input
@@ -219,9 +237,9 @@ export function TerminologyView() {
               value={newDomain}
               placeholder={m.newDomainPlaceholder}
               onChange={(event) => setNewDomain(event.target.value)}
-              onKeyDown={(event) => event.key === 'Enter' && void addDomain()}
+              onKeyDown={(event) => event.key === 'Enter' && addDomain()}
             />
-            <button onClick={() => void addDomain()}>{m.add}</button>
+            <button onClick={addDomain}>{m.add}</button>
           </div>
         )}
       </aside>
@@ -259,7 +277,19 @@ export function TerminologyView() {
           onBack={() => setOpen(null)}
           onSaved={(saved) => conceptSaved(open, saved)}
           onGone={() => conceptGone(open, activeDomain.id)}
-          onUnsavedChange={() => {}}
+          onUnsavedChange={setUnsaved}
+        />
+      )}
+      {pendingLeave !== null && (
+        <ConfirmDialog
+          title={m.leaveUnsavedTitle}
+          message={m.leaveUnsavedConfirm}
+          confirmLabel={m.leaveUnsaved}
+          onCancel={() => setPendingLeave(null)}
+          onConfirm={() => {
+            setPendingLeave(null)
+            pendingLeave()
+          }}
         />
       )}
     </div>

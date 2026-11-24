@@ -23,6 +23,7 @@ import { languageLabel } from './languages'
 import { useStore } from './state/store'
 import { TerminologyView } from './terminology/TerminologyView'
 import type { Language, WindowUsage } from './types'
+import { ConfirmDialog } from './ui/ConfirmDialog'
 import { Wordmark } from './Wordmark'
 
 export default function App() {
@@ -79,7 +80,25 @@ export default function App() {
       {activeView === 'profiles' && <ProfilesView />}
       {activeView === 'admin' && isAdmin && <AdminView />}
       {activeView === 'activity' && <ActivityView />}
+      <LeaveUnsavedQuestion />
     </div>
+  )
+}
+
+function LeaveUnsavedQuestion() {
+  const m = useMessages()
+  const pendingView = useStore((s) => s.pendingView)
+  const confirmPendingView = useStore((s) => s.confirmPendingView)
+  const cancelPendingView = useStore((s) => s.cancelPendingView)
+  if (pendingView === null) return null
+  return (
+    <ConfirmDialog
+      title={m.leaveUnsavedTitle}
+      message={m.leaveUnsavedConfirm}
+      confirmLabel={m.leaveUnsaved}
+      onConfirm={confirmPendingView}
+      onCancel={cancelPendingView}
+    />
   )
 }
 

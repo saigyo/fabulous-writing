@@ -222,6 +222,13 @@ export const it: Messages = {
   conceptConflict: (language) => `Qualcun altro ha modificato ${language} nel frattempo.`,
   conceptConflictLinks: 'Qualcun altro ha modificato i domini di questo concetto nel frattempo.',
   loadCurrentVersion: 'Carica la versione attuale',
+  reloadLanguageConfirm: (language) =>
+    `Caricare la versione attuale di ${language}? Le tue modifiche a ${language} verranno scartate.`,
+  reloadLinksConfirm:
+    'Caricare i domini attuali di questo concetto? Le tue modifiche ai domini verranno scartate.',
+  leaveUnsavedTitle: 'Modifiche non salvate',
+  leaveUnsavedConfirm: 'Questo concetto ha modifiche non salvate. Se esci ora, verranno scartate.',
+  leaveUnsaved: 'Esci senza salvare',
 
   profilesTitle: 'Profili di controllo',
   newProfilePlaceholder: 'Nuovo profilo…',

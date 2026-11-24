@@ -210,6 +210,51 @@ describe('ActiveView', () => {
   })
 })
 
+describe('leaving the terminology view with unsaved changes', () => {
+  beforeEach(() => {
+    resetSessionState()
+    useStore.setState({ activeView: 'terminology' })
+  })
+
+  it('switches at once while nothing is unsaved', () => {
+    useStore.getState().setActiveView('rules')
+    expect(useStore.getState().activeView).toBe('rules')
+    expect(useStore.getState().pendingView).toBeNull()
+  })
+
+  it('only stores the wish while something is unsaved', () => {
+    useStore.getState().setTerminologyUnsaved(true)
+    useStore.getState().setActiveView('rules')
+    expect(useStore.getState().activeView).toBe('terminology')
+    expect(useStore.getState().pendingView).toBe('rules')
+    expect(useStore.getState().terminologyUnsaved).toBe(true)
+  })
+
+  it('switches on confirm although the flag is still set', () => {
+    useStore.getState().setTerminologyUnsaved(true)
+    useStore.getState().setActiveView('activity')
+    useStore.getState().confirmPendingView()
+    expect(useStore.getState().activeView).toBe('activity')
+    expect(useStore.getState().pendingView).toBeNull()
+  })
+
+  it('drops the wish on cancel', () => {
+    useStore.getState().setTerminologyUnsaved(true)
+    useStore.getState().setActiveView('rules')
+    useStore.getState().cancelPendingView()
+    expect(useStore.getState().activeView).toBe('terminology')
+    expect(useStore.getState().pendingView).toBeNull()
+  })
+
+  it('clears both fields on a session reset', () => {
+    useStore.getState().setTerminologyUnsaved(true)
+    useStore.getState().setActiveView('rules')
+    resetSessionState()
+    expect(useStore.getState().terminologyUnsaved).toBe(false)
+    expect(useStore.getState().pendingView).toBeNull()
+  })
+})
+
 describe('activitySubject', () => {
   it('setActivitySubject sets both fields and resets to self/null on session reset', () => {
     useStore.getState().setActivitySubject(7, 'ada@example.com')

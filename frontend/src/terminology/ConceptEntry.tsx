@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import {
   createConcept,
   deleteConcept,
+  getConcept,
   HttpError,
   removeConceptFromDomain,
   saveConcept,
@@ -22,6 +23,7 @@ import {
   hasUnsaved,
   linksUnsaved,
   newEntry,
+  reloadPart,
   saveAllBody,
   sectionProblems,
   toSectionInput,
@@ -50,7 +52,7 @@ interface EntryError {
   at: ErrorSlot
   message: string
   conflict: boolean
-  part?: string
+  part?: Language | 'links'
 }
 
 function withComment(comment: string): { comment?: string } {
@@ -78,11 +80,14 @@ export function ConceptEntry({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<EntryError | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [confirmingReload, setConfirmingReload] = useState(false)
+  const [confirmingLeave, setConfirmingLeave] = useState(false)
 
   const unsaved = hasUnsaved(state)
   useEffect(() => {
     onUnsavedChange(unsaved)
   }, [unsaved, onUnsavedChange])
+  useEffect(() => () => onUnsavedChange(false), [onUnsavedChange])
 
   const nameOf = (code: string) => languageName(code, languages)
   const conceptId = state.conceptId
@@ -115,7 +120,7 @@ export function ConceptEntry({
     }
     if (e.code === 'conflict') {
       const message = e.part === 'links' ? m.conceptConflictLinks : m.conceptConflict(nameOf(e.part ?? ''))
-      return { message, conflict: true, part: e.part }
+      return { message, conflict: true, part: e.part as Language | 'links' | undefined }
     }
     if (e.code === 'duplicate_text') return { message: m.problemDuplicateText, conflict: false }
     if (e.code === 'second_preferred') return { message: m.problemSecondPreferred, conflict: false }
@@ -190,8 +195,26 @@ export function ConceptEntry({
     setState((s) => ({ ...s, domainIds }))
   }
 
-  // Loading the current version of a refused part is Task 7.
-  function loadCurrentVersion() {}
+  async function loadCurrentVersion(refused: EntryError) {
+    const { part } = refused
+    if (conceptId === null || part === undefined) return
+    setBusy(true)
+    try {
+      const concept = await getConcept(conceptId)
+      setState((s) => reloadPart(s, concept, part))
+      setCurrent(concept)
+      setError(null)
+    } catch (e) {
+      setError({ ...refused, message: describe(e).message })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function back() {
+    if (unsaved) setConfirmingLeave(true)
+    else onBack()
+  }
 
   function errorAt(slot: ErrorSlot) {
     if (error?.at !== slot) return null
@@ -199,7 +222,7 @@ export function ConceptEntry({
       <p className="entry-error" role="alert">
         <span>{error.message}</span>
         {error.conflict && (
-          <button type="button" disabled={busy} onClick={loadCurrentVersion}>
+          <button type="button" disabled={busy} onClick={() => setConfirmingReload(true)}>
             {m.loadCurrentVersion}
           </button>
         )}
@@ -211,7 +234,7 @@ export function ConceptEntry({
     <section className="concept-entry">
       <div className="entry-header">
         <h2>
-          <button type="button" className="link-button" disabled={busy} onClick={onBack}>
+          <button type="button" className="link-button" disabled={busy} onClick={back}>
             ← {domain.name}
           </button>{' '}
           / {label}
@@ -291,7 +314,7 @@ export function ConceptEntry({
           onSave={() => void saveSection(section)}
           onDiscard={() => discardOne(section.language)}
           onRemove={() => remove(section)}
-          onReload={loadCurrentVersion}
+          onReload={() => setConfirmingReload(true)}
         />
       ))}
       {!readOnly && missingLanguages.length > 0 && (
@@ -352,6 +375,30 @@ export function ConceptEntry({
               await deleteConcept(conceptId)
               onGone()
             })
+          }}
+        />
+      )}
+      {confirmingReload && error?.part !== undefined && (
+        <ConfirmDialog
+          title={m.loadCurrentVersion}
+          message={error.part === 'links' ? m.reloadLinksConfirm : m.reloadLanguageConfirm(nameOf(error.part))}
+          confirmLabel={m.loadCurrentVersion}
+          onCancel={() => setConfirmingReload(false)}
+          onConfirm={() => {
+            setConfirmingReload(false)
+            void loadCurrentVersion(error)
+          }}
+        />
+      )}
+      {confirmingLeave && (
+        <ConfirmDialog
+          title={m.leaveUnsavedTitle}
+          message={m.leaveUnsavedConfirm}
+          confirmLabel={m.leaveUnsaved}
+          onCancel={() => setConfirmingLeave(false)}
+          onConfirm={() => {
+            setConfirmingLeave(false)
+            onBack()
           }}
         />
       )}

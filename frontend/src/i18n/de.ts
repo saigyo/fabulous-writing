@@ -222,6 +222,14 @@ export const de: Messages = {
   conceptConflict: (language) => `Jemand anderes hat ${language} in der Zwischenzeit geändert.`,
   conceptConflictLinks: 'Jemand anderes hat die Domänen dieses Konzepts in der Zwischenzeit geändert.',
   loadCurrentVersion: 'Aktuelle Fassung laden',
+  reloadLanguageConfirm: (language) =>
+    `Aktuelle Fassung von ${language} laden? Deine Änderungen an ${language} werden verworfen.`,
+  reloadLinksConfirm:
+    'Aktuelle Domänen dieses Konzepts laden? Deine Änderungen an den Domänen werden verworfen.',
+  leaveUnsavedTitle: 'Nicht gespeicherte Änderungen',
+  leaveUnsavedConfirm:
+    'Dieses Konzept hat nicht gespeicherte Änderungen. Wenn du jetzt gehst, werden sie verworfen.',
+  leaveUnsaved: 'Ohne Speichern verlassen',
 
   profilesTitle: 'Prüfprofile',
   newProfilePlaceholder: 'Neues Profil…',

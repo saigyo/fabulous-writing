@@ -36,6 +36,7 @@ vi.mock('../documents/documents', () => ({
 }))
 
 import {
+  createDomain,
   deleteDomain,
   getConcepts,
   getDomains,
@@ -345,6 +346,8 @@ describe('TerminologyView answers from an entry the writer has left', () => {
 
     const rowB = screen.getAllByText('Private B').find((el) => el.closest('.domain-row')) as HTMLElement
     await userEvent.click(rowB)
+    const dialog = await screen.findByRole('dialog')
+    await userEvent.click(within(dialog).getByRole('button', { name: en.leaveUnsaved }))
     await screen.findByRole('button', { name: 'beta' })
 
     resolveSave(conceptOf(201, 'alpha saved', [2]))
@@ -382,6 +385,119 @@ describe('TerminologyView answers from an entry the writer has left', () => {
     expect(callsA).toBe(1)
     expect(screen.queryByRole('button', { name: 'alpha reloaded' })).toBeNull()
     screen.getByRole('button', { name: 'beta' })
+  })
+})
+
+describe('TerminologyView leaving an entry with unsaved changes', () => {
+  const privateA: Domain = { id: 2, name: 'Private A', description: '', is_global: false }
+  const privateB: Domain = { id: 3, name: 'Private B', description: '', is_global: false }
+  const added: Domain = { id: 4, name: 'Fresh', description: '', is_global: false }
+  const unsaved = () => useStore.getState().terminologyUnsaved
+  const back = () => screen.queryByRole('button', { name: `← ${privateA.name}` })
+  const rowOf = (name: string) =>
+    screen.getAllByText(name).find((el) => el.closest('.domain-row')) as HTMLElement
+
+  beforeEach(() => {
+    useStore.setState({
+      domains: [privateA, privateB],
+      terminologyUnsaved: false,
+      user: user({ policy: { llm: { tiers: null, providers: null, models: null }, features: ['custom_domains'] } }),
+    })
+    vi.mocked(getDomains).mockResolvedValue([privateA, privateB])
+    vi.mocked(getConcepts).mockImplementation(async (domainId: number) =>
+      domainId === privateA.id ? [conceptOf(201, 'alpha', [2])] : [conceptOf(202, 'beta', [3])],
+    )
+  })
+
+  async function editAlpha() {
+    render(<TerminologyView />)
+    await userEvent.click(await screen.findByRole('button', { name: 'alpha' }))
+    await userEvent.type(screen.getByRole('textbox', { name: en.definitionLabel }), 'A letter')
+    expect(unsaved()).toBe(true)
+  }
+
+  async function answerLeave(name: string) {
+    await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name }))
+  }
+
+  it('asks before another domain and switches only after confirming', async () => {
+    await editAlpha()
+    await userEvent.click(rowOf('Private B'))
+    await answerLeave(en.dialogCancel)
+    expect(back()).not.toBeNull()
+    expect(unsaved()).toBe(true)
+
+    await userEvent.click(rowOf('Private B'))
+    await answerLeave(en.leaveUnsaved)
+    await screen.findByRole('button', { name: 'beta' })
+    expect(back()).toBeNull()
+    expect(unsaved()).toBe(false)
+  })
+
+  it('asks before the way back and is clear after leaving the entry', async () => {
+    await editAlpha()
+    await userEvent.click(back()!)
+    await answerLeave(en.leaveUnsaved)
+    screen.getByRole('button', { name: 'alpha' })
+    expect(unsaved()).toBe(false)
+  })
+
+  it('asks before adding a domain, which makes it active', async () => {
+    vi.mocked(createDomain).mockResolvedValue(added)
+    await editAlpha()
+    vi.mocked(getDomains).mockResolvedValue([privateA, privateB, added])
+    await userEvent.type(screen.getByPlaceholderText(en.newDomainPlaceholder), 'Fresh')
+    await userEvent.click(screen.getByRole('button', { name: en.add }))
+    await screen.findByRole('dialog')
+    expect(createDomain).not.toHaveBeenCalled()
+
+    await answerLeave(en.leaveUnsaved)
+    await waitFor(() => expect(getConcepts).toHaveBeenCalledWith(added.id))
+    expect(createDomain).toHaveBeenCalledWith('Fresh')
+    expect(back()).toBeNull()
+  })
+
+  it('adds a domain at once while nothing is unsaved', async () => {
+    vi.mocked(createDomain).mockResolvedValue(added)
+    render(<TerminologyView />)
+    await userEvent.click(await screen.findByRole('button', { name: 'alpha' }))
+    await userEvent.type(screen.getByPlaceholderText(en.newDomainPlaceholder), 'Fresh')
+    await userEvent.click(screen.getByRole('button', { name: en.add }))
+    await waitFor(() => expect(createDomain).toHaveBeenCalledWith('Fresh'))
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('is clear after saving', async () => {
+    const saved = conceptOf(201, 'alpha', [2])
+    saved.sections[0].definition = 'A letter'
+    vi.mocked(saveConceptLanguage).mockResolvedValue(saved)
+    await editAlpha()
+    await userEvent.click(screen.getByRole('button', { name: en.saveLanguage('English') }))
+    await waitFor(() => expect(unsaved()).toBe(false))
+  })
+
+  it('is clear after discarding', async () => {
+    await editAlpha()
+    await userEvent.click(screen.getByRole('button', { name: en.discard }))
+    expect(unsaved()).toBe(false)
+  })
+
+  it('is clear after the view unmounts', async () => {
+    await editAlpha()
+    cleanup()
+    expect(unsaved()).toBe(false)
+  })
+
+  it('holds back closing the tab only while something is unsaved', async () => {
+    const unload = () => {
+      const event = new Event('beforeunload', { cancelable: true })
+      window.dispatchEvent(event)
+      return event.defaultPrevented
+    }
+    await editAlpha()
+    expect(unload()).toBe(true)
+    await userEvent.click(screen.getByRole('button', { name: en.discard }))
+    expect(unload()).toBe(false)
   })
 })
 

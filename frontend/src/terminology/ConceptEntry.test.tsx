@@ -641,6 +641,172 @@ describe('ConceptEntry failed saves', () => {
   })
 })
 
+describe('ConceptEntry after a save refused as out of date', () => {
+  const conflict = (part: string) =>
+    json(409, { detail: { code: 'conflict', message: 'out of date', part } })
+  const gets = () => requests().filter((r) => r.method === 'GET')
+  const DE_SERVER = section(
+    70,
+    'de',
+    [term(701, 'Anmeldung', { usage_status: 'preferred' }), term(703, 'Einloggen', { usage_status: 'deprecated' })],
+    { definition: 'Vom Server', revision: 3 },
+  )
+
+  async function refusedGermanSave(user: ReturnType<typeof userEvent.setup>) {
+    renderEntry()
+    await user.type(definition(deSection()), 'Vorgang')
+    await user.type(definition(enSection()), 'Step')
+    answer(conflict('de'))
+    await user.click(button(en.saveLanguage('Deutsch')))
+    await within(deSection()).findByText(en.conceptConflict('Deutsch'))
+  }
+
+  it('loads the changed language after asking and leaves the other section alone', async () => {
+    const user = userEvent.setup()
+    await refusedGermanSave(user)
+    expect(definition(deSection()).value).toBe('Vorgang')
+
+    await user.click(button(en.loadCurrentVersion, deSection()))
+    const dialog = await screen.findByRole('dialog')
+    within(dialog).getByText(en.reloadLanguageConfirm('Deutsch'))
+    expect(gets()).toEqual([])
+
+    answer(json(200, conceptOf({ sections: [DE_SERVER, EN], revision: 4 })))
+    await user.click(within(dialog).getByRole('button', { name: en.loadCurrentVersion }))
+
+    await waitFor(() => expect(definition(deSection()).value).toBe('Vom Server'))
+    expect(gets().map((r) => r.path)).toEqual(['/api/concepts/7'])
+    expect(termTexts(deSection()).map((i) => i.value)).toEqual(['Anmeldung', 'Einloggen'])
+    within(deSection()).getByText(`✓ ${en.sectionSaved}`)
+    expect(screen.queryByText(en.conceptConflict('Deutsch'))).toBeNull()
+    expect(definition(enSection()).value).toBe('Step')
+    within(enSection()).getByText(`● ${en.unsavedChanges(1)}`)
+  })
+
+  it('changes nothing when the question is cancelled', async () => {
+    const user = userEvent.setup()
+    await refusedGermanSave(user)
+    await user.click(button(en.loadCurrentVersion, deSection()))
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: en.dialogCancel }))
+
+    expect(gets()).toEqual([])
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(definition(deSection()).value).toBe('Vorgang')
+    within(deSection()).getByText(en.conceptConflict('Deutsch'))
+  })
+
+  it('disables the entry while the current version is loading', async () => {
+    const user = userEvent.setup()
+    await refusedGermanSave(user)
+    await user.click(button(en.loadCurrentVersion, deSection()))
+    const resolve = pending()
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: en.loadCurrentVersion }))
+
+    expect(definition(enSection()).disabled).toBe(true)
+    expect(button(en.loadCurrentVersion, deSection()).disabled).toBe(true)
+    expect(button(`← ${docs.name}`).disabled).toBe(true)
+
+    resolve(json(200, conceptOf({ sections: [DE_SERVER, EN], revision: 4 })))
+    await waitFor(() => expect(definition(enSection()).disabled).toBe(false))
+  })
+
+  it('shows a failed load next to the same button and changes nothing else', async () => {
+    const user = userEvent.setup()
+    await refusedGermanSave(user)
+    await user.click(button(en.loadCurrentVersion, deSection()))
+    answer(json(404, { detail: 'Concept not found' }))
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: en.loadCurrentVersion }))
+
+    await within(deSection()).findByText(en.changeFailed('Concept not found'))
+    expect(screen.getAllByText(en.changeFailed('Concept not found'))).toHaveLength(1)
+    within(deSection()).getByRole('button', { name: en.loadCurrentVersion })
+    expect(definition(deSection()).value).toBe('Vorgang')
+    expect(definition(enSection()).value).toBe('Step')
+  })
+
+  it('names the domains at "Save all" and loads only the links', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    await user.selectOptions(screen.getByRole('combobox', { name: en.addConceptDomain }), 'Support')
+    await user.type(definition(deSection()), 'Vorgang')
+    answer(conflict('links'))
+    await user.click(button(en.saveAll))
+
+    const message = await screen.findByText(en.conceptConflictLinks)
+    expect(deSection().contains(message)).toBe(false)
+    expect(enSection().contains(message)).toBe(false)
+
+    await user.click(button(en.loadCurrentVersion))
+    const dialog = await screen.findByRole('dialog')
+    within(dialog).getByText(en.reloadLinksConfirm)
+    answer(json(200, conceptOf({ domain_ids: [2, 4], revision: 5, sections: [DE_SERVER, EN] })))
+    await user.click(within(dialog).getByRole('button', { name: en.loadCurrentVersion }))
+
+    await screen.findByRole('button', { name: en.removeDomainLink('Legal') })
+    expect(screen.queryByRole('button', { name: en.removeDomainLink('Support') })).toBeNull()
+    expect(definition(deSection()).value).toBe('Vorgang')
+    screen.getByText(en.unsavedList('Deutsch'))
+    expect(screen.queryByText(en.conceptConflictLinks)).toBeNull()
+  })
+
+  it('marks nothing saved and names English when "Save all" is refused for English', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    await user.type(definition(deSection()), 'Vorgang')
+    await user.type(definition(enSection()), 'Step')
+    answer(conflict('en'))
+    await user.click(button(en.saveAll))
+
+    const message = await screen.findByText(en.conceptConflict('English'))
+    expect(deSection().contains(message)).toBe(false)
+    expect(enSection().contains(message)).toBe(false)
+    within(deSection()).getByText(`● ${en.unsavedChanges(1)}`)
+    within(enSection()).getByText(`● ${en.unsavedChanges(1)}`)
+    expect(screen.queryByText(`✓ ${en.sectionSaved}`)).toBeNull()
+  })
+
+  it('clears the message when the same part is then saved', async () => {
+    const user = userEvent.setup()
+    await refusedGermanSave(user)
+    answer(json(200, conceptOf({ sections: [section(70, 'de', DE.terms, { definition: 'Vorgang', revision: 3 }), EN] })))
+    await user.click(button(en.saveLanguage('Deutsch')))
+    await within(deSection()).findByText(`✓ ${en.sectionSaved}`)
+    expect(screen.queryByText(en.conceptConflict('Deutsch'))).toBeNull()
+  })
+})
+
+describe('ConceptEntry way back', () => {
+  it('asks first while something is unsaved and goes back only after confirming', async () => {
+    const user = userEvent.setup()
+    const { onBack } = renderEntry()
+    await user.type(definition(deSection()), 'Vorgang')
+    await user.click(button(`← ${docs.name}`))
+    const dialog = await screen.findByRole('dialog')
+    within(dialog).getByText(en.leaveUnsavedConfirm)
+    expect(onBack).not.toHaveBeenCalled()
+
+    await user.click(within(dialog).getByRole('button', { name: en.dialogCancel }))
+    expect(onBack).not.toHaveBeenCalled()
+    expect(definition(deSection()).value).toBe('Vorgang')
+
+    await user.click(button(`← ${docs.name}`))
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: en.leaveUnsaved }))
+    expect(onBack).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports unsaved changes as they come and go, and none once it is gone', async () => {
+    const user = userEvent.setup()
+    const { onUnsavedChange } = renderEntry()
+    await user.type(definition(deSection()), 'V')
+    expect(onUnsavedChange).toHaveBeenLastCalledWith(true)
+    await user.click(button(en.discard, deSection()))
+    expect(onUnsavedChange).toHaveBeenLastCalledWith(false)
+    await user.type(definition(deSection()), 'V')
+    cleanup()
+    expect(onUnsavedChange).toHaveBeenLastCalledWith(false)
+  })
+})
+
 describe('ConceptEntry removal actions', () => {
   it('disables "Remove from this domain" while the concept is in no other domain', () => {
     renderEntry()

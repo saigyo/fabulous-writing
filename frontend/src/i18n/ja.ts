@@ -211,6 +211,12 @@ export const ja: Messages = {
   conceptConflict: (language) => `その間に別のユーザーが${language}を変更しました。`,
   conceptConflictLinks: 'その間に別のユーザーがこの概念のドメインを変更しました。',
   loadCurrentVersion: '最新の版を読み込む',
+  reloadLanguageConfirm: (language) =>
+    `${language}の最新の版を読み込みますか？${language}への変更は破棄されます。`,
+  reloadLinksConfirm: 'この概念の最新のドメインを読み込みますか？ドメインへの変更は破棄されます。',
+  leaveUnsavedTitle: '未保存の変更',
+  leaveUnsavedConfirm: 'この概念には未保存の変更があります。今離れると、変更は破棄されます。',
+  leaveUnsaved: '保存せずに離れる',
 
   profilesTitle: 'チェックプロファイル',
   newProfilePlaceholder: '新しいプロファイル…',

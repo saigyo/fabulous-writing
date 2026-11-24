@@ -228,6 +228,14 @@ export const fr: Messages = {
   conceptConflict: (language) => `Quelqu’un d’autre a modifié ${language} entre-temps.`,
   conceptConflictLinks: 'Quelqu’un d’autre a modifié les domaines de ce concept entre-temps.',
   loadCurrentVersion: 'Charger la version actuelle',
+  reloadLanguageConfirm: (language) =>
+    `Charger la version actuelle de ${language} ? Tes modifications de ${language} seront abandonnées.`,
+  reloadLinksConfirm:
+    'Charger les domaines actuels de ce concept ? Tes modifications des domaines seront abandonnées.',
+  leaveUnsavedTitle: 'Modifications non enregistrées',
+  leaveUnsavedConfirm:
+    'Ce concept a des modifications non enregistrées. Si tu quittes maintenant, elles seront abandonnées.',
+  leaveUnsaved: 'Quitter sans enregistrer',
 
   profilesTitle: 'Profils de vérification',
   newProfilePlaceholder: 'Nouveau profil…',
