@@ -171,11 +171,14 @@ def test_sections_keep_the_old_term_ids(db):
     ])
     store = TerminologyStore(db)
 
+    sections = {
+        section.id: section
+        for domain in ("Shared", "Mine")
+        for concept in store.list_concepts(ids[domain], owner_id=1)
+        for section in concept.sections
+    }
     for section_id, wording in ((1, "sign in"), (3, "Anmeldung"), (4, "connexion")):
-        concept = store.get_concept_by_section(section_id, owner_id=1)
-        assert concept is not None
-        assert concept.sections[0].id == section_id
-        assert concept.sections[0].terms[0].text == wording
+        assert sections[section_id].terms[0].text == wording
 
     later = add_term(store, ids["Shared"], language=L.IT, preferred="accesso")
     assert later.sections[0].id > 4
