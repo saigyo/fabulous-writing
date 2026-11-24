@@ -12,7 +12,6 @@ from app.services.ownership import (
 )
 from app.services.terminology import changes, migration, rows, schema
 from app.services.terminology.model import (
-    PROCESS_STATUS_ENFORCED,
     Actor,
     Concept,
     Domain,
@@ -170,6 +169,7 @@ class TerminologyStore:
                 # start would skip the backfill; on Postgres the new tables would go.
                 conn.commit()
                 migration.migrate_legacy_terms(conn, now=_utcnow())
+                migration.drop_legacy_terms(conn)
             else:
                 schema.verify(conn)
 
@@ -295,41 +295,6 @@ class TerminologyStore:
         if concept is None or not is_visible(concept.owner_id, user_id=owner_id):
             return None
         return concept
-
-    def get_concept_by_section(self, section_id: int, *, owner_id: int) -> Concept | None:
-        """The concept a language section belongs to, for the old term endpoints,
-        whose term id is a section id. Removed again in the third pull request,
-        together with those endpoints."""
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT concept_id FROM concept_languages WHERE id = ?", (section_id,)
-            ).fetchone()
-            concept = rows.load_concept(conn, row["concept_id"]) if row else None
-        if concept is None or not is_visible(concept.owner_id, user_id=owner_id):
-            return None
-        return concept
-
-    def section_ids_by_preferred(self, domain_id: int, *, owner_id: int) -> list[int] | None:
-        """Ids of the domain's language sections that have an enforced preferred
-        term, ordered by its text in SQL, so that the database's collation decides
-        the order of the old term list as it did before. Removed again in the third
-        pull request, together with `get_concept_by_section`."""
-        enforced = [status.value for status, on in PROCESS_STATUS_ENFORCED.items() if on]
-        with self._connect() as conn:
-            if self._visible_domain_row(conn, domain_id, owner_id) is None:
-                return None
-            found = conn.execute(
-                "SELECT s.id FROM concept_languages s"
-                " JOIN concepts c ON c.id = s.concept_id"
-                " JOIN concept_domains cd ON cd.concept_id = s.concept_id"
-                " JOIN concept_terms t ON t.section_id = s.id"
-                " WHERE cd.domain_id = ? AND " + visible_clause("c.owner_id")
-                + " AND t.usage_status = ?"
-                f" AND t.process_status IN ({', '.join('?' for _ in enforced)})"
-                " ORDER BY t.text, s.id",
-                (domain_id, owner_id, UsageStatus.PREFERRED.value, *enforced),
-            ).fetchall()
-        return [row["id"] for row in found]
 
     def list_sections(
         self, domain_id: int, *, owner_id: int, language: Language

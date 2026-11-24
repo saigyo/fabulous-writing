@@ -237,24 +237,59 @@ def test_variant_differing_only_in_case_is_carried_over(sqlite_db):
     assert term_shape(concept) == [("GitHub", P, A, True), ("Github", F, A, True)]
 
 
-def test_old_table_is_renamed_and_a_second_start_changes_nothing(db):
+def test_second_start_changes_nothing(db):
     legacy(db, [
         Old("Shared", L.EN, "sign in", ["login"]),
         Old("Mine", L.DE, "Anmeldung", ["Login"], "Vorgang.", True),
     ])
-    with db.connect() as conn:
-        original = [tuple(r) for r in conn.execute("SELECT * FROM terms ORDER BY id").fetchall()]
 
     TerminologyStore(db)
-    assert columns(db, "terms") == set()
-    with db.connect() as conn:
-        kept = [tuple(r) for r in conn.execute("SELECT * FROM terms_legacy ORDER BY id").fetchall()]
-    assert kept == original
     counts = {table: count(db, table) for table in _NEW_TABLES}
     assert counts["concepts"] == 2
 
     TerminologyStore(db)
     assert {table: count(db, table) for table in _NEW_TABLES} == counts
+
+
+def test_legacy_table_is_dropped_after_migration(db):
+    legacy(db, [
+        Old("Shared", L.EN, "sign in", ["login"]),
+        Old("Mine", L.DE, "Anmeldung"),
+    ])
+
+    TerminologyStore(db)
+
+    assert columns(db, "terms") == set()
+    assert columns(db, "terms_legacy") == set()
+    assert count(db, "concepts") == 2
+
+
+def _after_previous_release(db) -> None:
+    """The state the previous release leaves: the new tables and `terms_legacy`."""
+    store = TerminologyStore(db)
+    add_term(store, store.create_domain("Shared", owner_id=None).id, language=L.EN, preferred="a")
+    with db.connect() as conn:
+        conn.executescript(LEGACY_TERMS_DDL.replace("TABLE terms", "TABLE terms_legacy") + ";")
+
+
+def test_leftover_legacy_table_is_dropped_on_the_next_start(db):
+    _after_previous_release(db)
+    counts = {table: count(db, table) for table in _NEW_TABLES}
+    log = logged_changes(db)
+
+    TerminologyStore(db)
+
+    assert columns(db, "terms_legacy") == set()
+    assert {table: count(db, table) for table in _NEW_TABLES} == counts
+    assert logged_changes(db) == log
+
+
+def test_verification_accepts_a_leftover_legacy_table(db):
+    _after_previous_release(db)
+
+    TerminologyStore(db, manage_schema=False)
+
+    assert columns(db, "terms_legacy") != set()
 
 
 def test_failed_migration_leaves_everything_as_it_was(db, failing_write, monkeypatch):
@@ -344,7 +379,7 @@ def test_row_without_any_usable_wording_is_skipped_with_a_warning(sqlite_db, cap
     (concept,) = concepts_in(store, ids["Shared"])
     assert concept.sections[0].language == L.DE
     assert any("7" in m and "Shared" in m for m in warnings(caplog))
-    assert count(sqlite_db, "terms_legacy") == 2
+    assert columns(sqlite_db, "terms_legacy") == set()
 
 
 def test_new_sections_never_take_the_id_of_an_old_row(db):
@@ -417,7 +452,7 @@ def test_check_results_after_migration_match_the_baseline(db):
 
 def test_migration_waits_for_a_write_of_the_previous_release_and_carries_it_over(pg_database):
     # Without the table lock the migration reads the old value and only waits
-    # at the rename, so the updated definition would stay in terms_legacy.
+    # at the rename, so the updated definition would be lost with the old table.
     ids = legacy(pg_database, [Old("Shared", L.EN, "sign in", ["login"], "Old.")])
     outcome: dict = {}
 

@@ -64,40 +64,6 @@ class TestStore:
         assert store.list_concepts(domain.id, owner_id=1) is None
 
 
-    def test_section_order_follows_the_database_collation(
-        self, store: TerminologyStore, db
-    ) -> None:
-        domain = store.create_domain("Cloud", owner_id=None)
-        wordings = ["Zoom", "apple", "Äpfel", "Bild"]
-        by_id = {
-            add_term(store, domain.id, language=Language.EN, preferred=w).sections[0].id: w
-            for w in wordings
-        }
-        store.create_concept(
-            domain.id,
-            [
-                SectionInput(
-                    language=Language.EN,
-                    terms=[TermInput(text="login", usage_status=UsageStatus.FORBIDDEN)],
-                )
-            ],
-            actor=Actor(user_id=1, is_admin=True),
-        )
-        with db.connect() as conn:
-            conn.execute("CREATE TEMPORARY TABLE wordings (text TEXT NOT NULL)")
-            for wording in wordings:
-                conn.execute("INSERT INTO wordings (text) VALUES (?)", (wording,))
-            expected = [
-                row["text"]
-                for row in conn.execute("SELECT text FROM wordings ORDER BY text").fetchall()
-            ]
-        order = store.section_ids_by_preferred(domain.id, owner_id=1)
-        assert order is not None
-        assert [by_id[section_id] for section_id in order] == expected
-        assert store.section_ids_by_preferred(domain.id, owner_id=2) == order
-        assert store.section_ids_by_preferred(9999, owner_id=1) is None
-
-
 class TestChecker:
     def test_flags_forbidden_variant_and_suggests_preferred(
         self, store: TerminologyStore
