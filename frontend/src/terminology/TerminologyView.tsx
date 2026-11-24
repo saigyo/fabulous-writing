@@ -32,10 +32,13 @@ export function TerminologyView() {
   const [activeDomainId, setActiveDomainId] = useState<number | null>(null)
   const [concepts, setConcepts] = useState<Concept[]>([])
   const [open, setOpen] = useState<OpenConcept | null>(null)
+  // Set together with `open`, so a late answer compares against the entry
+  // shown from the moment it changes, not from the next effect.
   const openRef = useRef<OpenConcept | null>(null)
-  useEffect(() => {
-    openRef.current = open
-  }, [open])
+  const showEntry = useCallback((next: OpenConcept | null) => {
+    openRef.current = next
+    setOpen(next)
+  }, [])
   const [pendingDelete, setPendingDelete] = useState<{ id: number; name: string; count: number } | null>(null)
   const [newDomain, setNewDomain] = useState('')
   const unsaved = useStore((s) => s.terminologyUnsaved)
@@ -58,10 +61,12 @@ export function TerminologyView() {
     else action()
   }
 
+  const domainsRequestRef = useRef(0)
   const refreshDomains = useCallback(() => {
     const gen = sessionGeneration()
+    const requestId = ++domainsRequestRef.current
     return getDomains().then((domains) => {
-      if (sessionGeneration() === gen) setDomains(domains)
+      if (sessionGeneration() === gen && domainsRequestRef.current === requestId) setDomains(domains)
     })
   }, [setDomains])
 
@@ -70,7 +75,8 @@ export function TerminologyView() {
   }, [refreshDomains, authGeneration])
 
   useEffect(() => {
-    if (activeDomainId === null && domains.length > 0) {
+    const missing = activeDomainId === null || !domains.some((d) => d.id === activeDomainId)
+    if (missing && domains.length > 0) {
       setActiveDomainId(domains[0].id)
     }
   }, [domains, activeDomainId])
@@ -103,6 +109,8 @@ export function TerminologyView() {
           setConcepts(fetched)
         }
       })
+      // A failed list load leaves the list as it is; nothing awaits it.
+      .catch(() => {})
       .finally(() => {
         if (conceptsRequestRef.current === requestId) conceptsPendingRef.current = false
       })
@@ -113,39 +121,50 @@ export function TerminologyView() {
     // stay interactive (or visible) while the new domain's fetch is in flight.
     activeDomainRef.current = activeDomainId
     setConcepts([])
-    setOpen(null)
+    showEntry(null)
     if (activeDomainId !== null) {
       void loadConcepts(activeDomainId)
     }
-  }, [activeDomainId, loadConcepts])
+  }, [activeDomainId, loadConcepts, showEntry])
 
+  const creatingRef = useRef(false)
   function addDomain() {
     const name = newDomain.trim()
-    if (!name) return
+    if (!name || creatingRef.current) return
     leaveEntry(() =>
       void run(async () => {
-        setOpen(null)
-        const domain = await createDomain(name)
-        setNewDomain('')
-        await refreshDomains()
-        if (!useStore.getState().terminologyUnsaved) setActiveDomainId(domain.id)
+        creatingRef.current = true
+        try {
+          showEntry(null)
+          const domain = await createDomain(name)
+          setNewDomain((current) => (current.trim() === name ? '' : current))
+          await refreshDomains()
+          if (!useStore.getState().terminologyUnsaved) setActiveDomainId(domain.id)
+        } finally {
+          creatingRef.current = false
+        }
       }),
     )
   }
 
+  const deleteAskRef = useRef(0)
   async function askRemoveDomain(domain: { id: number; name: string }) {
+    const ask = ++deleteAskRef.current
     await run(async () => {
       const inDomain = await getConcepts(domain.id)
+      if (ask !== deleteAskRef.current) return
+      if (!useStore.getState().domains.some((d) => d.id === domain.id)) return
       const count = inDomain.filter((c) => c.domain_ids.length === 1).length
       setPendingDelete({ id: domain.id, name: domain.name, count })
     })
   }
 
   async function removeDomain(id: number) {
+    if (activeDomainRef.current === id) showEntry(null)
     await run(async () => {
       await deleteDomain(id)
-      if (activeDomainRef.current === id) setActiveDomainId(null)
       await refreshDomains()
+      if (activeDomainRef.current === id) setActiveDomainId(null)
     })
   }
 
@@ -184,17 +203,18 @@ export function TerminologyView() {
     // A list answer still on its way was read before this save; fetch again
     // so it cannot replace the list without the saved concept.
     if (conceptsPendingRef.current && active !== null) void loadConcepts(active)
-    if (entry.conceptId !== saved.id) setOpen({ ...entry, conceptId: saved.id })
+    if (entry.conceptId !== saved.id) showEntry({ ...entry, conceptId: saved.id })
   }
 
-  // A deleted concept is gone from every domain, so any entry open for it
-  // closes; a concept removed from one domain only closes the entry that
-  // asked.
-  function conceptGone(entry: OpenConcept, deleted: boolean) {
-    setOpen((current) =>
-      current === entry || (deleted && current?.conceptId === entry.conceptId) ? null : current,
-    )
-    if (activeDomainRef.current !== null) void loadConcepts(activeDomainRef.current)
+  // The entry that asked closes. Another entry for the same concept closes
+  // when the concept was deleted, or when it is open in the domain the
+  // concept was removed from.
+  function conceptGone(entry: OpenConcept, deleted: boolean, fromDomainId: number) {
+    const current = openRef.current
+    const active = activeDomainRef.current
+    const sameConcept = current !== null && current.conceptId === entry.conceptId
+    if (current === entry || (sameConcept && (deleted || active === fromDomainId))) showEntry(null)
+    if (active !== null) void loadConcepts(active)
   }
 
   const activeDomain = domains.find((domain) => domain.id === activeDomainId) ?? null
@@ -295,8 +315,8 @@ export function TerminologyView() {
           canCreate={canCreate}
           language={listLanguage}
           onLanguageChange={setListLanguage}
-          onOpen={(conceptId, language) => setOpen({ conceptId, language })}
-          onCreate={(language) => setOpen({ conceptId: null, language })}
+          onOpen={(conceptId, language) => showEntry({ conceptId, language })}
+          onCreate={(language) => showEntry({ conceptId: null, language })}
         />
       )}
       {activeDomain !== null && open !== null && (
@@ -306,9 +326,9 @@ export function TerminologyView() {
           concept={concepts.find((c) => c.id === open.conceptId) ?? null}
           newLanguage={open.language}
           readOnly={readOnly}
-          onBack={() => setOpen(null)}
+          onBack={() => showEntry(null)}
           onSaved={(saved) => conceptSaved(open, saved)}
-          onGone={(deleted) => conceptGone(open, deleted)}
+          onGone={(deleted) => conceptGone(open, deleted, activeDomain.id)}
           onUnsavedChange={setUnsaved}
         />
       )}
