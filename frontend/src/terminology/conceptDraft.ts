@@ -281,6 +281,6 @@ export function applySaved(
 }
 
 export function reloadPart(state: EntryState, concept: Concept, part: Language | 'links'): EntryState {
-  if (part === 'links') return { ...state, ...linksFrom(concept) }
+  if (part === 'links') return applySaved(state, concept, { languages: [], links: true })
   return applySaved(state, concept, { languages: [part], links: false })
 }

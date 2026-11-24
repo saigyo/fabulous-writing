@@ -947,8 +947,10 @@ describe('TerminologyView domain actions and late answers', () => {
     vi.mocked(getConcepts).mockImplementation(() => new Promise<Concept[]>((resolve) => (answer = resolve)))
     await userEvent.click(within(rowOf('Private B')).getByTitle(en.deleteDomainTitle))
     act(() => useStore.getState().setDomains([privateA]))
-    answer([])
-    await tick()
+    await act(async () => {
+      answer([])
+      await tick()
+    })
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
@@ -961,21 +963,69 @@ describe('TerminologyView domain actions and late answers', () => {
     expect(back()).toBeNull()
   })
 
-  it('keeps text typed into the new-domain field while the domain was created', async () => {
+  it('disables the new-domain field and Add while a domain is created', async () => {
     let answerCreate!: (domain: Domain) => void
     vi.mocked(createDomain).mockReturnValue(new Promise<Domain>((resolve) => (answerCreate = resolve)))
     vi.mocked(getDomains).mockResolvedValue([privateA, privateB, added])
     render(<TerminologyView />)
     const field = screen.getByPlaceholderText(en.newDomainPlaceholder) as HTMLInputElement
+    const addButton = screen.getByRole('button', { name: en.add }) as HTMLButtonElement
     await userEvent.type(field, 'Fresh')
-    await userEvent.click(screen.getByRole('button', { name: en.add }))
-    await userEvent.type(field, ' more')
-    answerCreate(added)
-    await waitFor(() => expect(getConcepts).toHaveBeenCalledWith(added.id))
-    expect(field.value).toBe('Fresh more')
+    await userEvent.click(addButton)
+    expect(field.disabled).toBe(true)
+    expect(addButton.disabled).toBe(true)
+
+    await act(async () => {
+      answerCreate(added)
+      await tick()
+    })
+    await waitFor(() => expect(addButton.disabled).toBe(false))
+    expect(field.disabled).toBe(false)
   })
 
-  it('clears the new-domain field when it still holds the name sent', async () => {
+  it('ends up on a new domain although another domain list request started meanwhile', async () => {
+    const answers: ((domains: Domain[]) => void)[] = []
+    vi.mocked(getDomains).mockImplementation(() => new Promise<Domain[]>((resolve) => answers.push(resolve)))
+    vi.mocked(createDomain).mockResolvedValue(added)
+    render(<TerminologyView />)
+    await act(async () => {
+      answers[0]([privateA, privateB])
+      await tick()
+    })
+    await userEvent.type(screen.getByPlaceholderText(en.newDomainPlaceholder), 'Fresh')
+    await userEvent.click(screen.getByRole('button', { name: en.add }))
+    await waitFor(() => expect(answers).toHaveLength(2))
+    act(() => useStore.setState({ authGeneration: useStore.getState().authGeneration + 1 }))
+    await waitFor(() => expect(answers).toHaveLength(3))
+
+    await act(async () => {
+      answers[1]([privateA, privateB, added])
+      await tick()
+    })
+    await act(async () => {
+      answers[2]([privateA, privateB, added])
+      await tick()
+    })
+    await waitFor(() => expect(rowOf('Fresh').classList.contains('selected')).toBe(true))
+    await tick()
+    expect(rowOf('Fresh').classList.contains('selected')).toBe(true)
+  })
+
+  it('removes a deleted domain from the list when the refresh after the delete fails', async () => {
+    vi.mocked(deleteDomain).mockImplementation(async () => {
+      vi.mocked(getDomains).mockRejectedValue(new Error('offline'))
+    })
+    render(<TerminologyView />)
+    await screen.findByRole('button', { name: 'alpha' })
+    await deleteDomainVia('Private A')
+
+    await screen.findByRole('button', { name: 'beta' })
+    expect(screen.queryByText('Private A')).toBeNull()
+    expect(rowOf('Private B').classList.contains('selected')).toBe(true)
+    screen.getByText(en.changeFailed('offline'))
+  })
+
+  it('clears the new-domain field once the domain is created', async () => {
     vi.mocked(createDomain).mockResolvedValue(added)
     vi.mocked(getDomains).mockResolvedValue([privateA, privateB, added])
     render(<TerminologyView />)
