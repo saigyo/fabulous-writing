@@ -62,6 +62,11 @@ interface AppStateData {
   tier: Tier | null
   llmAuto: boolean
   activeView: ActiveView
+  // Set by TerminologyView while its concept entry has unsaved changes.
+  // While it is set, setActiveView() to another view only stores the wish
+  // in pendingView; App.tsx asks before confirmPendingView() switches.
+  terminologyUnsaved: boolean
+  pendingView: ActiveView | null
   tracked: TrackedFinding[]
   selectedId: string | null
   // Persists across checks and resolved findings by design; only explicit
@@ -201,6 +206,9 @@ interface AppStateActions {
   setRouting: (routing: RoutingTable | null) => void
   setLlmAuto: (llmAuto: boolean) => void
   setActiveView: (view: ActiveView) => void
+  setTerminologyUnsaved: (value: boolean) => void
+  confirmPendingView: () => void
+  cancelPendingView: () => void
   setTracked: (tracked: TrackedFinding[], selectedId: string | null) => void
   setSeverityFilter: (severityFilter: Severity | null) => void
   setSourceFilter: (sourceFilter: SourceGroup | null) => void
@@ -348,6 +356,8 @@ export const INITIAL_DATA: Omit<
   tier: 'balanced',
   llmAuto: true,
   activeView: 'editor',
+  terminologyUnsaved: false,
+  pendingView: null,
   tracked: [],
   selectedId: null,
   severityFilter: null,
@@ -433,7 +443,18 @@ export const useStore = create<AppState>()((set) => ({
   setPinned: (provider, model) => set({ provider, model, tier: null }),
   setRouting: (routing) => set({ routing }),
   setLlmAuto: (llmAuto) => set({ llmAuto }),
-  setActiveView: (activeView) => set({ activeView }),
+  setActiveView: (activeView) =>
+    set((state) =>
+      state.terminologyUnsaved && activeView !== state.activeView
+        ? { pendingView: activeView }
+        : { activeView },
+    ),
+  setTerminologyUnsaved: (terminologyUnsaved) => set({ terminologyUnsaved }),
+  confirmPendingView: () =>
+    set((state) =>
+      state.pendingView === null ? {} : { activeView: state.pendingView, pendingView: null },
+    ),
+  cancelPendingView: () => set({ pendingView: null }),
   setTracked: (tracked, selectedId) =>
     set((state) => {
       const idMap = mapEquivalentIds(state.tracked, tracked)

@@ -188,6 +188,11 @@ export interface Messages {
   conceptConflict: (language: string) => string
   conceptConflictLinks: string
   loadCurrentVersion: string
+  reloadLanguageConfirm: (language: string) => string
+  reloadLinksConfirm: string
+  leaveUnsavedTitle: string
+  leaveUnsavedConfirm: string
+  leaveUnsaved: string
 
   // Profiles view
   profilesTitle: string

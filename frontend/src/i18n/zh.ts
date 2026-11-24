@@ -209,6 +209,11 @@ export const zh: Messages = {
   conceptConflict: (language) => `在此期间，其他人更改了${language}。`,
   conceptConflictLinks: '在此期间，其他人更改了此概念的领域。',
   loadCurrentVersion: '加载当前版本',
+  reloadLanguageConfirm: (language) => `加载${language}的当前版本？你对${language}的更改将被放弃。`,
+  reloadLinksConfirm: '加载此概念的当前领域？你对领域的更改将被放弃。',
+  leaveUnsavedTitle: '未保存的更改',
+  leaveUnsavedConfirm: '此概念有未保存的更改。如果现在离开，这些更改将被放弃。',
+  leaveUnsaved: '不保存并离开',
 
   profilesTitle: '检查配置',
   newProfilePlaceholder: '新配置…',

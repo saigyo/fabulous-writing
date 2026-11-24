@@ -209,6 +209,12 @@ export const en: Messages = {
   conceptConflict: (language) => `Someone else changed ${language} in the meantime.`,
   conceptConflictLinks: 'Someone else changed the domains of this concept in the meantime.',
   loadCurrentVersion: 'Load current version',
+  reloadLanguageConfirm: (language) =>
+    `Load the current version of ${language}? Your changes to ${language} are discarded.`,
+  reloadLinksConfirm: 'Load the current domains of this concept? Your changes to its domains are discarded.',
+  leaveUnsavedTitle: 'Unsaved changes',
+  leaveUnsavedConfirm: 'This concept has unsaved changes. If you leave now, they are discarded.',
+  leaveUnsaved: 'Leave without saving',
 
   profilesTitle: 'Checking profiles',
   newProfilePlaceholder: 'New profile…',

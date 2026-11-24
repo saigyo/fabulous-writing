@@ -225,6 +225,13 @@ export const es: Messages = {
   conceptConflict: (language) => `Otra persona ha cambiado ${language} mientras tanto.`,
   conceptConflictLinks: 'Otra persona ha cambiado los dominios de este concepto mientras tanto.',
   loadCurrentVersion: 'Cargar la versión actual',
+  reloadLanguageConfirm: (language) =>
+    `¿Cargar la versión actual de ${language}? Se descartarán tus cambios en ${language}.`,
+  reloadLinksConfirm:
+    '¿Cargar los dominios actuales de este concepto? Se descartarán tus cambios en los dominios.',
+  leaveUnsavedTitle: 'Cambios sin guardar',
+  leaveUnsavedConfirm: 'Este concepto tiene cambios sin guardar. Si sales ahora, se descartarán.',
+  leaveUnsaved: 'Salir sin guardar',
 
   profilesTitle: 'Perfiles de comprobación',
   newProfilePlaceholder: 'Nuevo perfil…',
