@@ -5228,3 +5228,45 @@ Verified: single machine, started, checks 1/1, image 0.7.5, `/api/health`
 200 reporting 0.7.5, automatic starts on again in the machine config. The
 production migration ran without an error. The app was offline for about a
 quarter of an hour.
+
+## 2026-11-24 — Terminology T1, pull request 2: checker statuses (PR #215)
+
+Second of three pull requests for issue #205. The checker now reads the
+status model of the concept store; nothing changes on the terminology screen,
+which still writes only preferred and forbidden terms. The one visible
+effect: an old row with an empty preferred wording is checked again.
+
+What the checker does now. Forbidden terms are errors, deprecated terms
+warnings, candidates are ignored everywhere. The suggested replacements are
+the active preferred terms of the language section, else the active admitted
+ones, else none; the message then says only that the term is forbidden or
+deprecated. Status reason and definition follow the lead sentence. Casing is
+checked for preferred and admitted case-sensitive terms. The rule id is
+`terminology.<term uid>`. The store filters sections by language in SQL
+instead of loading every language of a domain.
+
+Decisions made while planning, now in spec section 8. Casing has three
+limits: text equal to an accepted term of the section is no finding, a span
+accepted by any matching cased term is no finding, otherwise one finding per
+section and span. Overlaps inside one domain: a warning overlapping an error
+is dropped, findings of equal severity are both kept, a casing finding yields
+to any status finding. Across domains the pipeline still drops the later
+domain's overlapping finding whatever its severity, so a warning can hide a
+later domain's error; left to issue #211 and documented there.
+
+Reviews. Plan: one agent review (wrong lists of tests expected to fail, no
+test for same-span order) and one Copilot point (file list). Code: the review
+after tasks 1 to 3 found an admitted case variant reported as a casing error,
+a quadratic overlap check and test gaps; all fixed and confirmed by a
+re-review. Copilot, three rounds: correctly cased occurrences were buffered
+before being discarded (two places), and the token-path tests would pass on
+the substring fallback if a language model failed to load; the test helper
+now asserts that the model loaded. The last round recommended approval.
+
+Verification: 1818 passed and 319 skipped on SQLite, 2137 passed on
+Postgres, no warnings, about 20 s and 28 s. Guards were shown to fail with
+the guard removed. No manual trial: the current screen cannot create the new
+statuses.
+
+Left as is: on the CJK token path two status findings on the same span can
+follow the grouping by case sensitivity instead of section order.
