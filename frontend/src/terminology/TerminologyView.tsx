@@ -4,9 +4,10 @@ import { hasFeature } from '../auth/policy'
 import { sessionGeneration } from '../auth/session'
 import { useCrudError } from '../hooks/useCrudError'
 import { ConfirmDialog } from '../ui/ConfirmDialog'
-import { useLocale, useMessages } from '../i18n'
+import { useMessages } from '../i18n'
 import { useStore } from '../state/store'
 import type { Concept, Language } from '../types'
+import { ConceptEntry } from './ConceptEntry'
 import { ConceptList } from './ConceptList'
 
 interface OpenConcept {
@@ -32,7 +33,6 @@ export function TerminologyView() {
   const [concepts, setConcepts] = useState<Concept[]>([])
   const [open, setOpen] = useState<OpenConcept | null>(null)
   const [pendingDelete, setPendingDelete] = useState<{ id: number; name: string; count: number } | null>(null)
-  const locale = useLocale()
   const [newDomain, setNewDomain] = useState('')
   const m = useMessages()
   const { error, run } = useCrudError(m.changeFailed)
@@ -58,9 +58,9 @@ export function TerminologyView() {
   // - the request counter orders same-domain fetches, so a stale fetch for
   //   the CURRENT domain (e.g. an in-flight load superseded by a newer one)
   //   is discarded instead of overwriting more recent rows;
-  // - activeDomainRef rejects cross-domain starts and completions, so a
-  //   mutation's onChanged callback — which closes over the domain id at
-  //   the render it was wired to — cannot refetch or apply results for a
+  // - activeDomainRef rejects cross-domain starts and completions, so the
+  //   entry's onGone callback — which closes over the domain id at the
+  //   render it was wired to — cannot refetch or apply results for a
   //   domain the user has since switched away from (its own fetch resolving
   //   later would otherwise "win" the counter race against the domain the
   //   user is actually looking at).
@@ -101,7 +101,8 @@ export function TerminologyView() {
     await run(async () => {
       const inDomain = await getConcepts(domain.id)
       const count = inDomain.filter((c) => c.domain_ids.length === 1).length
-      setPendingDelete({ id: domain.id, name: domain.name, count })    })
+      setPendingDelete({ id: domain.id, name: domain.name, count })
+    })
   }
 
   async function removeDomain(id: number) {
@@ -130,7 +131,27 @@ export function TerminologyView() {
     })
   }
 
+  // `entry` is the open object the entry was rendered with: an answer that
+  // arrives after the writer left that entry updates the list only.
+  function conceptSaved(entry: OpenConcept, saved: Concept) {
+    setConcepts((list) => {
+      const rest = list.filter((c) => c.id !== saved.id)
+      return activeDomainRef.current !== null && saved.domain_ids.includes(activeDomainRef.current)
+        ? [...rest, saved]
+        : rest
+    })
+    setOpen((current) =>
+      current === entry && current.conceptId !== saved.id ? { ...current, conceptId: saved.id } : current,
+    )
+  }
+
+  function conceptGone(entry: OpenConcept, domainId: number) {
+    setOpen((current) => (current === entry ? null : current))
+    void loadConcepts(domainId)
+  }
+
   const activeDomain = domains.find((domain) => domain.id === activeDomainId) ?? null
+  const readOnly = activeDomain !== null && activeDomain.is_global && !isAdmin
 
   return (
     <div className="terminology">
@@ -222,18 +243,24 @@ export function TerminologyView() {
           domain={activeDomain}
           concepts={concepts}
           domains={domains}
-          readOnly={activeDomain.is_global && !isAdmin}
+          readOnly={readOnly}
           canCreate={canCreate}
-          onOpen={(conceptId) => setOpen({ conceptId, language: locale })}
+          onOpen={(conceptId, language) => setOpen({ conceptId, language })}
           onCreate={(language) => setOpen({ conceptId: null, language })}
         />
       )}
       {activeDomain !== null && open !== null && (
-        <section className="concept-list">
-          <button type="button" onClick={() => setOpen(null)}>
-            ← {m.concepts}
-          </button>
-        </section>
+        <ConceptEntry
+          domain={activeDomain}
+          domains={domains}
+          concept={concepts.find((c) => c.id === open.conceptId) ?? null}
+          newLanguage={open.language}
+          readOnly={readOnly}
+          onBack={() => setOpen(null)}
+          onSaved={(saved) => conceptSaved(open, saved)}
+          onGone={() => conceptGone(open, activeDomain.id)}
+          onUnsavedChange={() => {}}
+        />
       )}
     </div>
   )

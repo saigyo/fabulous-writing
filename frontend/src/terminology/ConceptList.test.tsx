@@ -190,10 +190,13 @@ describe('ConceptList', () => {
     expect(screen.queryByText(en.noConceptsMatch)).toBeNull()
   })
 
-  it('opens a concept from its row', async () => {
+  it('opens a concept from its row with the chosen language', async () => {
     const { onOpen } = renderList([widget])
     await userEvent.click(screen.getByRole('button', { name: 'widget' }))
-    expect(onOpen).toHaveBeenCalledWith(1)
+    expect(onOpen).toHaveBeenLastCalledWith(1, 'en')
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: en.conceptLanguageTitle }), 'de')
+    await userEvent.click(screen.getByRole('button', { name: 'Bauteil' }))
+    expect(onOpen).toHaveBeenLastCalledWith(1, 'de')
   })
 
   it('creates a concept in the chosen language', async () => {
