@@ -83,14 +83,20 @@ export function TerminologyView() {
   //   user is actually looking at).
   const activeDomainRef = useRef<number | null>(null)
   const conceptsRequestRef = useRef(0)
+  const conceptsPendingRef = useRef(false)
   const loadConcepts = useCallback((domainId: number) => {
     if (activeDomainRef.current !== domainId) return Promise.resolve()
     const requestId = ++conceptsRequestRef.current
-    return getConcepts(domainId).then((fetched) => {
-      if (conceptsRequestRef.current === requestId && activeDomainRef.current === domainId) {
-        setConcepts(fetched)
-      }
-    })
+    conceptsPendingRef.current = true
+    return getConcepts(domainId)
+      .then((fetched) => {
+        if (conceptsRequestRef.current === requestId && activeDomainRef.current === domainId) {
+          setConcepts(fetched)
+        }
+      })
+      .finally(() => {
+        if (conceptsRequestRef.current === requestId) conceptsPendingRef.current = false
+      })
   }, [])
 
   useEffect(() => {
@@ -109,6 +115,7 @@ export function TerminologyView() {
     if (!name) return
     leaveEntry(() =>
       void run(async () => {
+        setOpen(null)
         const domain = await createDomain(name)
         setNewDomain('')
         await refreshDomains()
@@ -160,6 +167,11 @@ export function TerminologyView() {
         ? [...rest, saved]
         : rest
     })
+    // A list answer still on its way was read before this save; fetch again
+    // so it cannot replace the list without the saved concept.
+    if (conceptsPendingRef.current && activeDomainRef.current !== null) {
+      void loadConcepts(activeDomainRef.current)
+    }
     setOpen((current) =>
       current === entry && current.conceptId !== saved.id ? { ...current, conceptId: saved.id } : current,
     )

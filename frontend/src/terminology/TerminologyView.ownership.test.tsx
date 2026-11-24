@@ -17,6 +17,7 @@ vi.mock('../api/client', async (importOriginal) => ({
   deleteDomain: vi.fn(),
   updateDomain: vi.fn(),
   saveConceptLanguage: vi.fn(),
+  createConcept: vi.fn(),
   getConcept: vi.fn(),
   removeConceptFromDomain: vi.fn(),
   // This file renders TerminologyView directly, not LoginGate, so nothing
@@ -38,6 +39,7 @@ vi.mock('../documents/documents', () => ({
 }))
 
 import {
+  createConcept,
   createDomain,
   deleteDomain,
   getConcept,
@@ -461,6 +463,17 @@ describe('TerminologyView leaving an entry with unsaved changes', () => {
     expect(back()).toBeNull()
   })
 
+  it('closes a clean entry as soon as a domain is being added', async () => {
+    vi.mocked(createDomain).mockReturnValue(new Promise<Domain>(() => {}))
+    render(<TerminologyView />)
+    await userEvent.click(await screen.findByRole('button', { name: 'alpha' }))
+    await userEvent.type(screen.getByPlaceholderText(en.newDomainPlaceholder), 'Fresh')
+    await userEvent.click(screen.getByRole('button', { name: en.add }))
+    expect(createDomain).toHaveBeenCalledWith('Fresh')
+    expect(back()).toBeNull()
+    expect(screen.queryByRole('textbox', { name: en.definitionLabel })).toBeNull()
+  })
+
   it('adds a domain at once while nothing is unsaved', async () => {
     vi.mocked(createDomain).mockResolvedValue(added)
     render(<TerminologyView />)
@@ -612,6 +625,30 @@ describe('TerminologyView keeps the list behind the entry current', () => {
     await userEvent.click(back()!)
     screen.getByRole('button', { name: 'omega' })
     expect(screen.queryByRole('button', { name: 'alpha' })).toBeNull()
+    expect(getConcepts).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a concept saved while the first list request was pending', async () => {
+    useStore.setState({
+      user: user({ policy: { llm: { tiers: null, providers: null, models: null }, features: ['custom_domains'] } }),
+    })
+    const created = conceptOf(301, 'widget', [2])
+    const answers: ((concepts: Concept[]) => void)[] = []
+    vi.mocked(getConcepts).mockImplementation(
+      () => new Promise<Concept[]>((resolve) => answers.push(resolve)),
+    )
+    vi.mocked(createConcept).mockResolvedValue(created)
+    render(<TerminologyView />)
+    await userEvent.click(await screen.findByRole('button', { name: en.newConcept }))
+    await userEvent.type(screen.getByRole('textbox', { name: en.termLabel }), 'widget')
+    await userEvent.click(screen.getByRole('button', { name: en.saveLanguage('English') }))
+    await waitFor(() => expect(answers).toHaveLength(2))
+
+    answers[0]([])
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    answers[1]([created])
+    await userEvent.click(back()!)
+    await screen.findByRole('button', { name: 'widget' })
   })
 
   it('shows the loaded version in the list and opens the entry from it', async () => {

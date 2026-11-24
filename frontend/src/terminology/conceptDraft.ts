@@ -256,6 +256,11 @@ function serverSection(concept: Concept, language: Language): SectionState[] {
   return found ? [sectionFromSaved(found)] : []
 }
 
+function withServerLanguages(sections: SectionState[], concept: Concept): SectionState[] {
+  const known = new Set(sections.map((s) => s.language))
+  return [...sections, ...concept.sections.filter((s) => !known.has(s.language)).map(sectionFromSaved)]
+}
+
 export function applySaved(
   state: EntryState,
   concept: Concept,
@@ -266,22 +271,21 @@ export function applySaved(
     const fresh = serverSection(concept, s.language)
     return fresh.length > 0 || s.saved ? fresh : [s]
   })
-  const known = new Set(state.sections.map((s) => s.language))
-  const added = concept.sections.filter((s) => !known.has(s.language)).map(sectionFromSaved)
   return {
     ...state,
     conceptId: concept.id,
     isGlobal: concept.is_global,
-    sections: [...kept, ...added],
+    sections: withServerLanguages(kept, concept),
     ...linksAfter(state, concept, sent.links),
   }
 }
 
 export function reloadPart(state: EntryState, concept: Concept, part: Language | 'links'): EntryState {
   if (part === 'links') return { ...state, ...linksFrom(concept) }
+  const replaced = state.sections.flatMap((s) => (s.language === part ? serverSection(concept, part) : [s]))
   return {
     ...state,
-    sections: state.sections.flatMap((s) => (s.language === part ? serverSection(concept, part) : [s])),
+    sections: withServerLanguages(replaced, concept),
     ...linksAfter(state, concept, false),
   }
 }
