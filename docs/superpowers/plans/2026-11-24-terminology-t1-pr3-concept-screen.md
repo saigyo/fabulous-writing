@@ -470,3 +470,12 @@ A review by Copilot added two points, both worked in: the client must also keep 
 ## Rulings during execution
 
 - **Task 4:** an added term with nothing typed into it counts as no change (Readings 7, 8, 11). A term with a context or a reason but no text does count, so that it cannot be dropped silently. Without this an untouched new concept asked before leaving, and a language added and left blank blocked "Save all". `newTerm` was added to the module so that the entry does not keep its own key counter.
+- **Task 5 and trial:** `ConceptList` takes `language` and `onLanguageChange`; the view holds the list's language, so that it survives a visit to an entry. `onOpen` passes that language along. The interface block in Task 5 shows the first design.
+- **Task 6:** `LanguageSectionEditor` has one more prop, `saveBlocked`, for the rule that a new concept's section cannot be saved while another unsaved section has a problem. "Save all" is disabled on a new concept while only the links are edited, because the first save cannot carry links. "Remove language" on a section that was never saved drops it at once.
+- **Task 7:** the way back is guarded inside `ConceptEntry`, and the entry clears the unsaved flag when it unmounts; the view has no reset of its own. Adding a domain asks before the domain is created. Deleting the active domain with unsaved changes asks both questions. The view switch has its own test file, `App.leave-guard.test.tsx`.
+- **Review R2:** a language that was added and is still blank stays in the entry when another part is saved.
+- **Review R3:** after "Load current version" the list behind the entry is updated; a message is dropped together with the section it belongs to.
+
+## Reviews during execution
+
+R1 (Tasks 1 and 2): code clean; one test that could not fail and two test gaps, fixed. R2 (Tasks 3 and 4): compliant; four test gaps and the blank-language point, fixed. R3 (Tasks 5 to 7): one important test gap and nine minor points, fixed and confirmed by a re-check. Final review: documentation leftovers and this record, fixed. Trial in the browser on a scratch stack: every step of the list in the Execution Plan passed; it found the list-language reset.
