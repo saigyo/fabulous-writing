@@ -61,13 +61,20 @@ export function TerminologyView() {
     else action()
   }
 
+  // Only the latest request's answer is applied. A superseded call settles
+  // with the latest one, so a caller that awaits it sees the list applied.
   const domainsRequestRef = useRef(0)
+  const latestDomainsRef = useRef<Promise<void>>(Promise.resolve())
   const refreshDomains = useCallback(() => {
     const gen = sessionGeneration()
     const requestId = ++domainsRequestRef.current
-    return getDomains().then((domains) => {
-      if (sessionGeneration() === gen && domainsRequestRef.current === requestId) setDomains(domains)
+    const request: Promise<void> = getDomains().then((domains) => {
+      if (sessionGeneration() !== gen) return
+      if (domainsRequestRef.current !== requestId) return latestDomainsRef.current
+      setDomains(domains)
     })
+    latestDomainsRef.current = request
+    return request
   }, [setDomains])
 
   useEffect(() => {
@@ -127,21 +134,21 @@ export function TerminologyView() {
     }
   }, [activeDomainId, loadConcepts, showEntry])
 
-  const creatingRef = useRef(false)
+  const [creating, setCreating] = useState(false)
   function addDomain() {
     const name = newDomain.trim()
-    if (!name || creatingRef.current) return
+    if (!name || creating) return
     leaveEntry(() =>
       void run(async () => {
-        creatingRef.current = true
+        setCreating(true)
         try {
           showEntry(null)
           const domain = await createDomain(name)
-          setNewDomain((current) => (current.trim() === name ? '' : current))
+          setNewDomain('')
           await refreshDomains()
           if (!useStore.getState().terminologyUnsaved) setActiveDomainId(domain.id)
         } finally {
-          creatingRef.current = false
+          setCreating(false)
         }
       }),
     )
@@ -163,8 +170,14 @@ export function TerminologyView() {
     if (activeDomainRef.current === id) showEntry(null)
     await run(async () => {
       await deleteDomain(id)
-      await refreshDomains()
-      if (activeDomainRef.current === id) setActiveDomainId(null)
+      try {
+        await refreshDomains()
+      } catch (e) {
+        setDomains(useStore.getState().domains.filter((d) => d.id !== id))
+        throw e
+      } finally {
+        if (activeDomainRef.current === id) setActiveDomainId(null)
+      }
     })
   }
 
@@ -285,10 +298,13 @@ export function TerminologyView() {
             <input
               value={newDomain}
               placeholder={m.newDomainPlaceholder}
+              disabled={creating}
               onChange={(event) => setNewDomain(event.target.value)}
               onKeyDown={(event) => event.key === 'Enter' && addDomain()}
             />
-            <button className="plain-button" onClick={addDomain}>{m.add}</button>
+            <button className="plain-button" disabled={creating} onClick={addDomain}>
+              {m.add}
+            </button>
           </div>
         )}
       </aside>

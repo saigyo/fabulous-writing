@@ -607,13 +607,20 @@ describe('reloadPart', () => {
     expect(state.domainIds).toEqual([1, 2])
   })
 
-  it('replaces the links, saved and edited, and no section', () => {
+  it('replaces the links, saved and edited, and leaves an unsaved section as it is', () => {
     const edited = { ...rename(entryFromConcept(concept()), 'en', 'plum'), domainIds: [1, 2] }
     const state = reloadPart(edited, concept([EN3, DE2], { domain_ids: [1, 5], revision: 4 }), 'links')
     expect(state.savedDomainIds).toEqual([1, 5])
     expect(state.savedRevision).toBe(4)
     expect(state.domainIds).toEqual([1, 5])
-    expect(state.sections).toBe(edited.sections)
+    expect(sectionOf(state, 'en')).toBe(sectionOf(edited, 'en'))
+  })
+
+  it('gives a clean section the newer version number when the links are loaded', () => {
+    const edited = { ...rename(entryFromConcept(concept()), 'en', 'plum'), domainIds: [1, 2] }
+    const state = reloadPart(edited, concept([EN3, DE2], { domain_ids: [1, 5], revision: 4 }), 'links')
+    expect(sectionOf(state, 'de').saved).toEqual(DE2)
+    expect(toSectionInput(sectionOf(state, 'de'))).toMatchObject({ id: 20, revision: 2 })
   })
 })
 
