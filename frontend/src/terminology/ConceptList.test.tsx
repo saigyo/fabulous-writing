@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { de } from '../i18n/de'
 import { en } from '../i18n/en'
@@ -78,14 +79,21 @@ const widget = concept(
 )
 const onlyGerman = concept(2, { de: [term(6, 'Schraube')] })
 
+type ListProps = React.ComponentProps<typeof ConceptList>
+
+function ControlledList({ start, ...props }: Omit<ListProps, 'language' | 'onLanguageChange'> & { start: Language }) {
+  const [language, setLanguage] = useState<Language>(start)
+  return <ConceptList {...props} language={language} onLanguageChange={setLanguage} />
+}
+
 function renderList(
   concepts: Concept[],
-  props: Partial<React.ComponentProps<typeof ConceptList>> = {},
+  props: Partial<Omit<ListProps, 'language' | 'onLanguageChange'>> & { start?: Language } = {},
 ) {
   const onOpen = vi.fn()
   const onCreate = vi.fn()
   render(
-    <ConceptList
+    <ControlledList
       domain={domain}
       concepts={concepts}
       domains={domains}
@@ -93,6 +101,7 @@ function renderList(
       canCreate
       onOpen={onOpen}
       onCreate={onCreate}
+      start="en"
       {...props}
     />,
   )
@@ -162,9 +171,9 @@ describe('ConceptList', () => {
     within(legend).getByText(en.statusCandidate)
   })
 
-  it('starts on the interface language and changes the labels with the selector', async () => {
+  it('shows the language it is given and changes the labels with the selector', async () => {
     useStore.setState({ uiLocale: 'de' })
-    renderList([widget])
+    renderList([widget], { start: 'de' })
     const select = screen.getByRole('combobox', { name: de.conceptLanguageTitle }) as HTMLSelectElement
     expect(select.value).toBe('de')
     row('Bauteil')

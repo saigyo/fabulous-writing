@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useLocale, useMessages } from '../i18n'
+import { useMessages } from '../i18n'
 import { languageName } from '../languages'
 import { useStore } from '../state/store'
 import type { Concept, Domain, Language } from '../types'
@@ -12,6 +12,8 @@ interface ConceptListProps {
   domains: Domain[]
   readOnly: boolean
   canCreate: boolean
+  language: Language
+  onLanguageChange: (language: Language) => void
   onOpen: (conceptId: number, language: Language) => void
   onCreate: (language: Language) => void
 }
@@ -24,13 +26,13 @@ export function ConceptList({
   domains,
   readOnly,
   canCreate,
+  language,
+  onLanguageChange,
   onOpen,
   onCreate,
 }: ConceptListProps) {
   const languages = useStore((s) => s.languages)
   const m = useMessages()
-  const locale = useLocale()
-  const [language, setLanguage] = useState<Language>(locale)
   const [query, setQuery] = useState('')
   const order = languages.map((l) => l.code)
 
@@ -48,7 +50,7 @@ export function ConceptList({
           aria-label={m.conceptLanguageTitle}
           title={m.conceptLanguageTitle}
           value={language}
-          onChange={(event) => setLanguage(event.target.value as Language)}
+          onChange={(event) => onLanguageChange(event.target.value as Language)}
         >
           {languages.map((info) => (
             <option key={info.code} value={info.code}>

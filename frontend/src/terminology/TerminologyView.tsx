@@ -4,7 +4,7 @@ import { hasFeature } from '../auth/policy'
 import { sessionGeneration } from '../auth/session'
 import { useCrudError } from '../hooks/useCrudError'
 import { ConfirmDialog } from '../ui/ConfirmDialog'
-import { useMessages } from '../i18n'
+import { useLocale, useMessages } from '../i18n'
 import { useStore } from '../state/store'
 import type { Concept, Language } from '../types'
 import { ConceptEntry } from './ConceptEntry'
@@ -38,6 +38,8 @@ export function TerminologyView() {
   const setUnsaved = useStore((s) => s.setTerminologyUnsaved)
   const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null)
   const m = useMessages()
+  const locale = useLocale()
+  const [listLanguage, setListLanguage] = useState<Language>(locale)
   const { error, run } = useCrudError(m.changeFailed)
 
   useEffect(() => {
@@ -264,6 +266,8 @@ export function TerminologyView() {
           domains={domains}
           readOnly={readOnly}
           canCreate={canCreate}
+          language={listLanguage}
+          onLanguageChange={setListLanguage}
           onOpen={(conceptId, language) => setOpen({ conceptId, language })}
           onCreate={(language) => setOpen({ conceptId: null, language })}
         />
