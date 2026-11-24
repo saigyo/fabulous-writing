@@ -144,19 +144,20 @@ editor.*
 
 ### Terminology
 
-The **Terminology** tab manages domain-specific wording per domain and language: each
-term has a preferred form, forbidden variants, and an optional definition. Forbidden
-variants found in your text are flagged with the preferred term as a one-click fix.
-Marking a term *case-sensitive* (the "Aa" toggle) makes variants match exact-case and
-additionally flags wrong casing of the preferred term itself (e.g. "Github" →
-"GitHub") — conventional capitalization at sentence starts is allowed. The
-table can be sorted by any column (click a header; multiple sort criteria stack),
-filtered by language, and searched as you type.
+The **Terminology** tab manages domain-specific wording per domain. A *concept* is one
+meaning; for each language it is defined in, it has a definition and its wordings, each
+with a usage status (preferred, admitted, deprecated, forbidden) and a process status
+(active or candidate). Deprecated and forbidden wordings found in your text are flagged
+with the preferred one as a one-click fix. Marking a wording *case-sensitive* makes it
+match exact-case and additionally flags wrong casing of the preferred wording itself
+(e.g. "Github" → "GitHub") — conventional capitalization at sentence starts is allowed.
+The tab lists a domain's concepts in the language you choose, sorted by label, and
+searches the wordings of every language as you type. Opening a concept shows one section
+per language, which you save one by one or all together.
 
 ![The Terminology tab with the seeded example domain: terms with preferred form, forbidden variants, and definitions, plus search and language filter](docs/images/terminology.png)
 
-*The Terminology tab: term management with search, language filter, and sortable
-columns.*
+*The Terminology tab: a domain's concepts with search and language choice.*
 
 A fresh installation seeds an example **Product docs** domain with a few style-guide
 terms per language (e.g. *sign in* ← "login", *Anwendung* ← "App", *用户* ← "使用者") —
@@ -644,7 +645,7 @@ versions; the backend transparently retries loading with an explicit `split_mode
 
 ### Terminology internals
 
-Terminology CRUD lives under `/api/domains` and `/api/terms`; the seeded example
+Terminology lives under `/api/domains` and `/api/concepts`; the seeded example
 domain is only created when no domains exist (`seed_terminology: false` disables it).
 
 For Japanese and Chinese, forbidden variants are matched over spaCy tokens
@@ -671,7 +672,7 @@ curl localhost:8000/api/languages                     # languages + NLP model av
 curl localhost:8000/api/profiles?language=en          # checking profiles (incl. example texts)
 curl localhost:8000/api/providers                     # LLM provider availability
 curl localhost:8000/api/rules?language=de             # rule catalog (+ load errors); language optional
-curl localhost:8000/api/domains                       # terminology CRUD under /api/domains, /api/terms
+curl localhost:8000/api/domains                       # terminology domains; concepts under /api/concepts
 ```
 
 ### Contributing

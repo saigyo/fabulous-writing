@@ -133,7 +133,16 @@ before `init-db` and start it only with the new image:
 On Postgres the migration locks `terms` before it reads it, so a write
 of a previous release that is still running cannot be lost; that write
 fails after the rename instead. `terms_legacy` keeps the original rows
-unchanged until a later release drops it.
+unchanged until the release below drops it.
+
+**Upgrade that drops `terms_legacy`.** This release replaces the term
+endpoints with concept endpoints, and `init-db` under the admin DSN
+drops `terms_legacy`. Run it before or after the deploy; no stop is
+needed, because neither the previous nor this release reads that table.
+Until `init-db` has run, the table stays and nothing else differs. The
+original rows are gone afterwards; their content lives in the concept
+tables. The import tool (`import-to-postgres`) initialises the stores on
+its source file, so it removes the table from that file too.
 
 ## 4. Operational notes
 

@@ -342,12 +342,12 @@ window.ATLAS = (function () {
     },
     {
       id: "w-termview", zone: "web", x: WX[2], y: 1102, kind: "View", title: "Terminology view",
-      summary: "Manage terminology domains and their terms; built-in domains are read-only for non-admins.",
+      summary: "Manage terminology domains and their concepts; built-in domains are read-only for non-admins.",
       body: [
-        "A term has a preferred form, forbidden variants, a definition, a language and a case-sensitivity flag. Terms are edited in place.",
-        "Built-in (global) domains carry a 'Built-in' badge; only admins can change them. Creating domains or terms can be gated by the user's tier (`custom_domains`).",
+        "A concept has a section per language with a definition and wordings, each with a usage status and a process status. A concept list leads to one entry per concept.",
+        "Built-in (global) domains carry a 'Built-in' badge; only admins can change them. Creating domains or concepts can be gated by the user's tier (`custom_domains`).",
       ],
-      files: ["frontend/src/terminology/TerminologyView.tsx", "frontend/src/terminology/termTable.ts"],
+      files: ["frontend/src/terminology/TerminologyView.tsx", "frontend/src/terminology/ConceptList.tsx", "frontend/src/terminology/ConceptEntry.tsx"],
       docs: ["frontend#is_global-affordances-and-the-domains-fetch-guard|Built-in items and ownership"],
     },
     {
@@ -892,12 +892,12 @@ window.ATLAS = (function () {
     },
     {
       id: "b-termapi", zone: "backend", x: BX[0], y: 1370, kind: "Router", title: "Terminology API",
-      summary: "Domain and term CRUD under /api/domains and /api/terms.",
+      summary: "Domain CRUD under /api/domains and concept endpoints under /api/concepts.",
       body: [
-        "Terms inherit visibility from their domain. Deleting a domain also removes it from every profile.",
-        "Creating domains or terms can be restricted per tier (`custom_domains`).",
+        "Concepts are owner-scoped like their domains. Deleting a domain also removes it from every profile.",
+        "Creating domains or concepts can be restricted per tier (`custom_domains`).",
       ],
-      files: ["backend/app/api/terminology.py", "backend/app/services/terminology.py"],
+      files: ["backend/app/api/terminology.py", "backend/app/services/terminology/store.py"],
       docs: ["backend#terminology"],
     },
     {
