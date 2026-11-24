@@ -159,6 +159,10 @@ per language, which you save one by one or all together.
 
 *The Terminology tab: a domain's concepts with search and language choice.*
 
+![A concept opened for editing: an English section with five wordings and their statuses, the details of one wording open, and a German section with one unsaved change](docs/images/concept-entry.png)
+
+*A concept entry: one section per language with usage status, process status and reason for each wording. German has an unsaved change and can be saved on its own or with "Save all".*
+
 A fresh installation seeds an example **Product docs** domain with a few style-guide
 terms per language (e.g. *sign in* ← "login", *Anwendung* ← "App", *用户* ← "使用者") —
 edit or delete it freely.

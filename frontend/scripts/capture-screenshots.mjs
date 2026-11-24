@@ -313,6 +313,25 @@ try {
   await page.waitForTimeout(600)
   await page.screenshot({ path: `${outDir}/terminology.png` })
   console.log('terminology.png captured')
+
+  // Shot 2b: the concept entry of the scratch concept, with the details of
+  // one term open and one unsaved change in German.
+  await page.locator('.concept-row', { hasText: 'workspace' }).click()
+  await page.locator('.concept-entry').waitFor()
+  await page.getByRole('button', { name: 'Details for work space' }).click()
+  await page
+    .locator('.language-section')
+    .nth(1)
+    .getByRole('textbox', { name: 'Reason' })
+    .nth(1)
+    .fill('Anglicism')
+  // Taller than the other shots, so that the footer with "Save all" is in view.
+  await page.setViewportSize({ width: 1600, height: 960 })
+  await page.waitForTimeout(300)
+  await page.screenshot({ path: `${outDir}/concept-entry.png` })
+  await page.setViewportSize({ width: 1600, height: 860 })
+  console.log('concept-entry.png captured')
+  await page.getByRole('button', { name: 'Discard all' }).click()
   await removeScratchConcept()
 
   // Shot 3: profiles view with the seeded EN profiles (Standard selected).
