@@ -5270,3 +5270,13 @@ statuses.
 
 Left as is: on the CJK token path two status findings on the same span can
 follow the grouping by case sensitivity instead of section order.
+
+## 2026-11-24 — v0.7.6 rollout: terminology checker statuses deployed (PR #216)
+
+Patch release for PR #215. Tag push → release workflow → GitHub release.
+No schema change, so the plain order was enough: fly.toml bumped on this
+branch, `fly deploy --ha=false -c deploy/fly/fly.toml` on the running
+machine, committed afterwards.
+
+Verified: single machine, started, checks 1/1, image 0.7.6, `/api/health`
+200 reporting 0.7.6.
