@@ -974,6 +974,16 @@ span.score-badge {
   overflow: auto;
 }
 
+/* Dropdowns of the terminology view look like the header's and are as tall
+   as the text fields beside them. */
+.terminology select {
+  padding: 0.3rem 0.3rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+
 .concept-controls {
   display: flex;
   align-items: center;
@@ -1240,7 +1250,9 @@ span.score-badge {
 
 .term-row {
   display: grid;
-  grid-template-columns: minmax(8rem, 1.2fr) 8rem 7rem minmax(6rem, 1.5fr) auto;
+  /* Every row is its own grid: a fixed last column keeps the columns of the
+     heading row and the term rows in line. */
+  grid-template-columns: minmax(8rem, 1.2fr) 8rem 7rem minmax(6rem, 1.5fr) 6.5rem;
   gap: 0.5rem;
   align-items: center;
   padding: 0.3rem 0;
@@ -1261,6 +1273,7 @@ span.score-badge {
 .term-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 0.3rem;
 }
 
