@@ -183,11 +183,20 @@ describe('sectionChanges', () => {
     const terms = [{ ...fr.terms[0], text: 'pomme' }, { ...newTerm(), text: 'fruit' }]
     expect(sectionChanges({ ...fr, definition: 'Un fruit', terms })).toBe(3)
   })
-  it('does not count an added term whose text is blank, whatever its other fields', () => {
+  it('does not count an added term with blank text fields, whatever its choices', () => {
     const s = en()
-    const blank = { ...newTerm(), text: '  ', context: 'later', usage_status: 'deprecated' as const }
+    const blank = { ...newTerm(), text: '  ', usage_status: 'deprecated' as const, case_sensitive: true }
     expect(sectionChanges({ ...s, terms: [...s.terms, blank] })).toBe(0)
   })
+  it.each(['status_reason', 'context', 'source'] as const)(
+    'counts an added term with only a typed %s as 1, unsaved and with an empty text',
+    (field) => {
+      const state = editSection(newEntry(1, false, 'en'), 'en', (s) => editTerm(s, 0, { [field]: 'later' }))
+      expect(sectionChanges(state.sections[0])).toBe(1)
+      expect(hasUnsaved(state)).toBe(true)
+      expect(sectionProblems(state.sections[0])).toEqual(['empty_text'])
+    },
+  )
   it('counts 1 for a real added term next to a blank one, which is still a problem', () => {
     const s = en()
     const added = { ...s, terms: [...s.terms, { ...newTerm(), text: 'pome' }, newTerm()] }

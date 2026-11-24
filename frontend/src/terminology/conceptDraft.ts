@@ -42,6 +42,8 @@ const TERM_FIELDS = [
   'case_sensitive',
 ] as const
 
+const TEXT_FIELDS = ['text', 'status_reason', 'context', 'source'] as const
+
 let nextKey = 1
 
 export function newTerm(usageStatus: UsageStatus = 'admitted'): TermDraft {
@@ -131,7 +133,7 @@ export function sectionChanges(section: SectionState): number {
     if (before) {
       matched += 1
       count += TERM_FIELDS.filter((field) => draft[field] !== before[field]).length
-    } else if (draft.text.trim() !== '') {
+    } else if (TEXT_FIELDS.some((field) => (draft[field] ?? '').trim() !== '')) {
       count += 1
     }
   }
