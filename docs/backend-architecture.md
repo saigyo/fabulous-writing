@@ -26,7 +26,7 @@ backend/
 │   │   ├── suggestions.py       # on-demand LLM fixes and sentence rewrites
 │   │   ├── llm_gate.py          # get_effective_provider: the one path from a request to a provider
 │   │   ├── rules.py             # rule catalog + reload
-│   │   ├── terminology.py       # domain CRUD; term endpoints as a layer over concepts (temporary)
+│   │   ├── terminology.py       # domain CRUD; concept endpoints
 │   │   ├── profiles.py          # checking-profile CRUD + reset
 │   │   ├── documents.py         # document CRUD + auto-titling
 │   │   ├── folders.py           # folder CRUD + per-folder defaults
@@ -608,9 +608,8 @@ distinct, non-blank variant, all with the row's `case_sensitive`. Dates and user
 null and every number is 1. It writes one `carried_over` batch per concept (origin
 `migration`). Special cases:
 
-- **The section keeps the old term id**, so that the old endpoints, whose id is the section
-  id, address the same entry before and after the upgrade (a browser tab left open across
-  the upgrade still holds old ids). The id allocator of `concept_languages` is then moved
+- **The section keeps the old term id**, so that ids that already circulate (a section id
+  in a bookmark or in an open browser tab) stay valid across the upgrade. The id allocator of `concept_languages` is then moved
   past every id the old table ever gave out (its largest id and its allocator's high-water
   mark), so a later section cannot take the id of a skipped or earlier deleted old row: on
   Postgres with `ALTER ... RESTART`, which rolls back with the transaction, unlike
@@ -634,39 +633,55 @@ EXCLUSIVE MODE`, before it reads a row: a write by a previous release still runn
 only; with the lock it waits and then fails on the renamed table. SQLite has a single
 writer and needs no lock. The previous release must be stopped before `init-db` runs
 anyway, since it reads `terms`; see the upgrade note in
-[fly-deployment.md](fly-deployment.md#3-updating). The legacy table stays until the screen
-rewrite removes it; a second
-start finds no `terms` table and does nothing. With `manage_schema=False`, `schema.verify`
-only checks: it fails, pointing to `init-db`, if a table is missing or the old `terms` table
-is still there. The import tool (`app/manage_import.py`) opens its source through the
-stores, so the source is migrated first; its table list names the five tables parents
-first and does not copy `terms_legacy`.
+[fly-deployment.md](fly-deployment.md#3-updating). A second start finds no `terms` table
+and does nothing.
 
-### Old endpoints as a translation layer
+Right after the migration, in the same managed-schema path, `migration.drop_legacy_terms`
+drops `terms_legacy` if it exists (checked with `table_columns`). It drops the table the
+migration of this start renamed and the one an earlier release left behind. The original
+rows are gone afterwards; their content lives in the concept tables. With
+`manage_schema=False`, `schema.verify` only checks: it fails, pointing to `init-db`, if a
+table is missing or the old `terms` table is still there. It neither requires nor rejects
+`terms_legacy`, so a deployment that has not yet run `init-db` keeps starting. The import
+tool (`app/manage_import.py`) opens its source through the stores, so the source is
+migrated first and loses `terms_legacy` too; its table list names the concept tables
+parents first and never contained `terms_legacy`.
 
-`/api/domains/{id}/terms` and `/api/terms/{id}` keep their request and response shapes.
-They are **temporary**; the third pull request replaces them with concept endpoints, and
-`get_concept_by_section` and `section_ids_by_preferred` on the store exist only for them
-and go with them.
+### Endpoints
 
-- A "term" in these endpoints is one language section seen through one domain, and its `id`
-  is the section id. A section with no enforced preferred term is not listed.
-- `POST` creates a concept with one section: the preferred term plus one `forbidden` term per
-  cleaned variant, all with the request's `case_sensitive`.
-- `GET` returns the sections of the domain's concepts in the order of
-  `section_ids_by_preferred`, a store read that sorts by the preferred term's text in SQL so
-  that the database's collation decides the order, as it did before.
-- `PUT` reads the concept, builds the new section from what it read (`SectionInput.from_section`)
-  and saves with the numbers it just read. The endpoints therefore use the same checked path
-  as any caller; the store has no unchecked save. If another write lands between the read
-  and the save, the endpoint answers 409. Terms that are not forbidden variants (for
-  instance an admitted term) are kept, but a `case_sensitive` in the request is set on every
-  term of the section. Changing the language removes the
-  section and creates one in the new language in one `save_concept` call, so the id changes;
-  the screen reloads after each save.
-- `DELETE` deletes the concept if the section is its only one, otherwise removes the section.
-- `GlobalReadOnlyError` maps to 403 and any `TerminologyRuleError` (including a version
-  conflict) to 409; an empty `preferred` is a 422 from `validate_name`.
+`app/api/terminology.py` has the domain endpoints (`GET`/`POST /api/domains`,
+`PUT`/`DELETE /api/domains/{id}`) and seven concept endpoints. Each concept endpoint is a thin
+call to one store method; the rules, the version comparison and the ownership checks stay in
+the store. The former term endpoints (`/api/domains/{id}/terms`, `/api/terms/{id}`) and the
+layer that translated them into concepts are gone, with `get_concept_by_section` and
+`section_ids_by_preferred` on the store.
+
+| Endpoint | Store call | Body and answer |
+|---|---|---|
+| `GET /api/domains/{id}/concepts` | `list_concepts` | The domain's concepts; 404 for an unknown or invisible domain |
+| `POST /api/domains/{id}/concepts` | `create_concept` | `{sections, comment?}`; 201 with the concept |
+| `GET /api/concepts/{id}` | `get_concept` | The concept |
+| `PUT /api/concepts/{id}` | `save_concept` | `{sections?, domain_ids?, revision?, comment?}`; the concept |
+| `PUT /api/concepts/{id}/languages/{language}` | `save_section` | `{id?, revision?, definition?, terms, comment?}`; the language is the path's; the concept |
+| `DELETE /api/concepts/{id}` | `delete_concept` | 204 |
+| `DELETE /api/domains/{id}/concepts/{concept_id}` | `remove_concept_from_domain` | 204 |
+
+Sections and terms in the bodies are the store's `SectionInput` and `TermInput`, with the
+version numbers the writer read. `domain_ids` without `revision` is a 422. Every answer that
+returns a concept is the store's `Concept` as it serialises, with the numbers of all three
+levels, `domain_ids` and `is_global`, and no `owner_id`.
+
+Errors: 404 when the store returns `None` or `False`, which is also what it does for a
+concept the user cannot see. 403 for a write to a global concept by a non-admin
+(`GlobalReadOnlyError`), and, on `POST` only, for a user without the `custom_domains`
+feature; saving and deleting need no feature. Any `TerminologyRuleError` is a **409 whose
+`detail` is an object**: `code` is the rule name (`conflict`, `duplicate_text`,
+`second_preferred`, `no_section`, `no_domain`, `unknown_domain`, `domain_owner_mismatch`,
+`duplicate_language`, `unknown_term`, `duplicate_term`) and `message` is the store's text. An
+out-of-date save (`code: "conflict"`, a `TerminologyConflictError`) adds `part`, the language
+code or `links`, so the screen can say which part changed. The domain endpoints keep their
+text `detail`. `test_concept_api.py` covers each endpoint, the 409 codes and parts, the 403
+cases, ownership (another user gets 404) and that the term endpoints answer 404.
 
 Deleting a domain also prunes it from every profile (`ProfileStore.remove_domain_everywhere`,
 deliberately unscoped by owner; see [Ownership](#ownership)).
@@ -1160,8 +1175,8 @@ running `init-db` and gets no startup failure if that step is skipped.
 serving while it runs. The terminology concept model is the exception: its
 migration renames `terms`, which the previous release reads, so the app is
 stopped first (upgrade note in [fly-deployment.md](fly-deployment.md#3-updating)).
-A store start that refuses the data (both `terms` and `terms_legacy`, or a
-row that cannot be converted) makes `init-db` print the message and return 1.
+A store start that refuses the data (both `terms` and `terms_legacy` at the moment
+the migration would rename, or a row that cannot be converted) makes `init-db` print the message and return 1.
 
 **The Postgres pool** (`PostgresDatabase`, wrapping `psycopg_pool.ConnectionPool`) is
 fixed-size, 1–5 connections, with no config knobs: a syntactically malformed DSN is
@@ -1404,12 +1419,11 @@ deletes what it contains.
 `app/api/validation.py`'s `validate_name(raw, *, message, max_len=None)` is the one
 shared name guard behind all of this: strip, reject empty with the caller-supplied
 per-entity message (so existing 422 texts like "Document name must not be empty" /
-"Profile name must not be empty" / "Folder name must not be empty" /
-"Preferred term must not be empty" stay byte-identical), and optionally enforce a max
+"Profile name must not be empty" / "Folder name must not be empty" stay
+byte-identical), and optionally enforce a max
 length (folders' 100-char cap; documents and profiles pass no `max_len`). It backs name
 validation in `app/api/documents.py`, `app/api/profiles.py`, `app/api/folders.py`
-(`_validated_name`, above), and `app/api/terminology.py` (the empty-`preferred` guard
-noted in [Terminology](#terminology)) — one validator instead of four near-duplicate
+(`_validated_name`, above) — one validator instead of three near-duplicate
 strip-and-check blocks.
 
 ### Per-folder defaults
@@ -2934,12 +2948,15 @@ each API router, anchoring, vetting, providers, profiles, seeding, …). Convent
 - Golden tests pair a rule or text sample with its expected findings
   (`test_starter_rules.py`, `test_demo_texts.py` keeps the seeded example texts firing).
 - Terminology has one module per layer of `app/services/terminology/` (`test_terminology_model.py`,
-  `_changes.py`, `_store.py`, `_migration.py`), plus `test_terminology_api.py` for the old
-  endpoints, which stay unchanged because they are the contract of the translation layer.
-  `test_terminology_baseline.py` compares check findings created through those endpoints with
-  a golden file (`tests/data/terminology_baseline.json`, built from `terminology_baseline.py`),
-  and `test_terminology_migration.py` re-runs it on migrated data; both must give equal
-  findings. Both backends run the store and migration tests when `FW_TEST_DATABASE_URL` is
+  `_changes.py`, `_store.py`, `_migration.py`), `test_concept_api.py` for the seven concept
+  endpoints (the 409 shape, ownership, the feature gate, the removed term endpoints) and
+  `test_terminology_api.py` for the domain endpoints and the change log.
+  `test_terminology_baseline.py` compares check findings on concepts created through the
+  API with a golden file (`tests/data/terminology_baseline.json`, built from
+  `terminology_baseline.py`), and `test_terminology_migration.py` re-runs it on migrated
+  data; both must give equal findings. `test_terminology_migration.py` also covers dropping
+  `terms_legacy` in both schema modes. Both backends run the store and migration tests when
+  `FW_TEST_DATABASE_URL` is
   set, and `test_terminology_concurrency.py` (Postgres only) checks the locks: one test
   races OS processes, four run a thread against a lock held on a raw connection (see
   [Locks and their order](#locks-and-their-order)). `test_terminology_checker_statuses.py`

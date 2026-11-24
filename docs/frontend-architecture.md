@@ -100,10 +100,14 @@ frontend/src/
 │   ├── Dialog.tsx              # accessible modal on native <dialog> (B3) — see Dialogs (B3)
 │   └── ConfirmDialog.tsx       # Dialog's Cancel/danger-confirm face
 ├── rules/                     # rule catalog view + per-profile toggles
-├── terminology/               # domain/term management view; terms edit in place
-│                              # (row edit mode shares TermFieldCells with the add
-│                              # row; drafts/parsing in termTable.ts), domains
-│                              # rename inline via ✎ or double-click
+├── terminology/               # domains and concepts; domains rename inline via ✎ or double-click
+│   ├── TerminologyView.tsx    # domain list, list/entry switch, the list's language, leave guards
+│   ├── ConceptList.tsx        # one row per concept in the chosen language, search, status legend
+│   ├── ConceptEntry.tsx       # one concept: sections, links, saving, removal; holds an EntryState
+│   ├── LanguageSectionEditor.tsx  # one language section's fields; decides nothing itself
+│   ├── StatusChip.tsx         # a wording with its status
+│   ├── labels.ts              # logic: label, other wordings, search, order of the list
+│   └── conceptDraft.ts        # logic: entry state, unsaved counts, problems, request bodies
 ├── admin/                     # AdminView.tsx: user list/create/row-edit, is_admin-gated (M6)
 ├── activity/                  # ActivityView.tsx + StackedBarChart.tsx (B40, #124)
 └── i18n/                      # 7 UI locales, hooks, interpolation, LocaleSwitcher.tsx
@@ -771,8 +775,90 @@ load start and on save success) so the single error slot cross-clears exactly as
 the views were split apart — a stale load error doesn't survive a successful save, and a
 stale save error doesn't survive a language switch that starts a new load. `TerminologyView.tsx`
 gained the same `{ error, run }` surface (previously it had none, so a failed
-create/rename/delete of a domain or term failed silently); `ProfilesView.tsx` was
+create/rename/delete of a domain failed silently); `ProfilesView.tsx` was
 already error-surfaced and now shares the same hook rather than its own copy.
+
+## Terminology screen
+
+The terminology view shows the domains on the left and, beside them, either the concept
+list of the active domain or one concept's entry. The shape of the data is in
+[the backend's Terminology section](backend-architecture.md#terminology).
+
+**Two logic modules decide; components do not.** `labels.ts` has the pure functions of
+the list: `conceptLabel` (the active preferred term, else the first active admitted one,
+else the first other term; in another language marked as a fallback if the concept has
+no wording in the chosen one), `otherWordings`, `matchesQuery`, `sortByLabel` and
+`conceptLanguages`. `conceptDraft.ts` has the pure functions of the entry: the state
+(`EntryState`), the count of changes per section, which parts are unsaved, the problems
+that block a save (`sectionProblems`), the request bodies (`toSectionInput`,
+`saveAllBody`, `createBody`), the discard functions, and `applySaved` and `reloadPart`,
+which merge a server answer into the state. `ConceptList`, `ConceptEntry` and
+`LanguageSectionEditor` only call them and render the result; a rule such as "this
+section cannot be saved" or "this link is unsaved" must not be re-implemented in a
+component.
+
+**The list's language** is state of `TerminologyView` (`listLanguage`, initially the UI
+locale), not of `ConceptList`, so the list keeps it after an entry was open. A new
+concept starts in that language. Opening a concept loads nothing: the entry is built from
+the list's copy.
+
+**The entry's state.** `ConceptEntry` builds its `EntryState` once, when it mounts, from
+its `concept` prop and ignores later changes of that prop. For each language section the
+state holds the version the writer read (`saved`) and the `draft`; for the domain links
+it holds the saved list, the concept's version number that was read, and the edited list.
+A part is unsaved when its draft differs from what was read; a new term with only blank
+text fields counts as nothing. A new concept has no id until its first save, and the
+view keeps the same entry mounted when it gets one (`onSaved` sets the open concept's
+id).
+
+**How a save is sent.** "Save <language>" sends `PUT /api/concepts/{id}/languages/{language}`
+with that section's draft and the id and version number it read. "Save all" sends one
+`PUT /api/concepts/{id}` with the unsaved sections and, only if the links are unsaved,
+`domain_ids` with the version number. A new concept is created by one
+`POST /api/domains/{id}/concepts` with all unsaved sections, whichever button was used.
+While a request is in flight, `busy` disables every control. The server's answer is the
+whole concept; `applySaved` decides what it replaces. Every section that was sent, and
+every section without unsaved changes, takes the server's state. An unsaved section that
+was not sent keeps its draft and the version it read, so its own later save is still
+refused if someone else changed it. The comment field is sent with the next save and
+cleared when it succeeds. The rules for the domain links, which keep a pending link change from being refused
+after the writer's own language save, are in `applySaved` and `linksAfter` in
+`conceptDraft.ts`.
+
+**Refused saves.** A failed save keeps every edit. `describe` in `ConceptEntry.tsx`
+reads the `HttpError`: `code: "conflict"` names the part (`part`, a language code or
+`links`) and offers "Load current version", which asks first and then calls
+`reloadPart` with a fresh `GET /api/concepts/{id}` for that part only; `duplicate_text`
+and `second_preferred` have translated messages; anything else shows the generic
+"change failed" text with the server's `message` (`detailMessage`). The message appears
+beside the button that was used. A failed reload is shown the same way.
+
+**Leaving with unsaved changes.** `ConceptEntry` reports `hasUnsaved(state)` through
+`onUnsavedChange`, and `TerminologyView` stores it in the store as `terminologyUnsaved`;
+the entry resets it when it unmounts. With the flag set:
+
+- The way back to the list and every change of the active domain (selecting one, adding
+  one, deleting the active one) ask first, in a `ConfirmDialog` (the entry's own for the
+  way back, the view's `pendingLeave` for domains). Closing or reloading the tab triggers
+  the browser's own question through a `beforeunload` listener.
+- `setActiveView` in `state/store.ts` stores the wish in `pendingView` instead of
+  switching, whoever asks (the header and the account menu both call it). `App.tsx`
+  renders `LeaveUnsavedQuestion`, which calls `confirmPendingView` or
+  `cancelPendingView`.
+- **Signing out is not guarded.** `logout()` in `auth/session.ts` does not go through
+  `setActiveView`, and the entry's unmount clears the flag.
+
+**Removal.** "Remove from this domain" is disabled while anything is unsaved or while the
+concept, as read, is in no other domain. "Delete concept" asks first. Both return to the
+list (`onGone` reloads it). Deleting a domain asks first and names how many of its
+concepts are in no other domain and will be deleted with it; the count comes from
+`GET /api/domains/{id}/concepts`, fetched when the delete button is used.
+
+**Answers for something the writer left.** The list fetch keeps a request counter and
+the active domain in a ref, so an answer for an earlier request or another domain is
+dropped. `conceptSaved` updates the list from the answer of an entry that is no longer
+open, and puts a concept into the list only if its `domain_ids` contain the active
+domain.
 
 ## `is_global` affordances and the domains-fetch guard
 
@@ -794,9 +880,10 @@ buttons and the double-click-to-rename handler — a non-admin simply has no way
 reach a mutation on a global domain. A `<span class="global-badge" title="…">Built-in
 </span>` renders immediately after the domain name whenever `domain.is_global` is true
 (admin or not — the badge states a fact about the row, not a permission the current
-viewer lacks). `TermTable` takes the whole `Domain` (not just its id) plus a `readOnly`
-boolean derived the same way, which hides the add-term row and every per-term ✎/✕ cell
-for a non-admin on a global domain's term list.
+viewer lacks). `ConceptList` and `ConceptEntry` take the whole `Domain` plus a `readOnly`
+boolean derived the same way (`activeDomain.is_global && !isAdmin`). It hides "+ Concept"
+in the list and, in the entry, disables every field and removes the save, discard, add,
+remove and delete controls.
 
 **`ProfilesView.tsx`**: each `ProfileCard` computes `readOnly = profile.is_global &&
 !isAdmin` and applies it twice, deliberately redundantly — **belt and buckle**:
@@ -1737,8 +1824,9 @@ and `hasFeature(user, 'custom_domains')` gate the **creation** entry points
 only, mirroring the backend's creation-only feature-gate scope
 (`docs/backend-architecture.md#feature-gates-are-creation-only`):
 `profiles/ProfilesView.tsx`'s `canCreate` hides the "+ New profile"
-affordance; `terminology/TerminologyView.tsx`'s `canCreate` hides "+ Add
-domain" and each domain's "+ Add term" row. Neither gate touches editing,
+affordance; `terminology/TerminologyView.tsx`'s `canCreate` hides the add-domain
+row and, passed to `ConceptList`, the "+ Concept" button. Saving and deleting a
+concept need no feature, as on the server. Neither gate touches editing,
 deleting, or viewing anything the caller already owns or any global row —
 those stay governed entirely by the pre-existing `is_global`/`isAdmin`
 ownership affordances (see [`is_global` affordances and the
