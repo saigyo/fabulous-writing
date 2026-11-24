@@ -155,7 +155,7 @@ The tab lists a domain's concepts in the language you choose, sorted by label, a
 searches the wordings of every language as you type. Opening a concept shows one section
 per language, which you save one by one or all together.
 
-![The Terminology tab with the seeded example domain: terms with preferred form, forbidden variants, and definitions, plus search and language filter](docs/images/terminology.png)
+![The Terminology tab with the seeded example domain: its concepts with their wordings, plus search and language choice](docs/images/terminology.png)
 
 *The Terminology tab: a domain's concepts with search and language choice.*
 
@@ -648,7 +648,7 @@ versions; the backend transparently retries loading with an explicit `split_mode
 Terminology lives under `/api/domains` and `/api/concepts`; the seeded example
 domain is only created when no domains exist (`seed_terminology: false` disables it).
 
-For Japanese and Chinese, forbidden variants are matched over spaCy tokens
+For Japanese and Chinese, forbidden and deprecated wordings are matched over spaCy tokens
 (PhraseMatcher) — `\b` word boundaries don't exist in CJK scripts. Without the
 language's model, matching falls back to plain substring search, which may over-match
 inside longer words.

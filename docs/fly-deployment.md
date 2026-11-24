@@ -137,8 +137,10 @@ unchanged until the release below drops it.
 
 **Upgrade that drops `terms_legacy`.** This release replaces the term
 endpoints with concept endpoints, and `init-db` under the admin DSN
-drops `terms_legacy`. Run it before or after the deploy; no stop is
+drops `terms_legacy`. When upgrading from a release that already has
+the concept tables, run it before or after the deploy; no stop is
 needed, because neither the previous nor this release reads that table.
+An upgrade from an older release follows the note above (stop first).
 Until `init-db` has run, the table stays and nothing else differs. The
 original rows are gone afterwards; their content lives in the concept
 tables. The import tool (`import-to-postgres`) initialises the stores on
