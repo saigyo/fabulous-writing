@@ -828,10 +828,20 @@ after the writer's own language save, are in `applySaved` and `linksAfter` in
 **Refused saves.** A failed save keeps every edit. `describe` in `ConceptEntry.tsx`
 reads the `HttpError`: `code: "conflict"` names the part (`part`, a language code or
 `links`) and offers "Load current version", which asks first and then calls
-`reloadPart` with a fresh `GET /api/concepts/{id}` for that part only; `duplicate_text`
+`reloadPart` with a fresh `GET /api/concepts/{id}`. For a language this replaces that
+section, edits included, and also brings every section without unsaved changes up to
+the fetched version, while unsaved other sections stay untouched; `duplicate_text`
 and `second_preferred` have translated messages; anything else shows the generic
 "change failed" text with the server's `message` (`detailMessage`). The message appears
 beside the button that was used. A failed reload is shown the same way.
+
+**Answers that arrive late.** The writer can switch domain, reopen a concept or start
+another request while one is pending. `TerminologyView.tsx` therefore applies only the
+answer to its latest request for the domain list, the concept list and the delete
+count; closes the open entry before a domain is created or the active domain is deleted;
+reloads the list instead of inserting the copy when a save answer comes from an entry
+the writer has left; closes every entry a delete or removal invalidates; and selects
+the first remaining domain when the active one is no longer in the list.
 
 **Leaving with unsaved changes.** `ConceptEntry` reports `hasUnsaved(state)` through
 `onUnsavedChange`, and `TerminologyView` stores it in the store as `terminologyUnsaved`;
