@@ -119,7 +119,7 @@ export function TerminologyView() {
         const domain = await createDomain(name)
         setNewDomain('')
         await refreshDomains()
-        setActiveDomainId(domain.id)
+        if (!useStore.getState().terminologyUnsaved) setActiveDomainId(domain.id)
       }),
     )
   }

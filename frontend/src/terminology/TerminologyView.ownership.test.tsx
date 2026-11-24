@@ -474,6 +474,28 @@ describe('TerminologyView leaving an entry with unsaved changes', () => {
     expect(screen.queryByRole('textbox', { name: en.definitionLabel })).toBeNull()
   })
 
+  it('does not make a new domain active over edits typed while it was being created', async () => {
+    let answerCreate!: (domain: Domain) => void
+    vi.mocked(createDomain).mockReturnValue(new Promise<Domain>((resolve) => (answerCreate = resolve)))
+    render(<TerminologyView />)
+    await userEvent.type(await screen.findByPlaceholderText(en.newDomainPlaceholder), 'Fresh')
+    await userEvent.click(screen.getByRole('button', { name: en.add }))
+    await userEvent.click(await screen.findByRole('button', { name: 'alpha' }))
+    await userEvent.type(screen.getByRole('textbox', { name: en.definitionLabel }), 'A letter')
+
+    vi.mocked(getDomains).mockResolvedValue([privateA, privateB, added])
+    answerCreate(added)
+    await waitFor(() => expect(rowOf('Fresh')).toBeDefined())
+    const freshRow = rowOf('Fresh').closest('.domain-row') as HTMLElement
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(freshRow.classList.contains('selected')).toBe(false)
+    expect(getConcepts).not.toHaveBeenCalledWith(added.id)
+    expect(back()).not.toBeNull()
+    expect((screen.getByRole('textbox', { name: en.definitionLabel }) as HTMLTextAreaElement).value).toBe('A letter')
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
   it('adds a domain at once while nothing is unsaved', async () => {
     vi.mocked(createDomain).mockResolvedValue(added)
     render(<TerminologyView />)
