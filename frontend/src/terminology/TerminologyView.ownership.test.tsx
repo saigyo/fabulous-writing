@@ -20,6 +20,7 @@ vi.mock('../api/client', async (importOriginal) => ({
   createConcept: vi.fn(),
   getConcept: vi.fn(),
   removeConceptFromDomain: vi.fn(),
+  deleteConcept: vi.fn(),
   // This file renders TerminologyView directly, not LoginGate, so nothing
   // here would actually call getHealth — mocked anyway (Task 7) so a real
   // fetch is never one accidental render away.
@@ -41,6 +42,7 @@ vi.mock('../documents/documents', () => ({
 import {
   createConcept,
   createDomain,
+  deleteConcept,
   deleteDomain,
   getConcept,
   getConcepts,
@@ -49,6 +51,7 @@ import {
   postLogin,
   removeConceptFromDomain,
   saveConceptLanguage,
+  updateDomain,
 } from '../api/client'
 import { login, logout } from '../auth/session'
 import { TerminologyView } from './TerminologyView'
@@ -391,6 +394,159 @@ describe('TerminologyView answers from an entry the writer has left', () => {
     expect(callsA).toBe(1)
     expect(screen.queryByRole('button', { name: 'alpha reloaded' })).toBeNull()
     screen.getByRole('button', { name: 'beta' })
+  })
+
+  const rowOf = (name: string) =>
+    screen.getAllByText(name).find((el) => el.closest('.domain-row'))!.closest('.domain-row') as HTMLElement
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
+  const definitionField = () => screen.getByRole('textbox', { name: en.definitionLabel }) as HTMLTextAreaElement
+
+  function serverWithShared(shared: () => Concept[]) {
+    vi.mocked(getConcepts).mockImplementation(async (domainId: number) =>
+      domainId === privateA.id ? [conceptOf(201, 'alpha', [2, 3])] : shared(),
+    )
+  }
+
+  it('does not let a late save answer replace a newer copy in the list', async () => {
+    let shared = [conceptOf(201, 'alpha', [2, 3])]
+    serverWithShared(() => shared)
+    let resolveFirst!: (concept: Concept) => void
+    vi.mocked(saveConceptLanguage)
+      .mockReturnValueOnce(new Promise<Concept>((resolve) => (resolveFirst = resolve)))
+      .mockImplementationOnce(async () => {
+        shared = [conceptOf(201, 'newer', [2, 3])]
+        return shared[0]
+      })
+    render(<TerminologyView />)
+    await userEvent.click(await screen.findByRole('button', { name: 'alpha' }))
+    await userEvent.type(definitionField(), 'first')
+    await userEvent.click(screen.getByRole('button', { name: en.saveLanguage('English') }))
+    await userEvent.click(rowOf('Private B'))
+    await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: en.leaveUnsaved }))
+
+    await userEvent.click(await screen.findByRole('button', { name: 'alpha' }))
+    await userEvent.type(definitionField(), 'second')
+    await userEvent.click(screen.getByRole('button', { name: en.saveLanguage('English') }))
+    await screen.findByText(`✓ ${en.sectionSaved}`)
+    await userEvent.click(screen.getByRole('button', { name: `← ${privateB.name}` }))
+    screen.getByRole('button', { name: 'newer' })
+
+    resolveFirst(conceptOf(201, 'older', [2, 3]))
+    await tick()
+    await tick()
+    expect(screen.queryByRole('button', { name: 'older' })).toBeNull()
+    screen.getByRole('button', { name: 'newer' })
+  })
+
+  it('reloads the list shown when a save answers from an entry the writer has left', async () => {
+    let shared = [conceptOf(201, 'alpha', [2, 3])]
+    serverWithShared(() => shared)
+    let resolveSave!: (concept: Concept) => void
+    vi.mocked(saveConceptLanguage).mockReturnValue(new Promise<Concept>((resolve) => (resolveSave = resolve)))
+    render(<TerminologyView />)
+    await userEvent.click(await screen.findByRole('button', { name: 'alpha' }))
+    await userEvent.type(definitionField(), 'first')
+    await userEvent.click(screen.getByRole('button', { name: en.saveLanguage('English') }))
+    await userEvent.click(rowOf('Private B'))
+    await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: en.leaveUnsaved }))
+    await screen.findByRole('button', { name: 'alpha' })
+
+    shared = [conceptOf(201, 'omega', [2, 3])]
+    resolveSave(shared[0])
+    await screen.findByRole('button', { name: 'omega' })
+  })
+
+  it('closes an entry for a concept deleted while the writer moved to another domain', async () => {
+    let shared = [conceptOf(201, 'alpha', [2, 3])]
+    serverWithShared(() => shared)
+    let resolveDelete!: () => void
+    vi.mocked(deleteConcept).mockReturnValue(new Promise<void>((resolve) => (resolveDelete = resolve)))
+    render(<TerminologyView />)
+    await userEvent.click(await screen.findByRole('button', { name: 'alpha' }))
+    await userEvent.click(screen.getByRole('button', { name: en.deleteConcept }))
+    await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: en.deleteConcept }))
+    await userEvent.click(rowOf('Private B'))
+    await userEvent.click(await screen.findByRole('button', { name: 'alpha' }))
+
+    shared = []
+    resolveDelete()
+    await waitFor(() => expect(screen.queryByRole('button', { name: `← ${privateB.name}` })).toBeNull())
+    await tick()
+    expect(screen.queryByRole('button', { name: 'alpha' })).toBeNull()
+  })
+
+  it('keeps an entry in another domain open when the concept was only removed from the first', async () => {
+    serverWithShared(() => [conceptOf(201, 'alpha', [3])])
+    let resolveRemove!: () => void
+    vi.mocked(removeConceptFromDomain).mockReturnValue(new Promise<void>((resolve) => (resolveRemove = resolve)))
+    render(<TerminologyView />)
+    await userEvent.click(await screen.findByRole('button', { name: 'alpha' }))
+    await userEvent.click(screen.getByRole('button', { name: en.removeFromDomain }))
+    await userEvent.click(rowOf('Private B'))
+    await userEvent.click(await screen.findByRole('button', { name: 'alpha' }))
+
+    resolveRemove()
+    await tick()
+    await tick()
+    screen.getByRole('button', { name: `← ${privateB.name}` })
+  })
+
+  it('keeps the entry of another domain when a pending domain delete answers', async () => {
+    vi.mocked(getConcepts).mockImplementation(async (domainId: number) =>
+      domainId === privateA.id ? [conceptOf(201, 'alpha', [2])] : [conceptOf(202, 'beta', [3])],
+    )
+    let resolveDelete!: () => void
+    vi.mocked(deleteDomain).mockReturnValue(new Promise<void>((resolve) => (resolveDelete = resolve)))
+    render(<TerminologyView />)
+    await screen.findByRole('button', { name: 'alpha' })
+    await userEvent.click(within(rowOf('Private A')).getByTitle(en.deleteDomainTitle))
+    await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: en.deleteDomainTitle }))
+    expect(deleteDomain).toHaveBeenCalledWith(privateA.id)
+
+    await userEvent.click(rowOf('Private B'))
+    await userEvent.click(await screen.findByRole('button', { name: 'beta' }))
+    await userEvent.type(definitionField(), 'B edit')
+    vi.mocked(getDomains).mockResolvedValue([privateB])
+    resolveDelete()
+    await waitFor(() => expect(screen.queryByText('Private A')).toBeNull())
+
+    screen.getByRole('button', { name: `← ${privateB.name}` })
+    expect(definitionField().value).toBe('B edit')
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('fetches nothing when a save answers after the view was left', async () => {
+    vi.mocked(getConcepts).mockResolvedValue([conceptOf(201, 'alpha', [2])])
+    let resolveSave!: (concept: Concept) => void
+    vi.mocked(saveConceptLanguage).mockReturnValue(new Promise<Concept>((resolve) => (resolveSave = resolve)))
+    const { unmount } = render(<TerminologyView />)
+    await userEvent.click(await screen.findByRole('button', { name: 'alpha' }))
+    await userEvent.type(definitionField(), 'A letter')
+    await userEvent.click(screen.getByRole('button', { name: en.saveLanguage('English') }))
+    await userEvent.click(rowOf('Private B'))
+    await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: en.leaveUnsaved }))
+    await tick()
+    unmount()
+    const before = vi.mocked(getConcepts).mock.calls.length
+
+    resolveSave(conceptOf(201, 'alpha', [2]))
+    await tick()
+    expect(vi.mocked(getConcepts).mock.calls.length).toBe(before)
+  })
+
+  it('does not close another rename field when an earlier rename answers', async () => {
+    let resolveRename!: () => void
+    vi.mocked(updateDomain).mockReturnValue(new Promise((resolve) => (resolveRename = () => resolve(privateA))))
+    render(<TerminologyView />)
+    await userEvent.click(within(rowOf('Private A')).getByTitle(en.renameDomainTitle))
+    await userEvent.type(screen.getByDisplayValue('Private A'), ' x{Enter}')
+    await userEvent.click(within(rowOf('Private B')).getByTitle(en.renameDomainTitle))
+    await userEvent.type(screen.getByDisplayValue('Private B'), ' y')
+
+    resolveRename()
+    await tick()
+    await tick()
+    screen.getByDisplayValue('Private B y')
   })
 })
 

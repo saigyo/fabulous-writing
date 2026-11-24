@@ -902,6 +902,7 @@ describe('ConceptEntry removal actions', () => {
     answer(new Response(null, { status: 204 }))
     await user.click(button(en.removeFromDomain))
     await waitFor(() => expect(onGone).toHaveBeenCalledTimes(1))
+    expect(onGone).toHaveBeenCalledWith(false)
     expect(writes()).toEqual([{ method: 'DELETE', path: '/api/domains/2/concepts/7', body: undefined }])
   })
 
@@ -915,6 +916,7 @@ describe('ConceptEntry removal actions', () => {
     answer(new Response(null, { status: 204 }))
     await user.click(within(dialog).getByRole('button', { name: en.deleteConcept }))
     await waitFor(() => expect(onGone).toHaveBeenCalledTimes(1))
+    expect(onGone).toHaveBeenCalledWith(true)
     expect(writes()).toEqual([{ method: 'DELETE', path: '/api/concepts/7', body: undefined }])
   })
 
