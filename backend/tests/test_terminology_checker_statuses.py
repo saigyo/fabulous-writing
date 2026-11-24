@@ -33,6 +33,10 @@ def check(
     language: Language = EN,
     nlp: NlpRegistry | None = None,
 ) -> list[Finding]:
+    if nlp is not None:
+        # Without a loaded pipeline the checker falls back to substring
+        # matching and a token-path test would pass without testing tokens.
+        assert nlp.get(language.value) is not None
     return TerminologyChecker(store, nlp=nlp).check(text, language, domain_id, owner_id=1)
 
 
