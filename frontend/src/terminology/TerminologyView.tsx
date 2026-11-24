@@ -252,7 +252,8 @@ export function TerminologyView() {
           onConfirm={() => {
             const { id } = pendingDelete
             setPendingDelete(null)
-            void removeDomain(id)
+            if (id === activeDomainId) leaveEntry(() => void removeDomain(id))
+            else void removeDomain(id)
           }}
         />
       )}

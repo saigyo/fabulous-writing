@@ -137,6 +137,7 @@ export const en: Messages = {
   deleteDomainTitle: 'Delete domain',
   concepts: 'Concepts',
   searchConceptsPlaceholder: 'Search concepts…',
+  searchConceptsLabel: 'Search concepts',
   conceptLanguageTitle: 'Language of the labels',
   newConcept: '+ Concept',
   labelHeader: 'Concept',
@@ -155,7 +156,7 @@ export const en: Messages = {
       ? 'No concept is deleted with it.'
       : n === 1
         ? '1 concept that is in no other domain is deleted with it.'
-        : `${n} concepts that are in no other domain are deleted with them.`),
+        : `${n} concepts that are in no other domain are deleted with it.`),
   renameDomainTitle: 'Rename domain',
   changeFailed: (error) => `Change failed: ${error}`,
   newConceptTitle: 'New concept',
@@ -172,6 +173,7 @@ export const en: Messages = {
   statusActive: 'active',
   reasonLabel: 'Reason',
   termDetails: 'Details',
+  termDetailsOf: (text) => `Details for ${text}`,
   contextLabel: 'Context',
   sourceLabel: 'Source',
   partOfSpeechLabel: 'Part of speech',
@@ -188,6 +190,7 @@ export const en: Messages = {
   matchCaseLabel: 'Match case',
   addTerm: '+ Term',
   removeTerm: 'Remove term',
+  removeTermNamed: (text) => `Remove term ${text}`,
   removeLanguage: 'Remove language',
   languageRemovedNote: 'This language is removed by the next save.',
   baseFormHint:

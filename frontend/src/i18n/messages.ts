@@ -130,6 +130,7 @@ export interface Messages {
   deleteDomainTitle: string
   concepts: string
   searchConceptsPlaceholder: string
+  searchConceptsLabel: string
   conceptLanguageTitle: string
   newConcept: string
   labelHeader: string
@@ -160,6 +161,7 @@ export interface Messages {
   statusActive: string
   reasonLabel: string
   termDetails: string
+  termDetailsOf: (text: string) => string
   contextLabel: string
   sourceLabel: string
   partOfSpeechLabel: string
@@ -168,6 +170,7 @@ export interface Messages {
   matchCaseLabel: string
   addTerm: string
   removeTerm: string
+  removeTermNamed: (text: string) => string
   removeLanguage: string
   languageRemovedNote: string
   baseFormHint: string

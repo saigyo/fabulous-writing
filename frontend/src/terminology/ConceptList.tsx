@@ -58,6 +58,7 @@ export function ConceptList({
         </select>
         <input
           type="search"
+          aria-label={m.searchConceptsLabel}
           value={query}
           placeholder={m.searchConceptsPlaceholder}
           onChange={(event) => setQuery(event.target.value)}
@@ -100,13 +101,13 @@ export function ConceptList({
                   <button type="button" className="concept-open">
                     {label.text || '—'}
                   </button>
+                </td>
+                <td>
                   {label.fallback && (
                     <span className="no-term-note">
                       {m.noTermIn(languageName(language, languages))}
                     </span>
                   )}
-                </td>
-                <td>
                   {otherWordings(concept, language).map((term) => (
                     <StatusChip key={term.id} term={term} />
                   ))}

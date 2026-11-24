@@ -153,6 +153,7 @@ export const es: Messages = {
   deleteDomainTitle: 'Eliminar dominio',
   concepts: 'Conceptos',
   searchConceptsPlaceholder: 'Buscar conceptos…',
+  searchConceptsLabel: 'Buscar conceptos',
   conceptLanguageTitle: 'Idioma de las etiquetas',
   newConcept: '+ Concepto',
   labelHeader: 'Concepto',
@@ -188,6 +189,7 @@ export const es: Messages = {
   statusActive: 'activo',
   reasonLabel: 'Motivo',
   termDetails: 'Detalles',
+  termDetailsOf: (text) => `Detalles de ${text}`,
   contextLabel: 'Contexto',
   sourceLabel: 'Fuente',
   partOfSpeechLabel: 'Categoría gramatical',
@@ -204,6 +206,7 @@ export const es: Messages = {
   matchCaseLabel: 'Distinguir mayúsculas y minúsculas',
   addTerm: '+ Término',
   removeTerm: 'Quitar término',
+  removeTermNamed: (text) => `Quitar término ${text}`,
   removeLanguage: 'Quitar idioma',
   languageRemovedNote: 'Este idioma se quitará la próxima vez que guardes.',
   baseFormHint:

@@ -28,6 +28,7 @@ import {
   sectionProblems,
   toSectionInput,
   unsavedLanguages,
+  withComment,
   type EntryState,
   type SectionState,
 } from './conceptDraft'
@@ -53,10 +54,6 @@ interface EntryError {
   message: string
   conflict: boolean
   part?: Language | 'links'
-}
-
-function withComment(comment: string): { comment?: string } {
-  return comment.trim() ? { comment } : {}
 }
 
 export function ConceptEntry({
@@ -169,14 +166,20 @@ export function ConceptEntry({
     return attempt('all', async () => commit(await saveConcept(conceptId, body), sent))
   }
 
+  function forgetErrorOf(language: Language) {
+    setError((e) => (e?.at === language || e?.part === language ? null : e))
+  }
+
   function discardOne(language: Language) {
     if (isNew && state.sections.length === 1) return onBack()
     setState((s) => discardSection(s, language))
+    forgetErrorOf(language)
   }
 
   function discardEverything() {
     if (isNew) return onBack()
     setState(discardAll)
+    setError((e) => (e?.at === 'header' ? e : null))
   }
 
   function update(section: SectionState) {
@@ -189,6 +192,7 @@ export function ConceptEntry({
   function remove(section: SectionState) {
     if (section.saved === null) return discardOne(section.language)
     update({ ...section, removed: true })
+    forgetErrorOf(section.language)
   }
 
   function setLinks(domainIds: number[]) {
@@ -204,6 +208,7 @@ export function ConceptEntry({
       setState((s) => reloadPart(s, concept, part))
       setCurrent(concept)
       setError(null)
+      onSaved(concept)
     } catch (e) {
       setError({ ...refused, message: describe(e).message })
     } finally {

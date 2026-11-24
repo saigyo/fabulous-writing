@@ -120,8 +120,10 @@ describe('ConceptList', () => {
   it('shows the fallback term with its language marker and the "no term" text', () => {
     renderList([onlyGerman])
     const r = row('Schraube')
-    within(r.querySelector('.concept-label') as HTMLElement).getByText('DE')
-    within(r).getByText(en.noTermIn('English'))
+    const [labelCell, wordingsCell] = r.querySelectorAll('td')
+    within(labelCell).getByText('DE')
+    within(wordingsCell).getByText(en.noTermIn('English'))
+    expect(within(labelCell).queryByText(en.noTermIn('English'))).toBeNull()
   })
 
   it('shows other wordings as chips whose accessible name contains the status', () => {
@@ -173,7 +175,7 @@ describe('ConceptList', () => {
 
   it('finds a concept by a wording of another language', async () => {
     renderList([widget, onlyGerman])
-    await userEvent.type(screen.getByRole('searchbox'), 'bauteil')
+    await userEvent.type(screen.getByRole('searchbox', { name: en.searchConceptsLabel }), 'bauteil')
     row('widget')
     expect(screen.queryByRole('button', { name: 'Schraube' })).toBeNull()
   })

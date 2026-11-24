@@ -149,6 +149,7 @@ export const it: Messages = {
   deleteDomainTitle: 'Elimina dominio',
   concepts: 'Concetti',
   searchConceptsPlaceholder: 'Cerca concetti…',
+  searchConceptsLabel: 'Cerca concetti',
   conceptLanguageTitle: 'Lingua delle etichette',
   newConcept: '+ Concetto',
   labelHeader: 'Concetto',
@@ -185,6 +186,7 @@ export const it: Messages = {
   statusActive: 'attivo',
   reasonLabel: 'Motivo',
   termDetails: 'Dettagli',
+  termDetailsOf: (text) => `Dettagli di ${text}`,
   contextLabel: 'Contesto',
   sourceLabel: 'Fonte',
   partOfSpeechLabel: 'Parte del discorso',
@@ -201,6 +203,7 @@ export const it: Messages = {
   matchCaseLabel: 'Distingui maiuscole/minuscole',
   addTerm: '+ Termine',
   removeTerm: 'Rimuovi termine',
+  removeTermNamed: (text) => `Rimuovi termine ${text}`,
   removeLanguage: 'Rimuovi lingua',
   languageRemovedNote: 'Questa lingua verrà rimossa al prossimo salvataggio.',
   baseFormHint:
