@@ -5354,3 +5354,18 @@ domain leaves the list.
 
 Upgrade: `init-db` under the admin connection drops `terms_legacy`. From
 0.7.5 or 0.7.6 it can run before or after the deploy without a stop.
+
+## 2026-11-25 — v0.8.0 rollout: concept endpoints and concept screen deployed (PR #219)
+
+Minor release for PR #217. Tag push → release workflow → GitHub release.
+Before the tag, the Architecture Atlas deploy on main had failed once
+(page artifact not found) and passed on a rerun.
+
+The release drops `terms_legacy`. The owner ran `init-db` under the admin
+DSN and then `fly deploy --ha=false -c deploy/fly/fly.toml` on the running
+machine; coming from 0.7.6, no stop was needed. fly.toml was bumped on
+this branch and committed afterwards.
+
+Verified: single machine, started, checks 1/1, image 0.8.0, `/api/health`
+200 reporting 0.8.0. The drop of the table itself was not checked from
+this side, since that needs the admin DSN.
