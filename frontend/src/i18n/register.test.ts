@@ -43,7 +43,6 @@ const FORMAL_MARKERS: Record<string, RegExp[]> = {
 const REQUIRED: Record<string, string[]> = {
   de: [
     'Klicke, um',
-    'Klicke zum Sortieren',
     'klicke für Details',
     'versuche es gleich erneut',
     'Bitte versuche es erneut',
@@ -53,7 +52,6 @@ const REQUIRED: Record<string, string[]> = {
   ],
   fr: [
     'Clique pour afficher',
-    'Clique pour trier',
     'clique pour les détails',
     'réessaie dans un instant',
     'Réessaie.',

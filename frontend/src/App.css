@@ -919,7 +919,7 @@ span.score-badge {
 }
 
 .domain-list h2,
-.term-table h2 {
+.concept-list h2 {
   font-size: 1rem;
   margin: 0 0 0.75rem;
 }
@@ -968,74 +968,115 @@ span.score-badge {
   min-width: 0;
 }
 
-.term-table {
+.concept-list {
   flex: 1;
   padding: 1rem;
   overflow: auto;
 }
 
-/* Language filter and search live in the table head so they align with
-   (and size like) the language and preferred columns beneath them. */
-.term-controls-row td {
-  border-bottom: none;
-  padding-top: 0;
-  padding-bottom: 0.6rem;
+.concept-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.75rem;
 }
 
-.term-table table {
+.concept-controls h2 {
+  margin: 0;
+  margin-right: auto;
+}
+
+.concept-list table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.85rem;
 }
 
-.term-table th.sortable {
-  cursor: pointer;
-  user-select: none;
-}
-
-.term-table th.sortable:hover {
-  color: var(--accent);
-}
-
-.sort-indicator {
-  margin-left: 0.3rem;
-  font-size: 0.7rem;
-  color: var(--accent);
-}
-
-.sort-indicator sup {
-  font-size: 0.6rem;
-  margin-left: 0.1rem;
-}
-
-.no-terms-row td {
-  color: var(--text-dim);
-  font-style: italic;
-}
-
-/* The preferred term leads each row; the supporting columns recede.
-   Inputs/selects in the add and edit rows are unaffected: they set
-   their own text color (only `font` is inherited). */
-.term-table tbody td {
-  color: var(--text-dim);
-}
-
-.term-table tbody td.term-preferred {
-  color: var(--text);
-  font-weight: 600;
-}
-
-.term-table th,
-.term-table td {
+.concept-list th,
+.concept-list td {
   text-align: left;
   padding: 0.4rem 0.5rem;
   border-bottom: 1px solid var(--border);
 }
 
-.term-table input,
-.term-table select {
-  width: 100%;
-  box-sizing: border-box;
+.concept-list tbody td {
+  color: var(--text-dim);
+}
+
+.concept-row {
+  cursor: pointer;
+}
+
+.concept-row:hover {
+  background: var(--accent-soft);
+}
+
+.no-concepts-row td {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.concept-label .concept-open {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.language-marker {
+  display: inline-block;
+  margin-right: 0.3rem;
+  font-size: 0.7rem;
+  padding: 0 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+}
+
+.no-term-note {
+  margin-left: 0.5rem;
+  font-style: italic;
+}
+
+.status-chip {
+  display: inline-block;
+  margin: 0 0.3rem 0.2rem 0;
+  padding: 0 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.8rem;
+  color: var(--text);
+}
+
+.status-chip.status-preferred {
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.status-chip.status-deprecated {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.status-chip.status-forbidden {
+  color: var(--text-dim);
+  text-decoration: line-through;
+}
+
+.status-chip.candidate {
+  border-style: dashed;
+}
+
+.status-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
 }
 
 .input-with-toggle {

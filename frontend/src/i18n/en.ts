@@ -135,24 +135,27 @@ export const en: Messages = {
   newDomainPlaceholder: 'New domain…',
   add: 'Add',
   deleteDomainTitle: 'Delete domain',
-  terms: 'Terms',
-  searchTermsPlaceholder: 'Search terms…',
-  allLanguages: 'All languages',
-  langHeader: 'Language',
-  preferredHeader: 'Preferred',
-  doNotUseHeader: 'Do not use',
-  definitionHeader: 'Definition',
-  sortHeaderTitle: 'Click to sort: ascending → descending → off',
-  languageFilterTitle: 'Show only terms of one language',
-  noTermsMatch: 'No terms match the current filter.',
-  preferredPlaceholder: 'preferred term',
-  forbiddenPlaceholder: 'forbidden, comma-separated',
-  definitionPlaceholder: 'definition (optional)',
-  deleteTermTitle: 'Delete term',
-  caseSensitiveTitle: 'Case-sensitive matching',
-  editTermTitle: 'Edit term',
-  saveEditTitle: 'Save changes',
-  cancelEditTitle: 'Discard changes',
+  concepts: 'Concepts',
+  searchConceptsPlaceholder: 'Search concepts…',
+  conceptLanguageTitle: 'Language of the labels',
+  newConcept: '+ Concept',
+  labelHeader: 'Concept',
+  wordingsHeader: 'Other wordings',
+  languagesHeader: 'Languages',
+  alsoInHeader: 'Also in',
+  noConceptsMatch: 'No concepts match the current filter.',
+  noTermIn: (language) => `no term in ${language}`,
+  statusName: (status) =>
+    ({ preferred: 'preferred', admitted: 'admitted', deprecated: 'deprecated', forbidden: 'forbidden' })[status],
+  statusCandidate: 'candidate',
+  statusLegend: 'Status',
+  deleteDomainConfirm: (name, n) =>
+    `Delete the domain "${name}"? ` +
+    (n === 0
+      ? 'No concept is deleted with it.'
+      : n === 1
+        ? '1 concept that is in no other domain is deleted with it.'
+        : `${n} concepts that are in no other domain are deleted with them.`),
   renameDomainTitle: 'Rename domain',
   changeFailed: (error) => `Change failed: ${error}`,
 

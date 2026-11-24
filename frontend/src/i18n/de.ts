@@ -147,24 +147,27 @@ export const de: Messages = {
   newDomainPlaceholder: 'Neue Domäne…',
   add: 'Hinzufügen',
   deleteDomainTitle: 'Domäne löschen',
-  terms: 'Begriffe',
-  searchTermsPlaceholder: 'Begriffe durchsuchen…',
-  allLanguages: 'Alle Sprachen',
-  langHeader: 'Sprache',
-  preferredHeader: 'Bevorzugt',
-  doNotUseHeader: 'Nicht verwenden',
-  definitionHeader: 'Definition',
-  sortHeaderTitle: 'Klicke zum Sortieren: aufsteigend → absteigend → aus',
-  languageFilterTitle: 'Nur Begriffe einer Sprache anzeigen',
-  noTermsMatch: 'Keine Begriffe entsprechen dem aktuellen Filter.',
-  preferredPlaceholder: 'bevorzugter Begriff',
-  forbiddenPlaceholder: 'verboten, kommagetrennt',
-  definitionPlaceholder: 'Definition (optional)',
-  deleteTermTitle: 'Begriff löschen',
-  caseSensitiveTitle: 'Groß-/Kleinschreibung beachten',
-  editTermTitle: 'Begriff bearbeiten',
-  saveEditTitle: 'Änderungen speichern',
-  cancelEditTitle: 'Änderungen verwerfen',
+  concepts: 'Konzepte',
+  searchConceptsPlaceholder: 'Konzepte durchsuchen…',
+  conceptLanguageTitle: 'Sprache der Bezeichnungen',
+  newConcept: '+ Konzept',
+  labelHeader: 'Konzept',
+  wordingsHeader: 'Weitere Formulierungen',
+  languagesHeader: 'Sprachen',
+  alsoInHeader: 'Auch in',
+  noConceptsMatch: 'Keine Konzepte entsprechen dem aktuellen Filter.',
+  noTermIn: (language) => `kein Begriff auf ${language}`,
+  statusName: (status) =>
+    ({ preferred: 'bevorzugt', admitted: 'zugelassen', deprecated: 'veraltet', forbidden: 'verboten' })[status],
+  statusCandidate: 'Kandidat',
+  statusLegend: 'Status',
+  deleteDomainConfirm: (name, n) =>
+    `Domäne „${name}“ löschen? ` +
+    (n === 0
+      ? 'Dabei wird kein Konzept gelöscht.'
+      : n === 1
+        ? 'Dabei wird 1 Konzept gelöscht, das in keiner anderen Domäne ist.'
+        : `Dabei werden ${n} Konzepte gelöscht, die in keiner anderen Domäne sind.`),
   renameDomainTitle: 'Domäne umbenennen',
   changeFailed: (error) => `Änderung fehlgeschlagen: ${error}`,
 

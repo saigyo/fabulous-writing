@@ -56,16 +56,6 @@ export interface Domain {
   is_global: boolean
 }
 
-export interface Term {
-  id: number
-  domain_id: number
-  language: Language
-  preferred: string
-  forbidden_variants: string[]
-  definition: string
-  case_sensitive: boolean
-}
-
 export type UsageStatus = 'preferred' | 'admitted' | 'deprecated' | 'forbidden'
 export type ProcessStatus = 'candidate' | 'active'
 export type PartOfSpeech = 'noun' | 'verb' | 'adjective' | 'adverb' | 'proper_noun' | 'other'
