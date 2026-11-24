@@ -326,7 +326,7 @@ try {
     .nth(1)
     .fill('Anglicism')
   // Taller than the other shots, so that the footer with "Save all" is in view.
-  await page.setViewportSize({ width: 1600, height: 960 })
+  await page.setViewportSize({ width: 1600, height: 1010 })
   await page.waitForTimeout(300)
   await page.screenshot({ path: `${outDir}/concept-entry.png` })
   await page.setViewportSize({ width: 1600, height: 860 })
