@@ -577,6 +577,14 @@ describe('reloadPart', () => {
     expect(sectionOf(state, 'de')).toBe(sectionOf(edited, 'de'))
   })
 
+  it('gives a clean other section the server state and its newer version number', () => {
+    const edited = rename(entryFromConcept(concept()), 'en', 'plum')
+    const state = reloadPart(edited, concept([EN3, DE2], { revision: 4 }), 'en')
+    expect(sectionOf(state, 'de').saved).toEqual(DE2)
+    expect(toSectionInput(sectionOf(state, 'de'))).toMatchObject({ id: 20, revision: 2 })
+    expect(sectionOf(state, 'de').terms.map((t) => t.text)).toEqual(['Birne'])
+  })
+
   it('drops the named language when the server no longer has it', () => {
     const edited = rename(entryFromConcept(concept()), 'de', 'Pflaume')
     const state = reloadPart(edited, concept([EN], { revision: 4 }), 'de')

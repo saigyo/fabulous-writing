@@ -282,10 +282,5 @@ export function applySaved(
 
 export function reloadPart(state: EntryState, concept: Concept, part: Language | 'links'): EntryState {
   if (part === 'links') return { ...state, ...linksFrom(concept) }
-  const replaced = state.sections.flatMap((s) => (s.language === part ? serverSection(concept, part) : [s]))
-  return {
-    ...state,
-    sections: withServerLanguages(replaced, concept),
-    ...linksAfter(state, concept, false),
-  }
+  return applySaved(state, concept, { languages: [part], links: false })
 }
