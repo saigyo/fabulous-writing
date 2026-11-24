@@ -1,6 +1,8 @@
 import json
 from collections.abc import Sequence
 
+from httpx import Response
+
 from app.core.models import Language
 from app.services.terminology import (
     Actor,
@@ -94,3 +96,32 @@ def changes(db) -> list[dict]:
         entry["changes"] = json.loads(entry["changes"])
         result.append(entry)
     return result
+
+
+def post_concept(
+    client,
+    domain_id: int,
+    *,
+    language: str = "en",
+    preferred: str | None = None,
+    forbidden: Sequence[str] = (),
+    definition: str = "",
+    case_sensitive: bool = False,
+    headers: dict | None = None,
+) -> Response:
+    terms = ([_term_body(preferred, "preferred", case_sensitive)] if preferred else []) + [
+        _term_body(text, "forbidden", case_sensitive) for text in forbidden
+    ]
+    section = {"language": language, "definition": definition, "terms": terms}
+    return client.post(
+        f"/api/domains/{domain_id}/concepts", json={"sections": [section]}, headers=headers
+    )
+
+
+def _term_body(text: str, usage_status: str, case_sensitive: bool) -> dict:
+    return {
+        "text": text,
+        "usage_status": usage_status,
+        "process_status": "active",
+        "case_sensitive": case_sensitive,
+    }
