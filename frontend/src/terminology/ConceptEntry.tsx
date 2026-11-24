@@ -43,7 +43,8 @@ interface ConceptEntryProps {
   readOnly: boolean
   onBack: () => void
   onSaved: (concept: Concept) => void
-  onGone: () => void
+  /** `deleted`: the concept is gone everywhere, not only from this domain. */
+  onGone: (deleted: boolean) => void
   onUnsavedChange: (unsaved: boolean) => void
 }
 
@@ -253,7 +254,7 @@ export function ConceptEntry({
               onClick={() =>
                 void attempt('header', async () => {
                   await removeConceptFromDomain(domain.id, conceptId)
-                  onGone()
+                  onGone(false)
                 })
               }
             >
@@ -379,7 +380,7 @@ export function ConceptEntry({
             setConfirmingDelete(false)
             void attempt('header', async () => {
               await deleteConcept(conceptId)
-              onGone()
+              onGone(true)
             })
           }}
         />

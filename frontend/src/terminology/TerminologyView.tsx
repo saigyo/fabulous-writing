@@ -32,6 +32,10 @@ export function TerminologyView() {
   const [activeDomainId, setActiveDomainId] = useState<number | null>(null)
   const [concepts, setConcepts] = useState<Concept[]>([])
   const [open, setOpen] = useState<OpenConcept | null>(null)
+  const openRef = useRef<OpenConcept | null>(null)
+  useEffect(() => {
+    openRef.current = open
+  }, [open])
   const [pendingDelete, setPendingDelete] = useState<{ id: number; name: string; count: number } | null>(null)
   const [newDomain, setNewDomain] = useState('')
   const unsaved = useStore((s) => s.terminologyUnsaved)
@@ -75,13 +79,18 @@ export function TerminologyView() {
   // - the request counter orders same-domain fetches, so a stale fetch for
   //   the CURRENT domain (e.g. an in-flight load superseded by a newer one)
   //   is discarded instead of overwriting more recent rows;
-  // - activeDomainRef rejects cross-domain starts and completions, so the
-  //   entry's onGone callback — which closes over the domain id at the
-  //   render it was wired to — cannot refetch or apply results for a
-  //   domain the user has since switched away from (its own fetch resolving
-  //   later would otherwise "win" the counter race against the domain the
-  //   user is actually looking at).
+  // - activeDomainRef rejects cross-domain starts and completions, so a
+  //   fetch for a domain the user has since switched away from cannot
+  //   apply its rows. Late answers from an entry (conceptSaved,
+  //   conceptGone, removeDomain) read it to act on the domain shown when
+  //   they arrive; it is null once the view has unmounted.
   const activeDomainRef = useRef<number | null>(null)
+  useEffect(
+    () => () => {
+      activeDomainRef.current = null
+    },
+    [],
+  )
   const conceptsRequestRef = useRef(0)
   const conceptsPendingRef = useRef(false)
   const loadConcepts = useCallback((domainId: number) => {
@@ -135,7 +144,7 @@ export function TerminologyView() {
   async function removeDomain(id: number) {
     await run(async () => {
       await deleteDomain(id)
-      if (activeDomainId === id) setActiveDomainId(null)
+      if (activeDomainRef.current === id) setActiveDomainId(null)
       await refreshDomains()
     })
   }
@@ -150,36 +159,42 @@ export function TerminologyView() {
 
   async function saveRename() {
     const name = renameValue.trim()
-    if (renamingId === null || !name) return // empty: stay open until corrected or cancelled
+    const id = renamingId
+    if (id === null || !name) return // empty: stay open until corrected or cancelled
     await run(async () => {
-      await updateDomain(renamingId, name)
-      setRenamingId(null)
+      await updateDomain(id, name)
+      setRenamingId((current) => (current === id ? null : current))
       await refreshDomains()
     })
   }
 
-  // `entry` is the open object the entry was rendered with: an answer that
-  // arrives after the writer left that entry updates the list only.
+  // `entry` is the open object the entry was rendered with. An answer from
+  // an entry the writer has left may be older than what the list shows by
+  // now, so it only triggers a reload of the active domain's list.
   function conceptSaved(entry: OpenConcept, saved: Concept) {
+    const active = activeDomainRef.current
+    if (openRef.current !== entry) {
+      if (active !== null) void loadConcepts(active)
+      return
+    }
     setConcepts((list) => {
       const rest = list.filter((c) => c.id !== saved.id)
-      return activeDomainRef.current !== null && saved.domain_ids.includes(activeDomainRef.current)
-        ? [...rest, saved]
-        : rest
+      return active !== null && saved.domain_ids.includes(active) ? [...rest, saved] : rest
     })
     // A list answer still on its way was read before this save; fetch again
     // so it cannot replace the list without the saved concept.
-    if (conceptsPendingRef.current && activeDomainRef.current !== null) {
-      void loadConcepts(activeDomainRef.current)
-    }
-    setOpen((current) =>
-      current === entry && current.conceptId !== saved.id ? { ...current, conceptId: saved.id } : current,
-    )
+    if (conceptsPendingRef.current && active !== null) void loadConcepts(active)
+    if (entry.conceptId !== saved.id) setOpen({ ...entry, conceptId: saved.id })
   }
 
-  function conceptGone(entry: OpenConcept, domainId: number) {
-    setOpen((current) => (current === entry ? null : current))
-    void loadConcepts(domainId)
+  // A deleted concept is gone from every domain, so any entry open for it
+  // closes; a concept removed from one domain only closes the entry that
+  // asked.
+  function conceptGone(entry: OpenConcept, deleted: boolean) {
+    setOpen((current) =>
+      current === entry || (deleted && current?.conceptId === entry.conceptId) ? null : current,
+    )
+    if (activeDomainRef.current !== null) void loadConcepts(activeDomainRef.current)
   }
 
   const activeDomain = domains.find((domain) => domain.id === activeDomainId) ?? null
@@ -293,7 +308,7 @@ export function TerminologyView() {
           readOnly={readOnly}
           onBack={() => setOpen(null)}
           onSaved={(saved) => conceptSaved(open, saved)}
-          onGone={() => conceptGone(open, activeDomain.id)}
+          onGone={(deleted) => conceptGone(open, deleted)}
           onUnsavedChange={setUnsaved}
         />
       )}
