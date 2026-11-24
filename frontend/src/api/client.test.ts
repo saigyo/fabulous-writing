@@ -133,6 +133,35 @@ describe('HttpError.code', () => {
   })
 })
 
+describe('HttpError details', () => {
+  it('carries code, part and message of a 409 object detail', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse(409, { detail: { code: 'conflict', part: 'de', message: 'out of date' } }),
+    )
+    const error = (await request('/api/concepts/1', { method: 'PUT' }).catch((e) => e)) as HttpError
+    expect(error.code).toBe('conflict')
+    expect(error.part).toBe('de')
+    expect(error.detailMessage).toBe('out of date')
+  })
+
+  it('uses a text detail as detailMessage', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(404, { detail: 'Concept not found' }))
+    const error = (await request('/api/concepts/1').catch((e) => e)) as HttpError
+    expect(error.detailMessage).toBe('Concept not found')
+    expect(error.code).toBeUndefined()
+    expect(error.part).toBeUndefined()
+  })
+
+  it('has no detailMessage for a list detail', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse(422, { detail: [{ loc: ['body'], msg: 'bad', type: 'x' }] }),
+    )
+    const error = (await request('/api/concepts/1', { method: 'PUT' }).catch((e) => e)) as HttpError
+    expect(error.detailMessage).toBeUndefined()
+    expect(error.part).toBeUndefined()
+  })
+})
+
 describe('401 handling', () => {
   it('routes a 401 from a normal endpoint through expireSession(), preserving the document buffer', async () => {
     useStore.setState({ token: 'tok', user: user(1), authStatus: 'authenticated' })

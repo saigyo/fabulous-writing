@@ -1,6 +1,7 @@
 import type {
   Category,
   CheckStatus,
+  Concept,
   Domain,
   Finding,
   Language,
@@ -13,6 +14,7 @@ import type {
   RuleError,
   RuleInfo,
   Scorecard,
+  SectionInput,
   Tier,
   Term,
   UsagePayload,
@@ -31,18 +33,22 @@ export class HttpError extends Error {
   readonly code?: string
   readonly retryToken?: string
   readonly reasons?: string[]
+  readonly part?: string
+  readonly detailMessage?: string
 
   constructor(
     status: number,
     message: string,
     code?: string,
-    extra?: { retryToken?: string; reasons?: string[] },
+    extra?: { retryToken?: string; reasons?: string[]; part?: string; detailMessage?: string },
   ) {
     super(message)
     this.status = status
     this.code = code
     this.retryToken = extra?.retryToken
     this.reasons = extra?.reasons
+    this.part = extra?.part
+    this.detailMessage = extra?.detailMessage
   }
 }
 
@@ -86,15 +92,26 @@ interface ErrorDetail {
   code?: string
   retryToken?: string
   reasons?: string[]
+  part?: string
+  detailMessage?: string
 }
 
 async function extractErrorDetail(response: Response): Promise<ErrorDetail> {
   try {
     const body: unknown = JSON.parse(await response.text())
     const detail = (body as { detail?: unknown } | null)?.detail
+    if (typeof detail === 'string') return { detailMessage: detail }
     if (detail === null || typeof detail !== 'object') return {}
-    const d = detail as { code?: unknown; retry_token?: unknown; reasons?: unknown }
+    const d = detail as {
+      code?: unknown
+      retry_token?: unknown
+      reasons?: unknown
+      part?: unknown
+      message?: unknown
+    }
     return {
+      part: typeof d.part === 'string' ? d.part : undefined,
+      detailMessage: typeof d.message === 'string' ? d.message : undefined,
       code: typeof d.code === 'string' ? d.code : undefined,
       retryToken: typeof d.retry_token === 'string' ? d.retry_token : undefined,
       reasons: Array.isArray(d.reasons)
@@ -164,7 +181,12 @@ async function requestWithOptions<T>(path: string, init?: RequestOptionsInternal
       response.status,
       `${init?.method ?? 'GET'} ${path} failed: ${response.status}`,
       detail.code,
-      { retryToken: detail.retryToken, reasons: detail.reasons },
+      {
+        retryToken: detail.retryToken,
+        reasons: detail.reasons,
+        part: detail.part,
+        detailMessage: detail.detailMessage,
+      },
     )
   }
   if (response.status === 204) return undefined as T
@@ -669,6 +691,35 @@ export const updateTerm = (termId: number, term: Partial<Omit<Term, 'id' | 'doma
   })
 export const deleteTerm = (termId: number) =>
   request<void>(`/api/terms/${termId}`, { method: 'DELETE' })
+
+export const getConcepts = (domainId: number) =>
+  request<Concept[]>(`/api/domains/${domainId}/concepts`)
+export const getConcept = (id: number) => request<Concept>(`/api/concepts/${id}`)
+export const createConcept = (
+  domainId: number,
+  body: { sections: SectionInput[]; comment?: string },
+) =>
+  request<Concept>(`/api/domains/${domainId}/concepts`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+export const saveConcept = (
+  id: number,
+  body: { sections?: SectionInput[]; domain_ids?: number[]; revision?: number; comment?: string },
+) => request<Concept>(`/api/concepts/${id}`, { method: 'PUT', body: JSON.stringify(body) })
+export const saveConceptLanguage = (
+  id: number,
+  language: Language,
+  body: Omit<SectionInput, 'language'> & { comment?: string },
+) =>
+  request<Concept>(`/api/concepts/${id}/languages/${language}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+export const deleteConcept = (id: number) =>
+  request<void>(`/api/concepts/${id}`, { method: 'DELETE' })
+export const removeConceptFromDomain = (domainId: number, conceptId: number) =>
+  request<void>(`/api/domains/${domainId}/concepts/${conceptId}`, { method: 'DELETE' })
 
 export type ProfilePayload = Omit<Profile, 'id' | 'is_standard' | 'is_global'>
 

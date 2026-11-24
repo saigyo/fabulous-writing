@@ -66,6 +66,73 @@ export interface Term {
   case_sensitive: boolean
 }
 
+export type UsageStatus = 'preferred' | 'admitted' | 'deprecated' | 'forbidden'
+export type ProcessStatus = 'candidate' | 'active'
+export type PartOfSpeech = 'noun' | 'verb' | 'adjective' | 'adverb' | 'proper_noun' | 'other'
+
+export interface ConceptTerm {
+  id: number
+  uid: string
+  text: string
+  usage_status: UsageStatus
+  process_status: ProcessStatus
+  status_reason: string
+  context: string
+  source: string
+  part_of_speech: PartOfSpeech | null
+  case_sensitive: boolean
+  revision: number
+  created_at: string | null
+  created_by: number | null
+  modified_at: string | null
+  modified_by: number | null
+}
+
+export interface LanguageSection {
+  id: number
+  language: Language
+  definition: string
+  revision: number
+  created_at: string | null
+  created_by: number | null
+  modified_at: string | null
+  modified_by: number | null
+  terms: ConceptTerm[]
+}
+
+export interface Concept {
+  id: number
+  uid: string
+  domain_ids: number[]
+  is_global: boolean
+  sections: LanguageSection[]
+  revision: number
+  created_at: string | null
+  created_by: number | null
+  modified_at: string | null
+  modified_by: number | null
+}
+
+export interface TermInput {
+  id?: number | null
+  text: string
+  usage_status: UsageStatus
+  process_status?: ProcessStatus
+  status_reason?: string
+  context?: string
+  source?: string
+  part_of_speech?: PartOfSpeech | null
+  case_sensitive?: boolean
+}
+
+export interface SectionInput {
+  language: Language
+  id?: number | null
+  revision?: number | null
+  definition?: string
+  terms: TermInput[]
+}
+
 export type CheckType =
   | 'existence'
   | 'substitution'
