@@ -5282,3 +5282,75 @@ Verified: single machine, started, checks 1/1, image 0.7.6, `/api/health`
 200 reporting 0.7.6.
 The owner logged in to the live app and ran a check with a terminology
 domain; it worked as expected.
+
+## 2026-11-25 — Terminology T1, pull request 3: concept endpoints and concept screen (PR #217)
+
+Third and last pull request for issue #205. Writers now manage terminology
+as concepts. With this, the statuses of the second pull request become
+reachable: a deprecated wording is a warning, a forbidden one an error, a
+candidate is ignored.
+
+Backend. Seven concept endpoints replace the four term endpoints: list and
+create under `/api/domains/{id}/concepts`, read, save and delete under
+`/api/concepts/{id}`, one language under
+`/api/concepts/{id}/languages/{language}`, removal from one domain under
+`/api/domains/{id}/concepts/{concept_id}`. A refused save answers 409 with
+`code`, `message` and, when it is out of date, the `part` that someone else
+changed. The translation layer and the two store methods behind it are gone.
+The store's startup migration drops `terms_legacy`; after `init-db` in
+production the original rows of the old term table no longer exist.
+
+Screen. A concept list (label in the chosen language with the fallback of
+spec 5.5, other wordings as status chips, languages, other domains, search
+over all wordings) and a concept entry (one section per language with its own
+save, "Save all" with only the changed parts, usage status, process status,
+reason and details per term, domain links, "Remove from this domain",
+"Delete concept"). Everything that decides something lives in two modules of
+pure functions, `labels.ts` and `conceptDraft.ts`; the components render and
+call them. A save that is out of date keeps the edits and offers to load the
+current version. Leaving with unsaved changes asks first. Deleting a domain
+asks first and states how many concepts go with it.
+
+Decisions, recorded in the plan. A link save passes after someone else added
+or removed a language as long as the links themselves are unchanged, against
+the letter of spec 5.7, because a writer's own language save would otherwise
+block their pending link change. A new term with nothing typed into it is no
+unsaved change. "Load current version" also refreshes every section without
+unsaved changes. Not built from the mockup: collapsed language sections and
+sortable columns. Signing out is not guarded.
+
+Reviews. Plan: one agent review with a blocker (the answer to a save did not
+know whether the links had been sent) and a Copilot round. Execution: three
+review rounds (backend, logic modules, screen) and a final review; the
+backend code was clean, the findings were test gaps and smaller behaviour
+points. Copilot on the code, two rounds of three findings each, all of one
+kind: an answer that arrives after the writer has switched domain, reopened
+a concept or started another request. Since the count did not fall, one
+exhaustive review of that kind followed over every asynchronous start in the
+view and the entry: eight more findings, two follow-ons in the re-check. One
+of them is older than this work: deleting the selected domain, when it is
+first in the list, left a blank screen.
+
+What went wrong on the way. A test written for one of these fixes asserted
+before React had rendered and passed with the fix removed, although it was
+reported as checked; the re-check found it. All similar tests were run
+against their mutation again, and the others held. The local `node_modules`
+was older than the lockfile, so one test file did not run at all until
+`npm ci`.
+
+Verification: frontend 77 files and 1219 tests, lint and build green;
+backend 1832 passed and 321 skipped on SQLite, 2153 passed on Postgres
+(before the last frontend-only rounds). Trial in the browser on a scratch
+stack, with a database upgraded from the 0.7.5 state: every step of the plan
+passed; it found that the list forgot its chosen language after an entry had
+been open. The README has a new screenshot of the list and one of the entry;
+the screenshot script stages one concept for them and removes it again, and
+was not run as a whole.
+
+Left for issue #218, because the code is shared with other views: a later
+success clears another action's error message, a failed load of the concept
+list shows no message, and an open entry closes without asking when its
+domain leaves the list.
+
+Upgrade: `init-db` under the admin connection drops `terms_legacy`. From
+0.7.5 or 0.7.6 it can run before or after the deploy without a stop.
