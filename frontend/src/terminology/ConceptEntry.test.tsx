@@ -139,6 +139,7 @@ function renderEntry(props: Partial<Parameters<typeof ConceptEntry>[0]> = {}) {
     onGone: vi.fn(),
     onUnsavedChange: vi.fn(),
     onTransferred: vi.fn(),
+    onReloadConcept: vi.fn(async () => {}),
   }
   render(
     <ConceptEntry

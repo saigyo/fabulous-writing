@@ -169,8 +169,7 @@ export const de: Messages = {
   mergeAddedDomain: (name) => `Die verschobenen Begriffe gelten jetzt auch in der Domäne „${name}“.`,
   transferOutdated: (label) =>
     `„${label}“ wurde inzwischen geändert. So sieht das Ergebnis jetzt aus.`,
-  transferOutdatedPreview: (label) =>
-    `„${label}“ wurde inzwischen geändert. Schließe diesen Dialog und öffne das Konzept noch einmal.`,
+  transferStale: (label) => `„${label}“ wurde inzwischen geändert.`,
   moveTitle: (text) => `„${text}“ verschieben`,
   moveToConcept: 'In das Konzept',
   moveToNew: 'In ein neues Konzept',

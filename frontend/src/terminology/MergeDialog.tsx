@@ -9,7 +9,7 @@ import { conceptLabel } from './labels'
 import { StatusChip } from './StatusChip'
 import { TargetPicker } from './TargetPicker'
 import { messageOf, notices, resultRows, sourceIsCurrent } from './transfer'
-import { Quoted, TransferButtons } from './transferParts'
+import { Quoted, StaleSource, TransferButtons } from './transferParts'
 import { useTransferPreview } from './useTransferPreview'
 import { useTransferRun } from './useTransferRun'
 
@@ -21,6 +21,8 @@ interface MergeDialogProps {
   comment: string
   onDone: (outcome: TransferOutcome) => void
   onClose: () => void
+  /** Loads the source's current version; the entry is remounted, which closes the dialog. */
+  onReload: () => Promise<void>
 }
 
 export function MergeDialog({
@@ -31,6 +33,7 @@ export function MergeDialog({
   comment,
   onDone,
   onClose,
+  onReload,
 }: MergeDialogProps) {
   const m = useMessages()
   const languages = useStore((s) => s.languages)
@@ -49,6 +52,12 @@ export function MergeDialog({
 
   const label = (concept: Concept) => conceptLabel(concept, language, order).text
   const sourceLabel = label(source)
+  const refusedAsOutdated = error?.code === 'outdated' && target !== null
+  const staleLabel = stale
+    ? sourceLabel
+    : refusedAsOutdated
+      ? label(error.conceptId === target.id ? target : source)
+      : null
 
   const merge = () => {
     if (target === null || outcome === null) return
@@ -85,14 +94,8 @@ export function MergeDialog({
         </div>
       )}
       {loading && <div className="transfer-wait">{m.transferWorking}</div>}
-      {error !== null && (
-        <div className="transfer-error">
-          {error.code === 'outdated' && target !== null
-            ? m.transferOutdatedPreview(label(error.conceptId === target.id ? target : source))
-            : messageOf(error, m)}
-        </div>
-      )}
-      {stale && <div className="transfer-error">{m.transferOutdatedPreview(sourceLabel)}</div>}
+      {error !== null && !refusedAsOutdated && <div className="transfer-error">{messageOf(error, m)}</div>}
+      {staleLabel !== null && <StaleSource sentence={m.transferStale(staleLabel)} onReload={onReload} />}
       {runError !== null && <div className="transfer-error">{runError}</div>}
       {outcome !== null && (
         <>

@@ -173,8 +173,7 @@ export const fr: Messages = {
   mergeAddedDomain: (name) => `Les termes déplacés s’appliquent maintenant aussi dans le domaine « ${name} ».`,
   transferOutdated: (label) =>
     `« ${label} » a été modifié entre-temps. Voici le résultat tel qu’il serait maintenant.`,
-  transferOutdatedPreview: (label) =>
-    `« ${label} » a été modifié entre-temps. Ferme cette boîte de dialogue et rouvre le concept.`,
+  transferStale: (label) => `« ${label} » a été modifié entre-temps.`,
   moveTitle: (text) => `Déplacer « ${text} »`,
   moveToConcept: 'Vers le concept',
   moveToNew: 'Vers un nouveau concept',

@@ -50,6 +50,8 @@ interface ConceptEntryProps {
   /** `deleted`: the concept is gone everywhere, not only from this domain. */
   onGone: (deleted: boolean) => void
   onTransferred: (outcome: TransferOutcome, kind: 'merge' | 'move') => void
+  /** From a merge or move dialog whose preview found the concept changed elsewhere. */
+  onReloadConcept: () => Promise<void>
   onUnsavedChange: (unsaved: boolean) => void
 }
 
@@ -74,6 +76,7 @@ export function ConceptEntry({
   onSaved,
   onGone,
   onTransferred,
+  onReloadConcept,
   onUnsavedChange,
 }: ConceptEntryProps) {
   const m = useMessages()
@@ -435,6 +438,7 @@ export function ConceptEntry({
           comment={comment}
           onDone={(outcome) => transferred(outcome, 'merge')}
           onClose={() => setMerging(false)}
+          onReload={onReloadConcept}
         />
       )}
       {moving !== null && current !== null && (
@@ -448,6 +452,7 @@ export function ConceptEntry({
           canCreate={canCreate}
           onDone={(outcome) => transferred(outcome, 'move')}
           onClose={() => setMoving(null)}
+          onReload={onReloadConcept}
         />
       )}
       {confirmingLeave && (
