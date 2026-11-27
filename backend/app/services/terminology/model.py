@@ -52,6 +52,8 @@ class Action(StrEnum):
     ADDED_TO_DOMAIN = "added_to_domain"
     REMOVED_FROM_DOMAIN = "removed_from_domain"
     CARRIED_OVER = "carried_over"
+    MOVED = "moved"
+    MERGED = "merged"
 
 
 @dataclass(frozen=True)
@@ -186,6 +188,64 @@ class TerminologyConflictError(TerminologyRuleError):
     def __init__(self, part: str, message: str) -> None:
         super().__init__("conflict", message)
         self.part = part
+
+
+class TransferOutdatedError(TerminologyRuleError):
+    def __init__(self, concept_id: int, message: str) -> None:
+        super().__init__("outdated", message)
+        self.concept_id = concept_id
+
+
+class SectionBasis(BaseModel):
+    id: int
+    revision: int
+
+
+class ConceptBasis(BaseModel):
+    concept_id: int
+    revision: int
+    sections: list[SectionBasis]
+
+
+class TransferBasis(BaseModel):
+    source: ConceptBasis
+    target: ConceptBasis | None = None
+
+
+class MovedTerm(BaseModel):
+    id: int
+    text: str
+    language: Language
+    usage_before: UsageStatus
+    usage_after: UsageStatus
+
+
+class DroppedTerm(BaseModel):
+    text: str
+    language: Language
+    usage_status: UsageStatus
+
+
+class DroppedDefinition(BaseModel):
+    language: Language
+    definition: str
+
+
+class DomainRef(BaseModel):
+    id: int
+    name: str
+
+
+class TransferOutcome(BaseModel):
+    target: Concept
+    source: Concept | None
+    moved: list[MovedTerm]
+    dropped_terms: list[DroppedTerm]
+    dropped_definitions: list[DroppedDefinition]
+    removed_languages: list[Language]
+    dropped_domains: list[DomainRef]
+    added_domains: list[DomainRef]
+    basis: TransferBasis
 
 
 def section_label(section: LanguageSection) -> str:

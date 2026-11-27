@@ -42,6 +42,7 @@ def test_pick_list_values():
     assert [m.value for m in Origin] == ["manual", "extraction", "import", "migration", "seed"]
     assert [m.value for m in Action] == [
         "created", "edited", "deleted", "added_to_domain", "removed_from_domain", "carried_over",
+        "moved", "merged",
     ]
 
 
