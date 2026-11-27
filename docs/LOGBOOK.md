@@ -5513,3 +5513,16 @@ Ten tasks by one agent each, seven on the mid tier and the two risky ones
 (the move in the store, the wiring into the terminology view) on the top
 tier, as were the three reviews. The top-tier agent of the view task was
 resumed for both later fixes in that file.
+
+## 2026-11-27 — v0.9.0 rollout: merging concepts, moving terms, shared domains deployed (PR #224)
+
+Minor release for PR #221 and PR #223. Tag push → release workflow →
+GitHub release. All checks on main were green before the tag.
+
+No schema change, so the plain order was enough: fly.toml bumped on this
+branch, `fly deploy --ha=false -c deploy/fly/fly.toml` on the running
+machine by the owner, committed afterwards.
+
+Verified: single machine, started, checks 1/1, image 0.9.0, `/api/health`
+200 reporting 0.9.0. The new functions were not tried on the live app
+from this side.
