@@ -1329,6 +1329,12 @@ span.score-badge {
   gap: 0.4rem;
 }
 
+.term-details-foot {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+}
+
 .entry-add-language {
   margin-top: 0.75rem;
 }

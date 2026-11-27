@@ -160,6 +160,8 @@ export interface Messages {
   moveSourceDeleted: (label: string) => string
   moveNewConceptDomains: (label: string) => string
   moveDuplicate: (target: string, text: string, language: string) => string
+  mergeInto: string
+  termMove: string
   searchConceptsLabel: string
   conceptLanguageTitle: string
   newConcept: string

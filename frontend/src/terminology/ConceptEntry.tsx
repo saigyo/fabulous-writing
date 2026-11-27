@@ -11,7 +11,7 @@ import {
 import { useMessages } from '../i18n'
 import { languageName } from '../languages'
 import { useStore } from '../state/store'
-import type { Concept, Domain, Language } from '../types'
+import type { Concept, ConceptTerm, Domain, Language, TransferOutcome } from '../types'
 import { ConfirmDialog } from '../ui/ConfirmDialog'
 import {
   addLanguage,
@@ -34,6 +34,8 @@ import {
 } from './conceptDraft'
 import { conceptLabel } from './labels'
 import { LanguageSectionEditor } from './LanguageSectionEditor'
+import { MergeDialog } from './MergeDialog'
+import { MoveDialog } from './MoveDialog'
 
 interface ConceptEntryProps {
   domain: Domain
@@ -41,10 +43,13 @@ interface ConceptEntryProps {
   concept: Concept | null
   newLanguage: Language
   readOnly: boolean
+  candidates: Concept[]
+  canCreate: boolean
   onBack: () => void
   onSaved: (concept: Concept) => void
   /** `deleted`: the concept is gone everywhere, not only from this domain. */
   onGone: (deleted: boolean) => void
+  onTransferred: (outcome: TransferOutcome, kind: 'merge' | 'move') => void
   onUnsavedChange: (unsaved: boolean) => void
 }
 
@@ -63,9 +68,12 @@ export function ConceptEntry({
   concept,
   newLanguage,
   readOnly,
+  candidates,
+  canCreate,
   onBack,
   onSaved,
   onGone,
+  onTransferred,
   onUnsavedChange,
 }: ConceptEntryProps) {
   const m = useMessages()
@@ -80,6 +88,8 @@ export function ConceptEntry({
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [confirmingReload, setConfirmingReload] = useState(false)
   const [confirmingLeave, setConfirmingLeave] = useState(false)
+  const [merging, setMerging] = useState(false)
+  const [moving, setMoving] = useState<ConceptTerm | null>(null)
 
   const unsaved = hasUnsaved(state)
   useEffect(() => {
@@ -106,11 +116,20 @@ export function ConceptEntry({
   const missingLanguages = languages.filter(
     (info) => !state.sections.some((s) => s.language === info.code),
   )
-  const label = isNew
-    ? m.newConceptTitle
-    : current
-      ? conceptLabel(current, newLanguage, languages.map((l) => l.code)).text
-      : ''
+  const order = languages.map((l) => l.code)
+  const label = isNew ? m.newConceptTitle : current ? conceptLabel(current, newLanguage, order).text : ''
+  const transferBlocked = busy || unsaved
+
+  function startMove(termId: number) {
+    const term = current?.sections.flatMap((s) => s.terms).find((t) => t.id === termId)
+    if (term) setMoving(term)
+  }
+
+  function transferred(outcome: TransferOutcome, kind: 'merge' | 'move') {
+    setMerging(false)
+    setMoving(null)
+    onTransferred(outcome, kind)
+  }
 
   function describe(e: unknown): Omit<EntryError, 'at'> {
     if (!(e instanceof HttpError)) {
@@ -250,6 +269,14 @@ export function ConceptEntry({
             <button
               type="button"
               className="plain-button"
+              disabled={transferBlocked || candidates.length === 0}
+              onClick={() => setMerging(true)}
+            >
+              {m.mergeInto}
+            </button>
+            <button
+              type="button"
+              className="plain-button"
               disabled={busy || unsaved || !inOtherDomain}
               onClick={() =>
                 void attempt('header', async () => {
@@ -322,6 +349,8 @@ export function ConceptEntry({
           onDiscard={() => discardOne(section.language)}
           onRemove={() => remove(section)}
           onReload={() => setConfirmingReload(true)}
+          onMoveTerm={readOnly || isNew ? undefined : startMove}
+          moveBlocked={transferBlocked}
         />
       ))}
       {!readOnly && missingLanguages.length > 0 && (
@@ -395,6 +424,30 @@ export function ConceptEntry({
             setConfirmingReload(false)
             void loadCurrentVersion(error)
           }}
+        />
+      )}
+      {merging && current !== null && (
+        <MergeDialog
+          source={current}
+          candidates={candidates}
+          language={newLanguage}
+          order={order}
+          comment={comment}
+          onDone={(outcome) => transferred(outcome, 'merge')}
+          onClose={() => setMerging(false)}
+        />
+      )}
+      {moving !== null && current !== null && (
+        <MoveDialog
+          source={current}
+          term={moving}
+          candidates={candidates}
+          language={newLanguage}
+          order={order}
+          comment={comment}
+          canCreate={canCreate}
+          onDone={(outcome) => transferred(outcome, 'move')}
+          onClose={() => setMoving(null)}
         />
       )}
       {confirmingLeave && (

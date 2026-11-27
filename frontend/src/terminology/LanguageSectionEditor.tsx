@@ -26,6 +26,8 @@ interface LanguageSectionEditorProps {
   onDiscard: () => void
   onRemove: () => void
   onReload: () => void
+  onMoveTerm?: (termId: number) => void
+  moveBlocked: boolean
 }
 
 const USAGE_STATUSES: UsageStatus[] = ['preferred', 'admitted', 'deprecated', 'forbidden']
@@ -52,6 +54,8 @@ export function LanguageSectionEditor({
   onDiscard,
   onRemove,
   onReload,
+  onMoveTerm,
+  moveBlocked,
 }: LanguageSectionEditorProps) {
   const m = useMessages()
   const languages = useStore((s) => s.languages)
@@ -144,6 +148,8 @@ export function LanguageSectionEditor({
               onRemove={() =>
                 onChange({ ...section, terms: section.terms.filter((t) => t.key !== term.key) })
               }
+              onMove={onMoveTerm && term.id != null ? () => onMoveTerm(term.id!) : undefined}
+              moveBlocked={moveBlocked}
             />
           ))}
           {!readOnly && (
@@ -168,12 +174,16 @@ function TermRow({
   saving,
   onChange,
   onRemove,
+  onMove,
+  moveBlocked,
 }: {
   term: TermDraft
   readOnly: boolean
   saving: boolean
   onChange: (change: Partial<TermDraft>) => void
   onRemove: () => void
+  onMove?: () => void
+  moveBlocked: boolean
 }) {
   const m = useMessages()
   const [open, setOpen] = useState(false)
@@ -286,6 +296,13 @@ function TermRow({
             />
             <span>{m.matchCaseLabel}</span>
           </label>
+          {onMove && (
+            <div className="term-details-foot">
+              <button type="button" className="plain-button" disabled={moveBlocked} onClick={onMove}>
+                {m.termMove}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

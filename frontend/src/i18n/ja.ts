@@ -174,6 +174,8 @@ export const ja: Messages = {
   moveSourceDeleted: (label) => `概念「${label}」は用語がなくなるため、削除されます。`,
   moveNewConceptDomains: (label) => `新しい概念は、「${label}」と同じドメインに入ります。`,
   moveDuplicate: (target, text, language) => `「${target}」には、${language}の用語「${text}」がすでにあります。`,
+  mergeInto: '別の概念に統合…',
+  termMove: '移す…',
   searchConceptsLabel: '概念を検索',
   conceptLanguageTitle: 'ラベルの言語',
   newConcept: '+ 概念',

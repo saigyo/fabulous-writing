@@ -6,7 +6,7 @@ import type { MeResponse } from '../api/client'
 import { en } from '../i18n/en'
 import { FALLBACK_LANGUAGES } from '../languages'
 import { useStore } from '../state/store'
-import type { Concept, ConceptTerm, Domain, Language, LanguageSection } from '../types'
+import type { Concept, ConceptTerm, Domain, Language, LanguageSection, TransferOutcome } from '../types'
 import { ConceptEntry } from './ConceptEntry'
 import { TerminologyView } from './TerminologyView'
 
@@ -125,12 +125,20 @@ function writes(): Sent[] {
   return requests().filter((r) => r.method !== 'GET')
 }
 
+const CANDIDATE = conceptOf({
+  id: 8,
+  uid: 'c8',
+  revision: 1,
+  sections: [section(80, 'de', [term(801, 'Konto', { usage_status: 'preferred' })])],
+})
+
 function renderEntry(props: Partial<Parameters<typeof ConceptEntry>[0]> = {}) {
   const handlers = {
     onBack: vi.fn(),
     onSaved: vi.fn(),
     onGone: vi.fn(),
     onUnsavedChange: vi.fn(),
+    onTransferred: vi.fn(),
   }
   render(
     <ConceptEntry
@@ -139,6 +147,8 @@ function renderEntry(props: Partial<Parameters<typeof ConceptEntry>[0]> = {}) {
       concept={conceptOf()}
       newLanguage="de"
       readOnly={false}
+      candidates={[CANDIDATE]}
+      canCreate
       {...handlers}
       {...props}
     />,
@@ -1021,5 +1031,181 @@ describe('ConceptEntry heading', () => {
     screen.getByRole('heading', { name: `← ${docs.name} / sign-in` })
     await user.click(screen.getByRole('button', { name: `← ${docs.name}` }))
     expect(onBack).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('ConceptEntry merge and move', () => {
+  const BASIS: TransferOutcome['basis'] = {
+    source: { concept_id: 7, revision: 3, sections: [{ id: 70, revision: 2 }, { id: 71, revision: 5 }] },
+    target: { concept_id: 8, revision: 1, sections: [{ id: 80, revision: 1 }] },
+  }
+  const MERGED: TransferOutcome = {
+    target: conceptOf({
+      id: 8,
+      uid: 'c8',
+      revision: 2,
+      sections: [section(80, 'de', [...CANDIDATE.sections[0].terms, ...DE.terms], { revision: 2 }), EN],
+    }),
+    source: null,
+    moved: [],
+    dropped_terms: [],
+    dropped_definitions: [],
+    removed_languages: [],
+    dropped_domains: [],
+    added_domains: [],
+    basis: BASIS,
+  }
+  const MOVED: TransferOutcome = {
+    ...MERGED,
+    target: conceptOf({ id: 8, uid: 'c8', sections: [section(80, 'de', [CANDIDATE.sections[0].terms[0], DE.terms[1]])] }),
+    source: conceptOf({ sections: [section(70, 'de', [DE.terms[0]], { revision: 3 }), EN], revision: 4 }),
+  }
+
+  const mergeButton = () => screen.queryByRole('button', { name: en.mergeInto }) as HTMLButtonElement | null
+  const moveButton = () => screen.queryByRole('button', { name: en.termMove }) as HTMLButtonElement | null
+  const runs = () => writes().filter((w) => w.body?.preview !== true)
+
+  function serve(outcome: TransferOutcome) {
+    fetchMock.mockImplementation(async () => json(200, outcome))
+  }
+
+  async function confirmWith(user: ReturnType<typeof userEvent.setup>, confirmName: string) {
+    const dialog = screen.getByRole('dialog')
+    await user.click(await within(dialog).findByRole('option', { name: /^Konto/ }))
+    const confirm = within(dialog).getByRole('button', { name: confirmName }) as HTMLButtonElement
+    await waitFor(() => expect(confirm.disabled).toBe(false))
+    await user.click(confirm)
+  }
+
+  it('offers neither for a new concept', async () => {
+    const user = userEvent.setup()
+    renderEntry({ concept: null })
+    await user.type(termTexts(deSection())[0], 'Anmeldung')
+    await user.click(button(en.termDetailsOf('Anmeldung'), deSection()))
+    within(deSection()).getByRole('textbox', { name: en.contextLabel })
+    expect(mergeButton()).toBeNull()
+    expect(moveButton()).toBeNull()
+  })
+
+  it('offers neither for a read-only concept', async () => {
+    const user = userEvent.setup()
+    renderEntry({ readOnly: true })
+    await user.click(button(en.termDetailsOf('Login'), deSection()))
+    within(deSection()).getByRole('textbox', { name: en.contextLabel })
+    expect(mergeButton()).toBeNull()
+    expect(moveButton()).toBeNull()
+  })
+
+  it('puts "Merge into…" before "Remove from this domain" and "Move…" into the term details', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    const header = document.querySelector('.entry-header') as HTMLElement
+    expect(within(header).getAllByRole('button').map((b) => b.textContent)).toEqual([
+      `← ${docs.name}`,
+      en.mergeInto,
+      en.removeFromDomain,
+      en.deleteConcept,
+    ])
+    expect(moveButton()).toBeNull()
+    await user.click(button(en.termDetailsOf('Login'), deSection()))
+    const details = deSection().querySelector('.term-details') as HTMLElement
+    within(details).getByRole('button', { name: en.termMove })
+  })
+
+  it('disables both while something is unsaved', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    await user.click(button(en.termDetailsOf('Login'), deSection()))
+    expect(mergeButton()!.disabled).toBe(false)
+    expect(moveButton()!.disabled).toBe(false)
+
+    await user.type(definition(enSection()), 'Step')
+    expect(mergeButton()!.disabled).toBe(true)
+    expect(moveButton()!.disabled).toBe(true)
+
+    await user.click(button(en.discard, enSection()))
+    expect(mergeButton()!.disabled).toBe(false)
+    expect(moveButton()!.disabled).toBe(false)
+  })
+
+  it('disables both while a request of the entry runs', async () => {
+    const user = userEvent.setup()
+    renderEntry({ concept: conceptOf({ domain_ids: [2, 3] }) })
+    await user.click(button(en.termDetailsOf('Login'), deSection()))
+    const resolve = pending()
+    await user.click(button(en.removeFromDomain))
+    expect(mergeButton()!.disabled).toBe(true)
+    expect(moveButton()!.disabled).toBe(true)
+    resolve(new Response(null, { status: 204 }))
+    await waitFor(() => expect(mergeButton()!.disabled).toBe(false))
+  })
+
+  it('disables "Merge into…" without candidates', () => {
+    renderEntry({ candidates: [] })
+    expect(button(en.mergeInto).disabled).toBe(true)
+  })
+
+  it('offers no "Move…" for a term without an id', async () => {
+    const user = userEvent.setup()
+    renderEntry()
+    await user.click(button(en.addTerm, enSection()))
+    await user.type(termTexts(enSection())[1], 'login')
+    await user.click(button(en.termDetailsOf('login'), enSection()))
+    within(enSection()).getByRole('textbox', { name: en.contextLabel })
+    expect(within(enSection()).queryByRole('button', { name: en.termMove })).toBeNull()
+
+    await user.click(button(en.termDetailsOf('sign-in'), enSection()))
+    expect(within(enSection()).getAllByRole('textbox', { name: en.contextLabel })).toHaveLength(2)
+    expect(within(enSection()).getAllByRole('button', { name: en.termMove })).toHaveLength(1)
+  })
+
+  it('opens and closes both dialogs', async () => {
+    const user = userEvent.setup()
+    const { onTransferred } = renderEntry()
+    await user.click(button(en.mergeInto))
+    await screen.findByRole('heading', { name: en.mergeTitle('Anmeldung') })
+    await user.click(button(en.dialogCancel, screen.getByRole('dialog')))
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    await user.click(button(en.termDetailsOf('Login'), deSection()))
+    await user.click(button(en.termMove))
+    await screen.findByRole('heading', { name: en.moveTitle('Login') })
+    await user.click(button(en.dialogCancel, screen.getByRole('dialog')))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(onTransferred).not.toHaveBeenCalled()
+  })
+
+  it('keeps "Merge into…" enabled with only a reason typed and sends the reason with the merge', async () => {
+    const user = userEvent.setup()
+    serve(MERGED)
+    const { onTransferred } = renderEntry()
+    await user.type(reason(), 'Same thing')
+    expect(button(en.mergeInto).disabled).toBe(false)
+    await user.click(button(en.mergeInto))
+    await confirmWith(user, en.mergeConfirm('Anmeldung'))
+
+    await waitFor(() => expect(onTransferred).toHaveBeenCalledWith(MERGED, 'merge'))
+    expect(runs()).toEqual([
+      { method: 'POST', path: '/api/concepts/7/merge', body: { target_id: 8, basis: BASIS, comment: 'Same thing' } },
+    ])
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('keeps "Move…" enabled with only a reason typed and sends the reason with the move', async () => {
+    const user = userEvent.setup()
+    serve(MOVED)
+    const { onTransferred } = renderEntry()
+    await user.type(reason(), 'Belongs there')
+    await user.click(button(en.termDetailsOf('Login'), deSection()))
+    expect(button(en.termMove).disabled).toBe(false)
+    await user.click(button(en.termMove))
+    await screen.findByRole('heading', { name: en.moveTitle('Login') })
+    await confirmWith(user, en.moveConfirm)
+
+    await waitFor(() => expect(onTransferred).toHaveBeenCalledWith(MOVED, 'move'))
+    expect(runs()).toEqual([
+      { method: 'POST', path: '/api/terms/702/move', body: { target_id: 8, basis: BASIS, comment: 'Belongs there' } },
+    ])
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })

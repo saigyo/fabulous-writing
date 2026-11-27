@@ -6,7 +6,7 @@ import { useCrudError } from '../hooks/useCrudError'
 import { ConfirmDialog } from '../ui/ConfirmDialog'
 import { useLocale, useMessages } from '../i18n'
 import { useStore } from '../state/store'
-import type { Concept, Language } from '../types'
+import type { Concept, Language, TransferOutcome } from '../types'
 import { ConceptEntry } from './ConceptEntry'
 import { ConceptList } from './ConceptList'
 
@@ -39,6 +39,9 @@ export function TerminologyView() {
     openRef.current = next
     setOpen(next)
   }, [])
+  // The entry builds its state once from the concept it is given; raised on
+  // each merge or move so it starts over from the patched list.
+  const [transfers, setTransfers] = useState(0)
   const [pendingDelete, setPendingDelete] = useState<{ id: number; name: string; count: number } | null>(null)
   const [newDomain, setNewDomain] = useState('')
   const [newShared, setNewShared] = useState(false)
@@ -232,6 +235,28 @@ export function TerminologyView() {
     if (active !== null) void loadConcepts(active)
   }
 
+  // Bound like conceptSaved. For an entry the view has closed meanwhile the
+  // outcome may be older than the list and belong to another domain, so it
+  // only triggers a reload of the active domain's list.
+  function conceptTransferred(entry: OpenConcept, outcome: TransferOutcome, kind: 'merge' | 'move') {
+    const active = activeDomainRef.current
+    if (active === null) return
+    if (openRef.current !== entry) {
+      void loadConcepts(active)
+      return
+    }
+    const { target, source } = outcome
+    const sourceId = outcome.basis.source.concept_id
+    setConcepts((list) => [
+      ...list.filter((c) => c.id !== target.id && c.id !== sourceId),
+      ...[target, source].filter((c): c is Concept => c !== null && c.domain_ids.includes(active)),
+    ])
+    const shown = kind === 'move' && source !== null ? source : target
+    setTransfers((n) => n + 1)
+    showEntry({ ...entry, conceptId: shown.id })
+    void loadConcepts(active)
+  }
+
   const activeDomain = domains.find((domain) => domain.id === activeDomainId) ?? null
   const readOnly = activeDomain !== null && activeDomain.is_global && !isAdmin
 
@@ -350,14 +375,18 @@ export function TerminologyView() {
       )}
       {activeDomain !== null && open !== null && (
         <ConceptEntry
+          key={transfers}
           domain={activeDomain}
           domains={domains}
           concept={concepts.find((c) => c.id === open.conceptId) ?? null}
           newLanguage={open.language}
           readOnly={readOnly}
+          candidates={concepts.filter((c) => c.id !== open.conceptId)}
+          canCreate={canCreate}
           onBack={() => showEntry(null)}
           onSaved={(saved) => conceptSaved(open, saved)}
           onGone={(deleted) => conceptGone(open, deleted, activeDomain.id)}
+          onTransferred={(outcome, kind) => conceptTransferred(open, outcome, kind)}
           onUnsavedChange={setUnsaved}
         />
       )}

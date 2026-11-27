@@ -187,6 +187,8 @@ export const es: Messages = {
   moveSourceDeleted: (label) => `El concepto «${label}» se queda sin términos y se elimina.`,
   moveNewConceptDomains: (label) => `El concepto nuevo está en los mismos dominios que «${label}».`,
   moveDuplicate: (target, text, language) => `«${target}» ya tiene el término «${text}» en ${language}.`,
+  mergeInto: 'Fusionar con…',
+  termMove: 'Mover…',
   searchConceptsLabel: 'Buscar conceptos',
   conceptLanguageTitle: 'Idioma de las etiquetas',
   newConcept: '+ Concepto',
