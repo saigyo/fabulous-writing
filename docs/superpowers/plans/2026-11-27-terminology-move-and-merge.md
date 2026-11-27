@@ -61,7 +61,7 @@ A reviewer checks the code against these.
 18. **Screen: order of chips in a result row:** by usage status (preferred, admitted, deprecated, forbidden), then by term id.
 19. **Screen: after the run,** for the entry that opened the dialog and is still the open one (Reading 20). With no active domain the view does nothing. Otherwise it first puts the concepts of the outcome into its list, as `conceptSaved` does: an old copy of the target and of the source is removed, and each of the two that is linked to the active domain is put in (a new concept is added this way); a deleted source is only removed. It then shows the entry through `showEntry` with a new object, then reloads the active domain's concepts. Merge: the entry shows `outcome.target`. Move: `outcome.source`, or `outcome.target` when `source` is null. The entry element's `key` is a counter the view raises on each transfer, so the entry is remounted and builds its state from the patched list; saving a new concept does not change the key. The remount clears the reason field.
 20. **Screen: while a real run is pending,** the dialog cannot be closed: Cancel is disabled and the dialog's `onClose` does nothing. The view still binds the callback to the entry that opened the dialog, as `conceptSaved` is bound, and compares it with `openRef`: for an entry it has closed in the meantime it only reloads the list of the active domain, if there is one. It patches nothing and opens nothing, because the answer may be older than what the list shows by now and may belong to another domain.
-21. **Screen: errors and texts the mockup does not show.** A failed preview shows the server's message in place of the result and leaves confirm unavailable; for `duplicate_text` the dialog shows the mockup's sentence built from the catalog. A real run refused as `outdated` shows the mockup's sentence naming the concept with that `concept_id` and requests a new preview. Any other failure of the real run shows its message and keeps the dialog open. English texts missing from the mockup: `No concept matches.` (suggestion list); `The term now also applies in the domain “Marketing”.` (move); `“work space” loses German.` (a lost language without a definition); `The German definition is not taken over: “…”` (move that deletes the source and drops a definition).
+21. **Screen: errors and texts the mockup does not show.** A failed preview shows the server's message in place of the result and leaves confirm unavailable; for `duplicate_text` the dialog shows the mockup's sentence built from the catalog. A real run refused as `outdated` shows the mockup's sentence naming the concept with that `concept_id` and requests a new preview. Any other failure of the real run shows its message and keeps the dialog open. English texts missing from the mockup: `No concept matches.` (suggestion list); `The term now also applies in the domain “Marketing”.` (move); `“work space” loses its section for Deutsch.` (a lost language without a definition); `The definition for Deutsch is not taken over: “…”` (move that deletes the source and drops a definition). Languages appear under their own names, as everywhere in the app, so every sentence is worded to read correctly with such a name (`for Deutsch`, never `the Deutsch …`); the mockup was corrected accordingly during execution.
 
 ## File Structure
 
@@ -376,6 +376,10 @@ Sequential, one agent at a time. The model is named per step; "Sonnet" and "Opus
 | Final review | Whole branch | Opus | |
 
 Delivery is one pull request.
+
+## Rulings during execution
+
+- **Language names in the notices.** The app shows languages under their own names. The mockup's "The German definition" and "loses German" could not be produced, so these sentences were reworded to "The definition for Deutsch: …" and "loses its section for Deutsch", in the mockup too.
 
 ## Plan review
 
