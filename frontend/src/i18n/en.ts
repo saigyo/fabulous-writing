@@ -133,6 +133,7 @@ export const en: Messages = {
 
   domains: 'Domains',
   newDomainPlaceholder: 'New domain…',
+  sharedDomain: 'Shared with all users',
   add: 'Add',
   deleteDomainTitle: 'Delete domain',
   concepts: 'Concepts',

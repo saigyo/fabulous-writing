@@ -663,10 +663,10 @@ export const getRules = (language: Language) =>
   request<RulesResponse>(`/api/rules?language=${language}`)
 
 export const getDomains = () => request<Domain[]>('/api/domains')
-export const createDomain = (name: string, description = '') =>
+export const createDomain = (name: string, shared = false) =>
   request<Domain>('/api/domains', {
     method: 'POST',
-    body: JSON.stringify({ name, description }),
+    body: JSON.stringify({ name, shared }),
   })
 export const updateDomain = (id: number, name: string) =>
   request<Domain>(`/api/domains/${id}`, {

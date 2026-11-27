@@ -145,6 +145,7 @@ export const it: Messages = {
 
   domains: 'Domini',
   newDomainPlaceholder: 'Nuovo dominio…',
+  sharedDomain: 'Condiviso con tutti gli utenti',
   add: 'Aggiungi',
   deleteDomainTitle: 'Elimina dominio',
   concepts: 'Concetti',

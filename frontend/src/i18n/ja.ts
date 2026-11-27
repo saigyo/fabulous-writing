@@ -137,6 +137,7 @@ export const ja: Messages = {
 
   domains: 'ドメイン',
   newDomainPlaceholder: '新しいドメイン…',
+  sharedDomain: '全ユーザーと共有',
   add: '追加',
   deleteDomainTitle: 'ドメインを削除',
   concepts: '概念',

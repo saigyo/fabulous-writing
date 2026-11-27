@@ -135,6 +135,7 @@ export const zh: Messages = {
 
   domains: '领域',
   newDomainPlaceholder: '新领域…',
+  sharedDomain: '与所有用户共享',
   add: '添加',
   deleteDomainTitle: '删除领域',
   concepts: '概念',

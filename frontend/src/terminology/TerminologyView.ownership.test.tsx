@@ -550,6 +550,30 @@ describe('TerminologyView answers from an entry the writer has left', () => {
   })
 })
 
+describe('TerminologyView shared domains', () => {
+  const features = { llm: { tiers: null, providers: null, models: null }, features: ['custom_domains'] }
+  const shared: Domain = { id: 5, name: 'Fresh', description: '', is_global: true }
+
+  it('offers the option to admins only', async () => {
+    useStore.setState({ user: user({ policy: features }) })
+    render(<TerminologyView />)
+    await screen.findByPlaceholderText(en.newDomainPlaceholder)
+    expect(screen.queryByRole('checkbox', { name: en.sharedDomain })).toBeNull()
+  })
+
+  it('creates a shared domain when ticked and unticks the option afterwards', async () => {
+    useStore.setState({ user: user({ is_admin: true, policy: features }) })
+    vi.mocked(createDomain).mockResolvedValue(shared)
+    render(<TerminologyView />)
+    const option = await screen.findByRole('checkbox', { name: en.sharedDomain })
+    await userEvent.click(option)
+    await userEvent.type(screen.getByPlaceholderText(en.newDomainPlaceholder), 'Fresh')
+    await userEvent.click(screen.getByRole('button', { name: en.add }))
+    await waitFor(() => expect(createDomain).toHaveBeenCalledWith('Fresh', true))
+    await waitFor(() => expect((option as HTMLInputElement).checked).toBe(false))
+  })
+})
+
 describe('TerminologyView leaving an entry with unsaved changes', () => {
   const privateA: Domain = { id: 2, name: 'Private A', description: '', is_global: false }
   const privateB: Domain = { id: 3, name: 'Private B', description: '', is_global: false }
@@ -615,7 +639,7 @@ describe('TerminologyView leaving an entry with unsaved changes', () => {
 
     await answerLeave(en.leaveUnsaved)
     await waitFor(() => expect(getConcepts).toHaveBeenCalledWith(added.id))
-    expect(createDomain).toHaveBeenCalledWith('Fresh')
+    expect(createDomain).toHaveBeenCalledWith('Fresh', false)
     expect(back()).toBeNull()
   })
 
@@ -625,7 +649,7 @@ describe('TerminologyView leaving an entry with unsaved changes', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'alpha' }))
     await userEvent.type(screen.getByPlaceholderText(en.newDomainPlaceholder), 'Fresh')
     await userEvent.click(screen.getByRole('button', { name: en.add }))
-    expect(createDomain).toHaveBeenCalledWith('Fresh')
+    expect(createDomain).toHaveBeenCalledWith('Fresh', false)
     expect(back()).toBeNull()
     expect(screen.queryByRole('textbox', { name: en.definitionLabel })).toBeNull()
   })
@@ -658,7 +682,7 @@ describe('TerminologyView leaving an entry with unsaved changes', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'alpha' }))
     await userEvent.type(screen.getByPlaceholderText(en.newDomainPlaceholder), 'Fresh')
     await userEvent.click(screen.getByRole('button', { name: en.add }))
-    await waitFor(() => expect(createDomain).toHaveBeenCalledWith('Fresh'))
+    await waitFor(() => expect(createDomain).toHaveBeenCalledWith('Fresh', false))
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
@@ -1055,7 +1079,7 @@ describe('TerminologyView domain actions and late answers', () => {
     await userEvent.clear(field)
     await userEvent.type(field, 'Second')
     await userEvent.click(screen.getByRole('button', { name: en.add }))
-    await waitFor(() => expect(createDomain).toHaveBeenCalledWith('Second'))
+    await waitFor(() => expect(createDomain).toHaveBeenCalledWith('Second', false))
   })
 
   it('applies only the latest domain list answer', async () => {

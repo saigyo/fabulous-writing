@@ -968,6 +968,14 @@ span.score-badge {
   min-width: 0;
 }
 
+.add-domain-shared {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+  font-size: 0.85rem;
+}
+
 .concept-list {
   flex: 1;
   padding: 1rem;
