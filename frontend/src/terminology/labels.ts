@@ -6,7 +6,7 @@ export interface ConceptLabel {
   fallback: boolean
 }
 
-const USAGE_RANK: Record<UsageStatus, number> = {
+export const USAGE_RANK: Record<UsageStatus, number> = {
   preferred: 0,
   admitted: 1,
   deprecated: 2,

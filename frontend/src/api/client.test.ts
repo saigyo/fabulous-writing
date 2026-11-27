@@ -11,6 +11,8 @@ import {
   type MeResponse,
   getAdminTiers,
   getAdminUsers,
+  mergeConcept,
+  moveTerm,
   patchAdminUser,
   postAdminUser,
   postLogin,
@@ -402,3 +404,37 @@ function _keepSessionOn401IsNotPublic(): void {
   void request('/api/whatever', { keepSessionOn401: true })
 }
 void _keepSessionOn401IsNotPublic
+
+describe('merge and move', () => {
+  const basis = {
+    source: { concept_id: 1, revision: 1, sections: [{ id: 1, revision: 1 }] },
+    target: null,
+  }
+
+  it('mergeConcept posts the body to the source concept', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(200, { moved: [] }))
+    await mergeConcept(1, { target_id: 2, basis, comment: 'tidy' })
+    const [url, init] = spy.mock.calls[0]
+    expect(String(url)).toMatch(/\/api\/concepts\/1\/merge$/)
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(String(init?.body))).toEqual({ target_id: 2, basis, comment: 'tidy' })
+  })
+
+  it('moveTerm posts a null target for a new concept', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(200, { moved: [] }))
+    await moveTerm(7, { target_id: null, preview: true })
+    const [url, init] = spy.mock.calls[0]
+    expect(String(url)).toMatch(/\/api\/terms\/7\/move$/)
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(String(init?.body))).toEqual({ target_id: null, preview: true })
+  })
+
+  it('carries concept_id of a 409 as conceptId', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse(409, { detail: { code: 'outdated', message: 'review again', concept_id: 2 } }),
+    )
+    const error = (await moveTerm(7, { target_id: 2, basis }).catch((e) => e)) as HttpError
+    expect(error.code).toBe('outdated')
+    expect(error.conceptId).toBe(2)
+  })
+})
