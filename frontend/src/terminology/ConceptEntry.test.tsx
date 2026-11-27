@@ -947,6 +947,25 @@ describe('ConceptEntry removal actions', () => {
 })
 
 describe('ConceptEntry read-only', () => {
+  it('shows nothing that only makes sense while editing', async () => {
+    renderEntry({ readOnly: true })
+    await screen.findAllByRole('textbox', { name: en.definitionLabel })
+    expect(screen.queryByText(en.baseFormHint)).toBeNull()
+    expect(screen.queryByText(en.sectionSaved, { exact: false })).toBeNull()
+    expect(screen.queryByPlaceholderText(en.reasonLabel)).toBeNull()
+    expect(screen.queryByPlaceholderText(en.definitionLabel)).toBeNull()
+    // The fields keep their accessible names.
+    expect(screen.getAllByRole('textbox', { name: en.reasonLabel }).length).toBeGreaterThan(0)
+  })
+
+  it('keeps the hint, the saved mark and the placeholders while editing', async () => {
+    renderEntry()
+    expect((await screen.findAllByText(en.baseFormHint)).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(en.sectionSaved, { exact: false }).length).toBeGreaterThan(0)
+    expect(screen.getAllByPlaceholderText(en.reasonLabel).length).toBeGreaterThan(0)
+    expect(screen.getAllByPlaceholderText(en.definitionLabel).length).toBeGreaterThan(0)
+  })
+
   it('has no enabled field and no save, discard, add, remove or delete control', async () => {
     const user = userEvent.setup()
     renderEntry({ readOnly: true, concept: conceptOf({ domain_ids: [2, 3] }) })

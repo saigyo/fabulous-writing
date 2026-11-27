@@ -79,7 +79,7 @@ export function LanguageSectionEditor({
         {changes > 0 ? (
           <span className="unsaved-marker">● {m.unsavedChanges(changes)}</span>
         ) : (
-          section.saved !== null && <span className="saved-marker">✓ {m.sectionSaved}</span>
+          section.saved !== null && !readOnly && <span className="saved-marker">✓ {m.sectionSaved}</span>
         )}
         {!readOnly && (
           <>
@@ -125,13 +125,13 @@ export function LanguageSectionEditor({
           <textarea
             className="section-definition"
             aria-label={m.definitionLabel}
-            placeholder={m.definitionLabel}
+            placeholder={readOnly ? undefined : m.definitionLabel}
             value={section.definition}
             disabled={locked}
             rows={2}
             onChange={(event) => onChange({ ...section, definition: event.target.value })}
           />
-          <p className="section-note">{m.baseFormHint}</p>
+          {!readOnly && <p className="section-note">{m.baseFormHint}</p>}
           <div className="term-row term-head" aria-hidden="true">
             <span>{m.termLabel}</span>
             <span>{m.usageStatusLabel}</span>
@@ -223,7 +223,7 @@ function TermRow({
       </select>
       <input
         aria-label={m.reasonLabel}
-        placeholder={m.reasonLabel}
+        placeholder={readOnly ? undefined : m.reasonLabel}
         value={term.status_reason ?? ''}
         disabled={locked}
         onChange={(event) => onChange({ status_reason: event.target.value })}
