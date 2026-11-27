@@ -1,3 +1,4 @@
+import type { HttpError } from '../api/client'
 import type {
   Concept,
   ConceptTerm,
@@ -134,3 +135,6 @@ export function notices(outcome: TransferOutcome, kind: 'merge' | 'move'): Notic
     ...sourceDeleted,
   ]
 }
+
+/** The server's own sentence of a refused request, else the generic one. */
+export const messageOf = (error: HttpError) => error.detailMessage ?? error.message

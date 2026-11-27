@@ -8,7 +8,8 @@ import { Dialog } from '../ui/Dialog'
 import { conceptLabel } from './labels'
 import { StatusChip } from './StatusChip'
 import { TargetPicker } from './TargetPicker'
-import { notices, resultRows } from './transfer'
+import { messageOf, notices, resultRows } from './transfer'
+import { Quoted } from './transferParts'
 import { useTransferPreview } from './useTransferPreview'
 
 interface MergeDialogProps {
@@ -20,20 +21,6 @@ interface MergeDialogProps {
   onDone: (outcome: TransferOutcome) => void
   onClose: () => void
 }
-
-function Quoted({ sentence, quote }: { sentence: string; quote: string }) {
-  const at = sentence.indexOf(quote)
-  if (at === -1) return <>{sentence}</>
-  return (
-    <>
-      {sentence.slice(0, at)}
-      <span className="transfer-quote">{quote}</span>
-      {sentence.slice(at + quote.length)}
-    </>
-  )
-}
-
-const messageOf = (error: HttpError) => error.detailMessage ?? error.message
 
 export function MergeDialog({
   source,
