@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terminology mockup: merge and move dialogs</title>
+<style>
+  /* Captions belong to this document, not to the app. */
+  .doc { display:flex; flex-direction:column; gap:26px; font:13px/1.45 ui-sans-serif,system-ui,-apple-system,sans-serif; }
+  .doc h1 { font-size:13px; margin:0 0 2px; color:var(--foreground,#1c1c1f); }
+  .doc .cap { margin:0 0 8px; color:var(--muted-foreground,#6f6f78); font-size:12px; }
+  .row { display:flex; flex-wrap:wrap; gap:18px; align-items:flex-start; }
+
+  /* Everything inside .fw uses the app's light tokens (frontend/src/index.css)
+     and the values of the named classes in frontend/src/App.css. In the app
+     the tokens switch with the theme; nothing here sets a colour directly
+     except the filled danger button, as .confirm-dialog-danger does. */
+  .fw { --bg:#ffffff; --panel:#fafafa; --border:#e4e4e7; --text:#1c1c1f; --text-dim:#6f6f78;
+        --accent:#6e56cf; --accent-soft:#6e56cf1e; --held-back:#b45309; --error-text:#c22126;
+        font-size:16px; color:var(--text); }
+  .fw * { box-sizing:border-box; }
+  .backdrop { background:rgba(0,0,0,.35); padding:16px; border-radius:8px; }
+  .panel { background:var(--panel); border:1px solid var(--border); padding:16px; border-radius:8px; }
+
+  /* dialog.app-dialog */
+  .dlg { background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:1rem 1.25rem; display:flex; flex-direction:column; font-size:.85rem; }
+  .dlg h2 { font-size:.95rem; margin:0 0 .25rem; }
+  .dlg p { margin:.25rem 0 .75rem; }
+  .merge-dialog { width:520px; }
+  .move-dialog { width:400px; }
+
+  /* buttons: .plain-button, .primary-button, .confirm-dialog-danger, .link-button */
+  .btns { display:flex; justify-content:flex-end; gap:.5rem; margin-top:.9rem; }
+  .b { font:inherit; font-size:.85rem; padding:.3rem .6rem; border-radius:6px; border:1px solid var(--border); background:var(--bg); color:var(--text); white-space:nowrap; }
+  .b.primary { border-color:var(--accent); background:var(--accent); color:var(--bg); }
+  .b.danger { background:#c22126; border-color:#c22126; color:#fff; }
+  .b.outline-danger { border-color:var(--error-text); color:var(--error-text); background:none; }
+  .b.off { opacity:.5; }
+  .link { color:var(--accent); background:none; border:none; padding:0; font:inherit; font-size:.8rem; }
+
+  /* target field */
+  .target-label { font-size:.75rem; color:var(--text-dim); margin:.35rem 0 .2rem; }
+  .field { border:1px solid var(--border); border-radius:6px; padding:.3rem .5rem; background:var(--bg); display:flex; align-items:center; gap:.5rem; min-height:1.9rem; }
+  .field.focus { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-soft); }
+  .field .ph { color:var(--text-dim); }
+  .field .picked { font-weight:600; flex:1; }
+  .caret { width:1px; height:1em; background:var(--text); display:inline-block; vertical-align:-2px; }
+  .suggest { border:1px solid var(--border); border-radius:6px; margin-top:.25rem; max-height:9.5rem; overflow:hidden; }
+  .sg { display:grid; grid-template-columns:minmax(7rem,auto) 1fr auto; gap:.6rem; align-items:baseline; padding:.3rem .5rem; border-bottom:1px solid var(--border); }
+  .sg:last-child { border-bottom:none; }
+  .sg.on { background:var(--accent-soft); }
+  .sg .lb { font-weight:600; }
+  .sg .ow { color:var(--text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sg mark { background:var(--accent-soft); color:inherit; border-radius:2px; }
+  .sg .none { color:var(--text-dim); font-style:italic; grid-column:1 / -1; }
+
+  /* .language-marker and .status-chip, as in the concept list */
+  .lm { display:inline-block; margin-right:.3rem; font-size:.7rem; padding:0 .25rem; border:1px solid var(--border); border-radius:4px; color:var(--text-dim); }
+  .chip { display:inline-block; margin:0 .3rem .2rem 0; padding:0 .5rem; border:1px solid var(--border); border-radius:999px; font-size:.8rem; }
+  .chip.preferred { border-color:var(--accent); font-weight:600; }
+  .chip.deprecated { color:var(--text-dim); font-style:italic; }
+  .chip.forbidden { color:var(--text-dim); text-decoration:line-through; }
+  .chip.candidate { border-style:dashed; }
+  /* new: an incoming term. The "+" is text, so the mark does not rely on colour. */
+  .chip.incoming { background:var(--accent-soft); }
+  .chip.incoming::before { content:"+"; font-weight:700; color:var(--accent); text-decoration:none; display:inline-block; margin-right:.3rem; }
+
+  /* result preview */
+  .result { margin-top:.75rem; border-top:1px solid var(--border); }
+  .rl { display:grid; grid-template-columns:2.2rem 1fr; gap:.15rem .4rem; padding:.45rem 0; border-bottom:1px solid var(--border); }
+  .rl .lm { margin-top:.15rem; justify-self:start; align-self:start; }
+  .rl .note { grid-column:2; font-size:.78rem; color:var(--text-dim); }
+  .box { margin-top:.75rem; border:1px solid var(--border); border-left:3px solid var(--held-back); border-radius:6px; padding:.5rem .7rem; background:var(--panel); }
+  .box h3 { margin:0 0 .25rem; font-size:.8rem; color:var(--held-back); }
+  .box ul { margin:0; padding-left:1.1rem; }
+  .box li { margin:.15rem 0; }
+  .quote { color:var(--text-dim); font-style:italic; }
+  .also { margin-top:.6rem; font-size:.8rem; color:var(--text-dim); }
+  .wait { margin-top:.75rem; color:var(--text-dim); font-style:italic; }
+  .err { margin-top:.75rem; color:var(--error-text); }
+
+  /* move dialog */
+  .choice { display:grid; grid-template-columns:auto 1fr; gap:.4rem .5rem; align-items:center; margin-top:.4rem; }
+  .radio { width:.85rem; height:.85rem; border-radius:50%; border:1px solid var(--text-dim); display:inline-block; }
+  .radio.on { border:.28rem solid var(--accent); }
+  .choice .sub { grid-column:2; }
+
+  /* placement excerpt */
+  .entry-head { display:flex; align-items:center; gap:.5rem; font-size:.85rem; }
+  .entry-head b { font-size:1rem; margin-right:auto; }
+  .term-details { margin-top:.9rem; border:1px solid var(--border); border-radius:6px; background:var(--bg); padding:.6rem .7rem; font-size:.85rem; display:grid; grid-template-columns:1fr 1fr; gap:.5rem .8rem; }
+  .term-details label { display:flex; flex-direction:column; gap:.15rem; font-size:.75rem; color:var(--text-dim); }
+  .term-details .inp { border:1px solid var(--border); border-radius:6px; padding:.3rem .5rem; color:var(--text); font-size:.85rem; background:var(--bg); min-height:1.9rem; }
+  .term-details .foot { grid-column:1 / -1; display:flex; justify-content:flex-end; }
+  .new { outline:2px dashed var(--accent); outline-offset:2px; }
+</style>
+</head>
+<body>
+<div class="doc">
+
+<section>
+  <h1>1. Where the actions are (spec 6.1)</h1>
+  <p class="cap">Excerpt of the concept entry. The two new buttons are outlined with a dashed line here; in the app they look like their neighbours.</p>
+  <div class="fw"><div class="panel" style="max-width:720px">
+    <div class="entry-head">
+      <span class="link">← Product docs</span>
+      <b>work space</b>
+      <span class="b new">Merge into…</span>
+      <span class="b">Remove from this domain</span>
+      <span class="b outline-danger">Delete concept</span>
+    </div>
+    <div class="term-details">
+      <label>Context<span class="inp">Open the work space of your team.</span></label>
+      <label>Source<span class="inp"></span></label>
+      <label>Part of speech<span class="inp">noun</span></label>
+      <label>Case sensitive<span class="inp">no</span></label>
+      <div class="foot"><span class="b new">Move…</span></div>
+    </div>
+  </div></div>
+</section>
+
+<section>
+  <h1>2. Merge dialog: picking the target (spec 6.2)</h1>
+  <p class="cap">Left: just opened, all candidates listed. Right: after typing. Labels that start with the typed text come first, then the other matches; every match is highlighted, also in the other wordings. The list scrolls after five rows.</p>
+  <div class="row">
+    <div class="fw"><div class="backdrop"><div class="dlg merge-dialog">
+      <h2>Merge “work space” into another concept</h2>
+      <p>“work space” is deleted. Its terms move to the concept you pick.</p>
+      <div class="target-label">Into</div>
+      <div class="field focus"><span><span class="caret"></span> <span class="ph">Search concepts…</span></span></div>
+      <div class="suggest">
+        <div class="sg"><span class="lb">email</span><span class="ow">e-mail</span><span><span class="lm">EN</span><span class="lm">DE</span></span></div>
+        <div class="sg"><span class="lb">sign in</span><span class="ow">log-in · login</span><span><span class="lm">EN</span></span></div>
+        <div class="sg"><span class="lb">website</span><span class="ow">web site</span><span><span class="lm">EN</span></span></div>
+        <div class="sg"><span class="lb">workflow</span><span class="ow">work flow</span><span><span class="lm">EN</span></span></div>
+        <div class="sg"><span class="lb">workspace</span><span class="ow">work area · team room</span><span><span class="lm">EN</span><span class="lm">DE</span></span></div>
+      </div>
+      <div class="btns"><span class="b">Cancel</span><span class="b danger off">Merge and delete “work space”</span></div>
+    </div></div></div>
+
+    <div class="fw"><div class="backdrop"><div class="dlg merge-dialog">
+      <h2>Merge “work space” into another concept</h2>
+      <p>“work space” is deleted. Its terms move to the concept you pick.</p>
+      <div class="target-label">Into</div>
+      <div class="field focus"><span>work<span class="caret"></span></span></div>
+      <div class="suggest">
+        <div class="sg on"><span class="lb"><mark>work</mark>flow</span><span class="ow"><mark>work</mark> flow</span><span><span class="lm">EN</span></span></div>
+        <div class="sg"><span class="lb"><mark>work</mark>space</span><span class="ow"><mark>work</mark> area · team room</span><span><span class="lm">EN</span><span class="lm">DE</span></span></div>
+        <div class="sg"><span class="lb">frame<mark>work</mark></span><span class="ow"></span><span><span class="lm">EN</span></span></div>
+        <div class="sg"><span class="lb">collaboration</span><span class="ow">team<mark>work</mark></span><span><span class="lm">EN</span><span class="lm">DE</span></span></div>
+      </div>
+      <div class="btns"><span class="b">Cancel</span><span class="b danger off">Merge and delete “work space”</span></div>
+    </div></div></div>
+  </div>
+</section>
+
+<section>
+  <h1>3. Merge dialog: the result (spec 6.3)</h1>
+  <p class="cap">Left: the common case, two concepts with one term each and nothing lost. Right: everything the dialog can show at once. The box and the line below it appear only when they have content.</p>
+  <div class="row">
+    <div class="fw"><div class="backdrop"><div class="dlg merge-dialog">
+      <h2>Merge “work space” into another concept</h2>
+      <p>“work space” is deleted. Its terms move to the concept you pick.</p>
+      <div class="target-label">Into</div>
+      <div class="field"><span class="picked">workspace</span><span class="link">Change</span></div>
+      <div class="result">
+        <div class="rl"><span class="lm">EN</span><div><span class="chip preferred">workspace</span><span class="chip incoming">work space</span></div>
+          <div class="note">“work space” was preferred and becomes admitted.</div></div>
+      </div>
+      <div class="btns"><span class="b">Cancel</span><span class="b danger">Merge and delete “work space”</span></div>
+    </div></div></div>
+
+    <div class="fw"><div class="backdrop"><div class="dlg merge-dialog">
+      <h2>Merge “work space” into another concept</h2>
+      <p>“work space” is deleted. Its terms move to the concept you pick.</p>
+      <div class="target-label">Into</div>
+      <div class="field"><span class="picked">workspace</span><span class="link">Change</span></div>
+      <div class="result">
+        <div class="rl"><span class="lm">EN</span><div><span class="chip preferred">workspace</span><span class="chip">work area</span><span class="chip incoming">work space</span><span class="chip incoming candidate">team space</span><span class="chip forbidden">team room</span></div>
+          <div class="note">“work space” was preferred and becomes admitted.</div></div>
+        <div class="rl"><span class="lm">DE</span><div><span class="chip preferred">Arbeitsbereich</span><span class="chip incoming">Arbeitsraum</span></div>
+          <div class="note">“Arbeitsraum” was preferred and becomes admitted.</div></div>
+        <div class="rl"><span class="lm">FR</span><div><span class="chip incoming preferred">espace de travail</span></div></div>
+      </div>
+      <div class="box">
+        <h3>Not taken over</h3>
+        <ul>
+          <li>The term “work area” (EN, admitted): “workspace” already has this wording.</li>
+          <li>The German definition: <span class="quote">“Bereich, in dem ein Team arbeitet.”</span> “workspace” keeps its own.</li>
+          <li>The domain “Support”: the moved terms no longer apply there.</li>
+        </ul>
+      </div>
+      <div class="also">The moved terms now also apply in the domain “Marketing”.</div>
+      <div class="btns"><span class="b">Cancel</span><span class="b danger">Merge and delete “work space”</span></div>
+    </div></div></div>
+  </div>
+</section>
+
+<section>
+  <h1>4. Merge dialog: waiting and out of date (spec 6.5)</h1>
+  <p class="cap">Left: a target is picked and its preview is still loading; the red button is unavailable. Right: the merge was refused because a concept changed; a new preview is shown below the message and the writer confirms again.</p>
+  <div class="row">
+    <div class="fw"><div class="backdrop"><div class="dlg merge-dialog">
+      <h2>Merge “work space” into another concept</h2>
+      <p>“work space” is deleted. Its terms move to the concept you pick.</p>
+      <div class="target-label">Into</div>
+      <div class="field"><span class="picked">workspace</span><span class="link">Change</span></div>
+      <div class="wait">Working out the result…</div>
+      <div class="btns"><span class="b">Cancel</span><span class="b danger off">Merge and delete “work space”</span></div>
+    </div></div></div>
+
+    <div class="fw"><div class="backdrop"><div class="dlg merge-dialog">
+      <h2>Merge “work space” into another concept</h2>
+      <p>“work space” is deleted. Its terms move to the concept you pick.</p>
+      <div class="target-label">Into</div>
+      <div class="field"><span class="picked">workspace</span><span class="link">Change</span></div>
+      <div class="err">“workspace” was changed in the meantime. This is the result as it would be now.</div>
+      <div class="result">
+        <div class="rl"><span class="lm">EN</span><div><span class="chip preferred">workspace</span><span class="chip">shared space</span><span class="chip incoming">work space</span></div>
+          <div class="note">“work space” was preferred and becomes admitted.</div></div>
+      </div>
+      <div class="btns"><span class="b">Cancel</span><span class="b danger">Merge and delete “work space”</span></div>
+    </div></div></div>
+  </div>
+</section>
+
+<section>
+  <h1>5. Move dialog (spec 6.4)</h1>
+  <p class="cap">First row: nothing else happens, so there is no box; then a move with side effects that keeps the source. Second row: the term is the last of its concept, so the button is red and names the concept; then the move to a new concept; then a refused move.</p>
+  <div class="row">
+    <div class="fw"><div class="backdrop"><div class="dlg move-dialog">
+      <h2>Move “team space”</h2>
+      <div class="choice">
+        <span class="radio on"></span><span>To the concept</span>
+        <div class="sub field"><span class="picked">workspace</span><span class="link">Change</span></div>
+        <span class="radio"></span><span>To a new concept</span>
+      </div>
+      <div class="btns"><span class="b">Cancel</span><span class="b primary">Move</span></div>
+    </div></div></div>
+
+    <div class="fw"><div class="backdrop"><div class="dlg move-dialog">
+      <h2>Move “Arbeitsraum”</h2>
+      <div class="choice">
+        <span class="radio on"></span><span>To the concept</span>
+        <div class="sub field"><span class="picked">workspace</span><span class="link">Change</span></div>
+        <span class="radio"></span><span>To a new concept</span>
+      </div>
+      <div class="box">
+        <h3>This also happens</h3>
+        <ul>
+          <li>“Arbeitsraum” was preferred and becomes admitted.</li>
+          <li>“work space” loses German. Its definition is not taken over: <span class="quote">“Bereich, in dem ein Team arbeitet.”</span></li>
+          <li>The term no longer applies in the domain “Support”.</li>
+        </ul>
+      </div>
+      <div class="btns"><span class="b">Cancel</span><span class="b primary">Move</span></div>
+    </div></div></div>
+  </div>
+  <div class="row" style="margin-top:18px">
+    <div class="fw"><div class="backdrop"><div class="dlg move-dialog">
+      <h2>Move “work space”</h2>
+      <div class="choice">
+        <span class="radio on"></span><span>To the concept</span>
+        <div class="sub field"><span class="picked">workspace</span><span class="link">Change</span></div>
+        <span class="radio"></span><span>To a new concept</span>
+      </div>
+      <div class="box">
+        <h3>This also happens</h3>
+        <ul>
+          <li>“work space” was preferred and becomes admitted.</li>
+          <li>The concept “work space” has no term left and is deleted.</li>
+        </ul>
+      </div>
+      <div class="btns"><span class="b">Cancel</span><span class="b danger">Move and delete “work space”</span></div>
+    </div></div></div>
+
+    <div class="fw"><div class="backdrop"><div class="dlg move-dialog">
+      <h2>Move “team room”</h2>
+      <div class="choice">
+        <span class="radio"></span><span>To the concept</span>
+        <span class="radio on"></span><span>To a new concept</span>
+      </div>
+      <div class="also">The new concept is in the same domains as “workspace”.</div>
+      <div class="btns"><span class="b">Cancel</span><span class="b primary">Move</span></div>
+    </div></div></div>
+
+    <div class="fw"><div class="backdrop"><div class="dlg move-dialog">
+      <h2>Move “work area”</h2>
+      <div class="choice">
+        <span class="radio on"></span><span>To the concept</span>
+        <div class="sub field"><span class="picked">workspace</span><span class="link">Change</span></div>
+        <span class="radio"></span><span>To a new concept</span>
+      </div>
+      <div class="err">“workspace” already has the term “work area” in English.</div>
+      <div class="btns"><span class="b">Cancel</span><span class="b primary off">Move</span></div>
+    </div></div></div>
+  </div>
+</section>
+
+</div>
+</body>
+</html>
