@@ -268,8 +268,9 @@ field and "To a new concept". Once the choice is complete:
 
 - A box "This also happens", shown only if it has entries: the change from
   preferred to admitted, a language the source loses with its dropped
-  definition, the domains where the term stops or starts applying, and
-  the deletion of the source concept when the term is its last.
+  definition, a definition that is dropped because the source concept is
+  deleted, the domains where the term stops or starts applying, and the
+  deletion of the source concept when the term is its last.
 - "Cancel" and "Move". When the source concept is deleted, the button is
   red and names the concept.
 - A move that is refused for the same wording shows the reason in place of
@@ -283,6 +284,8 @@ field and "To a new concept". Once the choice is complete:
 - Confirming sends the basis of the preview on display, and the entry's
   "reason for this change" as the comment if one is typed, as the next
   save would. The dialogs have no comment field of their own.
+- While the real run is in progress the dialog cannot be closed, so that
+  its answer always reaches the entry.
 - If the run is refused as out of date, the dialog says which concept was
   changed in the meantime and loads a new preview. The writer confirms
   again.
