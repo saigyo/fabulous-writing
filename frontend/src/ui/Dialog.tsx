@@ -12,6 +12,7 @@ export function Dialog({
   onClose,
   returnFocusTo,
   className,
+  locked = false,
   children,
 }: {
   title: string
@@ -21,6 +22,10 @@ export function Dialog({
    * back to whatever was active at mount. */
   returnFocusTo?: RefObject<HTMLElement | null>
   className?: string
+  /** Escape and the backdrop do nothing, and a native close (Chrome lets a
+   * second Escape close even when the first `cancel` was prevented)
+   * reopens the dialog. */
+  locked?: boolean
   children: ReactNode
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null)
@@ -60,9 +65,14 @@ export function Dialog({
       aria-labelledby={titleId}
       onCancel={(event) => {
         event.preventDefault()
-        onClose()
+        if (!locked) onClose()
+      }}
+      onClose={() => {
+        const dialog = dialogRef.current
+        if (locked && dialog && !dialog.open && dialog.isConnected) dialog.showModal()
       }}
       onMouseDown={(event) => {
+        if (locked) return
         // Backdrop clicks land on the <dialog> element itself; clicks on
         // content land on descendants — but clicks on the panel's own
         // padding also target the element, so only coordinates outside its

@@ -1152,7 +1152,7 @@ describe('TerminologyView after a merge or a move', () => {
   const alias: ConceptTerm = { ...termOf(alpha), id: 20101, uid: 't201b', text: 'alias', usage_status: 'admitted' }
   const alphaWithAlias: Concept = { ...alpha, sections: [{ ...alpha.sections[0], terms: [termOf(alpha), alias] }] }
 
-  function outcomeOf(target: Concept, source: Concept | null): TransferOutcome {
+  function outcomeOf(target: Concept, source: Concept | null, sourceId = 201): TransferOutcome {
     return {
       target,
       source,
@@ -1162,7 +1162,7 @@ describe('TerminologyView after a merge or a move', () => {
       removed_languages: [],
       dropped_domains: [],
       added_domains: [],
-      basis: { source: { concept_id: 201, revision: 1, sections: [{ id: 2010, revision: 1 }] }, target: null },
+      basis: { source: { concept_id: sourceId, revision: 1, sections: [] }, target: null },
     }
   }
 
@@ -1279,6 +1279,69 @@ describe('TerminologyView after a merge or a move', () => {
     expect(saveConceptLanguage).toHaveBeenCalledWith(301, 'en', expect.objectContaining({ id: 3010 }))
     await userEvent.click(back()!)
     screen.getByRole('button', { name: 'alpha' })
+  })
+
+  it('closes the entry when the merge target is no longer in the domain, and reloads the list', async () => {
+    const reloads = lists([alpha, beta])
+    const unlinked = { ...withTerms(beta, [termOf(beta), termOf(alpha)]), domain_ids: [9] }
+    serve(mergeConcept, outcomeOf(unlinked, null))
+    await open('alpha')
+    await userEvent.click(screen.getByRole('button', { name: en.mergeInto }))
+    await pickAndConfirm('beta', en.mergeConfirm('alpha'))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(heading(en.newConceptTitle)).toBeNull()
+    expect(back()).toBeNull()
+    expect(screen.queryByRole('button', { name: 'alpha' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'beta' })).toBeNull()
+    expect(reloads).toHaveLength(1)
+  })
+
+  it('closes the entry when the target of a move that deleted the source is no longer in the domain', async () => {
+    const reloads = lists([alpha, beta])
+    const unlinked = { ...withTerms(beta, [termOf(beta), termOf(alpha)]), domain_ids: [9] }
+    serve(moveTerm, outcomeOf(unlinked, null))
+    await open('alpha')
+    await startMove('alpha')
+    await pickAndConfirm('beta', en.moveConfirmDelete('alpha'))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(heading(en.newConceptTitle)).toBeNull()
+    expect(back()).toBeNull()
+    expect(screen.queryByRole('button', { name: 'alpha' })).toBeNull()
+    expect(reloads).toHaveLength(1)
+  })
+
+  it('does not let a list answer requested before the transfer replace the patched list', async () => {
+    const answers: ((concepts: Concept[]) => void)[] = []
+    vi.mocked(getConcepts).mockImplementation(() => new Promise<Concept[]>((resolve) => answers.push(resolve)))
+    const gadget: ConceptTerm = { ...termOf(conceptOf(301, 'gadget', [2])), id: 30101, uid: 't301b', usage_status: 'admitted' }
+    const created = conceptOf(301, 'widget', [2])
+    created.sections[0].terms.push(gadget)
+    vi.mocked(createConcept).mockResolvedValue(created)
+    const kept = withTerms(created, [termOf(created)])
+    const split = { ...conceptOf(302, 'gadget', [2]), sections: [{ ...conceptOf(302, '', [2]).sections[0], terms: [gadget] }] }
+    serve(moveTerm, outcomeOf(split, kept, 301))
+    render(<TerminologyView />)
+    await userEvent.click(await screen.findByRole('button', { name: en.newConcept }))
+    await userEvent.type(screen.getByRole('textbox', { name: en.termLabel }), 'widget')
+    await userEvent.click(screen.getByRole('button', { name: en.saveLanguage('English') }))
+    await waitFor(() => expect(answers).toHaveLength(2))
+
+    await startMove('gadget')
+    await userEvent.click(screen.getByRole('radio', { name: en.moveToNew }))
+    await pickAndConfirm(null, en.moveConfirm)
+    await waitFor(() => expect(answers).toHaveLength(3))
+    await userEvent.click(back()!)
+    screen.getByRole('button', { name: 'gadget' })
+
+    await act(async () => {
+      answers[0]([])
+      answers[1]([created])
+      await tick()
+    })
+    screen.getByRole('button', { name: 'gadget' })
+    screen.getByRole('button', { name: 'widget' })
   })
 
   it('does not remount the entry when a new concept is saved', async () => {

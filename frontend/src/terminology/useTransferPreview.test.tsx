@@ -105,14 +105,27 @@ describe('useTransferPreview', () => {
     expect(run).toHaveBeenCalledTimes(1)
   })
 
-  it('does not update state after unmounting', async () => {
-    const d = deferred()
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const run = () => d.promise
-    const { unmount } = renderHook(() => useTransferPreview(run))
-    unmount()
-    await act(async () => d.resolve(outcome(1)))
-    expect(error).not.toHaveBeenCalled()
-    error.mockRestore()
+  it('keeps the answer after a reload when the answer from before it arrives late', async () => {
+    const before = deferred()
+    const after = deferred()
+    const run = vi.fn<() => Promise<TransferOutcome>>().mockReturnValueOnce(before.promise).mockReturnValueOnce(after.promise)
+    const { result } = renderHook(() => useTransferPreview(run))
+    act(() => result.current.reload())
+    await act(async () => after.resolve(outcome(2)))
+    await act(async () => before.resolve(outcome(1)))
+    expect(result.current.outcome).toEqual(outcome(2))
+    expect(result.current.loading).toBe(false)
+  })
+
+  it('keeps the error after a reload when the error from before it arrives late', async () => {
+    const before = deferred()
+    const after = deferred()
+    const run = vi.fn<() => Promise<TransferOutcome>>().mockReturnValueOnce(before.promise).mockReturnValueOnce(after.promise)
+    const { result } = renderHook(() => useTransferPreview(run))
+    act(() => result.current.reload())
+    const error = new HttpError(409, 'later')
+    await act(async () => after.reject(error))
+    await act(async () => before.reject(new HttpError(409, 'earlier')))
+    expect(result.current.error).toBe(error)
   })
 })
