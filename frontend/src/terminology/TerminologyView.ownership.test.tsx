@@ -7,7 +7,7 @@ import { de } from '../i18n/de'
 import { en } from '../i18n/en'
 import { FALLBACK_LANGUAGES } from '../languages'
 import { useStore } from '../state/store'
-import type { Concept, Domain } from '../types'
+import type { Concept, ConceptTerm, Domain, TransferOutcome } from '../types'
 
 vi.mock('../api/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api/client')>()),
@@ -21,6 +21,8 @@ vi.mock('../api/client', async (importOriginal) => ({
   getConcept: vi.fn(),
   removeConceptFromDomain: vi.fn(),
   deleteConcept: vi.fn(),
+  mergeConcept: vi.fn(),
+  moveTerm: vi.fn(),
   // This file renders TerminologyView directly, not LoginGate, so nothing
   // here would actually call getHealth — mocked anyway (Task 7) so a real
   // fetch is never one accidental render away.
@@ -48,6 +50,8 @@ import {
   getConcepts,
   getDomains,
   HttpError,
+  mergeConcept,
+  moveTerm,
   postLogin,
   removeConceptFromDomain,
   saveConceptLanguage,
@@ -1125,6 +1129,213 @@ describe('TerminologyView domain actions and late answers', () => {
     await waitFor(() => expect(back()).toBeNull())
     await tick()
     expect(screen.queryByRole('button', { name: 'alpha' })).toBeNull()
+  })
+})
+
+describe('TerminologyView after a merge or a move', () => {
+  const privateA: Domain = { id: 2, name: 'Private A', description: '', is_global: false }
+  const privateB: Domain = { id: 3, name: 'Private B', description: '', is_global: false }
+  const back = () => screen.queryByRole('button', { name: `← ${privateA.name}` })
+  const heading = (label: string) => screen.queryByRole('heading', { name: `← ${privateA.name} / ${label}` })
+  const termValues = () =>
+    (screen.getAllByRole('textbox', { name: en.termLabel }) as HTMLInputElement[]).map((i) => i.value)
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+  const termOf = (c: Concept, i = 0): ConceptTerm => c.sections[0].terms[i]
+  const withTerms = (c: Concept, terms: ConceptTerm[]): Concept => ({
+    ...c,
+    revision: c.revision + 1,
+    sections: [{ ...c.sections[0], revision: c.sections[0].revision + 1, terms }],
+  })
+  const alpha = conceptOf(201, 'alpha', [2])
+  const beta = conceptOf(202, 'beta', [2])
+  const alias: ConceptTerm = { ...termOf(alpha), id: 20101, uid: 't201b', text: 'alias', usage_status: 'admitted' }
+  const alphaWithAlias: Concept = { ...alpha, sections: [{ ...alpha.sections[0], terms: [termOf(alpha), alias] }] }
+
+  function outcomeOf(target: Concept, source: Concept | null): TransferOutcome {
+    return {
+      target,
+      source,
+      moved: [],
+      dropped_terms: [],
+      dropped_definitions: [],
+      removed_languages: [],
+      dropped_domains: [],
+      added_domains: [],
+      basis: { source: { concept_id: 201, revision: 1, sections: [{ id: 2010, revision: 1 }] }, target: null },
+    }
+  }
+
+  /** The first list request answers `first`; every later one waits for its entry in the returned array. */
+  function lists(first: Concept[]) {
+    const reloads: ((concepts: Concept[]) => void)[] = []
+    let calls = 0
+    vi.mocked(getConcepts).mockImplementation(() => {
+      calls += 1
+      if (calls === 1) return Promise.resolve(first)
+      return new Promise<Concept[]>((resolve) => reloads.push(resolve))
+    })
+    return reloads
+  }
+
+  function serve(fn: typeof mergeConcept | typeof moveTerm, outcome: TransferOutcome, run?: Promise<TransferOutcome>) {
+    vi.mocked(fn).mockImplementation(async (_id: number, body: { preview?: boolean }) =>
+      body.preview ? outcome : (run ?? outcome),
+    )
+  }
+
+  async function open(label: string) {
+    render(<TerminologyView />)
+    await userEvent.click(await screen.findByRole('button', { name: label }))
+  }
+
+  async function pickAndConfirm(target: string | null, confirmName: string) {
+    if (target !== null) await userEvent.click(await screen.findByRole('option', { name: new RegExp(`^${target}`) }))
+    const confirm = screen.getByRole('button', { name: confirmName }) as HTMLButtonElement
+    await waitFor(() => expect(confirm.disabled).toBe(false))
+    await userEvent.click(confirm)
+  }
+
+  async function startMove(text: string) {
+    await userEvent.click(screen.getByRole('button', { name: en.termDetailsOf(text) }))
+    await userEvent.click(screen.getByRole('button', { name: en.termMove }))
+  }
+
+  beforeEach(() => {
+    useStore.setState({
+      domains: [privateA],
+      user: user({ policy: { llm: { tiers: null, providers: null, models: null }, features: ['custom_domains'] } }),
+    })
+    vi.mocked(getDomains).mockResolvedValue([privateA])
+  })
+
+  it('shows the merge target with the incoming term before the list reload answers, and reloads the list', async () => {
+    const reloads = lists([alpha, beta])
+    const merged = withTerms(beta, [termOf(beta), { ...termOf(alpha), usage_status: 'admitted' }])
+    serve(mergeConcept, outcomeOf(merged, null))
+    await open('alpha')
+    await userEvent.click(screen.getByRole('button', { name: en.mergeInto }))
+    await pickAndConfirm('beta', en.mergeConfirm('alpha'))
+
+    await waitFor(() => expect(heading('beta')).not.toBeNull())
+    expect(termValues()).toEqual(['beta', 'alpha'])
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(reloads).toHaveLength(1)
+    expect(getConcepts).toHaveBeenLastCalledWith(privateA.id)
+
+    await userEvent.click(back()!)
+    screen.getByRole('button', { name: 'beta' })
+    expect(screen.queryByRole('button', { name: 'alpha' })).toBeNull()
+  })
+
+  it('keeps the move source open without the term, with the outcome\'s versions and an empty reason', async () => {
+    lists([alphaWithAlias, beta])
+    const source = withTerms(alphaWithAlias, [termOf(alpha)])
+    serve(moveTerm, outcomeOf(withTerms(beta, [termOf(beta), alias]), source))
+    vi.mocked(saveConceptLanguage).mockResolvedValue(source)
+    await open('alpha')
+    await userEvent.type(screen.getByRole('textbox', { name: en.changeReason }), 'Belongs there')
+    await startMove('alias')
+    await pickAndConfirm('beta', en.moveConfirm)
+
+    await waitFor(() => expect(termValues()).toEqual(['alpha']))
+    expect(heading('alpha')).not.toBeNull()
+    expect((screen.getByRole('textbox', { name: en.changeReason }) as HTMLInputElement).value).toBe('')
+
+    await userEvent.type(screen.getByRole('textbox', { name: en.definitionLabel }), 'A letter')
+    await userEvent.click(screen.getByRole('button', { name: en.saveLanguage('English') }))
+    await waitFor(() => expect(saveConceptLanguage).toHaveBeenCalledTimes(1))
+    expect(saveConceptLanguage).toHaveBeenCalledWith(201, 'en', expect.objectContaining({ id: 2010, revision: 2 }))
+  })
+
+  it('shows the move target when the move deletes the source', async () => {
+    lists([alpha, beta])
+    serve(moveTerm, outcomeOf(withTerms(beta, [termOf(beta), { ...termOf(alpha), usage_status: 'admitted' }]), null))
+    await open('alpha')
+    await startMove('alpha')
+    await pickAndConfirm('beta', en.moveConfirmDelete('alpha'))
+
+    await waitFor(() => expect(heading('beta')).not.toBeNull())
+    expect(termValues()).toEqual(['beta', 'alpha'])
+  })
+
+  it('shows the new concept with its term after splitting off the last term', async () => {
+    lists([alpha, beta])
+    const split = { ...conceptOf(301, 'alpha', [2]), sections: [{ ...alpha.sections[0], id: 3010, terms: [termOf(alpha)] }] }
+    serve(moveTerm, outcomeOf(split, null))
+    vi.mocked(saveConceptLanguage).mockResolvedValue(split)
+    await open('alpha')
+    await startMove('alpha')
+    await userEvent.click(screen.getByRole('radio', { name: en.moveToNew }))
+    await pickAndConfirm(null, en.moveConfirmDelete('alpha'))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(heading('alpha')).not.toBeNull()
+    expect(heading(en.newConceptTitle)).toBeNull()
+    expect(termValues()).toEqual(['alpha'])
+    await userEvent.type(screen.getByRole('textbox', { name: en.definitionLabel }), 'A letter')
+    await userEvent.click(screen.getByRole('button', { name: en.saveLanguage('English') }))
+    await waitFor(() => expect(saveConceptLanguage).toHaveBeenCalledTimes(1))
+    expect(saveConceptLanguage).toHaveBeenCalledWith(301, 'en', expect.objectContaining({ id: 3010 }))
+    await userEvent.click(back()!)
+    screen.getByRole('button', { name: 'alpha' })
+  })
+
+  it('does not remount the entry when a new concept is saved', async () => {
+    useStore.setState({ domains: [privateA, privateB] })
+    vi.mocked(getDomains).mockResolvedValue([privateA, privateB])
+    lists([])
+    vi.mocked(createConcept).mockResolvedValue(conceptOf(301, 'widget', [2]))
+    render(<TerminologyView />)
+    await userEvent.click(await screen.findByRole('button', { name: en.newConcept }))
+    await userEvent.type(screen.getByRole('textbox', { name: en.termLabel }), 'widget')
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: en.addConceptDomain }), 'Private B')
+    await userEvent.click(screen.getByRole('button', { name: en.saveLanguage('English') }))
+
+    await waitFor(() => expect(heading('widget')).not.toBeNull())
+    screen.getByRole('button', { name: en.removeDomainLink('Private B') })
+    screen.getByText(en.unsavedList(en.unsavedLinks))
+  })
+
+  it('offers every concept of the list but the open one as merge target', async () => {
+    lists([alpha, beta, conceptOf(203, 'gamma', [2])])
+    await open('alpha')
+    await userEvent.click(screen.getByRole('button', { name: en.mergeInto }))
+    const options = await within(await screen.findByRole('listbox')).findAllByRole('option')
+    expect(options.map((o) => o.querySelector('.target-option-text')!.textContent)).toEqual(['beta', 'gamma'])
+  })
+
+  it('only reloads the list of the domain then active when the entry was closed while the merge ran', async () => {
+    useStore.setState({ domains: [privateA, privateB] })
+    vi.mocked(getDomains).mockResolvedValue([privateA, privateB])
+    const shared = conceptOf(202, 'beta', [2, 3])
+    const heldB: ((concepts: Concept[]) => void)[] = []
+    let callsB = 0
+    vi.mocked(getConcepts).mockImplementation((domainId: number) => {
+      if (domainId === privateA.id) return Promise.resolve([alpha, shared])
+      callsB += 1
+      if (callsB === 1) return Promise.resolve([conceptOf(203, 'gamma', [3])])
+      return new Promise<Concept[]>((resolve) => heldB.push(resolve))
+    })
+    let finish!: (outcome: TransferOutcome) => void
+    const merged = withTerms(shared, [termOf(shared), { ...termOf(alpha), usage_status: 'admitted' }])
+    serve(mergeConcept, outcomeOf(merged, null), new Promise<TransferOutcome>((resolve) => (finish = resolve)))
+    await open('alpha')
+    await userEvent.click(screen.getByRole('button', { name: en.mergeInto }))
+    await pickAndConfirm('beta', en.mergeConfirm('alpha'))
+    await waitFor(() => expect(mergeConcept).toHaveBeenCalledTimes(2))
+
+    act(() => useStore.getState().setDomains([privateB]))
+    await screen.findByRole('button', { name: 'gamma' })
+    expect(back()).toBeNull()
+
+    finish(outcomeOf(merged, null))
+    await waitFor(() => expect(heldB).toHaveLength(1))
+    await tick()
+    expect(screen.queryByRole('button', { name: 'beta' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: `← ${privateB.name} / beta` })).toBeNull()
+    screen.getByRole('button', { name: 'gamma' })
+    expect(vi.mocked(getConcepts).mock.calls.filter(([id]) => id === privateA.id)).toHaveLength(1)
   })
 })
 

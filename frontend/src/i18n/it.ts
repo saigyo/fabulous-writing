@@ -183,6 +183,8 @@ export const it: Messages = {
   moveSourceDeleted: (label) => `Il concetto «${label}» non ha più termini e viene eliminato.`,
   moveNewConceptDomains: (label) => `Il nuovo concetto si trova negli stessi domini di «${label}».`,
   moveDuplicate: (target, text, language) => `«${target}» ha già il termine «${text}» in ${language}.`,
+  mergeInto: 'Unisci a…',
+  termMove: 'Sposta…',
   searchConceptsLabel: 'Cerca concetti',
   conceptLanguageTitle: 'Lingua delle etichette',
   newConcept: '+ Concetto',

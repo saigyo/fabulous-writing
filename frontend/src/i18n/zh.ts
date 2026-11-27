@@ -172,6 +172,8 @@ export const zh: Messages = {
   moveSourceDeleted: (label) => `概念“${label}”已没有术语，将被删除。`,
   moveNewConceptDomains: (label) => `新概念与“${label}”属于相同的领域。`,
   moveDuplicate: (target, text, language) => `“${target}”的${language}中已有术语“${text}”。`,
+  mergeInto: '合并到…',
+  termMove: '移动…',
   searchConceptsLabel: '搜索概念',
   conceptLanguageTitle: '标签语言',
   newConcept: '+ 概念',

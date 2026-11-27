@@ -187,6 +187,8 @@ export const fr: Messages = {
   moveSourceDeleted: (label) => `Le concept « ${label} » n’a plus de terme et est supprimé.`,
   moveNewConceptDomains: (label) => `Le nouveau concept est dans les mêmes domaines que « ${label} ».`,
   moveDuplicate: (target, text, language) => `« ${target} » a déjà le terme « ${text} » en ${language}.`,
+  mergeInto: 'Fusionner avec…',
+  termMove: 'Déplacer…',
   searchConceptsLabel: 'Rechercher des concepts',
   conceptLanguageTitle: 'Langue des libellés',
   newConcept: '+ Concept',
