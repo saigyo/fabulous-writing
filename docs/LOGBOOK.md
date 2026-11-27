@@ -5412,3 +5412,104 @@ and build. The two new view tests were each checked by removing the code
 they guard, and the refusal for a non-admin failed before the guard existed.
 The checkbox was seen in the retaken terminology screenshot; creating a
 shared domain was not clicked through in a browser.
+
+## 2026-11-27 — Terminology: moving terms and merging concepts (PR #223)
+
+The owner's wish while trying release 0.8.0: pull concepts together that
+turned out to mean the same thing, and move a term that sits under the
+wrong concept. Spec, mockup, plan and implementation are on one branch.
+
+**What was built**
+
+- Three actions: merge a concept into another one, move one term to
+  another concept, move one term to a new concept (a split). "Merge
+  into…" sits in the header of a concept, "Move…" in a term's details.
+  The target is searched within the domain on screen.
+- **One operation on the server.** `_transfer` in the terminology store
+  holds the rules; `merge_concept` and `move_term` call it. What happens
+  to each term, definition and section is decided by a function without
+  database access (`transfer.plan_transfer`). No schema change.
+- **Preview is the real run, rolled back.** Each endpoint
+  (`POST /api/concepts/{id}/merge`, `POST /api/terms/{id}/move`) takes
+  `preview`. A real run sends back the version numbers the preview
+  returned (the "basis") and is refused as out of date if either concept
+  changed. A preview and its run agree in outcome and version numbers;
+  generated ids, a new concept's uid and timestamps belong to each run.
+- **"Target wins."** The target keeps its preferred term (an incoming
+  preferred term becomes admitted), its definition and its domains. In a
+  merge an incoming duplicate wording is dropped; in a move it is refused.
+  A split-off term keeps the domains of the concept it came from.
+  Everything the source loses is named in the dialog, including domains
+  where moved terms stop or start applying.
+- The change log gained the actions `moved` and `merged`. A moved term
+  keeps its id, uid and history.
+- **Screen.** Pure functions in `terminology/transfer.ts` turn the
+  server's answer into what the dialogs show; `TargetPicker`,
+  `useTransferPreview` (latest request wins) and `useTransferRun` are
+  shared by `MergeDialog` and `MoveDialog`. After a merge the entry shows
+  the target; after a move it stays on the source.
+
+**Decisions during the work**
+
+- Mockups in the app's own styles were added to the spec at the owner's
+  request and made binding. In the browser trial they exposed four style
+  deviations (oval radios, outset button borders, an accent border on the
+  picked target, the size of "Change") that no test would have found.
+- Languages appear under their own names, as everywhere in the app, so the
+  notices read "The definition for Deutsch: …"; the mockup's "The German
+  definition" could not be produced without a table of language adjectives
+  in seven languages.
+- The dialogs do not speak of deleting the merged concept. The owner found
+  "Merge and delete "work space"" puzzling: a concept is named after its
+  term, so it read as deleting the wording. The line now says that all
+  terms move and the two become one concept, the button reads "Merge into
+  "target"", and the move of a concept's last term keeps the plain "Move".
+- `ui/Dialog` got an opt-in `locked` state. A browser closes a native
+  dialog on a second Escape even when the first was refused, which would
+  have hidden the result of a running merge. Confirmed in a real browser.
+- A preview is accepted only if it was computed from the concept as the
+  entry holds it. Otherwise the dialog offers "Load current version",
+  which refetches the concept and rebuilds the entry.
+
+**Reviews, and what they found**
+
+- Plan review and re-check before the start: the entry would have been
+  rebuilt from the list as it was before the move; a test demanded
+  identity of preview and run in every field, which Postgres cannot give
+  for created ids.
+- Review of the server part: approved, six test gaps closed.
+- Review of the screen part: the dialog lock above, and an empty "new
+  concept" form when the target had left the domain between preview and
+  run; nine smaller points in texts, focus and repeated code.
+- Final review of the branch: ready to merge; server sentences reached
+  the dialogs untranslated.
+- Copilot, three rounds on plan and code: answers for a closed entry must
+  only reload; preview parity without timestamps; a dialog could name one
+  concept and act on another after a move or rename elsewhere; keys during
+  IME composition; the first cure for a stale concept ("close and open
+  again") did not work because reopening used the cached list.
+- Found by the owner in the trial, older than this branch and fixed here:
+  a read-only concept showed the base-form hint, the saved mark and the
+  placeholders of fields nobody can fill in.
+- The lock-order test needed two edits to fail (an unsorted `_lock` and a
+  list instead of a set), because a set of small integers iterates in
+  ascending order; with both it deadlocked at once.
+
+**Verification**
+
+Backend 1887 passed, 347 skipped on SQLite (22 s) and 2234 on Postgres,
+including two opposite merges raced as separate processes. Frontend 1350
+tests, lint with the seven warnings that were there before, build. Browser
+trial on a scratch stack: fourteen steps, among them the locked dialog
+against repeated Escape, an out-of-date merge, a split, a refused move and
+a non-admin on a shared domain; the recovery from a stale concept was
+tried separately. The out-of-date cases were provoked through the API,
+not through a second browser window. The texts in French, Spanish,
+Italian, Japanese and Chinese were written and checked by models only.
+
+**Execution**
+
+Ten tasks by one agent each, seven on the mid tier and the two risky ones
+(the move in the store, the wiring into the terminology view) on the top
+tier, as were the three reviews. The top-tier agent of the view task was
+resumed for both later fixes in that file.
