@@ -186,7 +186,7 @@ export const es: Messages = {
   moveDefinitionDropped: (language, quote) => `La definición para ${language} no se traspasa: ${quote}`,
   moveDroppedDomain: (name) => `El término ya no se aplica en el dominio «${name}».`,
   moveAddedDomain: (name) => `El término ahora también se aplica en el dominio «${name}».`,
-  moveSourceDeleted: 'Este es el último término de su concepto. El concepto queda vacío y se elimina.',
+  moveSourceDeleted: 'Este es el último término de su concepto. El concepto queda vacío y se retira.',
   moveNewConceptDomains: (label) => `El concepto nuevo está en los mismos dominios que «${label}».`,
   moveDuplicate: (target, text, language) => `«${target}» ya tiene el término «${text}» en ${language}.`,
   mergeInto: 'Fusionar con…',
