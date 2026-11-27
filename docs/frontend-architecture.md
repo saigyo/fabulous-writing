@@ -866,6 +866,11 @@ shows the preview the server computed.
   is the server's own sentence of a refusal (`detailMessage`), else the generic one,
   wrapped in the translated `changeFailed` like the entry's errors, so the English text
   of the server never stands alone in a dialog.
+  A preview is only shown when it was computed from the source as the entry holds it
+  (`sourceIsCurrent` compares the concept, its revision and its sections' revisions with
+  the preview's basis); otherwise the dialog says the concept changed in the meantime and
+  confirm stays unavailable. The picker ignores keys while an input method is composing,
+  so Enter commits the composition and the arrows move through its candidates.
 - **Languages appear under their own names in the notices** ("loses its section for
   Deutsch"), as everywhere in the app (`languageName`). The mockup's "The German
   definition" could not be produced from the language list, so the sentences were

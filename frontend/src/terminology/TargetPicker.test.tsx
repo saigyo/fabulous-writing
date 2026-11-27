@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -149,6 +149,35 @@ describe('TargetPicker', () => {
     expect(onPick).toHaveBeenCalledTimes(1)
     expect(onPick).toHaveBeenCalledWith(email)
     expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('ignores the keys while an input method composes', async () => {
+    const user = userEvent.setup()
+    const onPick = vi.fn()
+    render(<Harness onPick={onPick} />)
+    const field = screen.getByRole('combobox', { name: 'Into' })
+    await user.click(field)
+    const first = field.getAttribute('aria-activedescendant')
+
+    const enter = createEvent.keyDown(field, { key: 'Enter', isComposing: true })
+    fireEvent(field, enter)
+    expect(onPick).not.toHaveBeenCalled()
+    expect(enter.defaultPrevented).toBe(false)
+
+    const legacy = createEvent.keyDown(field, { key: 'Enter', keyCode: 229 })
+    fireEvent(field, legacy)
+    expect(onPick).not.toHaveBeenCalled()
+    expect(legacy.defaultPrevented).toBe(false)
+
+    const down = createEvent.keyDown(field, { key: 'ArrowDown', isComposing: true })
+    fireEvent(field, down)
+    expect(down.defaultPrevented).toBe(false)
+    expect(field.getAttribute('aria-activedescendant')).toBe(first)
+
+    await user.keyboard('{ArrowDown}')
+    expect(field.getAttribute('aria-activedescendant')).toBe(screen.getAllByRole('option')[1].id)
+    await user.keyboard('{Enter}')
+    expect(onPick).toHaveBeenCalledTimes(1)
   })
 
   it('scrolls the newly active row into view', async () => {

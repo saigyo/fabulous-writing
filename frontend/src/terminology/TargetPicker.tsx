@@ -95,6 +95,8 @@ export function TargetPicker({
   }
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    // While an input method composes, Enter commits the text and the arrows pick candidates.
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return
     if (event.key === 'ArrowDown') {
       event.preventDefault()
       moveTo(Math.min(current + 1, rows.length - 1))
