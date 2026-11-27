@@ -29,6 +29,11 @@
 //     SHOTS_API=http://127.0.0.1:8001 SHOTS_APP=http://localhost:4199 npm run screenshots
 //   cd frontend && npm run build   # restore the production dist afterwards
 //
+// Start the scratch backend with placeholder values for ANTHROPIC_API_KEY and
+// MISTRAL_API_KEY (any non-empty text). The server only checks that the
+// variables are set, so the header shows the routed model instead of a red
+// "LLM check skipped: missing …" line; no shot calls those providers.
+//
 // Run from frontend/:  npm run screenshots
 import { existsSync, readdirSync } from 'fs'
 import os from 'os'
