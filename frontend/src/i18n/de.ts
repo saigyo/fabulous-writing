@@ -153,6 +153,21 @@ export const de: Messages = {
   transferInto: 'In',
   transferChange: 'Ändern',
   noConceptMatches: 'Kein Konzept passt.',
+  statusIncoming: 'neu',
+  mergeTitle: (label) => `„${label}“ mit einem anderen Konzept zusammenführen`,
+  mergeIntro: (label) => `„${label}“ wird gelöscht. Die Begriffe wandern in das Konzept, das du auswählst.`,
+  mergeConfirm: (label) => `Zusammenführen und „${label}“ löschen`,
+  transferWorking: 'Das Ergebnis wird berechnet…',
+  transferDemoted: (text) => `„${text}“ war bevorzugt und wird zugelassen.`,
+  transferNotTakenOver: 'Nicht übernommen',
+  transferDroppedTerm: (text, language, status, target) =>
+    `Der Begriff „${text}“ (${language}, ${status}): „${target}“ hat diese Schreibweise schon.`,
+  transferDroppedDefinition: (language, quote, target) =>
+    `Die Definition (${language}): ${quote} „${target}“ behält die eigene.`,
+  transferDroppedDomain: (name) => `Die Domäne „${name}“: Die verschobenen Begriffe gelten dort nicht mehr.`,
+  mergeAddedDomain: (name) => `Die verschobenen Begriffe gelten jetzt auch in der Domäne „${name}“.`,
+  transferOutdated: (label) =>
+    `„${label}“ wurde inzwischen geändert. So sieht das Ergebnis jetzt aus.`,
   searchConceptsLabel: 'Konzepte durchsuchen',
   conceptLanguageTitle: 'Sprache der Bezeichnungen',
   newConcept: '+ Konzept',

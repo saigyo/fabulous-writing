@@ -157,6 +157,21 @@ export const es: Messages = {
   transferInto: 'En',
   transferChange: 'Cambiar',
   noConceptMatches: 'Ningún concepto coincide.',
+  statusIncoming: 'nuevo',
+  mergeTitle: (label) => `Fusionar «${label}» con otro concepto`,
+  mergeIntro: (label) => `«${label}» se elimina. Sus términos pasan al concepto que elijas.`,
+  mergeConfirm: (label) => `Fusionar y eliminar «${label}»`,
+  transferWorking: 'Calculando el resultado…',
+  transferDemoted: (text) => `«${text}» era preferido y pasa a ser admitido.`,
+  transferNotTakenOver: 'No se traspasa',
+  transferDroppedTerm: (text, language, status, target) =>
+    `El término «${text}» (${language}, ${status}): «${target}» ya tiene esta forma.`,
+  transferDroppedDefinition: (language, quote, target) =>
+    `La definición (${language}): ${quote} «${target}» conserva la suya.`,
+  transferDroppedDomain: (name) => `El dominio «${name}»: los términos movidos ya no se aplican allí.`,
+  mergeAddedDomain: (name) => `Los términos movidos ahora también se aplican en el dominio «${name}».`,
+  transferOutdated: (label) =>
+    `«${label}» ha cambiado entretanto. Este es el resultado tal como sería ahora.`,
   searchConceptsLabel: 'Buscar conceptos',
   conceptLanguageTitle: 'Idioma de las etiquetas',
   newConcept: '+ Concepto',

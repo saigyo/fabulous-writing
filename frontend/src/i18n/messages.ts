@@ -134,6 +134,18 @@ export interface Messages {
   transferInto: string
   transferChange: string
   noConceptMatches: string
+  statusIncoming: string
+  mergeTitle: (label: string) => string
+  mergeIntro: (label: string) => string
+  mergeConfirm: (label: string) => string
+  transferWorking: string
+  transferDemoted: (text: string) => string
+  transferNotTakenOver: string
+  transferDroppedTerm: (text: string, language: string, status: string, target: string) => string
+  transferDroppedDefinition: (language: string, quote: string, target: string) => string
+  transferDroppedDomain: (name: string) => string
+  mergeAddedDomain: (name: string) => string
+  transferOutdated: (label: string) => string
   searchConceptsLabel: string
   conceptLanguageTitle: string
   newConcept: string
