@@ -257,6 +257,68 @@ def apply_sections(
             )
 
 
+def term_concept_id(conn: Any, term_id: int) -> int | None:
+    row = conn.execute(
+        "SELECT s.concept_id FROM concept_terms t JOIN concept_languages s ON s.id = t.section_id"
+        " WHERE t.id = ?",
+        (term_id,),
+    ).fetchone()
+    return row["concept_id"] if row else None
+
+
+def concept_domain_ids(conn: Any, concept_id: int) -> list[int]:
+    return [
+        row["domain_id"]
+        for row in conn.execute(
+            "SELECT domain_id FROM concept_domains WHERE concept_id = ? ORDER BY domain_id",
+            (concept_id,),
+        ).fetchall()
+    ]
+
+
+def insert_section(
+    conn: Any, concept_id: int, language: Language, definition: str, *, now: str, user_id: int | None
+) -> int:
+    return conn.execute(
+        "INSERT INTO concept_languages"
+        " (concept_id, language, definition, created_at, created_by, modified_at, modified_by)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
+        (concept_id, language.value, definition, now, user_id, now, user_id),
+    ).fetchone()["id"]
+
+
+def update_section(
+    conn: Any, section_id: int, definition: str, *, now: str, user_id: int | None
+) -> None:
+    conn.execute(
+        "UPDATE concept_languages SET definition = ?, revision = revision + 1,"
+        " modified_at = ?, modified_by = ? WHERE id = ?",
+        (definition, now, user_id, section_id),
+    )
+
+
+def delete_section(conn: Any, section_id: int) -> None:
+    conn.execute("DELETE FROM concept_languages WHERE id = ?", (section_id,))
+
+
+def move_term(
+    conn: Any,
+    term_id: int,
+    section_id: int,
+    usage_status: UsageStatus,
+    *,
+    now: str,
+    user_id: int | None,
+) -> None:
+    cursor = conn.execute(
+        "UPDATE concept_terms SET section_id = ?, usage_status = ?, revision = revision + 1,"
+        " modified_at = ?, modified_by = ? WHERE id = ?",
+        (section_id, usage_status.value, now, user_id, term_id),
+    )
+    if cursor.rowcount != 1:
+        raise RuntimeError(f"moving term {term_id} changed {cursor.rowcount} rows")
+
+
 def touch_concept(conn: Any, concept_id: int, *, now: str, user_id: int | None) -> None:
     conn.execute(
         "UPDATE concepts SET revision = revision + 1, modified_at = ?, modified_by = ?"

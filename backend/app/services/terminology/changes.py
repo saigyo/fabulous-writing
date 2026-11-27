@@ -147,6 +147,49 @@ def diff(
     return entries
 
 
+def transfer_entries(
+    source_before: Concept,
+    source_after: Concept | None,
+    target_before: Concept | None,
+    target_after: Concept,
+    *,
+    domain_names: dict[int, str],
+) -> list[Entry]:
+    """The log of a move or merge: a moved term gets one `moved` entry, never a
+    `created` or `deleted` one."""
+    left = {t.id: t for s in source_before.sections for t in s.terms}
+    labels = _labels(target_after)
+    moved: list[Entry] = []
+    for section in target_after.sections:
+        for term in sorted(section.terms, key=lambda t: t.id):
+            old = left.get(term.id)
+            if old is None:
+                continue
+            field_changes = [
+                {"field": "concept", "old": source_before.uid, "new": target_after.uid}
+            ]
+            if old.usage_status != term.usage_status:
+                field_changes.append({
+                    "field": "usage_status",
+                    "old": term_value(old, "usage_status"),
+                    "new": term_value(term, "usage_status"),
+                })
+            moved.append(Entry(
+                Action.MOVED, target_after.id, target_after.uid, term.id, term.uid, term.text,
+                section.language.value, labels, field_changes,
+            ))
+    moved_ids = {e.term_id for e in moved}
+
+    def without_moved(entries: list[Entry]) -> list[Entry]:
+        return [e for e in entries if e.term_id not in moved_ids]
+
+    return (
+        without_moved(diff(target_before, target_after, domain_names=domain_names))
+        + moved
+        + without_moved(diff(source_before, source_after, domain_names=domain_names))
+    )
+
+
 def write(
     conn: Any, entries: list[Entry], *, batch: str, at: str, actor: Actor, comment: str = ""
 ) -> None:
