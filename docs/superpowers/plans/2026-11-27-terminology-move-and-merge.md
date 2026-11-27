@@ -383,6 +383,7 @@ Delivery is one pull request.
 - **A dialog that must stay open.** A browser can close a native dialog on a second Escape although the first was refused. `ui/Dialog` therefore has an opt-in `locked` state that reopens the dialog after such a close; the two dialogs use it while their run is pending. Confirmed in the browser trial.
 - **A concept that left the domain in the meantime.** If the concept to show after a run is no longer linked to the active domain, the entry closes instead of showing it (Reading 19 did not cover this case).
 - **Focus.** Both dialogs open with focus in the search field, and focus moves to "Change" after a pick.
+- **No "delete" in the dialogs.** The owner found "Merge and delete "work space"" puzzling: a concept is named after its term, so it read as deleting the wording. The merge line now says that all terms move and the two become one concept; the merge button reads "Merge", then "Merge into "target""; a move of a concept's last term says the concept is left empty and is removed, and its button is the plain "Move". Spec 6.3, 6.4 and the mockup were changed accordingly; the task texts above still show the first wording.
 
 ## Reviews during execution
 

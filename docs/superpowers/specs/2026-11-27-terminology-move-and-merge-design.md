@@ -251,8 +251,10 @@ The target is picked by typing into a search field.
 
 ### 6.3 The merge dialog
 
-Title "Merge "X" into another concept", a line saying that X is deleted
-and its terms move, and the target field. Once a target is picked:
+Title "Merge "X" into another concept", a line saying that all terms of X
+move to the picked concept and the two become one, and the target field.
+The dialog does not speak of deleting X: a concept is named after its
+term, so "delete X" reads as deleting the wording, which is kept. Once a target is picked:
 
 - The target as it will be afterwards: one row per language with the
   status chips of all its terms. Incoming terms are marked as new. A term
@@ -261,7 +263,9 @@ and its terms move, and the target field. Once a target is picked:
   with their status, dropped definitions with their text, and the domains
   where the moved terms stop applying.
 - A line naming the domains where the moved terms start applying, if any.
-- "Cancel", and a red button "Merge and delete "X"".
+- "Cancel", and a red button that reads "Merge" until a target is picked
+  and "Merge into "target"" afterwards. It is red because a merge cannot
+  be undone.
 
 ### 6.4 The move dialog
 
@@ -271,10 +275,11 @@ field and "To a new concept". Once the choice is complete:
 - A box "This also happens", shown only if it has entries: the change from
   preferred to admitted, a language the source loses with its dropped
   definition, a definition that is dropped because the source concept is
-  deleted, the domains where the term stops or starts applying, and the
-  deletion of the source concept when the term is its last.
-- "Cancel" and "Move". When the source concept is deleted, the button is
-  red and names the concept.
+  deleted, the domains where the term stops or starts applying, and, when the
+  term is the last of its concept, that the concept is left empty and is
+  removed.
+- "Cancel" and "Move". The button is the same in every case; the box says
+  when the emptied concept goes away.
 - A move that is refused for the same wording shows the reason in place of
   the box, and "Move" is unavailable.
 
