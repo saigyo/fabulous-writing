@@ -67,13 +67,19 @@ export function TargetPicker({ candidates, language, order, target, onPick, disa
   const current = Math.min(active, Math.max(rows.length - 1, 0))
   const optionId = (conceptId: number) => `${id}-option-${conceptId}`
 
+  const moveTo = (index: number) => {
+    setActive(index)
+    const row = rows[index]
+    if (row) document.getElementById(optionId(row.id))?.scrollIntoView?.({ block: 'nearest' })
+  }
+
   const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      setActive(Math.min(current + 1, rows.length - 1))
+      moveTo(Math.min(current + 1, rows.length - 1))
     } else if (event.key === 'ArrowUp') {
       event.preventDefault()
-      setActive(Math.max(current - 1, 0))
+      moveTo(Math.max(current - 1, 0))
     } else if (event.key === 'Enter') {
       event.preventDefault()
       if (rows[current]) onPick(rows[current])
