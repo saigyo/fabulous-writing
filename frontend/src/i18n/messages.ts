@@ -131,6 +131,9 @@ export interface Messages {
   deleteDomainTitle: string
   concepts: string
   searchConceptsPlaceholder: string
+  transferInto: string
+  transferChange: string
+  noConceptMatches: string
   searchConceptsLabel: string
   conceptLanguageTitle: string
   newConcept: string

@@ -2619,3 +2619,91 @@ dialog.app-dialog h2 {
   padding: 0;
 }
 .activity-table td button { color: var(--accent); }
+
+.target-caption {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  margin: 0.35rem 0 0.2rem;
+}
+
+.target-field {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 1.9rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.target-field:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.target-field input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  padding: 0;
+  font: inherit;
+  background: none;
+  color: var(--text);
+}
+
+.target-picked {
+  flex: 1;
+  font-weight: 600;
+}
+
+.target-suggest {
+  margin-top: 0.25rem;
+  max-height: 9.5rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.target-option {
+  display: grid;
+  grid-template-columns: minmax(7rem, auto) 1fr auto;
+  gap: 0.6rem;
+  align-items: baseline;
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.target-option:last-child {
+  border-bottom: none;
+}
+
+.target-option.active {
+  background: var(--accent-soft);
+}
+
+.target-option-label {
+  font-weight: 600;
+}
+
+.target-option-others {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.target-option mark {
+  background: var(--accent-soft);
+  color: inherit;
+  border-radius: 2px;
+}
+
+.target-none {
+  padding: 0.3rem 0.5rem;
+  color: var(--text-dim);
+  font-style: italic;
+}
