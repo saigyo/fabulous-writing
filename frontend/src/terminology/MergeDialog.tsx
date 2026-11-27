@@ -82,7 +82,13 @@ export function MergeDialog({
         </div>
       )}
       {loading && <div className="transfer-wait">{m.transferWorking}</div>}
-      {error !== null && <div className="transfer-error">{messageOf(error)}</div>}
+      {error !== null && (
+        <div className="transfer-error">
+          {error.code === 'outdated' && target !== null
+            ? m.transferOutdatedPreview(label(error.conceptId === target.id ? target : source))
+            : messageOf(error, m)}
+        </div>
+      )}
       {runError !== null && <div className="transfer-error">{runError}</div>}
       {outcome !== null && (
         <>

@@ -338,7 +338,7 @@ describe('MoveDialog', () => {
     serve([json(409, { detail: { code: 'owner_mismatch', message: 'Different owners.' } })])
     renderDialog()
     await pick(user, 'workspace')
-    expect(await screen.findByText('Different owners.')).toBeTruthy()
+    expect(await screen.findByText('Change failed: Different owners.')).toBeTruthy()
     expect(moveButton().disabled).toBe(true)
   })
 
@@ -471,6 +471,32 @@ describe('MoveDialog', () => {
     ).toBeTruthy()
   })
 
+  it('shows a failed preview whose concept is outdated as a sentence naming it and keeps confirm unavailable', async () => {
+    const user = userEvent.setup()
+    serve([json(409, { detail: { code: 'outdated', message: 'changed', concept_id: 20 } })])
+    renderDialog()
+    await pick(user, 'workspace')
+    expect(
+      await screen.findByText(
+        '“workspace” was changed in the meantime. Close this dialog and open the concept again.',
+      ),
+    ).toBeTruthy()
+    expect(moveButton().disabled).toBe(true)
+  })
+
+  it('names the source when the source is the concept an outdated preview names', async () => {
+    const user = userEvent.setup()
+    serve([json(409, { detail: { code: 'outdated', message: 'changed', concept_id: 10 } })])
+    renderDialog()
+    await pick(user, 'workspace')
+    expect(
+      await screen.findByText(
+        '“work space” was changed in the meantime. Close this dialog and open the concept again.',
+      ),
+    ).toBeTruthy()
+    expect(moveButton().disabled).toBe(true)
+  })
+
   it('shows another failure of the run and keeps the dialog open and usable', async () => {
     const user = userEvent.setup()
     serve(
@@ -482,7 +508,7 @@ describe('MoveDialog', () => {
     await waitFor(() => expect(moveButton().disabled).toBe(false))
     await user.click(moveButton())
 
-    expect(await screen.findByText('Cannot move into itself.')).toBeTruthy()
+    expect(await screen.findByText('Change failed: Cannot move into itself.')).toBeTruthy()
     expect(onDone).not.toHaveBeenCalled()
     expect(onClose).not.toHaveBeenCalled()
     expect(moveButton().disabled).toBe(false)

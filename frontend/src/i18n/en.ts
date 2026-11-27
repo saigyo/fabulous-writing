@@ -156,6 +156,8 @@ export const en: Messages = {
   mergeAddedDomain: (name) => `The moved terms now also apply in the domain “${name}”.`,
   transferOutdated: (label) =>
     `“${label}” was changed in the meantime. This is the result as it would be now.`,
+  transferOutdatedPreview: (label) =>
+    `“${label}” was changed in the meantime. Close this dialog and open the concept again.`,
   moveTitle: (text) => `Move “${text}”`,
   moveToConcept: 'To the concept',
   moveToNew: 'To a new concept',

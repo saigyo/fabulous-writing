@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { HttpError } from '../api/client'
 import type { TransferBasis, TransferOutcome } from '../types'
+import { useMessages } from '../i18n'
 import { withComment } from './conceptDraft'
 import { messageOf } from './transfer'
 
@@ -8,6 +9,7 @@ type Send = (body: { basis: TransferBasis; comment?: string }) => Promise<Transf
 
 /** The real run of a merge or move: after success it stays running, because its opener closes the dialog. */
 export function useTransferRun(comment: string, onDone: (outcome: TransferOutcome) => void, reload: () => void) {
+  const m = useMessages()
   const [running, setRunning] = useState(false)
   const [runError, setRunError] = useState<string | null>(null)
   const [outdatedId, setOutdatedId] = useState<number | null>(null)
@@ -22,7 +24,7 @@ export function useTransferRun(comment: string, onDone: (outcome: TransferOutcom
     outcome: TransferOutcome,
     send: Send,
     outdatedFallback: number,
-    describe: (failure: HttpError) => string = messageOf,
+    describe: (failure: HttpError) => string = (failure) => messageOf(failure, m),
   ) => {
     setRunning(true)
     clear()

@@ -60,7 +60,7 @@ export function MoveDialog({
   const failureText = (failure: HttpError) =>
     failure.code === 'duplicate_text' && target !== null
       ? m.moveDuplicate(label(target), term.text, named(termLanguage ?? language))
-      : messageOf(failure)
+      : messageOf(failure, m)
 
   const move = () => {
     if (targetId === undefined || outcome === null) return
@@ -155,7 +155,13 @@ export function MoveDialog({
       {choice === 'new' && <div className="transfer-also">{m.moveNewConceptDomains(sourceLabel)}</div>}
       {outdatedLabel !== null && <div className="transfer-error">{m.transferOutdated(outdatedLabel)}</div>}
       {loading && <div className="transfer-wait">{m.transferWorking}</div>}
-      {error !== null && <div className="transfer-error">{failureText(error)}</div>}
+      {error !== null && (
+        <div className="transfer-error">
+          {error.code === 'outdated'
+            ? m.transferOutdatedPreview(label(error.conceptId !== source.id && target ? target : source))
+            : failureText(error)}
+        </div>
+      )}
       {runError !== null && <div className="transfer-error">{runError}</div>}
       {also.length > 0 && (
         <div className="transfer-box">
