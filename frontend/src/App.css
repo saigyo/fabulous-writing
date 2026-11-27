@@ -2644,7 +2644,7 @@ dialog.app-dialog h2 {
   background: var(--bg);
 }
 
-.target-field:focus-within {
+.target-field:has(input):focus-within {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
@@ -2658,6 +2658,11 @@ dialog.app-dialog h2 {
   font: inherit;
   background: none;
   color: var(--text);
+}
+
+.target-field .link-button {
+  font-size: 0.8rem;
+  text-decoration: none;
 }
 
 .target-picked {
@@ -2745,9 +2750,11 @@ dialog.app-dialog h2 {
 .transfer-choice input[type='radio'] {
   appearance: none;
   box-sizing: border-box;
+  flex: none;
   width: 0.85rem;
   height: 0.85rem;
   margin: 0;
+  padding: 0;
   border: 1px solid var(--text-dim);
   border-radius: 50%;
 }
@@ -2857,6 +2864,8 @@ dialog.app-dialog h2 {
 }
 
 .transfer-buttons button {
+  border-width: 1px;
+  border-style: solid;
   font-size: 0.85rem;
   padding: 0.3rem 0.6rem;
   border-radius: 6px;
