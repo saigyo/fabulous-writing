@@ -146,6 +146,20 @@ export interface Messages {
   transferDroppedDomain: (name: string) => string
   mergeAddedDomain: (name: string) => string
   transferOutdated: (label: string) => string
+  moveTitle: (text: string) => string
+  moveToConcept: string
+  moveToNew: string
+  moveAlso: string
+  moveConfirm: string
+  moveConfirmDelete: (label: string) => string
+  moveLostLanguage: (label: string, language: string) => string
+  moveLostLanguageDefinition: (label: string, language: string, quote: string) => string
+  moveDefinitionDropped: (language: string, quote: string) => string
+  moveDroppedDomain: (name: string) => string
+  moveAddedDomain: (name: string) => string
+  moveSourceDeleted: (label: string) => string
+  moveNewConceptDomains: (label: string) => string
+  moveDuplicate: (target: string, text: string, language: string) => string
   searchConceptsLabel: string
   conceptLanguageTitle: string
   newConcept: string

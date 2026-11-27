@@ -2718,6 +2718,47 @@ dialog.app-dialog h2 {
   margin: 0.25rem 0 0.75rem;
 }
 
+.move-dialog {
+  width: 400px;
+  font-size: 0.85rem;
+}
+
+.transfer-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
+.transfer-choice label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.transfer-choice input[type='radio'] {
+  appearance: none;
+  box-sizing: border-box;
+  width: 0.85rem;
+  height: 0.85rem;
+  margin: 0;
+  border: 1px solid var(--text-dim);
+  border-radius: 50%;
+}
+
+.transfer-choice input[type='radio']:checked {
+  border: 0.28rem solid var(--accent);
+}
+
+.transfer-choice input[type='radio']:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.transfer-choice-sub {
+  padding-left: 1.35rem;
+}
+
 .transfer-result {
   margin-top: 0.75rem;
   border-top: 1px solid var(--border);
