@@ -167,7 +167,7 @@ export const fr: Messages = {
   transferDroppedTerm: (text, language, status, target) =>
     `Le terme « ${text} » (${language}, ${status}) : « ${target} » a déjà cette forme.`,
   transferDroppedDefinition: (language, quote, target) =>
-    `La définition (${language}) : ${quote} « ${target} » garde la sienne.`,
+    `La définition pour ${language} :${quote} « ${target} » garde la sienne.`,
   transferDroppedDomain: (name) => `Le domaine « ${name} » : les termes déplacés n’y valent plus.`,
   mergeAddedDomain: (name) => `Les termes déplacés valent maintenant aussi dans le domaine « ${name} ».`,
   transferOutdated: (label) =>
