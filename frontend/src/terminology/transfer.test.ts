@@ -7,7 +7,7 @@ import type {
   TransferOutcome,
   UsageStatus,
 } from '../types'
-import { highlight, notices, resultRows, suggest, suggestionRow } from './transfer'
+import { highlight, notices, resultRows, sourceIsCurrent, suggest, suggestionRow } from './transfer'
 
 const ORDER: Language[] = ['en', 'de', 'fr', 'es', 'it', 'ja', 'zh']
 
@@ -283,5 +283,70 @@ describe('notices', () => {
       { kind: 'droppedDefinition', language: 'de', definition: 'Ein Ort.' },
       { kind: 'sourceDeleted' },
     ])
+  })
+})
+
+describe('sourceIsCurrent', () => {
+  const held = concept(section('en', [term('a')]), section('de', [term('b')]))
+  const [first, second] = held.sections
+  const basedOn = (over: Partial<TransferOutcome['basis']['source']> = {}) =>
+    outcome({
+      basis: {
+        source: {
+          concept_id: held.id,
+          revision: held.revision,
+          sections: [
+            { id: first.id, revision: first.revision },
+            { id: second.id, revision: second.revision },
+          ],
+          ...over,
+        },
+        target: null,
+      },
+    })
+
+  it('is true when concept, revision and sections match, in any order', () => {
+    expect(sourceIsCurrent(held, basedOn())).toBe(true)
+    expect(
+      sourceIsCurrent(
+        held,
+        basedOn({
+          sections: [
+            { id: second.id, revision: second.revision },
+            { id: first.id, revision: first.revision },
+          ],
+        }),
+      ),
+    ).toBe(true)
+  })
+
+  it('is false for another concept', () => {
+    expect(sourceIsCurrent(held, basedOn({ concept_id: held.id + 1 }))).toBe(false)
+  })
+
+  it('is false for another concept revision', () => {
+    expect(sourceIsCurrent(held, basedOn({ revision: held.revision + 1 }))).toBe(false)
+  })
+
+  it('is false when a section has another revision', () => {
+    expect(
+      sourceIsCurrent(
+        held,
+        basedOn({
+          sections: [
+            { id: first.id, revision: first.revision },
+            { id: second.id, revision: second.revision + 1 },
+          ],
+        }),
+      ),
+    ).toBe(false)
+  })
+
+  it('is false for an extra or a missing section', () => {
+    const one = { id: first.id, revision: first.revision }
+    const two = { id: second.id, revision: second.revision }
+    expect(sourceIsCurrent(held, basedOn({ sections: [one, two, { id: 99999, revision: 1 }] }))).toBe(false)
+    expect(sourceIsCurrent(held, basedOn({ sections: [one] }))).toBe(false)
+    expect(sourceIsCurrent(held, basedOn({ sections: [one, { id: 99999, revision: 1 }] }))).toBe(false)
   })
 })

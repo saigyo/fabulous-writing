@@ -7,7 +7,7 @@ import type { Concept, ConceptTerm, Language, TransferOutcome } from '../types'
 import { Dialog } from '../ui/Dialog'
 import { conceptLabel } from './labels'
 import { TargetPicker } from './TargetPicker'
-import { messageOf, notices, type Notice } from './transfer'
+import { messageOf, notices, sourceIsCurrent, type Notice } from './transfer'
 import { Quoted, TransferButtons } from './transferParts'
 import { useTransferPreview } from './useTransferPreview'
 import { useTransferRun } from './useTransferRun'
@@ -49,8 +49,11 @@ export function MoveDialog({
       targetId === undefined ? null : () => moveTerm(term.id, { target_id: targetId, preview: true }),
     [term.id, targetId],
   )
-  const { outcome, loading, error, reload } = useTransferPreview(run)
+  const { outcome: previewed, loading, error, reload } = useTransferPreview(run)
   const { running, runError, outdatedId, clear, confirm } = useTransferRun(comment, onDone, reload)
+
+  const stale = previewed !== null && !sourceIsCurrent(source, previewed)
+  const outcome = stale ? null : previewed
 
   const label = (concept: Concept) => conceptLabel(concept, language, order).text
   const sourceLabel = label(source)
@@ -162,6 +165,7 @@ export function MoveDialog({
             : failureText(error)}
         </div>
       )}
+      {stale && <div className="transfer-error">{m.transferOutdatedPreview(sourceLabel)}</div>}
       {runError !== null && <div className="transfer-error">{runError}</div>}
       {also.length > 0 && (
         <div className="transfer-box">

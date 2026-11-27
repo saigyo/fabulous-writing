@@ -8,7 +8,7 @@ import { Dialog } from '../ui/Dialog'
 import { conceptLabel } from './labels'
 import { StatusChip } from './StatusChip'
 import { TargetPicker } from './TargetPicker'
-import { messageOf, notices, resultRows } from './transfer'
+import { messageOf, notices, resultRows, sourceIsCurrent } from './transfer'
 import { Quoted, TransferButtons } from './transferParts'
 import { useTransferPreview } from './useTransferPreview'
 import { useTransferRun } from './useTransferRun'
@@ -41,8 +41,11 @@ export function MergeDialog({
       target === null ? null : () => mergeConcept(source.id, { target_id: target.id, preview: true }),
     [source.id, target],
   )
-  const { outcome, loading, error, reload } = useTransferPreview(run)
+  const { outcome: previewed, loading, error, reload } = useTransferPreview(run)
   const { running, runError, outdatedId, clear, confirm } = useTransferRun(comment, onDone, reload)
+
+  const stale = previewed !== null && !sourceIsCurrent(source, previewed)
+  const outcome = stale ? null : previewed
 
   const label = (concept: Concept) => conceptLabel(concept, language, order).text
   const sourceLabel = label(source)
@@ -89,6 +92,7 @@ export function MergeDialog({
             : messageOf(error, m)}
         </div>
       )}
+      {stale && <div className="transfer-error">{m.transferOutdatedPreview(sourceLabel)}</div>}
       {runError !== null && <div className="transfer-error">{runError}</div>}
       {outcome !== null && (
         <>

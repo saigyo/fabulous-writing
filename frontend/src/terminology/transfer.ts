@@ -84,6 +84,15 @@ export function resultRows(outcome: TransferOutcome, order: Language[]): ResultR
   })
 }
 
+/** A preview is only usable when the server computed it from the source as the entry holds it. */
+export function sourceIsCurrent(source: Concept, outcome: TransferOutcome): boolean {
+  const basis = outcome.basis.source
+  if (basis.concept_id !== source.id || basis.revision !== source.revision) return false
+  if (basis.sections.length !== source.sections.length) return false
+  const held = new Map(source.sections.map((s) => [s.id, s.revision]))
+  return basis.sections.every((s) => held.get(s.id) === s.revision)
+}
+
 export type Notice =
   | { kind: 'droppedTerm'; text: string; language: Language; usageStatus: UsageStatus }
   | { kind: 'droppedDefinition'; language: Language; definition: string }
