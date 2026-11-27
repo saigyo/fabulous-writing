@@ -163,7 +163,7 @@ export const de: Messages = {
   transferDroppedTerm: (text, language, status, target) =>
     `Der Begriff „${text}“ (${language}, ${status}): „${target}“ hat diese Schreibweise schon.`,
   transferDroppedDefinition: (language, quote, target) =>
-    `Die Definition (${language}): ${quote} „${target}“ behält die eigene.`,
+    `Die Definition für ${language}: ${quote} „${target}“ behält ihre eigene.`,
   transferDroppedDomain: (name) => `Die Domäne „${name}“: Die verschobenen Begriffe gelten dort nicht mehr.`,
   mergeAddedDomain: (name) => `Die verschobenen Begriffe gelten jetzt auch in der Domäne „${name}“.`,
   transferOutdated: (label) =>

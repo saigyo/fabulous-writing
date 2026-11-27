@@ -256,7 +256,7 @@ describe('MergeDialog', () => {
     const items = within(box).getAllByRole('listitem').map((li) => li.textContent)
     expect(items).toEqual([
       'The term “work area” (EN, admitted): “workspace” already has this wording.',
-      `The Deutsch definition: “${DEFINITION}” “workspace” keeps its own.`,
+      `The definition for Deutsch: “${DEFINITION}” “workspace” keeps its own.`,
       'The domain “Support”: the moved terms no longer apply there.',
     ])
     expect(within(dialog).getByText('The moved terms now also apply in the domain “Marketing”.')).toBeTruthy()

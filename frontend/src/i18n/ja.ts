@@ -155,7 +155,7 @@ export const ja: Messages = {
   transferDroppedTerm: (text, language, status, target) =>
     `用語「${text}」(${language}、${status}):「${target}」には同じ表記がすでにあります。`,
   transferDroppedDefinition: (language, quote, target) =>
-    `定義(${language}):${quote}「${target}」は自分の定義を保ちます。`,
+    `${language}の定義:${quote}「${target}」は自分の定義を保ちます。`,
   transferDroppedDomain: (name) => `ドメイン「${name}」:移した用語はそこでは適用されなくなります。`,
   mergeAddedDomain: (name) => `移した用語は、ドメイン「${name}」でも適用されるようになります。`,
   transferOutdated: (label) => `「${label}」はその間に変更されました。これが現在の結果です。`,

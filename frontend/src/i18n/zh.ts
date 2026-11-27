@@ -153,7 +153,7 @@ export const zh: Messages = {
   transferDroppedTerm: (text, language, status, target) =>
     `术语“${text}”(${language}，${status})：“${target}”已有这个写法。`,
   transferDroppedDefinition: (language, quote, target) =>
-    `定义(${language})：${quote}“${target}”保留自己的定义。`,
+    `${language}的定义：${quote}“${target}”保留自己的定义。`,
   transferDroppedDomain: (name) => `领域“${name}”：移过去的术语在那里不再适用。`,
   mergeAddedDomain: (name) => `移过去的术语现在也适用于领域“${name}”。`,
   transferOutdated: (label) => `“${label}”在此期间被修改过。这是现在的结果。`,
