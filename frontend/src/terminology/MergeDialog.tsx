@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { HttpError, mergeConcept } from '../api/client'
+import { mergeConcept } from '../api/client'
 import { useMessages } from '../i18n'
 import { languageName } from '../languages'
 import { useStore } from '../state/store'
@@ -9,8 +9,9 @@ import { conceptLabel } from './labels'
 import { StatusChip } from './StatusChip'
 import { TargetPicker } from './TargetPicker'
 import { messageOf, notices, resultRows } from './transfer'
-import { Quoted } from './transferParts'
+import { Quoted, TransferButtons } from './transferParts'
 import { useTransferPreview } from './useTransferPreview'
+import { useTransferRun } from './useTransferRun'
 
 interface MergeDialogProps {
   source: Concept
@@ -34,9 +35,6 @@ export function MergeDialog({
   const m = useMessages()
   const languages = useStore((s) => s.languages)
   const [target, setTarget] = useState<Concept | null>(null)
-  const [running, setRunning] = useState(false)
-  const [runError, setRunError] = useState<string | null>(null)
-  const [outdatedId, setOutdatedId] = useState<number | null>(null)
 
   const run = useMemo(
     () =>
@@ -44,38 +42,19 @@ export function MergeDialog({
     [source.id, target],
   )
   const { outcome, loading, error, reload } = useTransferPreview(run)
+  const { running, runError, outdatedId, clear, confirm } = useTransferRun(comment, onDone, reload)
 
   const label = (concept: Concept) => conceptLabel(concept, language, order).text
   const sourceLabel = label(source)
 
-  const confirm = async () => {
+  const merge = () => {
     if (target === null || outcome === null) return
-    setRunning(true)
-    setRunError(null)
-    setOutdatedId(null)
-    try {
-      const done = await mergeConcept(source.id, {
-        target_id: target.id,
-        basis: outcome.basis,
-        comment: comment || undefined,
-      })
-      onDone(done)
-    } catch (caught) {
-      setRunning(false)
-      const failure = caught as HttpError
-      if (failure.code === 'outdated') {
-        setOutdatedId(failure.conceptId ?? target.id)
-        reload()
-      } else {
-        setRunError(messageOf(failure))
-      }
-    }
+    void confirm(outcome, (body) => mergeConcept(source.id, { target_id: target.id, ...body }), target.id)
   }
 
   const pick = (concept: Concept | null) => {
     setTarget(concept)
-    setRunError(null)
-    setOutdatedId(null)
+    clear()
   }
 
   const taken = outcome === null ? [] : notices(outcome, 'merge')
@@ -95,6 +74,7 @@ export function MergeDialog({
         target={target}
         onPick={pick}
         disabled={running}
+        autoFocus
       />
       {outdatedId !== null && target !== null && (
         <div className="transfer-error">
@@ -161,19 +141,14 @@ export function MergeDialog({
           ))}
         </>
       )}
-      <div className="transfer-buttons">
-        <button type="button" className="plain-button" disabled={running} onClick={onClose}>
-          {m.dialogCancel}
-        </button>
-        <button
-          type="button"
-          className="confirm-dialog-danger"
-          disabled={outcome === null || running}
-          onClick={confirm}
-        >
-          {m.mergeConfirm(sourceLabel)}
-        </button>
-      </div>
+      <TransferButtons
+        running={running}
+        ready={outcome !== null}
+        danger
+        label={m.mergeConfirm(sourceLabel)}
+        onCancel={onClose}
+        onConfirm={merge}
+      />
     </Dialog>
   )
 }

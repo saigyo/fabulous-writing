@@ -194,6 +194,76 @@ describe('TargetPicker', () => {
     expect(onPick).not.toHaveBeenCalled()
   })
 
+  it('keeps the no-match row out of the listbox and reports whether options are shown', async () => {
+    const user = userEvent.setup()
+    render(<Harness onPick={vi.fn()} />)
+    const field = screen.getByRole('combobox', { name: 'Into' })
+    expect(field.getAttribute('aria-expanded')).toBe('true')
+    await user.type(field, 'zzz')
+    const none = await screen.findByText('No concept matches.')
+    expect(none.closest('[role="listbox"]')).toBeNull()
+    expect(screen.queryByRole('listbox')).toBeNull()
+    expect(field.getAttribute('aria-expanded')).toBe('false')
+    await user.clear(field)
+    expect(field.getAttribute('aria-expanded')).toBe('true')
+    expect(document.getElementById(field.getAttribute('aria-controls')!)?.getAttribute('role')).toBe('listbox')
+  })
+
+  it('moves the focus to "Change" after a pick by click and by Enter', async () => {
+    const user = userEvent.setup()
+    render(<Harness onPick={vi.fn()} />)
+    await user.click(screen.getByRole('option', { name: /workflow/ }))
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Change' })))
+
+    await user.click(screen.getByRole('button', { name: 'Change' }))
+    const field = await screen.findByRole('combobox', { name: 'Into' })
+    await waitFor(() => expect(document.activeElement).toBe(field))
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Change' })))
+  })
+
+  it('does not move the focus for a target it was given', () => {
+    render(<Harness onPick={vi.fn()} start={workflow} />)
+    expect(document.activeElement).not.toBe(screen.getByRole('button', { name: 'Change' }))
+  })
+
+  it('hides the caption visually but keeps it as the field\'s name', () => {
+    render(
+      <TargetPicker
+        candidates={all}
+        language="en"
+        order={order}
+        target={null}
+        disabled={false}
+        onPick={vi.fn()}
+        hideCaption
+      />,
+    )
+    const field = screen.getByRole('combobox', { name: 'Into' })
+    expect(document.querySelector(`label[for="${field.id}"]`)!.classList.contains('visually-hidden')).toBe(true)
+  })
+
+  it('shows the caption by default', () => {
+    render(<Harness onPick={vi.fn()} />)
+    const field = screen.getByRole('combobox', { name: 'Into' })
+    expect(document.querySelector(`label[for="${field.id}"]`)!.classList.contains('visually-hidden')).toBe(false)
+  })
+
+  it('marks the field to be focused when the dialog opens, if asked', () => {
+    render(
+      <TargetPicker
+        candidates={all}
+        language="en"
+        order={order}
+        target={null}
+        disabled={false}
+        onPick={vi.fn()}
+        autoFocus
+      />,
+    )
+    expect(screen.getByRole('combobox', { name: 'Into' }).hasAttribute('data-autofocus')).toBe(true)
+  })
+
   it('shows the picked concept with a Change button that clears it and focuses the field', async () => {
     const user = userEvent.setup()
     const onPick = vi.fn()

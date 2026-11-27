@@ -321,6 +321,24 @@ describe('MergeDialog', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
+  it('leaves out a reason of only spaces', async () => {
+    const user = userEvent.setup()
+    serve([json(200, outcome())], async () => json(200, outcome()))
+    const { onDone } = renderDialog({ comment: '   ' })
+    await pick(user, 'workspace')
+    await waitFor(() => expect(confirmButton().disabled).toBe(false))
+    await user.click(confirmButton())
+    await waitFor(() => expect(onDone).toHaveBeenCalled())
+    expect(runs()[0].body).toEqual({ target_id: 20, basis: basis(1) })
+  })
+
+  it('opens with the focus in the search field and a visible caption', () => {
+    renderDialog()
+    const field = screen.getByRole('combobox', { name: 'Into' })
+    expect(document.activeElement).toBe(field)
+    expect(document.querySelector(`label[for="${field.id}"]`)!.classList.contains('visually-hidden')).toBe(false)
+  })
+
   it('closes on Cancel and Escape when nothing runs', async () => {
     const user = userEvent.setup()
     const { onClose } = renderDialog()

@@ -5,7 +5,8 @@ import { useEffect, useId, useRef, type ReactNode, type RefObject } from 'react'
  * rest of the page inert — the platform is the focus trap — and Escape
  * arrives as the `cancel` event. The component never closes itself: every
  * path (Escape, backdrop, buttons inside) goes through onClose so the
- * parent's mount/unmount stays the single source of truth.
+ * parent's mount/unmount stays the single source of truth. An element
+ * marked `data-autofocus` gets the focus once the dialog is open.
  */
 export function Dialog({
   title,
@@ -43,6 +44,7 @@ export function Dialog({
     const priorOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     dialog.showModal()
+    dialog.querySelector<HTMLElement>('[data-autofocus]')?.focus()
     return () => {
       document.body.style.overflow = priorOverflow
       if (dialog.open) dialog.close()

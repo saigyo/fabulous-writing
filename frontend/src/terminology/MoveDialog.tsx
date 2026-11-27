@@ -1,5 +1,5 @@
 import { useId, useMemo, useState } from 'react'
-import { HttpError, moveTerm } from '../api/client'
+import { moveTerm, type HttpError } from '../api/client'
 import { useMessages } from '../i18n'
 import { languageName } from '../languages'
 import { useStore } from '../state/store'
@@ -8,8 +8,9 @@ import { Dialog } from '../ui/Dialog'
 import { conceptLabel } from './labels'
 import { TargetPicker } from './TargetPicker'
 import { messageOf, notices, type Notice } from './transfer'
-import { Quoted } from './transferParts'
+import { Quoted, TransferButtons } from './transferParts'
 import { useTransferPreview } from './useTransferPreview'
+import { useTransferRun } from './useTransferRun'
 
 interface MoveDialogProps {
   source: Concept
@@ -41,9 +42,6 @@ export function MoveDialog({
   const groupName = useId()
   const [choice, setChoice] = useState<Choice>('concept')
   const [target, setTarget] = useState<Concept | null>(null)
-  const [running, setRunning] = useState(false)
-  const [runError, setRunError] = useState<string | null>(null)
-  const [outdatedId, setOutdatedId] = useState<number | null>(null)
 
   const targetId = choice === 'new' ? null : (target?.id ?? undefined)
   const run = useMemo(
@@ -52,6 +50,7 @@ export function MoveDialog({
     [term.id, targetId],
   )
   const { outcome, loading, error, reload } = useTransferPreview(run)
+  const { running, runError, outdatedId, clear, confirm } = useTransferRun(comment, onDone, reload)
 
   const label = (concept: Concept) => conceptLabel(concept, language, order).text
   const sourceLabel = label(source)
@@ -63,42 +62,19 @@ export function MoveDialog({
       ? m.moveDuplicate(label(target), term.text, named(termLanguage ?? language))
       : messageOf(failure)
 
-  const clearMessages = () => {
-    setRunError(null)
-    setOutdatedId(null)
-  }
-
-  const confirm = async () => {
+  const move = () => {
     if (targetId === undefined || outcome === null) return
-    setRunning(true)
-    clearMessages()
-    try {
-      const done = await moveTerm(term.id, {
-        target_id: targetId,
-        basis: outcome.basis,
-        comment: comment || undefined,
-      })
-      onDone(done)
-    } catch (caught) {
-      setRunning(false)
-      const failure = caught as HttpError
-      if (failure.code === 'outdated') {
-        setOutdatedId(failure.conceptId ?? source.id)
-        reload()
-      } else {
-        setRunError(failureText(failure))
-      }
-    }
+    void confirm(outcome, (body) => moveTerm(term.id, { target_id: targetId, ...body }), source.id, failureText)
   }
 
   const choose = (next: Choice) => {
     setChoice(next)
-    clearMessages()
+    clear()
   }
 
   const pick = (concept: Concept | null) => {
     setTarget(concept)
-    clearMessages()
+    clear()
   }
 
   const outdatedLabel = outdatedId === null ? null : label(outdatedId !== source.id && target ? target : source)
@@ -158,6 +134,8 @@ export function MoveDialog({
               target={target}
               onPick={pick}
               disabled={running}
+              hideCaption
+              autoFocus
             />
           </div>
         )}
@@ -189,19 +167,14 @@ export function MoveDialog({
           </ul>
         </div>
       )}
-      <div className="transfer-buttons">
-        <button type="button" className="plain-button" disabled={running} onClick={onClose}>
-          {m.dialogCancel}
-        </button>
-        <button
-          type="button"
-          className={deletesSource ? 'confirm-dialog-danger' : 'primary-button'}
-          disabled={outcome === null || running}
-          onClick={confirm}
-        >
-          {deletesSource ? m.moveConfirmDelete(sourceLabel) : m.moveConfirm}
-        </button>
-      </div>
+      <TransferButtons
+        running={running}
+        ready={outcome !== null}
+        danger={deletesSource}
+        label={deletesSource ? m.moveConfirmDelete(sourceLabel) : m.moveConfirm}
+        onCancel={onClose}
+        onConfirm={move}
+      />
     </Dialog>
   )
 }

@@ -102,6 +102,16 @@ describe('Dialog', () => {
     expect(document.activeElement).toBe(screen.getByText('opener'))
   })
 
+  it('focuses the element marked data-autofocus once it is open', () => {
+    render(
+      <Dialog title="T" onClose={() => {}}>
+        <button>first</button>
+        <input aria-label="field" data-autofocus />
+      </Dialog>,
+    )
+    expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'field' }))
+  })
+
   /** A native close the parent did not ask for: what a second Escape does in Chrome. */
   function closeNatively(el: HTMLDialogElement) {
     el.close()
