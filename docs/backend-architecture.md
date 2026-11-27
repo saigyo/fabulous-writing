@@ -443,12 +443,13 @@ re-exports the public names, so callers import from `app.services.terminology`.
 
 | Module | Owns |
 |---|---|
-| `model.py` | Pydantic models (`Domain`, `Concept`, `LanguageSection`, `ConceptTerm`), the input models (`SectionInput`, `TermInput`, which carry the version numbers a save read), the pick-list enums, `Actor`, the two exceptions, `section_label` |
+| `model.py` | Pydantic models (`Domain`, `Concept`, `LanguageSection`, `ConceptTerm`), the input models (`SectionInput`, `TermInput`, which carry the version numbers a save read), the models of a merge or move (`TransferBasis`, `TransferOutcome` and the parts of an outcome), the pick-list enums, `Actor`, the exceptions, `section_label` |
 | `schema.py` | The DDL, `REQUIRED_SCHEMA` (what `manage_schema=false` verifies), `verify`, and `migrate_domains` (the `domains.owner_id` backfill and its indexes) |
 | `rows.py` | SQL on the concept tables: loading concepts, inserting, applying a section input, the link rows, and the version-number updates. It decides nothing; it writes what it is told |
-| `changes.py` | `diff` (two states of a concept to a list of log entries) and `write` (the entries to `terminology_changes`) |
+| `changes.py` | `diff` (two states of a concept to a list of log entries), `transfer_entries` (the entries of a move or merge, built from two `diff`s) and `write` (the entries to `terminology_changes`) |
+| `transfer.py` | The decision of a move or merge, without SQL: `plan_transfer` (which terms move, which are dropped as duplicates, which sections empty out, which definitions are adopted or dropped) and the comparison of a basis with a concept (`basis_of`, `basis_matches`) |
 | `migration.py` | `migrate_legacy_terms`: the old `terms` table to concepts |
-| `store.py` | `TerminologyStore`: the transactions, the locks, the rules, the version comparison, and the ownership checks |
+| `store.py` | `TerminologyStore`: the transactions, the locks, the rules, the version comparison, the ownership checks, and `_transfer`, the one function behind move, merge and split |
 
 `app/api/terminology.py` and `app/checkers/terminology.py` use the store only through
 these names.
@@ -586,10 +587,108 @@ A write method loads the concept before and after its changes and gives both to
   entry, only the term entries, because a definition is compared as text and an absent
   section counts as empty.
 
+A move or merge is logged by `changes.transfer_entries`, not by `_record` (see
+[Moving a term and merging concepts](#moving-a-term-and-merging-concepts)). It adds two
+actions, `moved` and `merged`.
+
 All entries of one call share a batch id and time. `delete_domain` writes one batch for
 all the concepts it deletes or unlinks. `Actor` carries the user, admin flag and origin
 (`manual`, `extraction`, `import`, `migration`, `seed`); `Actor.system(origin)` has no user.
 Domain create and update are not logged.
+
+### Moving a term and merging concepts
+
+Three operations share one function, `_transfer` in `store.py`, so that the rules exist
+once: moving a term to another concept, merging a concept into another, and splitting a
+term off into a new concept (a move whose target is `null`). A merge is a move of every
+term of the source, and the source is then deleted. `transfer.py` decides what happens
+(`plan_transfer`); `_apply_transfer` writes it; `changes.transfer_entries` logs it. The
+terms keep their ids, uids and history: a move changes `section_id` (and, for a demotion,
+`usage_status`), it does not delete and create.
+
+The rules of the plan:
+
+- A term whose wording equals one in the target's section of the same language (exact
+  comparison, so a wording that differs only in case is kept) is refused in a move
+  (`duplicate_text`) and dropped in a merge, which reports it as `dropped_terms`.
+- A moved `preferred` active term lands as `admitted` if the target section already has an
+  active preferred term (`usage_before` and `usage_after` in `moved`).
+- A language the term moves into without a section there gets a new section. A source
+  section that empties out hands its definition over if the target has no section for that
+  language or its definition is blank; if the target has its own, the source's is dropped
+  and reported (`dropped_definitions`). A section that does not empty out keeps its
+  definition. A source section that empties out is removed
+  (`removed_languages`); if that was the last one the source concept is deleted
+  (`source` is `null` in the answer).
+- Source and target must have the same owner (`owner_mismatch`) and differ
+  (`same_concept`), and both must be writable for the actor (`GlobalReadOnlyError`).
+- The domains are not merged. A merge reports the source's domains the target is not in
+  (`dropped_domains`: the moved terms no longer apply there) and the target's domains the
+  source was not in (`added_domains`: they now apply there). A new concept gets the source's
+  domain links and an empty report.
+
+**The order inside `_transfer`.** Reads, locks, checks, writes, in this order:
+
+1. Read without a lock the one fact needed to lock: the concept of the term, or for a
+   split the source's domain ids.
+2. Lock with `_lock`: for a split the source's domains (so that a domain cannot be deleted
+   meanwhile), then the concept rows of source and target, in ascending id. Two merges of
+   the same pair in opposite directions therefore take the same order and cannot deadlock.
+3. Load both concepts again. A concept that is gone or invisible answers `None` (404).
+   A term that is no longer in the source, or a split whose source now has other domains
+   than step 1 read, is `outdated` even for a preview.
+4. `_check_transfer`: writable, `same_concept`, `owner_mismatch`, then the basis (below).
+5. `plan_transfer`, which can raise `duplicate_text`.
+6. Write, in this order: create the target sections that are missing and, for a split, the
+   new concept with its links; re-point each moved term to its new section; update the
+   definitions of target sections that received something; delete the dropped duplicates;
+   then delete the emptied source sections, or the whole source concept. **The order is
+   what keeps the terms.** `concept_terms` cascades from its section and the section from
+   its concept (`ON DELETE CASCADE`), so a term still pointing at an old section when that
+   section or the concept is deleted would be deleted with it. Every moved term has left
+   before anything is removed. Version numbers rise as for a save: the term, the sections
+   written, the concept when a section was added or removed. A new concept starts at 1.
+7. Load source and target again, build the log entries and the answer.
+
+**The basis.** A real run must carry the `basis` its preview returned: for source and
+target the concept id and version number and the id and version number of every section.
+`basis_matches` compares them with the locked state, and any difference, a changed section
+set included, refuses the run with `TransferOutdatedError`, a 409 with `code: "outdated"`,
+`message` and `concept_id`, the concept that changed (the source is checked first). For a
+split the basis has no target, and a run that sends one (or a target concept without one)
+is outdated as well. The comparison is on the whole concept, not on the term, because the
+preview shows the result of the whole state: a definition adopted or dropped depends on
+sections the writer did not touch. A preview needs no basis and is not compared.
+
+**A preview is the same run, rolled back.** `_transferring` runs `_transfer` in the
+transaction of the call and, when `preview` is set, raises a private `_Rollback` carrying
+the answer, which the context manager turns into a rollback. There is no second
+implementation of the rules to drift from the first: the preview raises every refusal a run
+would. What may differ between a preview and its run: timestamps, and anything the database
+generates, which on Postgres means the ids of new sections and of a new concept (rolled-back
+sequence values are not reused) and a new concept's `uid`. Version numbers, term ids, the
+moved terms, notices and the basis agree. A preview takes the same locks as a run, so it
+waits for concurrent writers of the same concepts and holds them while it computes. On
+SQLite the lock statement is the first write, which opens the single write transaction, so a
+preview waits behind every writer and blocks them for its duration.
+
+**The log.** One batch for the call, entries in this order: the target's own changes, then
+the `moved` entries, then what happened to the source. A moved term never gets a `created`
+or `deleted` entry. `transfer_entries` takes the two `diff`s (source and target, before and
+after), removes the entries about moved terms, and adds one `moved` entry per term, written
+for the target, with the change `concept` (old: the source's uid, new: the target's uid) and
+`usage_status` when it was demoted.
+
+| Operation | Entries |
+|---|---|
+| Move to an existing concept | the target's `edited` entry if a definition was adopted; `moved` per term; for the source an `edited` entry if a definition left with its section, and a `deleted` entry for the source concept if it is gone |
+| Merge | as a move; the source's concept entry is `merged` instead of `deleted` and starts its changes with `merged_into` (the target's uid); dropped duplicates are `deleted` term entries of the source |
+| Split | one `created` entry for the new concept (its definitions and domains), `moved` per term, then the source as in a move |
+
+**The endpoints** are in [Endpoints](#endpoints). The gate `custom_domains` applies only to
+a move with `target_id: null`, because that is the one that creates a concept; it is
+checked for a preview too, so the dialog learns of a missing feature before the writer
+confirms.
 
 ### Migration of the old terms
 
@@ -650,7 +749,7 @@ parents first and never contained `terms_legacy`.
 ### Endpoints
 
 `app/api/terminology.py` has the domain endpoints (`GET`/`POST /api/domains`,
-`PUT`/`DELETE /api/domains/{id}`) and seven concept endpoints. Each concept endpoint is a thin
+`PUT`/`DELETE /api/domains/{id}`) and nine concept endpoints. Each concept endpoint is a thin
 call to one store method; the rules, the version comparison and the ownership checks stay in
 the store. The former term endpoints (`/api/domains/{id}/terms`, `/api/terms/{id}`) and the
 layer that translated them into concepts are gone, with `get_concept_by_section` and
@@ -665,19 +764,32 @@ layer that translated them into concepts are gone, with `get_concept_by_section`
 | `PUT /api/concepts/{id}/languages/{language}` | `save_section` | `{id?, revision?, definition?, terms, comment?}`; the language is the path's; the concept |
 | `DELETE /api/concepts/{id}` | `delete_concept` | 204 |
 | `DELETE /api/domains/{id}/concepts/{concept_id}` | `remove_concept_from_domain` | 204 |
+| `POST /api/concepts/{id}/merge` | `merge_concept` | `{target_id, preview?, basis?, comment?}`; the `TransferOutcome` |
+| `POST /api/terms/{id}/move` | `move_term` | `{target_id, preview?, basis?, comment?}` with `target_id: null` for a new concept; the `TransferOutcome` |
 
 Sections and terms in the bodies are the store's `SectionInput` and `TermInput`, with the
 version numbers the writer read. `domain_ids` without `revision` is a 422. Every answer that
 returns a concept is the store's `Concept` as it serialises, with the numbers of all three
 levels, `domain_ids` and `is_global`, and no `owner_id`.
 
+A merge or move answers a `TransferOutcome`, 200 for a preview and for a run alike:
+`target` and `source` (the concepts after the operation; `source` is `null` if it was
+deleted), `moved` (id, text, language, `usage_before`, `usage_after`), `dropped_terms`,
+`dropped_definitions`, `removed_languages`, `dropped_domains`, `added_domains` (id and name)
+and `basis`. `preview: true` computes and rolls back. Without `preview` the body must carry
+`basis`, the one a preview answered, otherwise it is a 422. 404 for an unknown or invisible
+term or concept ("Term not found", "Concept not found"). 403 for a global concept without
+admin, and for a split without `custom_domains`. 409 `detail` carries the rule codes
+`same_concept`, `owner_mismatch`, `duplicate_text` (a move only) and `outdated`, which adds
+`concept_id`.
+
 Errors: 404 when the store returns `None` or `False`, which is also what it does for a
 concept the user cannot see. 403 for a write to a global concept by a non-admin
 (`GlobalReadOnlyError`), and, on `POST` only, for a user without the `custom_domains`
-feature; saving and deleting need no feature. Any `TerminologyRuleError` is a **409 whose
+feature (and for a move to a new concept); saving, deleting and merging need no feature. Any `TerminologyRuleError` is a **409 whose
 `detail` is an object**: `code` is the rule name (`conflict`, `duplicate_text`,
 `second_preferred`, `no_section`, `no_domain`, `unknown_domain`, `domain_owner_mismatch`,
-`duplicate_language`, `unknown_term`, `duplicate_term`) and `message` is the store's text. An
+`duplicate_language`, `unknown_term`, `duplicate_term`, and for a merge or move `same_concept`, `owner_mismatch`, `outdated`) and `message` is the store's text. An
 out-of-date save (`code: "conflict"`, a `TerminologyConflictError`) adds `part`, the language
 code or `links`, so the screen can say which part changed. The domain endpoints keep their
 text `detail`. `test_concept_api.py` covers each endpoint, the 409 codes and parts, the 403
@@ -2499,8 +2611,9 @@ actually enforces the policy server-side regardless of what a client sends.
 
 `custom_profiles`/`custom_domains` (checked via `features_for`) gate
 **creating** a private profile or domain — `POST /api/profiles`
-(`app/api/profiles.py`), `POST /api/domains` and `POST
-/api/domains/{id}/concepts` (`app/api/terminology.py`). They do **not** gate
+(`app/api/profiles.py`), `POST /api/domains`, `POST
+/api/domains/{id}/concepts` and a move to a new concept (`POST /api/terms/{id}/move` with
+`target_id: null`) (`app/api/terminology.py`). They do **not** gate
 reading, editing, or deleting anything a caller already owns or any global
 row: a tier that loses `custom_profiles` after a user has already created
 private profiles does not retroactively lock them out of those profiles —
@@ -2908,7 +3021,7 @@ Every endpoint below requires a valid `Authorization: Bearer <token>` caller **e
 | `POST /api/checks` → `GET /api/checks/{id}[/events]` | run a check; poll or stream results |
 | `POST /api/suggestions` | on-demand LLM fix (span) or sentence rewrite |
 | `GET /api/rules`, `POST /api/rules/reload` | rule catalog + validation errors; hot reload |
-| `GET/POST/PUT/DELETE /api/domains`, `/api/domains/{id}/concepts`, `/api/concepts/{id}`, `/api/concepts/{id}/languages/{language}` | domain CRUD and the seven concept endpoints (see [Endpoints](#endpoints)) |
+| `GET/POST/PUT/DELETE /api/domains`, `/api/domains/{id}/concepts`, `/api/concepts/{id}`, `/api/concepts/{id}/languages/{language}`, `/api/concepts/{id}/merge`, `/api/terms/{id}/move` | domain CRUD and the nine concept endpoints (see [Endpoints](#endpoints)) |
 | `GET/POST/PUT/DELETE /api/profiles`, `POST /api/profiles/{id}/reset` | profile CRUD |
 | `GET/POST/PUT/DELETE /api/documents`, `POST /api/documents/{id}/generate-name` | revision-guarded document CRUD + auto-titling (see [Documents](#documents)) |
 | `GET/POST/PUT/DELETE /api/folders` | folder CRUD, lossless delete, read-time defaults pruning (see [Folders](#folders)) |

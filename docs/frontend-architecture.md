@@ -105,7 +105,14 @@ frontend/src/
 │   ├── ConceptList.tsx        # one row per concept in the chosen language, search, status legend
 │   ├── ConceptEntry.tsx       # one concept: sections, links, saving, removal; holds an EntryState
 │   ├── LanguageSectionEditor.tsx  # one language section's fields; decides nothing itself
-│   ├── StatusChip.tsx         # a wording with its status
+│   ├── StatusChip.tsx         # a wording with its status; `incoming` marks a term a merge or move brings
+│   ├── MergeDialog.tsx        # merge this concept into another: picker, preview, confirm
+│   ├── MoveDialog.tsx         # move one term to a concept or to a new one: choice, preview, confirm
+│   ├── TargetPicker.tsx       # search field with suggestions, or the picked concept with "Change"
+│   ├── transferParts.tsx      # Quoted and TransferButtons, shared by the two dialogs
+│   ├── useTransferPreview.ts  # the preview request; the latest request wins
+│   ├── useTransferRun.ts      # the real run: running, errors, the out-of-date case
+│   ├── transfer.ts            # logic: suggestions, result rows, notices
 │   ├── labels.ts              # logic: label, other wordings, search, order of the list
 │   └── conceptDraft.ts        # logic: entry state, unsaved counts, problems, request bodies
 ├── admin/                     # AdminView.tsx: user list/create/row-edit, is_admin-gated (M6)
@@ -835,6 +842,64 @@ and `second_preferred` have translated messages; anything else shows the generic
 "change failed" text with the server's `message` (`detailMessage`). The message appears
 beside the button that was used. A failed reload is shown the same way.
 
+**Merging and moving.** "Merge into…" in the entry's header merges the open concept into
+another one of the domain; "Move…" at the foot of a saved term's details moves that
+term to another concept or, if the user has `custom_domains`, to a new one (a split).
+Both are unavailable for a new or read-only concept, while a request is in flight and
+while anything is unsaved, because the server computes the result from what it has
+stored. The comment field is sent with the run and cleared afterwards like a save's.
+The rules are the server's ([Moving a term and merging
+concepts](backend-architecture.md#moving-a-term-and-merging-concepts)); the screen only
+shows the preview the server computed.
+
+- `transfer.ts` decides, `MergeDialog` and `MoveDialog` render. `suggest` filters and
+  orders the candidates for the picker (those matching first, wordings starting with the
+  query before the rest, always sorted by label), `suggestionRow` gives a candidate's
+  label, other wordings and languages, `highlight` splits a text at the matches of the
+  query. `resultRows` turns an outcome into the rows of the merge dialog: per language
+  the target's terms in status order, each flagged `incoming` if the outcome lists it as
+  moved, and the terms demoted from preferred to admitted. `notices` turns the
+  outcome into the sentences below the result: for a merge the terms and definitions
+  that are not taken over and the domains whose terms no longer apply; for a move also
+  the demotions, the languages the source loses, the added domains and a deleted source,
+  and a definition is not reported twice when it goes with a lost language. `messageOf`
+  is the server's own sentence of a refusal (`detailMessage`), else the generic one.
+- **Languages appear under their own names in the notices** ("loses its section for
+  Deutsch"), as everywhere in the app (`languageName`). The mockup's "The German
+  definition" could not be produced from the language list, so the sentences were
+  reworded, in the mockup as well. A quoted definition is set apart by `Quoted`, which
+  finds the quote in the translated sentence wherever the language puts it.
+- `TargetPicker` is a combobox (`role="combobox"`, a listbox of options,
+  `aria-activedescendant`); arrow keys move the active row, Enter picks it, a pick shows
+  the concept with a "Change" button, and focus follows the change. It owns the query
+  and the active row; the target is the dialog's. `autoFocus` sets `data-autofocus`.
+- `useTransferPreview(run)` runs the preview request when `run` changes, and again when
+  `reload()` is called. **The latest request wins**: an answer is stored with the `run`
+  and round it belongs to and is returned only while both are current, so an answer for
+  a target the writer has replaced is never shown, and the dialog never offers to
+  confirm an outcome that is not the one on screen. `run` must be memoised by its
+  callers (the dialogs key it on the source or term id and the target).
+- `useTransferRun` sends the real run with `outcome.basis`. While it runs the dialog
+  is locked and a second click on confirm sends nothing. On success it stays in the
+  running state, because its opener closes the dialog. On the `outdated` refusal it names
+  the concept that changed (`conceptId` of the error, else the one the dialog gives),
+  shows the sentence "was changed in the meantime" and reloads the preview, so the
+  writer sees the new result and confirms again; any other refusal is shown and the
+  buttons come back.
+- `MergeDialog`: picker, then the result (the chips of the merged concept, new terms
+  marked `incoming`), the "Not taken over" box and a line per added domain; the
+  confirm button is red and names the concept that is deleted. `MoveDialog`: two radio
+  buttons, "To the concept" (with the picker) and, with `canCreate`, "To a new concept";
+  the box "This also happens" with the notices; the confirm button is plain "Move",
+  and red "Move and delete …" when the preview leaves the source without a term. A
+  `duplicate_text` refusal of a move gets its own sentence naming concept and wording.
+- `Dialog` has a `locked` prop for a pending run: Escape and the backdrop do nothing.
+  A second Escape in Chrome closes the native dialog even though the first `cancel`
+  was prevented, so while locked a native `close` that leaves the element in the document
+  opens it again with `showModal()`; an unmount is not undone (`isConnected`). A control
+  with `data-autofocus` gets the focus when a dialog opens (the picker's field).
+- `StatusChip` with `incoming` adds a "+" and ", new" to the accessible name.
+
 **Answers that arrive late.** The writer can switch domain, reopen a concept or start
 another request while one is pending. `TerminologyView.tsx` therefore applies only the
 answer to its latest request for the domain list, the concept list and the delete
@@ -842,6 +907,19 @@ count; closes the open entry before a domain is created or the active domain is 
 reloads the list instead of inserting the copy when a save answer comes from an entry
 the writer has left; closes every entry a delete or removal invalidates; and selects
 the first remaining domain when the active one is no longer in the list.
+
+`conceptTransferred` is bound to the open entry as `conceptSaved` is, and has three
+branches. If the entry that asked is still the open one, the old copies of target and
+source (the source's id comes from the outcome's basis, so a deleted source goes too) are
+replaced in the list by the outcome's concepts that are linked to the active domain, and
+the entry shows the source after a move that kept it, else the target; a counter raised
+on each transfer is the entry's `key`, so it remounts and builds its state from the patched
+list instead of the one it had; and the list is reloaded, since a list answer still
+on its way was read before the transfer. If the entry was closed or replaced meanwhile,
+the outcome may be older than the list or belong to another domain: only the list is
+reloaded and nothing is patched or opened. If the concept to show is not linked to the
+active domain any more (it was unlinked between preview and run), the entry closes
+instead of showing a concept the list does not have.
 
 **Leaving with unsaved changes.** `ConceptEntry` reports `hasUnsaved(state)` through
 `onUnsavedChange`, and `TerminologyView` stores it in the store as `terminologyUnsaved`;

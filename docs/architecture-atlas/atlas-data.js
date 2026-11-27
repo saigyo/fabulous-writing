@@ -346,8 +346,9 @@ window.ATLAS = (function () {
       body: [
         "A concept has a section per language with a definition and wordings, each with a usage status and a process status. A concept list leads to one entry per concept.",
         "Built-in (global) domains carry a 'Built-in' badge; only admins can change them. Creating domains or concepts can be gated by the user's tier (`custom_domains`).",
+        "A concept can be merged into another and a term moved to another concept or split off into a new one. Each shows a server-computed preview first; the dialogs and their logic are in `transfer.ts`.",
       ],
-      files: ["frontend/src/terminology/TerminologyView.tsx", "frontend/src/terminology/ConceptList.tsx", "frontend/src/terminology/ConceptEntry.tsx"],
+      files: ["frontend/src/terminology/TerminologyView.tsx", "frontend/src/terminology/ConceptList.tsx", "frontend/src/terminology/ConceptEntry.tsx", "frontend/src/terminology/transfer.ts", "frontend/src/terminology/MergeDialog.tsx", "frontend/src/terminology/MoveDialog.tsx", "frontend/src/terminology/TargetPicker.tsx", "frontend/src/terminology/useTransferPreview.ts", "frontend/src/terminology/useTransferRun.ts"],
       docs: ["frontend#is_global-affordances-and-the-domains-fetch-guard|Built-in items and ownership"],
     },
     {
@@ -896,8 +897,9 @@ window.ATLAS = (function () {
       body: [
         "Concepts are owner-scoped like their domains. Deleting a domain also removes it from every profile.",
         "Creating domains or concepts can be restricted per tier (`custom_domains`).",
+        "`POST /api/concepts/{id}/merge` and `POST /api/terms/{id}/move` merge a concept or move a term (to a new concept with `target_id: null`). A preview runs the same transaction and rolls it back; a real run must carry the preview's basis or is refused as outdated.",
       ],
-      files: ["backend/app/api/terminology.py", "backend/app/services/terminology/store.py"],
+      files: ["backend/app/api/terminology.py", "backend/app/services/terminology/store.py", "backend/app/services/terminology/transfer.py", "backend/app/services/terminology/changes.py"],
       docs: ["backend#terminology"],
     },
     {
