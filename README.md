@@ -154,6 +154,8 @@ match exact-case and additionally flags wrong casing of the preferred wording it
 The tab lists a domain's concepts in the language you choose, sorted by label, and
 searches the wordings of every language as you type. Opening a concept shows one section
 per language, which you save one by one or all together.
+A concept can be merged into another one, and a single wording can be moved to another
+concept or split off into a new one; each shows a preview of the outcome before anything changes.
 
 ![The Terminology tab with the seeded example domain: its concepts with their wordings, plus search and language choice](docs/images/terminology.png)
 
