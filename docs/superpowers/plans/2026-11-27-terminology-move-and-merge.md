@@ -355,15 +355,25 @@ Also pinned: a double click on confirm sends one request (Task 7); a typed reaso
 
 ## Execution Plan
 
-Sequential, one agent at a time. Implementers on the mid tier; the review of the store work (R1) and the final review on the most capable model.
+Sequential, one agent at a time. The model is named per step; "Sonnet" and "Opus" are the current models of those tiers. A fix round goes back to the agent that did the task; after three rounds without a clean re-check the task moves to Opus.
 
-| Step | What | Review |
-|---|---|---|
-| Tasks 1 to 4 | Planner, store, API | **R1** after Task 4: spec 4 and 5, Readings 1 to 14 |
-| Tasks 5 to 9 | Client, picker, dialogs, wiring | **R2** after Task 9: spec 6, Readings 15 to 21, the mockup side by side with the rendered dialogs |
-| Trial | In the browser, by the controller, on its own scratch stack (own `config.yaml` with a scratch SQLite file, ports other than 5173 and 8000, placeholder provider keys): merge two single-term concepts; the "everything at once" merge; a move with and without side effects; a split; a refused move; an out-of-date merge provoked from a second browser context; a non-admin on a shared domain. Screenshots of each dialog state are compared with the mockup. | |
-| Task 10 | Documentation | |
-| Final review | Whole branch | Most capable model |
+| Step | What | Model | Why this model |
+|---|---|---|---|
+| Task 1 | Models and the decision of a transfer | Sonnet | Pure functions with every rule pinned by a named test. |
+| Task 2 | Move one term to an existing concept | Opus | Order of locks and writes under `ON DELETE CASCADE`, preview by rollback, the change log without `_record`: a wrong structure here is rebuilt in Task 3. |
+| Task 3 | Merge, and a new concept as target | Sonnet | Extends the structure of Task 2; the tests name every case. |
+| Task 4 | Endpoints | Sonnet | Thin layer over the store, modelled on the concept endpoints. |
+| **R1** | Review of Tasks 1 to 4 against spec 4 and 5 and Readings 1 to 14 | Opus | Transactions, concurrency and the log are where a subtle defect hides. |
+| Task 5 | Types, client and the dialogs' logic | Sonnet | Pure functions with literal fixtures. |
+| Task 6 | Target picker and preview hook | Sonnet | Two small units; the late-answer rule has its own test. |
+| Task 7 | The merge dialog | Sonnet | Rendering against the mockup from tested logic. |
+| Task 8 | The move dialog | Sonnet | As Task 7. |
+| Task 9 | The two buttons and what the entry shows afterwards | Opus | Changes `TerminologyView`, whose guards against late answers produced most of the defects of the concept screen. |
+| **R2** | Review of Tasks 5 to 9 against spec 6, Readings 15 to 21 and the mockup | Opus | Same reason as Task 9, plus the comparison with the mockup. |
+| Scoped re-checks | After each fix round of R1 and R2 | Sonnet | They verify named fixes on a small diff. |
+| Trial | In the browser, by the controller, on its own scratch stack (own `config.yaml` with a scratch SQLite file, ports other than 5173 and 8000, placeholder provider keys): merge two single-term concepts; the "everything at once" merge; a move with and without side effects; a split; a refused move; an out-of-date merge provoked from a second browser context; a non-admin on a shared domain. Screenshots of each dialog state are compared with the mockup. | Controller | |
+| Task 10 | Documentation | Sonnet | Describes finished code. |
+| Final review | Whole branch | Opus | |
 
 Delivery is one pull request.
 
