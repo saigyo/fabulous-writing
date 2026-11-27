@@ -248,7 +248,7 @@ def _apply_transfer(
         for old in source.sections:
             if old.language in removed:
                 rows.delete_section(conn, old.id)
-        leaving = {m.term.id for m in plan.moves} | {t.id for _, t in plan.dropped}
+        leaving = {m.term.id for m in plan.moves}
         for old in source.sections:
             if old.language not in removed and any(t.id in leaving for t in old.terms):
                 rows.update_section(conn, old.id, old.definition, now=now, user_id=user_id)
