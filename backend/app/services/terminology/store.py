@@ -1,5 +1,5 @@
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -15,12 +15,24 @@ from app.services.terminology.model import (
     Actor,
     Concept,
     Domain,
+    DomainRef,
+    DroppedTerm,
     LanguageSection,
+    MovedTerm,
     SectionInput,
     TerminologyConflictError,
     TerminologyRuleError,
+    TransferBasis,
+    TransferOutcome,
+    TransferOutdatedError,
     UsageStatus,
     is_enforced,
+)
+from app.services.terminology.transfer import (
+    TransferPlan,
+    basis_matches,
+    basis_of,
+    plan_transfer,
 )
 
 
@@ -155,6 +167,159 @@ def _delete(
     entries = changes.diff(before, None, domain_names=rows.domain_names(conn, before.domain_ids))
     changes.write(conn, entries, batch=batch, at=now, actor=actor, comment=comment)
     conn.execute("DELETE FROM concepts WHERE id = ?", (before.id,))
+
+
+_OUTDATED = "This concept was changed since the preview. Preview again."
+
+
+class _Rollback(Exception):
+    def __init__(self, outcome: TransferOutcome) -> None:
+        super().__init__()
+        self.outcome = outcome
+
+
+def _check_transfer(
+    source: Concept, target: Concept, basis: TransferBasis | None, *, preview: bool, actor: Actor
+) -> None:
+    require_writable(source.owner_id, is_admin=actor.is_admin)
+    require_writable(target.owner_id, is_admin=actor.is_admin)
+    if source.id == target.id:
+        raise TerminologyRuleError("same_concept", "Source and target are the same concept.")
+    if source.owner_id != target.owner_id:
+        raise TerminologyRuleError(
+            "owner_mismatch",
+            "Terms can only move between concepts with the same owner: own or built-in.",
+        )
+    if preview:
+        return
+    if basis is None or not basis_matches(basis.source, source):
+        raise TransferOutdatedError(source.id, _OUTDATED)
+    if basis.target is None or not basis_matches(basis.target, target):
+        raise TransferOutdatedError(target.id, _OUTDATED)
+
+
+def _apply_transfer(
+    conn: Any,
+    source: Concept,
+    target: Concept,
+    plan: TransferPlan,
+    *,
+    now: str,
+    user_id: int | None,
+) -> None:
+    # Order matters: terms cascade with their section, sections with their concept.
+    section_ids = {s.language: s.id for s in target.sections}
+    receiving = {m.language for m in plan.moves} | set(plan.adopted_definitions)
+    created = [lang for lang in Language if lang in receiving and lang not in section_ids]
+    for language in created:
+        section_ids[language] = rows.insert_section(
+            conn, target.id, language, plan.adopted_definitions.get(language, ""),
+            now=now, user_id=user_id,
+        )
+    for move in plan.moves:
+        rows.move_term(
+            conn, move.term.id, section_ids[move.language], move.usage_after,
+            now=now, user_id=user_id,
+        )
+    for existing in target.sections:
+        if existing.language in receiving:
+            rows.update_section(
+                conn, existing.id,
+                plan.adopted_definitions.get(existing.language, existing.definition),
+                now=now, user_id=user_id,
+            )
+    for _, dropped in plan.dropped:
+        conn.execute("DELETE FROM concept_terms WHERE id = ?", (dropped.id,))
+
+    removed = set(plan.removed_languages)
+    if plan.source_deleted:
+        conn.execute("DELETE FROM concepts WHERE id = ?", (source.id,))
+    else:
+        for old in source.sections:
+            if old.language in removed:
+                rows.delete_section(conn, old.id)
+        leaving = {m.term.id for m in plan.moves} | {t.id for _, t in plan.dropped}
+        for old in source.sections:
+            if old.language not in removed and any(t.id in leaving for t in old.terms):
+                rows.update_section(conn, old.id, old.definition, now=now, user_id=user_id)
+        if removed:
+            rows.touch_concept(conn, source.id, now=now, user_id=user_id)
+    if created:
+        rows.touch_concept(conn, target.id, now=now, user_id=user_id)
+
+
+def _outcome(
+    source: Concept,
+    source_after: Concept | None,
+    target: Concept,
+    target_after: Concept,
+    plan: TransferPlan,
+    names: dict[int, str],
+) -> TransferOutcome:
+    def refs(domain_ids: set[int]) -> list[DomainRef]:
+        found = [DomainRef(id=d, name=names.get(d, "")) for d in domain_ids]
+        return sorted(found, key=lambda r: (r.name, r.id))
+
+    return TransferOutcome(
+        target=target_after,
+        source=source_after,
+        moved=[
+            MovedTerm(
+                id=m.term.id, text=m.term.text, language=m.language,
+                usage_before=m.term.usage_status, usage_after=m.usage_after,
+            )
+            for m in plan.moves
+        ],
+        dropped_terms=[
+            DroppedTerm(text=t.text, language=language, usage_status=t.usage_status)
+            for language, t in plan.dropped
+        ],
+        dropped_definitions=plan.dropped_definitions,
+        removed_languages=plan.removed_languages if source_after is not None else [],
+        dropped_domains=refs(set(source.domain_ids) - set(target.domain_ids)),
+        added_domains=refs(set(target.domain_ids) - set(source.domain_ids)),
+        basis=TransferBasis(source=basis_of(source), target=basis_of(target)),
+    )
+
+
+def _transfer(
+    conn: Any,
+    *,
+    term_id: int,
+    target_id: int,
+    basis: TransferBasis | None,
+    preview: bool,
+    actor: Actor,
+    comment: str,
+) -> TransferOutcome | None:
+    source_id = rows.term_concept_id(conn, term_id)
+    if source_id is None:
+        return None
+    _lock(conn, concept_ids={source_id, target_id})
+    source = rows.load_concept(conn, source_id)
+    target = rows.load_concept(conn, target_id)
+    if source is None or target is None:
+        return None
+    if not is_visible(source.owner_id, user_id=actor.user_id) or not is_visible(
+        target.owner_id, user_id=actor.user_id
+    ):
+        return None
+    if not any(t.id == term_id for s in source.sections for t in s.terms):
+        raise TransferOutdatedError(source.id, _OUTDATED)
+    _check_transfer(source, target, basis, preview=preview, actor=actor)
+    plan = plan_transfer(source, [term_id], target, merge=False)
+
+    now = _utcnow()
+    _apply_transfer(conn, source, target, plan, now=now, user_id=actor.user_id)
+    source_after = None if plan.source_deleted else rows.load_concept(conn, source.id)
+    target_after = rows.load_concept(conn, target.id)
+    assert target_after is not None
+    names = rows.domain_names(conn, sorted(set(source.domain_ids) | set(target.domain_ids)))
+    entries = changes.transfer_entries(
+        source, source_after, target, target_after, domain_names=names
+    )
+    changes.write(conn, entries, batch=uuid.uuid4().hex, at=now, actor=actor, comment=comment)
+    return _outcome(source, source_after, target, target_after, plan, names)
 
 
 class TerminologyStore:
@@ -387,3 +552,37 @@ class TerminologyStore:
             rows.set_links(conn, concept_id, [d for d in before.domain_ids if d != domain_id])
             _record(conn, concept_id, before, actor=actor, comment=comment, now=_utcnow())
             return True
+
+    # -- moving terms ----------------------------------------------------
+
+    def _transferring(
+        self, run: Callable[[Any], TransferOutcome | None], *, preview: bool
+    ) -> TransferOutcome | None:
+        try:
+            with self._connect() as conn:
+                outcome = run(conn)
+                if preview and outcome is not None:
+                    raise _Rollback(outcome)
+                return outcome
+        except _Rollback as rolled_back:
+            return rolled_back.outcome
+
+    def move_term(
+        self,
+        term_id: int,
+        target_id: int | None,
+        *,
+        basis: TransferBasis | None,
+        preview: bool = False,
+        actor: Actor,
+        comment: str = "",
+    ) -> TransferOutcome | None:
+        if target_id is None:
+            raise NotImplementedError("moving a term to a new concept")
+        return self._transferring(
+            lambda conn: _transfer(
+                conn, term_id=term_id, target_id=target_id, basis=basis,
+                preview=preview, actor=actor, comment=comment,
+            ),
+            preview=preview,
+        )
