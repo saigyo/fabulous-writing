@@ -122,10 +122,10 @@ export function MergeDialog({
                       <Quoted
                         sentence={m.transferDroppedDefinition(
                           languageName(notice.language, languages),
-                          `“${notice.definition}”`,
+                          m.quoted(notice.definition),
                           target ? label(target) : '',
                         )}
-                        quote={`“${notice.definition}”`}
+                        quote={m.quoted(notice.definition)}
                       />
                     )}
                     {notice.kind === 'droppedDomain' && m.transferDroppedDomain(notice.name)}

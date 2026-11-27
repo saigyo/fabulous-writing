@@ -185,6 +185,7 @@ export const de: Messages = {
   moveDuplicate: (target, text, language) => `„${target}“ hat den Begriff „${text}“ in ${language} schon.`,
   mergeInto: 'Zusammenführen mit…',
   termMove: 'Verschieben…',
+  quoted: (text) => `„${text}“`,
   searchConceptsLabel: 'Konzepte durchsuchen',
   conceptLanguageTitle: 'Sprache der Bezeichnungen',
   newConcept: '+ Konzept',

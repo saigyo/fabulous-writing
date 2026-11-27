@@ -86,11 +86,11 @@ export function MoveDialog({
       case 'lostLanguage': {
         const name = named(notice.language)
         if (notice.definition === null) return m.moveLostLanguage(sourceLabel, name)
-        const quote = `“${notice.definition}”`
+        const quote = m.quoted(notice.definition)
         return <Quoted sentence={m.moveLostLanguageDefinition(sourceLabel, name, quote)} quote={quote} />
       }
       case 'droppedDefinition': {
-        const quote = `“${notice.definition}”`
+        const quote = m.quoted(notice.definition)
         return <Quoted sentence={m.moveDefinitionDropped(named(notice.language), quote)} quote={quote} />
       }
       case 'droppedDomain':

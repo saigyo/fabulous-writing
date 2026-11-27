@@ -167,9 +167,9 @@ export const fr: Messages = {
   transferDroppedTerm: (text, language, status, target) =>
     `Le terme « ${text} » (${language}, ${status}) : « ${target} » a déjà cette forme.`,
   transferDroppedDefinition: (language, quote, target) =>
-    `La définition pour ${language} :${quote} « ${target} » garde la sienne.`,
-  transferDroppedDomain: (name) => `Le domaine « ${name} » : les termes déplacés n’y valent plus.`,
-  mergeAddedDomain: (name) => `Les termes déplacés valent maintenant aussi dans le domaine « ${name} ».`,
+    `La définition pour ${language} : ${quote} « ${target} » garde la sienne.`,
+  transferDroppedDomain: (name) => `Le domaine « ${name} » : les termes déplacés ne s’y appliquent plus.`,
+  mergeAddedDomain: (name) => `Les termes déplacés s’appliquent maintenant aussi dans le domaine « ${name} ».`,
   transferOutdated: (label) =>
     `« ${label} » a été modifié entre-temps. Voici le résultat tel qu’il serait maintenant.`,
   moveTitle: (text) => `Déplacer « ${text} »`,
@@ -182,13 +182,14 @@ export const fr: Messages = {
   moveLostLanguageDefinition: (label, language, quote) =>
     `« ${label} » perd sa section pour ${language}. Sa définition n’est pas reprise : ${quote}`,
   moveDefinitionDropped: (language, quote) => `La définition pour ${language} n’est pas reprise : ${quote}`,
-  moveDroppedDomain: (name) => `Le terme ne vaut plus dans le domaine « ${name} ».`,
-  moveAddedDomain: (name) => `Le terme vaut maintenant aussi dans le domaine « ${name} ».`,
+  moveDroppedDomain: (name) => `Le terme ne s’applique plus dans le domaine « ${name} ».`,
+  moveAddedDomain: (name) => `Le terme s’applique maintenant aussi dans le domaine « ${name} ».`,
   moveSourceDeleted: (label) => `Le concept « ${label} » n’a plus de terme et est supprimé.`,
   moveNewConceptDomains: (label) => `Le nouveau concept est dans les mêmes domaines que « ${label} ».`,
   moveDuplicate: (target, text, language) => `« ${target} » a déjà le terme « ${text} » en ${language}.`,
   mergeInto: 'Fusionner avec…',
   termMove: 'Déplacer…',
+  quoted: (text) => `« ${text} »`,
   searchConceptsLabel: 'Rechercher des concepts',
   conceptLanguageTitle: 'Langue des libellés',
   newConcept: '+ Concept',

@@ -173,6 +173,7 @@ export const en: Messages = {
   moveDuplicate: (target, text, language) => `“${target}” already has the term “${text}” in ${language}.`,
   mergeInto: 'Merge into…',
   termMove: 'Move…',
+  quoted: (text) => `“${text}”`,
   searchConceptsLabel: 'Search concepts',
   conceptLanguageTitle: 'Language of the labels',
   newConcept: '+ Concept',
