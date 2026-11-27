@@ -102,6 +102,47 @@ describe('Dialog', () => {
     expect(document.activeElement).toBe(screen.getByText('opener'))
   })
 
+  /** A native close the parent did not ask for: what a second Escape does in Chrome. */
+  function closeNatively(el: HTMLDialogElement) {
+    el.close()
+    fireEvent(el, new Event('close'))
+  }
+
+  it('reopens after a native close and ignores Escape and the backdrop while locked', () => {
+    const onClose = vi.fn()
+    render(
+      <Dialog title="T" onClose={onClose} locked>
+        <p>body</p>
+      </Dialog>,
+    )
+    closeNatively(dialogEl())
+    expect(dialogEl().open).toBe(true)
+    const event = fireCancel(dialogEl())
+    expect(event.defaultPrevented).toBe(true)
+    fireEvent.mouseDown(dialogEl(), { clientX: -10, clientY: -10 })
+    expect(onClose).not.toHaveBeenCalled()
+    expect(dialogEl().open).toBe(true)
+  })
+
+  it('stays closed after a native close and routes Escape again once unlocked', () => {
+    const onClose = vi.fn()
+    const { rerender } = render(
+      <Dialog title="T" onClose={onClose} locked>
+        <p>body</p>
+      </Dialog>,
+    )
+    rerender(
+      <Dialog title="T" onClose={onClose} locked={false}>
+        <p>body</p>
+      </Dialog>,
+    )
+    fireCancel(dialogEl())
+    expect(onClose).toHaveBeenCalledTimes(1)
+    closeNatively(dialogEl())
+    expect(dialogEl().open).toBe(false)
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
   it('falls back to the element that was focused at mount', () => {
     function Harness() {
       const [open, setOpen] = useState(false)

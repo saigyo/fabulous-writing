@@ -252,8 +252,13 @@ export function TerminologyView() {
       ...[target, source].filter((c): c is Concept => c !== null && c.domain_ids.includes(active)),
     ])
     const shown = kind === 'move' && source !== null ? source : target
-    setTransfers((n) => n + 1)
-    showEntry({ ...entry, conceptId: shown.id })
+    // Unlinked from this domain between preview and run: not in the list.
+    if (shown.domain_ids.includes(active)) {
+      setTransfers((n) => n + 1)
+      showEntry({ ...entry, conceptId: shown.id })
+    } else {
+      showEntry(null)
+    }
     void loadConcepts(active)
   }
 

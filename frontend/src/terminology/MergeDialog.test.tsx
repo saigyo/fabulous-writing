@@ -194,6 +194,12 @@ function fireCancel() {
   fireEvent(dialog, new Event('cancel', { cancelable: true }))
 }
 
+function closeNatively() {
+  const dialog = document.querySelector('dialog')!
+  dialog.close()
+  fireEvent(dialog, new Event('close'))
+}
+
 beforeEach(() => {
   fetchMock = vi.spyOn(globalThis, 'fetch')
   useStore.setState({ uiLocale: 'en', languages: FALLBACK_LANGUAGES, token: 'token' })
@@ -306,6 +312,8 @@ describe('MergeDialog', () => {
     expect(cancelButton().disabled).toBe(true)
     fireCancel()
     expect(onClose).not.toHaveBeenCalled()
+    closeNatively()
+    expect(document.querySelector('dialog')!.open).toBe(true)
     expect(onDone).not.toHaveBeenCalled()
 
     finish(json(200, answer))

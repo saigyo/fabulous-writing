@@ -134,7 +134,8 @@ export function MoveDialog({
   return (
     <Dialog
       title={m.moveTitle(term.text)}
-      onClose={running ? () => {} : onClose}
+      onClose={onClose}
+      locked={running}
       className="move-dialog"
     >
       <div className="transfer-choice" role="radiogroup" aria-label={m.moveTitle(term.text)}>

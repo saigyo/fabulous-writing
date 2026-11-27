@@ -83,7 +83,8 @@ export function MergeDialog({
   return (
     <Dialog
       title={m.mergeTitle(sourceLabel)}
-      onClose={running ? () => {} : onClose}
+      onClose={onClose}
+      locked={running}
       className="merge-dialog"
     >
       <p>{m.mergeIntro(sourceLabel)}</p>
