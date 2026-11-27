@@ -263,11 +263,14 @@ def test_term_that_left_the_source_after_the_read_is_outdated(store, db):
     d, source, target = _pair(store)
     stale = concept(store, [d.id], section(Language.EN, term("sign on")))
     before = stored(store, db, source, target, stale)
+    # A basis that matches the stale concept, so only the membership check can refuse.
+    basis = preview(store, find(stale, "sign on").id, target.id).basis
     with patch("app.services.terminology.rows.term_concept_id", return_value=stale.id):
         for is_preview in (True, False):
             with pytest.raises(TransferOutdatedError) as refused:
                 store.move_term(
-                    find(source, "logon").id, target.id, basis=None, preview=is_preview, actor=ME
+                    find(source, "logon").id, target.id,
+                    basis=None if is_preview else basis, preview=is_preview, actor=ME,
                 )
             assert refused.value.concept_id == stale.id
     assert stored(store, db, source, target, stale) == before
@@ -388,8 +391,14 @@ def test_change_log_of_a_move(store, db):
     )
     target = concept(store, [d.id], section(Language.EN, term("sign-in")))
     login = find(source, "login")
+    own = find(target, "sign-in")
     entries = logged(login.id, target.id)
     assert len(entries) == 3
+    own_after = find(store.get_concept(target.id, owner_id=1), "sign-in")
+    assert (own_after.id, own_after.usage_status, own_after.revision) == (
+        own.id, own.usage_status, own.revision
+    )
+    assert own_after.usage_status == UsageStatus.PREFERRED
     [moved] = [e for e in entries if e["action"] == "moved"]
     assert moved["concept_id"] == target.id
     assert moved["concept_uid"] == target.uid
@@ -572,6 +581,13 @@ def test_change_log_of_a_merge(store, db):
     moved = [e for e in entries if e["action"] == "moved"]
     assert {e["term_id"] for e in moved} == moved_ids
     assert all(e["concept_id"] == target.id for e in moved)
+    # The labels are those of the target after the run, French included.
+    assert {e["term_language"] for e in moved} >= {"fr"}
+    assert all(
+        e["concept_labels"]
+        == {"en": "workspace", "de": "Arbeitsbereich", "fr": "espace de travail"}
+        for e in moved
+    )
     assert not [e for e in entries if e["term_id"] in moved_ids and e["action"] != "moved"]
     assert not [
         e for e in entries
@@ -594,7 +610,7 @@ def test_merge_preview_writes_nothing_and_matches_the_real_run(store, db):
     assert comparable(real) == comparable(seen)
 
 
-def test_merge_is_refused_for_the_same_concept_and_a_stale_basis(store):
+def test_merge_is_refused_for_the_same_concept_and_a_stale_basis(store, db):
     _, source, target = _pair(store)
     for is_preview in (True, False):
         with pytest.raises(TerminologyRuleError) as refused:
@@ -602,9 +618,11 @@ def test_merge_is_refused_for_the_same_concept_and_a_stale_basis(store):
         assert refused.value.rule == "same_concept"
     basis = merge_preview(store, source.id, target.id).basis
     _edit_definition(store, source, "changed")
+    before = stored(store, db, source, target)
     with pytest.raises(TransferOutdatedError) as refused:
         store.merge_concept(source.id, target.id, basis=basis, actor=ME)
     assert refused.value.concept_id == source.id
+    assert stored(store, db, source, target) == before
     assert store.merge_concept(999999, target.id, basis=None, preview=True, actor=ME) is None
 
 
@@ -721,10 +739,65 @@ def test_source_whose_domains_changed_after_the_read_is_outdated(store, db):
     login = find(source, "login")
     before = stored(store, db, source)
     count = _count_concepts(db)
+    basis = preview(store, login.id, None).basis
     with patch("app.services.terminology.rows.concept_domain_ids", return_value=[a.id]):
         for is_preview in (True, False):
             with pytest.raises(TransferOutdatedError) as refused:
-                store.move_term(login.id, None, basis=None, preview=is_preview, actor=ME)
+                store.move_term(
+                    login.id, None, basis=None if is_preview else basis,
+                    preview=is_preview, actor=ME,
+                )
             assert refused.value.concept_id == source.id
     assert stored(store, db, source) == before
     assert _count_concepts(db) == count
+
+
+def _counts(db) -> dict[str, int]:
+    tables = ("concepts", "concept_domains", "concept_languages", "concept_terms",
+              "terminology_changes")
+    with db.connect() as conn:
+        return {
+            t: conn.execute(f"SELECT COUNT(*) AS n FROM {t}").fetchone()["n"] for t in tables
+        }
+
+
+def test_preview_that_fails_midway_leaves_nothing_behind(store, db):
+    _, _, source = _new_concept_setup(store)
+    login = find(source, "login")
+    basis = preview(store, login.id, None).basis
+    before = _counts(db)
+    for is_preview in (True, False):
+        with patch(
+            "app.services.terminology.changes.write", side_effect=RuntimeError("boom")
+        ):
+            with pytest.raises(RuntimeError, match="boom"):
+                store.move_term(
+                    login.id, None, basis=None if is_preview else basis,
+                    preview=is_preview, actor=ME,
+                )
+        assert _counts(db) == before
+
+
+def test_section_that_only_adopts_a_definition_is_raised_once(store):
+    d = store.create_domain("Cloud", owner_id=1)
+    source = concept(
+        store, [d.id],
+        section(Language.EN, term("login"), definition="Sign in."),
+        section(Language.DE, term("Anmeldung")),
+    )
+    target = concept(
+        store, [d.id],
+        section(Language.EN, term("login")),
+        section(Language.DE, term("Anmeldung")),
+    )
+    assert part(target, Language.EN).definition == ""
+
+    outcome = merge(store, source.id, target.id)
+
+    # The English incoming term is a duplicate and is dropped; only the definition arrives.
+    assert [d.language for d in outcome.dropped_terms] == [Language.EN, Language.DE]
+    assert outcome.moved == []
+    after = part(outcome.target, Language.EN)
+    assert after.definition == "Sign in."
+    assert after.revision == part(target, Language.EN).revision + 1
+    assert outcome.target.revision == target.revision
