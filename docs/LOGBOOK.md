@@ -5369,3 +5369,46 @@ this branch and committed afterwards.
 Verified: single machine, started, checks 1/1, image 0.8.0, `/api/health`
 200 reporting 0.8.0. The drop of the table itself was not checked from
 this side, since that needs the admin DSN.
+
+## 2026-11-27 — Admins can create shared terminology domains (PR #221)
+
+Found while the owner tried release 0.8.0: a concept of the seeded domain
+could not be linked to a second domain. A concept is only linked to domains
+of its own owner, and every created domain belonged to its creator, admins
+included, so no second global domain could exist.
+
+**What changed**
+
+- `POST /api/domains` takes `shared: true`. For an admin it creates a global
+  domain (`owner_id NULL`); for anyone else it answers 403. The store already
+  accepted a missing owner, so only the endpoint changed.
+- The terminology view shows admins a checkbox "Shared with all users" below
+  the add-domain field. It is unticked after each creation.
+  `createDomain(name, shared)` replaces the unused description argument.
+- The badge of global items reads "Shared" instead of "Built-in" in all seven
+  languages, with a tooltip that says who sees and who changes the item. The
+  one label is used for domains, profiles, the rules banner and the header
+  dropdowns, and the owner accepted it for all of them. The server's 403
+  text "Only admins can change built-in items" is unchanged.
+- README screenshots of terminology, concept entry, profiles and rules were
+  retaken. The scratch backend ran with placeholder values for
+  `ANTHROPIC_API_KEY` and `MISTRAL_API_KEY`: availability only checks that
+  the variable is set, so the red "LLM check skipped: missing …" line is
+  gone. The capture script's header now says so.
+
+**Decided and deferred**
+
+- Switching an existing domain between shared and owned was discussed and
+  deferred to the organisations work, where it matters for members too
+  (#220, with the rules a design has to settle and the "copy to my domain"
+  idea for normal users).
+- The same option for profiles is its own change (#222); a shared profile
+  must only refer to shared domains.
+
+**Verification**
+
+Backend 1834 passed on SQLite, 2155 on Postgres; frontend 1221 tests, lint
+and build. The two new view tests were each checked by removing the code
+they guard, and the refusal for a non-admin failed before the guard existed.
+The checkbox was seen in the retaken terminology screenshot; creating a
+shared domain was not clicked through in a browser.
