@@ -25,6 +25,7 @@ router = APIRouter(prefix="/api", tags=["terminology"])
 class DomainCreate(BaseModel):
     name: str
     description: str = ""
+    shared: bool = False
 
 
 class DomainUpdate(BaseModel):
@@ -96,9 +97,11 @@ def create_domain(
         tier=user.tier, is_admin=user.is_admin, settings=request.app.state.settings
     ):
         raise HTTPException(403, "Your plan does not include custom terminology domains")
+    if body.shared and not user.is_admin:
+        raise HTTPException(403, "Only admins can create shared domains")
     try:
         return _store(request).create_domain(
-            body.name, body.description, owner_id=user.id
+            body.name, body.description, owner_id=None if body.shared else user.id
         )
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc

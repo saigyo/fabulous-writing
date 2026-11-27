@@ -41,6 +41,7 @@ export function TerminologyView() {
   }, [])
   const [pendingDelete, setPendingDelete] = useState<{ id: number; name: string; count: number } | null>(null)
   const [newDomain, setNewDomain] = useState('')
+  const [newShared, setNewShared] = useState(false)
   const unsaved = useStore((s) => s.terminologyUnsaved)
   const setUnsaved = useStore((s) => s.setTerminologyUnsaved)
   const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null)
@@ -143,8 +144,9 @@ export function TerminologyView() {
         setCreating(true)
         try {
           showEntry(null)
-          const domain = await createDomain(name)
+          const domain = await createDomain(name, newShared)
           setNewDomain('')
+          setNewShared(false)
           await refreshDomains()
           if (!useStore.getState().terminologyUnsaved) setActiveDomainId(domain.id)
         } finally {
@@ -306,6 +308,17 @@ export function TerminologyView() {
               {m.add}
             </button>
           </div>
+        )}
+        {canCreate && isAdmin && (
+          <label className="add-domain-shared">
+            <input
+              type="checkbox"
+              checked={newShared}
+              disabled={creating}
+              onChange={(event) => setNewShared(event.target.checked)}
+            />
+            {m.sharedDomain}
+          </label>
         )}
       </aside>
       {pendingDelete !== null && (

@@ -689,8 +689,12 @@ deliberately unscoped by owner; see [Ownership](#ownership)).
 ### Domain ownership
 
 `domains.owner_id` is nullable, exactly like `profiles.owner_id`: `NULL` is a **global**
-domain, the seeded "Product docs" example and nothing else, since `create_domain` always
-writes `owner_id=user.id` regardless of caller; a caller's `users.id` is a private one.
+domain: the seeded "Product docs" example, and any domain an admin creates with
+`shared: true` in the body of `POST /api/domains` (403 for anyone else). Without it the
+endpoint writes `owner_id=user.id`, for an admin too; a caller's `users.id` is a private
+one. A shared domain exists so that global concepts can be linked to a second domain: a
+concept is only linked to domains of its own owner. An existing domain cannot change
+between shared and private.
 **One-shot backfill** (`schema.migrate_domains`): when `owner_id` is first added to an
 existing database, the single row matching the seed domain's name (`SEED_DOMAIN_NAME`,
 "Product docs", asserted equal to `seed.DOMAIN_NAME` by a test, since `seed.py` imports the
@@ -2219,9 +2223,9 @@ cover everything:
 - **Owner-scoped with global rows** (`profiles`, `domains`): `owner_id` is nullable.
   `NULL` means **global** — seeded built-ins (the Standard profile per language, the
   example Marketing/Technical Documentation/Blog profiles, the "Product docs" example
-  terminology domain) and nothing else: both create endpoints always write
-  `owner_id=user.id`, even for an admin caller, so a startup seeder is the only path to
-  a global row. A global row
+  terminology domain), plus terminology domains an admin creates with `shared: true`.
+  The profile create endpoint always writes `owner_id=user.id`, even for an admin
+  caller, so for profiles a startup seeder is the only path to a global row. A global row
   is visible to every caller (`WHERE owner_id IS NULL OR owner_id = ?`) but mutable only
   by an admin: any store's `update_*`/`delete_*` (and, for terminology, every write to a
   global domain or concept) raises `GlobalReadOnlyError` (`app/services/ownership.py`) when

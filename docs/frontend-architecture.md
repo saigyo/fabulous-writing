@@ -873,10 +873,10 @@ domain.
 ## `is_global` affordances and the domains-fetch guard
 
 M3 gave the backend's `profiles` and `domains` tables a nullable `owner_id`: a row with
-`owner_id NULL` is **global** — always a seeded built-in (Standard, the example
-profiles, "Product docs"), never something created through the API: both create
-endpoints always write `owner_id=user.id`, even for an admin caller, so a startup
-seeder is the only path to a global row. A global row is visible to every account but
+`owner_id NULL` is **global** — a seeded built-in (Standard, the example
+profiles, "Product docs") or a terminology domain an admin created as shared. The
+profile create endpoint always writes `owner_id=user.id`, even for an admin caller.
+A global row is visible to every account but
 mutable only by an admin (see
 `docs/backend-architecture.md#ownership`). The frontend's job is narrower than the
 backend's: it never sees `owner_id` at all, only the derived `is_global: boolean` both
@@ -887,7 +887,7 @@ and 403.
 **`TerminologyView.tsx`**: `isAdmin` comes from the store; each domain computes
 `editable = !domain.is_global || isAdmin`, which gates the rename (✎) and delete (✕)
 buttons and the double-click-to-rename handler — a non-admin simply has no way to
-reach a mutation on a global domain. A `<span class="global-badge" title="…">Built-in
+reach a mutation on a global domain. A `<span class="global-badge" title="…">Shared
 </span>` renders immediately after the domain name whenever `domain.is_global` is true
 (admin or not — the badge states a fact about the row, not a permission the current
 viewer lacks). `ConceptList` and `ConceptEntry` take the whole `Domain` plus a `readOnly`
@@ -1835,7 +1835,10 @@ only, mirroring the backend's creation-only feature-gate scope
 (`docs/backend-architecture.md#feature-gates-are-creation-only`):
 `profiles/ProfilesView.tsx`'s `canCreate` hides the "+ New profile"
 affordance; `terminology/TerminologyView.tsx`'s `canCreate` hides the add-domain
-row and, passed to `ConceptList`, the "+ Concept" button. Saving and deleting a
+row and, passed to `ConceptList`, the "+ Concept" button. Below the add-domain
+row an admin has the checkbox "Shared with all users"; ticked, the new domain is
+created as a global one (`createDomain(name, shared)`), and the checkbox is
+unticked after each creation. Saving and deleting a
 concept need no feature, as on the server. Neither gate touches editing,
 deleting, or viewing anything the caller already owns or any global row —
 those stay governed entirely by the pre-existing `is_global`/`isAdmin`

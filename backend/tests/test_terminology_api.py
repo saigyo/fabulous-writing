@@ -205,3 +205,54 @@ def test_concept_changes_are_logged(client: TestClient) -> None:
     entries = changes(client.app.state.db)
     assert len({entry["batch"] for entry in entries}) == 3
     assert {(entry["origin"], entry["user_id"]) for entry in entries} == {("manual", admin_id)}
+
+
+def test_admin_creates_a_shared_domain(tmp_path):
+    settings = Settings(db_path=tmp_path / "t.db", rules_dir=tmp_path / "rules")
+    client = TestClient(create_app(settings))
+    admin = auth_headers(client)
+    other = second_user_headers(client)
+
+    created = client.post(
+        "/api/domains", json={"name": "Shared", "shared": True}, headers=admin
+    )
+    assert created.status_code == 201
+    shared = created.json()
+    assert shared["is_global"] is True
+    # Everyone sees it; only admins write to it.
+    assert any(d["id"] == shared["id"] for d in client.get("/api/domains", headers=other).json())
+    assert post_concept(client, shared["id"], preferred="x", headers=other).status_code == 403
+
+    # A concept of the seeded domain can be linked to it.
+    seeded = next(
+        d
+        for d in client.get("/api/domains", headers=admin).json()
+        if d["is_global"] and d["id"] != shared["id"]
+    )
+    concept = client.get(f"/api/domains/{seeded['id']}/concepts", headers=admin).json()[0]
+    linked = client.put(
+        f"/api/concepts/{concept['id']}",
+        json={
+            "revision": concept["revision"],
+            "domain_ids": [seeded["id"], shared["id"]],
+            "sections": [],
+        },
+        headers=admin,
+    )
+    assert linked.status_code == 200, linked.text
+    assert sorted(linked.json()["domain_ids"]) == sorted([seeded["id"], shared["id"]])
+
+    # The name is unique among shared domains.
+    again = client.post("/api/domains", json={"name": "shared", "shared": True}, headers=admin)
+    assert again.status_code == 409
+
+
+def test_only_admins_create_shared_domains(tmp_path):
+    settings = Settings(db_path=tmp_path / "t.db", rules_dir=tmp_path / "rules")
+    client = TestClient(create_app(settings))
+    auth_headers(client)
+    other = second_user_headers(client)
+
+    refused = client.post("/api/domains", json={"name": "Shared", "shared": True}, headers=other)
+    assert refused.status_code == 403
+    assert all(d["name"] != "Shared" for d in client.get("/api/domains", headers=other).json())

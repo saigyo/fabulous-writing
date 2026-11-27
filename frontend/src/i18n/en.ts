@@ -128,11 +128,12 @@ export const en: Messages = {
       structure: 'structure',
     })[d],
 
-  globalBadge: 'Built-in',
-  globalBadgeTitle: 'Built-in item — only admins can change it',
+  globalBadge: 'Shared',
+  globalBadgeTitle: 'Shared item — visible to everyone, only admins can change it',
 
   domains: 'Domains',
   newDomainPlaceholder: 'New domain…',
+  sharedDomain: 'Shared with all users',
   add: 'Add',
   deleteDomainTitle: 'Delete domain',
   concepts: 'Concepts',

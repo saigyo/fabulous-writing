@@ -126,6 +126,7 @@ export interface Messages {
   // Terminology view
   domains: string
   newDomainPlaceholder: string
+  sharedDomain: string
   add: string
   deleteDomainTitle: string
   concepts: string

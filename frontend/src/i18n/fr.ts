@@ -144,11 +144,12 @@ export const fr: Messages = {
       structure: 'structure',
     })[d],
 
-  globalBadge: 'Intégré',
-  globalBadgeTitle: 'Élément intégré — seuls les administrateurs peuvent le modifier',
+  globalBadge: 'Partagé',
+  globalBadgeTitle: 'Élément partagé — visible par tous, seuls les administrateurs peuvent le modifier',
 
   domains: 'Domaines',
   newDomainPlaceholder: 'Nouveau domaine…',
+  sharedDomain: 'Partagé avec tous les utilisateurs',
   add: 'Ajouter',
   deleteDomainTitle: 'Supprimer le domaine',
   concepts: 'Concepts',
