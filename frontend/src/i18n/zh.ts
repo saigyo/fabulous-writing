@@ -130,8 +130,8 @@ export const zh: Messages = {
       structure: '结构',
     })[d],
 
-  globalBadge: '内置',
-  globalBadgeTitle: '内置项 — 仅管理员可修改',
+  globalBadge: '共享',
+  globalBadgeTitle: '共享项 — 所有人可见，仅管理员可修改',
 
   domains: '领域',
   newDomainPlaceholder: '新领域…',

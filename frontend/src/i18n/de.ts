@@ -140,12 +140,12 @@ export const de: Messages = {
       structure: 'Struktur',
     })[d],
 
-  globalBadge: 'Mitgeliefert',
-  globalBadgeTitle: 'Mitgelieferter Eintrag — nur Administratoren können ihn ändern',
+  globalBadge: 'Geteilt',
+  globalBadgeTitle: 'Geteilter Eintrag — für alle sichtbar, nur Administratoren können ihn ändern',
 
   domains: 'Domänen',
   newDomainPlaceholder: 'Neue Domäne…',
-  sharedDomain: 'Für alle Benutzer freigegeben',
+  sharedDomain: 'Mit allen Benutzern geteilt',
   add: 'Hinzufügen',
   deleteDomainTitle: 'Domäne löschen',
   concepts: 'Konzepte',
