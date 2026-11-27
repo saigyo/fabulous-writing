@@ -208,8 +208,18 @@ of date. The out-of-date answer also names which concept changed.
 
 ## 6. Screen
 
-The mockups agreed in the design conversation fix structure and content;
-styling uses the existing dialog, buttons and status chips.
+The mockup `2026-11-27-terminology-move-and-merge-mockup.html`, next to
+this document, shows every state of both dialogs and where the two
+actions sit in the entry. It is binding for structure, order, spacing
+relations, the English texts and which button is filled, red or
+unavailable in which state. It is drawn with the app's own tokens and the
+values of the existing classes (`dialog.app-dialog`, `.plain-button`,
+`.primary-button`, `.confirm-dialog-danger`, `.status-chip`,
+`.language-marker`, `.link-button`); the implementation uses those
+classes and adds new ones only for the parts that have no counterpart:
+the suggestion list, the result rows, the mark on an incoming term and
+the box with the amber edge. The texts of the other six languages follow
+the English ones.
 
 ### 6.1 Where the actions are
 
