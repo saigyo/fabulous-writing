@@ -899,10 +899,11 @@ shows the preview the server computed.
   confirm stays unavailable.
 - `MergeDialog`: picker, then the result (the chips of the merged concept, new terms
   marked `incoming`), the "Not taken over" box and a line per added domain; the
-  confirm button is red and names the concept that is deleted. `MoveDialog`: two radio
+  confirm button is red, reads "Merge" until a target is picked and "Merge into “target”"
+  after. `MoveDialog`: two radio
   buttons, "To the concept" (with the picker) and, with `canCreate`, "To a new concept";
-  the box "This also happens" with the notices; the confirm button is plain "Move",
-  and red "Move and delete …" when the preview leaves the source without a term. A
+  the box "This also happens" with the notices; the confirm button is always the normal "Move"; when the preview
+  leaves the source without a term, the box says the concept is left empty and removed. A
   `duplicate_text` refusal of a move gets its own sentence naming concept and wording.
 - `Dialog` has a `locked` prop for a pending run: Escape and the backdrop do nothing.
   A second Escape in Chrome closes the native dialog even though the first `cancel`

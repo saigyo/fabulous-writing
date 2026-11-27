@@ -162,8 +162,6 @@ function renderDialog(props: Partial<Parameters<typeof MoveDialog>[0]> = {}) {
 }
 
 const moveButton = () => screen.getByRole('button', { name: 'Move' }) as HTMLButtonElement
-const deleteButton = () =>
-  screen.getByRole('button', { name: 'Move and delete “work space”' }) as HTMLButtonElement
 const cancelButton = () => screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement
 const toConcept = () => screen.getByRole('radio', { name: 'To the concept' }) as HTMLInputElement
 const toNew = () => screen.getByRole('radio', { name: 'To a new concept' }) as HTMLInputElement
@@ -267,7 +265,7 @@ describe('MoveDialog', () => {
     const box = (await screen.findByText('This also happens')).closest('.transfer-box') as HTMLElement
     expect(within(box).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
       `The definition for Deutsch is not taken over: “${DEFINITION}”`,
-      'The concept “work space” has no term left and is deleted.',
+      'This is the last term of its concept. The concept is left empty and is removed.',
     ])
   })
 
@@ -292,14 +290,15 @@ describe('MoveDialog', () => {
     expect(quote.className).toBe('transfer-quote')
   })
 
-  it('names the concept on a red button when the source is deleted, and says plain Move otherwise', async () => {
+  it('says plain Move on the normal button whether or not the source is left empty', async () => {
     const user = userEvent.setup()
     serve([json(200, outcome({ source: null })), json(200, outcome())])
     renderDialog()
     await pick(user, 'workspace')
-    await waitFor(() => expect(deleteButton().disabled).toBe(false))
-    expect(deleteButton().className).toContain('confirm-dialog-danger')
-    expect(screen.queryByRole('button', { name: 'Move' })).toBeNull()
+    await waitFor(() => expect(moveButton().disabled).toBe(false))
+    expect(moveButton().className).toContain('primary-button')
+    expect(moveButton().className).not.toContain('confirm-dialog-danger')
+    expect(screen.queryByRole('button', { name: /delete/ })).toBeNull()
 
     await user.click(screen.getByRole('button', { name: 'Change' }))
     await pick(user, 'workflow')

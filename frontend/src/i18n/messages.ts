@@ -137,7 +137,8 @@ export interface Messages {
   statusIncoming: string
   mergeTitle: (label: string) => string
   mergeIntro: (label: string) => string
-  mergeConfirm: (label: string) => string
+  mergeConfirm: string
+  mergeConfirmInto: (label: string) => string
   transferWorking: string
   transferDemoted: (text: string) => string
   transferNotTakenOver: string
@@ -152,13 +153,12 @@ export interface Messages {
   moveToNew: string
   moveAlso: string
   moveConfirm: string
-  moveConfirmDelete: (label: string) => string
   moveLostLanguage: (label: string, language: string) => string
   moveLostLanguageDefinition: (label: string, language: string, quote: string) => string
   moveDefinitionDropped: (language: string, quote: string) => string
   moveDroppedDomain: (name: string) => string
   moveAddedDomain: (name: string) => string
-  moveSourceDeleted: (label: string) => string
+  moveSourceDeleted: string
   moveNewConceptDomains: (label: string) => string
   moveDuplicate: (target: string, text: string, language: string) => string
   mergeInto: string

@@ -183,7 +183,7 @@ function renderDialog(props: Partial<Parameters<typeof MergeDialog>[0]> = {}) {
 }
 
 const confirmButton = () =>
-  screen.getByRole('button', { name: 'Merge and delete “work space”' }) as HTMLButtonElement
+  screen.getByRole('button', { name: /^Merge( into “workspace”)?$/ }) as HTMLButtonElement
 const cancelButton = () => screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement
 
 async function pick(user: ReturnType<typeof userEvent.setup>, label: string) {
@@ -218,9 +218,16 @@ describe('MergeDialog', () => {
     renderDialog()
     expect(screen.getByRole('heading', { name: 'Merge “work space” into another concept' })).toBeTruthy()
     expect(confirmButton().disabled).toBe(true)
+    expect(confirmButton().textContent).toBe('Merge')
+    expect(confirmButton().className).toContain('confirm-dialog-danger')
+    expect(
+      screen.getByText('All terms of “work space” move to the concept you pick, and the two become one concept.'),
+    ).toBeTruthy()
     await pick(user, 'workspace')
     expect(await screen.findByText('Working out the result…')).toBeTruthy()
     expect(confirmButton().disabled).toBe(true)
+    expect(confirmButton().textContent).toBe('Merge into “workspace”')
+    expect(confirmButton().className).toContain('confirm-dialog-danger')
   })
 
   it('requests a preview for the picked target', async () => {
