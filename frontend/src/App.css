@@ -2756,6 +2756,19 @@ dialog.app-dialog h2 {
   border: 0.28rem solid var(--accent);
 }
 
+.transfer-choice input[type='radio']:disabled {
+  border-color: var(--border);
+  cursor: not-allowed;
+}
+
+.transfer-choice input[type='radio']:checked:disabled {
+  border-color: var(--text-dim);
+}
+
+.transfer-choice label:has(input:disabled) {
+  color: var(--text-dim);
+}
+
 .transfer-choice input[type='radio']:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
