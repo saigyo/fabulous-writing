@@ -18,6 +18,11 @@ from app.services.terminology import (
     TerminologyRuleError,
     TerminologyStore,
 )
+from app.services.terminology.model import (
+    TransferBasis,
+    TransferOutcome,
+    TransferOutdatedError,
+)
 
 router = APIRouter(prefix="/api", tags=["terminology"])
 
@@ -59,6 +64,23 @@ class SectionSave(BaseModel):
     comment: str = ""
 
 
+class MergeRequest(BaseModel):
+    target_id: int
+    preview: bool = False
+    basis: TransferBasis | None = None
+    comment: str = ""
+
+    @model_validator(mode="after")
+    def _run_needs_a_basis(self) -> "MergeRequest":
+        if not self.preview and self.basis is None:
+            raise ValueError("a real run needs the basis of its preview")
+        return self
+
+
+class MoveRequest(MergeRequest):
+    target_id: int | None
+
+
 def _store(request: Request) -> TerminologyStore:
     return request.app.state.terminology_store
 
@@ -77,6 +99,8 @@ def _concept_errors() -> Iterator[None]:
         detail = {"code": exc.rule, "message": str(exc)}
         if isinstance(exc, TerminologyConflictError):
             detail["part"] = exc.part
+        if isinstance(exc, TransferOutdatedError):
+            detail["concept_id"] = exc.concept_id
         raise HTTPException(409, detail) from exc
 
 
@@ -263,3 +287,47 @@ def remove_concept_from_domain(
     if not removed:
         raise HTTPException(404, "Concept not found")
     return Response(status_code=204)
+
+
+@router.post("/concepts/{concept_id}/merge")
+def merge_concept(
+    request: Request,
+    concept_id: int,
+    body: MergeRequest,
+    user: CurrentUser = Depends(get_current_user),
+) -> TransferOutcome:
+    with _concept_errors():
+        outcome = _store(request).merge_concept(
+            concept_id,
+            body.target_id,
+            basis=body.basis,
+            preview=body.preview,
+            actor=_actor(user),
+            comment=body.comment,
+        )
+    if outcome is None:
+        raise HTTPException(404, "Concept not found")
+    return outcome
+
+
+@router.post("/terms/{term_id}/move")
+def move_term(
+    request: Request,
+    term_id: int,
+    body: MoveRequest,
+    user: CurrentUser = Depends(get_current_user),
+) -> TransferOutcome:
+    if body.target_id is None:
+        _require_custom_domains(request, user)
+    with _concept_errors():
+        outcome = _store(request).move_term(
+            term_id,
+            body.target_id,
+            basis=body.basis,
+            preview=body.preview,
+            actor=_actor(user),
+            comment=body.comment,
+        )
+    if outcome is None:
+        raise HTTPException(404, "Term not found")
+    return outcome

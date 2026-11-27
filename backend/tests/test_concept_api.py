@@ -415,4 +415,5 @@ def test_comment_reaches_the_change_log(client: TestClient, write) -> None:
 
 
 def test_term_endpoints_are_gone(client: TestClient) -> None:
-    assert [path for path in client.app.openapi()["paths"] if "/terms" in path] == []
+    paths = [path for path in client.app.openapi()["paths"] if "/terms" in path]
+    assert paths == ["/api/terms/{term_id}/move"]
