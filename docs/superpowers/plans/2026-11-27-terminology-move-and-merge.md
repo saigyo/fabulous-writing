@@ -380,6 +380,15 @@ Delivery is one pull request.
 ## Rulings during execution
 
 - **Language names in the notices.** The app shows languages under their own names. The mockup's "The German definition" and "loses German" could not be produced, so these sentences were reworded to "The definition for Deutsch: …" and "loses its section for Deutsch", in the mockup too.
+- **A dialog that must stay open.** A browser can close a native dialog on a second Escape although the first was refused. `ui/Dialog` therefore has an opt-in `locked` state that reopens the dialog after such a close; the two dialogs use it while their run is pending. Confirmed in the browser trial.
+- **A concept that left the domain in the meantime.** If the concept to show after a run is no longer linked to the active domain, the entry closes instead of showing it (Reading 19 did not cover this case).
+- **Focus.** Both dialogs open with focus in the search field, and focus moves to "Change" after a pick.
+
+## Reviews during execution
+
+- **R1** (Tasks 1 to 4): approved, no finding above minor; six test gaps closed and one unreachable expression removed.
+- **R2** (Tasks 5 to 9): two important findings (the dialog lock and the concept that left the domain, above) and nine minor ones (texts in three languages, quotation marks per language, focus and roles in the picker, a comment of only spaces, repeated run handling); all fixed and re-checked.
+- **Browser trial:** fourteen steps passed; four style deviations from the mockup corrected (round radios, flat buttons, the picked target's border, the size of "Change").
 
 ## Plan review
 
