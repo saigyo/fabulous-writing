@@ -1215,7 +1215,7 @@ describe('TerminologyView after a merge or a move', () => {
     serve(mergeConcept, outcomeOf(merged, null))
     await open('alpha')
     await userEvent.click(screen.getByRole('button', { name: en.mergeInto }))
-    await pickAndConfirm('beta', en.mergeConfirm('alpha'))
+    await pickAndConfirm('beta', en.mergeConfirmInto('beta'))
 
     await waitFor(() => expect(heading('beta')).not.toBeNull())
     expect(termValues()).toEqual(['beta', 'alpha'])
@@ -1253,7 +1253,7 @@ describe('TerminologyView after a merge or a move', () => {
     serve(moveTerm, outcomeOf(withTerms(beta, [termOf(beta), { ...termOf(alpha), usage_status: 'admitted' }]), null))
     await open('alpha')
     await startMove('alpha')
-    await pickAndConfirm('beta', en.moveConfirmDelete('alpha'))
+    await pickAndConfirm('beta', en.moveConfirm)
 
     await waitFor(() => expect(heading('beta')).not.toBeNull())
     expect(termValues()).toEqual(['beta', 'alpha'])
@@ -1267,7 +1267,7 @@ describe('TerminologyView after a merge or a move', () => {
     await open('alpha')
     await startMove('alpha')
     await userEvent.click(screen.getByRole('radio', { name: en.moveToNew }))
-    await pickAndConfirm(null, en.moveConfirmDelete('alpha'))
+    await pickAndConfirm(null, en.moveConfirm)
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(heading('alpha')).not.toBeNull()
@@ -1287,7 +1287,7 @@ describe('TerminologyView after a merge or a move', () => {
     serve(mergeConcept, outcomeOf(unlinked, null))
     await open('alpha')
     await userEvent.click(screen.getByRole('button', { name: en.mergeInto }))
-    await pickAndConfirm('beta', en.mergeConfirm('alpha'))
+    await pickAndConfirm('beta', en.mergeConfirmInto('beta'))
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(heading(en.newConceptTitle)).toBeNull()
@@ -1303,7 +1303,7 @@ describe('TerminologyView after a merge or a move', () => {
     serve(moveTerm, outcomeOf(unlinked, null))
     await open('alpha')
     await startMove('alpha')
-    await pickAndConfirm('beta', en.moveConfirmDelete('alpha'))
+    await pickAndConfirm('beta', en.moveConfirm)
 
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(heading(en.newConceptTitle)).toBeNull()
@@ -1385,7 +1385,7 @@ describe('TerminologyView after a merge or a move', () => {
     serve(mergeConcept, outcomeOf(merged, null), new Promise<TransferOutcome>((resolve) => (finish = resolve)))
     await open('alpha')
     await userEvent.click(screen.getByRole('button', { name: en.mergeInto }))
-    await pickAndConfirm('beta', en.mergeConfirm('alpha'))
+    await pickAndConfirm('beta', en.mergeConfirmInto('beta'))
     await waitFor(() => expect(mergeConcept).toHaveBeenCalledTimes(2))
 
     act(() => useStore.getState().setDomains([privateB]))

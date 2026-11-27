@@ -155,7 +155,7 @@ export function MergeDialog({
         running={running}
         ready={outcome !== null}
         danger
-        label={m.mergeConfirm(sourceLabel)}
+        label={target === null ? m.mergeConfirm : m.mergeConfirmInto(label(target))}
         onCancel={onClose}
         onConfirm={merge}
       />

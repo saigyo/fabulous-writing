@@ -101,14 +101,13 @@ export function MoveDialog({
       case 'addedDomain':
         return m.moveAddedDomain(notice.name)
       case 'sourceDeleted':
-        return m.moveSourceDeleted(sourceLabel)
+        return m.moveSourceDeleted
       case 'droppedTerm':
         return null
     }
   }
 
   const also = outcome === null ? [] : notices(outcome, 'move')
-  const deletesSource = outcome !== null && outcome.source === null
 
   return (
     <Dialog
@@ -180,8 +179,8 @@ export function MoveDialog({
       <TransferButtons
         running={running}
         ready={outcome !== null}
-        danger={deletesSource}
-        label={deletesSource ? m.moveConfirmDelete(sourceLabel) : m.moveConfirm}
+        danger={false}
+        label={m.moveConfirm}
         onCancel={onClose}
         onConfirm={move}
       />

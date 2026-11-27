@@ -1201,7 +1201,7 @@ describe('ConceptEntry merge and move', () => {
     await user.type(reason(), 'Same thing')
     expect(button(en.mergeInto).disabled).toBe(false)
     await user.click(button(en.mergeInto))
-    await confirmWith(user, en.mergeConfirm('Anmeldung'))
+    await confirmWith(user, en.mergeConfirmInto('Konto'))
 
     await waitFor(() => expect(onTransferred).toHaveBeenCalledWith(MERGED, 'merge'))
     expect(runs()).toEqual([
