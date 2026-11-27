@@ -103,6 +103,58 @@ export interface Concept {
   modified_by: number | null
 }
 
+export interface SectionBasis {
+  id: number
+  revision: number
+}
+
+export interface ConceptBasis {
+  concept_id: number
+  revision: number
+  sections: SectionBasis[]
+}
+
+export interface TransferBasis {
+  source: ConceptBasis
+  target: ConceptBasis | null
+}
+
+export interface MovedTerm {
+  id: number
+  text: string
+  language: Language
+  usage_before: UsageStatus
+  usage_after: UsageStatus
+}
+
+export interface DroppedTerm {
+  text: string
+  language: Language
+  usage_status: UsageStatus
+}
+
+export interface DroppedDefinition {
+  language: Language
+  definition: string
+}
+
+export interface DomainRef {
+  id: number
+  name: string
+}
+
+export interface TransferOutcome {
+  target: Concept
+  source: Concept | null
+  moved: MovedTerm[]
+  dropped_terms: DroppedTerm[]
+  dropped_definitions: DroppedDefinition[]
+  removed_languages: Language[]
+  dropped_domains: DomainRef[]
+  added_domains: DomainRef[]
+  basis: TransferBasis
+}
+
 export interface TermInput {
   id?: number | null
   text: string

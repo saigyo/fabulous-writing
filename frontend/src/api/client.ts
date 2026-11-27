@@ -16,6 +16,8 @@ import type {
   Scorecard,
   SectionInput,
   Tier,
+  TransferBasis,
+  TransferOutcome,
   UsagePayload,
 } from '../types'
 // store.ts only imports this module's *types* (`import type`), which are
@@ -33,13 +35,14 @@ export class HttpError extends Error {
   readonly retryToken?: string
   readonly reasons?: string[]
   readonly part?: string
+  readonly conceptId?: number
   readonly detailMessage?: string
 
   constructor(
     status: number,
     message: string,
     code?: string,
-    extra?: { retryToken?: string; reasons?: string[]; part?: string; detailMessage?: string },
+    extra?: { retryToken?: string; reasons?: string[]; part?: string; conceptId?: number; detailMessage?: string },
   ) {
     super(message)
     this.status = status
@@ -47,6 +50,7 @@ export class HttpError extends Error {
     this.retryToken = extra?.retryToken
     this.reasons = extra?.reasons
     this.part = extra?.part
+    this.conceptId = extra?.conceptId
     this.detailMessage = extra?.detailMessage
   }
 }
@@ -92,6 +96,7 @@ interface ErrorDetail {
   retryToken?: string
   reasons?: string[]
   part?: string
+  conceptId?: number
   detailMessage?: string
 }
 
@@ -106,10 +111,12 @@ async function extractErrorDetail(response: Response): Promise<ErrorDetail> {
       retry_token?: unknown
       reasons?: unknown
       part?: unknown
+      concept_id?: unknown
       message?: unknown
     }
     return {
       part: typeof d.part === 'string' ? d.part : undefined,
+      conceptId: typeof d.concept_id === 'number' ? d.concept_id : undefined,
       detailMessage: typeof d.message === 'string' ? d.message : undefined,
       code: typeof d.code === 'string' ? d.code : undefined,
       retryToken: typeof d.retry_token === 'string' ? d.retry_token : undefined,
@@ -184,6 +191,7 @@ async function requestWithOptions<T>(path: string, init?: RequestOptionsInternal
         retryToken: detail.retryToken,
         reasons: detail.reasons,
         part: detail.part,
+        conceptId: detail.conceptId,
         detailMessage: detail.detailMessage,
       },
     )
@@ -698,6 +706,21 @@ export const saveConceptLanguage = (
 ) =>
   request<Concept>(`/api/concepts/${id}/languages/${language}`, {
     method: 'PUT',
+    body: JSON.stringify(body),
+  })
+export interface TransferBody {
+  preview?: boolean
+  basis?: TransferBasis
+  comment?: string
+}
+export const mergeConcept = (sourceId: number, body: TransferBody & { target_id: number }) =>
+  request<TransferOutcome>(`/api/concepts/${sourceId}/merge`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+export const moveTerm = (termId: number, body: TransferBody & { target_id: number | null }) =>
+  request<TransferOutcome>(`/api/terms/${termId}/move`, {
+    method: 'POST',
     body: JSON.stringify(body),
   })
 export const deleteConcept = (id: number) =>
