@@ -847,7 +847,7 @@ another one of the domain; "Move…" at the foot of a saved term's details moves
 term to another concept or, if the user has `custom_domains`, to a new one (a split).
 Both are unavailable for a new or read-only concept, while a request is in flight and
 while anything is unsaved, because the server computes the result from what it has
-stored. The comment field is sent with the run and cleared afterwards like a save's.
+stored; "Merge into…" is also unavailable when the domain has no other concept to merge into. The comment field is sent with the run and cleared afterwards like a save's.
 The rules are the server's ([Moving a term and merging
 concepts](backend-architecture.md#moving-a-term-and-merging-concepts)); the screen only
 shows the preview the server computed.
@@ -863,7 +863,9 @@ shows the preview the server computed.
   that are not taken over and the domains whose terms no longer apply; for a move also
   the demotions, the languages the source loses, the added domains and a deleted source,
   and a definition is not reported twice when it goes with a lost language. `messageOf`
-  is the server's own sentence of a refusal (`detailMessage`), else the generic one.
+  is the server's own sentence of a refusal (`detailMessage`), else the generic one,
+  wrapped in the translated `changeFailed` like the entry's errors, so the English text
+  of the server never stands alone in a dialog.
 - **Languages appear under their own names in the notices** ("loses its section for
   Deutsch"), as everywhere in the app (`languageName`). The mockup's "The German
   definition" could not be produced from the language list, so the sentences were
@@ -885,7 +887,11 @@ shows the preview the server computed.
   the concept that changed (`conceptId` of the error, else the one the dialog gives),
   shows the sentence "was changed in the meantime" and reloads the preview, so the
   writer sees the new result and confirms again; any other refusal is shown and the
-  buttons come back.
+  buttons come back. A *preview* refused as `outdated` (the term has left the concept, or
+  the source changed under the dialog) is different: previewing again cannot help, so
+  both dialogs show "was changed in the meantime. Close this dialog and open the concept
+  again." naming the concept of `conceptId` (the target's, else the source's), and
+  confirm stays unavailable.
 - `MergeDialog`: picker, then the result (the chips of the merged concept, new terms
   marked `incoming`), the "Not taken over" box and a line per added domain; the
   confirm button is red and names the concept that is deleted. `MoveDialog`: two radio

@@ -212,6 +212,13 @@ def test_unknown_or_foreign_ids_are_404(client: TestClient) -> None:
         assert _move(client, own_term, 99999, **extra).status_code == 404
         assert _move(client, foreign_term, mine["id"], **extra).status_code == 404
         assert _move(client, own_term, foreign["id"], **extra).status_code == 404
+        for missing_term, missing_target in (
+            (99999, mine["id"]),
+            (own_term, 99999),
+            (own_term, foreign["id"]),
+        ):
+            answer = _move(client, missing_term, missing_target, **extra)
+            assert answer.json() == {"detail": "Term or target concept not found"}
 
 
 def test_non_admin_gets_403_on_global_concepts(client: TestClient) -> None:

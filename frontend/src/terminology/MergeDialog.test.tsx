@@ -404,7 +404,33 @@ describe('MergeDialog', () => {
     serve([json(409, { detail: { code: 'owner_mismatch', message: 'Different owners.' } })])
     renderDialog()
     await pick(user, 'workspace')
-    expect(await screen.findByText('Different owners.')).toBeTruthy()
+    expect(await screen.findByText('Change failed: Different owners.')).toBeTruthy()
+    expect(confirmButton().disabled).toBe(true)
+  })
+
+  it('shows a failed preview whose concept is outdated as a sentence naming it and keeps confirm unavailable', async () => {
+    const user = userEvent.setup()
+    serve([json(409, { detail: { code: 'outdated', message: 'changed', concept_id: 20 } })])
+    renderDialog()
+    await pick(user, 'workspace')
+    expect(
+      await screen.findByText(
+        '“workspace” was changed in the meantime. Close this dialog and open the concept again.',
+      ),
+    ).toBeTruthy()
+    expect(confirmButton().disabled).toBe(true)
+  })
+
+  it('names the source when the source is the concept an outdated preview names', async () => {
+    const user = userEvent.setup()
+    serve([json(409, { detail: { code: 'outdated', message: 'changed', concept_id: 10 } })])
+    renderDialog()
+    await pick(user, 'workspace')
+    expect(
+      await screen.findByText(
+        '“work space” was changed in the meantime. Close this dialog and open the concept again.',
+      ),
+    ).toBeTruthy()
     expect(confirmButton().disabled).toBe(true)
   })
 
@@ -419,7 +445,7 @@ describe('MergeDialog', () => {
     await waitFor(() => expect(confirmButton().disabled).toBe(false))
     await user.click(confirmButton())
 
-    expect(await screen.findByText('Cannot merge into itself.')).toBeTruthy()
+    expect(await screen.findByText('Change failed: Cannot merge into itself.')).toBeTruthy()
     expect(screen.getByRole('dialog')).toBeTruthy()
     expect(onDone).not.toHaveBeenCalled()
     expect(onClose).not.toHaveBeenCalled()

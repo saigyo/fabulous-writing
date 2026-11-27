@@ -329,5 +329,5 @@ def move_term(
             comment=body.comment,
         )
     if outcome is None:
-        raise HTTPException(404, "Term not found")
+        raise HTTPException(404, "Term or target concept not found")
     return outcome

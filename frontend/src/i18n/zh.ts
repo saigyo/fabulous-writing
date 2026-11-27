@@ -157,6 +157,8 @@ export const zh: Messages = {
   transferDroppedDomain: (name) => `领域“${name}”：移过去的术语在那里不再适用。`,
   mergeAddedDomain: (name) => `移过去的术语现在也适用于领域“${name}”。`,
   transferOutdated: (label) => `“${label}”在此期间被修改过。这是现在的结果。`,
+  transferOutdatedPreview: (label) =>
+    `“${label}”在此期间被修改过。请关闭此对话框,然后重新打开该概念。`,
   moveTitle: (text) => `移动“${text}”`,
   moveToConcept: '移到已有概念',
   moveToNew: '移到新概念',

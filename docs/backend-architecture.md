@@ -778,7 +778,8 @@ deleted), `moved` (id, text, language, `usage_before`, `usage_after`), `dropped_
 `dropped_definitions`, `removed_languages`, `dropped_domains`, `added_domains` (id and name)
 and `basis`. `preview: true` computes and rolls back. Without `preview` the body must carry
 `basis`, the one a preview answered, otherwise it is a 422. 404 for an unknown or invisible
-term or concept ("Term not found", "Concept not found"). 403 for a global concept without
+term or concept. A move answers "Term or target concept not found" for either, so the
+answer does not reveal which of the two is missing; a merge answers "Concept not found". 403 for a global concept without
 admin, and for a split without `custom_domains`. 409 `detail` carries the rule codes
 `same_concept`, `owner_mismatch`, `duplicate_text` (a move only) and `outdated`, which adds
 `concept_id`.

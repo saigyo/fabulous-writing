@@ -159,6 +159,8 @@ export const ja: Messages = {
   transferDroppedDomain: (name) => `ドメイン「${name}」:移した用語はそこでは適用されなくなります。`,
   mergeAddedDomain: (name) => `移した用語は、ドメイン「${name}」でも適用されるようになります。`,
   transferOutdated: (label) => `「${label}」はその間に変更されました。これが現在の結果です。`,
+  transferOutdatedPreview: (label) =>
+    `「${label}」はその間に変更されました。このダイアログを閉じて、もう一度概念を開いてください。`,
   moveTitle: (text) => `「${text}」を移す`,
   moveToConcept: '既存の概念へ',
   moveToNew: '新しい概念へ',

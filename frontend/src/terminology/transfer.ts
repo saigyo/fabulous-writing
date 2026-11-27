@@ -1,4 +1,5 @@
 import type { HttpError } from '../api/client'
+import type { Messages } from '../i18n'
 import type {
   Concept,
   ConceptTerm,
@@ -136,5 +137,6 @@ export function notices(outcome: TransferOutcome, kind: 'merge' | 'move'): Notic
   ]
 }
 
-/** The server's own sentence of a refused request, else the generic one. */
-export const messageOf = (error: HttpError) => error.detailMessage ?? error.message
+/** The server's own sentence of a refusal (`detailMessage`), else the generic one, inside the translated frame. */
+export const messageOf = (error: HttpError, m: Pick<Messages, 'changeFailed'>) =>
+  m.changeFailed(error.detailMessage ?? error.message)
