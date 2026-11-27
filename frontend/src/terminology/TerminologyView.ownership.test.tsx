@@ -1162,7 +1162,7 @@ describe('TerminologyView after a merge or a move', () => {
       removed_languages: [],
       dropped_domains: [],
       added_domains: [],
-      basis: { source: { concept_id: sourceId, revision: 1, sections: [] }, target: null },
+      basis: { source: { concept_id: sourceId, revision: 1, sections: [{ id: sourceId * 10, revision: 1 }] }, target: null },
     }
   }
 

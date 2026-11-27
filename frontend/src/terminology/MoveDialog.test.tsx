@@ -73,13 +73,17 @@ const WORKFLOW = concept(21, { en: [term(211, 'workflow', 'preferred')] })
 const CANDIDATES = [WORKSPACE, WORKFLOW]
 const order: Language[] = FALLBACK_LANGUAGES.map((l) => l.code)
 
-function basis(revision: number, target: number | null = 20): TransferOutcome['basis'] {
-  const side = (id: number): ConceptBasis => ({
+/** `revision` is the target's; the source is as the entry holds it (revision 1) unless `sourceRevision` says otherwise. */
+function basis(revision: number, target: number | null = 20, sourceRevision = 1): TransferOutcome['basis'] {
+  const side = (id: number, rev: number, sections: number[]): ConceptBasis => ({
     concept_id: id,
-    revision,
-    sections: [{ id: id * 10, revision }],
+    revision: rev,
+    sections: sections.map((section) => ({ id: section, revision: rev })),
   })
-  return { source: side(10), target: target === null ? null : side(target) }
+  return {
+    source: side(10, sourceRevision, SOURCE.sections.map((s) => s.id)),
+    target: target === null ? null : side(target, revision, [target * 10]),
+  }
 }
 
 function outcome(over: Partial<TransferOutcome> = {}): TransferOutcome {
@@ -487,6 +491,34 @@ describe('MoveDialog', () => {
   it('names the source when the source is the concept an outdated preview names', async () => {
     const user = userEvent.setup()
     serve([json(409, { detail: { code: 'outdated', message: 'changed', concept_id: 10 } })])
+    renderDialog()
+    await pick(user, 'workspace')
+    expect(
+      await screen.findByText(
+        '“work space” was changed in the meantime. Close this dialog and open the concept again.',
+      ),
+    ).toBeTruthy()
+    expect(moveButton().disabled).toBe(true)
+  })
+
+  it('shows the stale-source sentence and no result when the preview names another source concept', async () => {
+    const user = userEvent.setup()
+    const other = outcome()
+    other.basis.source = { concept_id: 30, revision: 1, sections: [{ id: 300, revision: 1 }] }
+    serve([json(200, other)])
+    renderDialog()
+    await pick(user, 'workspace')
+    expect(
+      await screen.findByText(
+        '“work space” was changed in the meantime. Close this dialog and open the concept again.',
+      ),
+    ).toBeTruthy()
+    expect(moveButton().disabled).toBe(true)
+  })
+
+  it('shows the stale-source sentence when a section of the source has a newer revision', async () => {
+    const user = userEvent.setup()
+    serve([json(200, outcome({ basis: basis(1, 20, 2) }))])
     renderDialog()
     await pick(user, 'workspace')
     expect(

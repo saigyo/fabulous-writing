@@ -71,13 +71,14 @@ const WORKFLOW = concept(21, { en: [term(211, 'workflow', 'preferred')] })
 const CANDIDATES = [WORKSPACE, WORKFLOW]
 const order: Language[] = FALLBACK_LANGUAGES.map((l) => l.code)
 
-function basis(revision: number): TransferOutcome['basis'] {
-  const side = (id: number): ConceptBasis => ({
+/** `revision` is the target's; the source is as the entry holds it (revision 1) unless `sourceRevision` says otherwise. */
+function basis(revision: number, sourceRevision = 1): TransferOutcome['basis'] {
+  const side = (id: number, rev: number): ConceptBasis => ({
     concept_id: id,
-    revision,
-    sections: [{ id: id * 10, revision }],
+    revision: rev,
+    sections: [{ id: id * 10, revision: rev }],
   })
-  return { source: side(10), target: side(20) }
+  return { source: side(10, sourceRevision), target: side(20, revision) }
 }
 
 function outcome(over: Partial<TransferOutcome> = {}): TransferOutcome {
@@ -397,6 +398,23 @@ describe('MergeDialog', () => {
     expect(
       await screen.findByText('“work space” was changed in the meantime. This is the result as it would be now.'),
     ).toBeTruthy()
+  })
+
+  it.each([
+    ['names another source concept', () => outcome({ basis: { ...basis(1), source: { concept_id: 30, revision: 1, sections: [{ id: 100, revision: 1 }] } } })],
+    ['has a newer source revision', () => outcome({ basis: basis(1, 2) })],
+  ])('shows the stale-source sentence and no result when the preview %s', async (_name, make) => {
+    const user = userEvent.setup()
+    serve([json(200, make())])
+    renderDialog()
+    await pick(user, 'workspace')
+    expect(
+      await screen.findByText(
+        '“work space” was changed in the meantime. Close this dialog and open the concept again.',
+      ),
+    ).toBeTruthy()
+    expect(confirmButton().disabled).toBe(true)
+    expect(document.querySelector('.transfer-result')).toBeNull()
   })
 
   it('shows the message of a failed preview and keeps confirm unavailable', async () => {
