@@ -150,7 +150,9 @@ two operations on the same pair cannot block each other.
 
 Both endpoints take `preview`. A preview applies the same checks,
 including the permissions of 4.1, and the same code as the real run, writes nothing that outlasts the request, and
-answers with the same body. *(Author's call: the simplest way to guarantee
+answers with the same body. "The same" covers the outcome and the version
+numbers; ids and identifiers a run generates, and its timestamps, belong
+to that run. *(Author's call: the simplest way to guarantee
 "the same code" is to run the operation in its transaction, read the
 result and roll back. The builder may choose another way if previews and
 real runs still share one implementation of the rules in 4.2 to 4.5.)*
