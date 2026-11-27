@@ -1,5 +1,5 @@
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any
 
@@ -154,9 +154,10 @@ def transfer_entries(
     target_after: Concept,
     *,
     domain_names: dict[int, str],
+    merged_into: str | None = None,
 ) -> list[Entry]:
     """The log of a move or merge: a moved term gets one `moved` entry, never a
-    `created` or `deleted` one."""
+    `created` or `deleted` one. `merged_into` is the uid of the target of a merge."""
     left = {t.id: t for s in source_before.sections for t in s.terms}
     labels = _labels(target_after)
     moved: list[Entry] = []
@@ -183,10 +184,18 @@ def transfer_entries(
     def without_moved(entries: list[Entry]) -> list[Entry]:
         return [e for e in entries if e.term_id not in moved_ids]
 
+    left_behind = without_moved(diff(source_before, source_after, domain_names=domain_names))
+    if merged_into is not None and source_after is None:
+        head = left_behind[0]
+        left_behind[0] = replace(
+            head,
+            action=Action.MERGED,
+            changes=[{"field": "merged_into", "old": None, "new": merged_into}, *head.changes],
+        )
     return (
         without_moved(diff(target_before, target_after, domain_names=domain_names))
         + moved
-        + without_moved(diff(source_before, source_after, domain_names=domain_names))
+        + left_behind
     )
 
 

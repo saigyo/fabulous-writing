@@ -235,3 +235,75 @@ def test_deleting_a_domain_waits_for_a_concept_being_created_in_it(pg_database):
             " WHERE id NOT IN (SELECT concept_id FROM concept_domains)"
         ).fetchone()["n"]
     assert unlinked == 0
+
+
+def _merge_worker(dsn: str, source_id: int, target_id: int, basis: dict, barrier, queue) -> None:
+    from app.services.db.postgres import PostgresDatabase
+    from app.services.terminology.model import TransferBasis, TransferOutdatedError
+
+    database = PostgresDatabase(dsn)
+    try:
+        store = TerminologyStore(database, manage_schema=False)
+        barrier.wait()
+        try:
+            outcome = store.merge_concept(
+                source_id, target_id, basis=TransferBasis.model_validate(basis), actor=ME
+            )
+        except TransferOutdatedError:
+            queue.put("outdated")
+        except Exception as exc:  # noqa: BLE001
+            queue.put(f"error: {type(exc).__name__}: {exc}")
+        else:
+            queue.put("merged" if outcome is not None else "none")
+    finally:
+        database.close()
+
+
+def test_two_merges_of_the_same_pair_in_opposite_directions(pg_database):
+    store = TerminologyStore(pg_database)
+    domain = store.create_domain("Medicine", owner_id=ME.user_id)
+
+    def one(text: str) -> Concept:
+        created = store.create_concept(
+            domain.id,
+            [SectionInput(language=Language.EN, terms=[TermInput(text=text, usage_status=UsageStatus.PREFERRED)])],
+            actor=ME,
+        )
+        assert created is not None
+        return created
+
+    a, b = one("alpha"), one("beta")
+    basis_ab = store.merge_concept(a.id, b.id, basis=None, preview=True, actor=ME).basis
+    basis_ba = store.merge_concept(b.id, a.id, basis=None, preview=True, actor=ME).basis
+    dsn = pg_database._pool.conninfo
+    ctx = multiprocessing.get_context("spawn")
+    barrier = ctx.Barrier(2)
+    queue = ctx.Queue()
+    processes = [
+        ctx.Process(
+            target=_merge_worker,
+            args=(dsn, source, target, basis.model_dump(mode="json"), barrier, queue),
+        )
+        for source, target, basis in ((a.id, b.id, basis_ab), (b.id, a.id, basis_ba))
+    ]
+    for p in processes:
+        p.start()
+    results = None
+    try:
+        results = [queue.get(timeout=30) for _ in processes]
+    finally:
+        if results is None:
+            for p in processes:
+                if p.is_alive():
+                    p.terminate()
+        for p in processes:
+            p.join(timeout=10)
+    assert not any(p.is_alive() for p in processes)
+    assert all(p.exitcode == 0 for p in processes), [p.exitcode for p in processes]
+    assert results.count("merged") == 1, results
+    assert next(r for r in results if r != "merged") in ("outdated", "none"), results
+    with pg_database.connect() as check:
+        remaining = check.execute("SELECT id FROM concepts").fetchall()
+        texts = sorted(r["text"] for r in check.execute("SELECT text FROM concept_terms").fetchall())
+    assert len(remaining) == 1
+    assert texts == ["alpha", "beta"]

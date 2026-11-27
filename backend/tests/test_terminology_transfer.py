@@ -18,6 +18,7 @@ from app.services.terminology import (
 from app.services.terminology.model import (
     DomainRef,
     DroppedDefinition,
+    DroppedTerm,
     MovedTerm,
     TransferBasis,
     TransferOutcome,
@@ -435,3 +436,295 @@ def test_change_log_of_a_move(store, db):
     deleted = _concept_entry(entries, source.id)
     assert deleted["action"] == "deleted"
     assert deleted["concept_labels"] == {"en": "signup"}
+
+
+def merge_preview(store, source_id, target_id, *, actor=ME) -> TransferOutcome:
+    outcome = store.merge_concept(source_id, target_id, basis=None, preview=True, actor=actor)
+    assert outcome is not None
+    return outcome
+
+
+def merge(store, source_id, target_id, *, actor=ME, comment="") -> TransferOutcome:
+    basis = merge_preview(store, source_id, target_id, actor=actor).basis
+    outcome = store.merge_concept(
+        source_id, target_id, basis=basis, actor=actor, comment=comment
+    )
+    assert outcome is not None
+    return outcome
+
+
+def _everything_at_once(store):
+    support = store.create_domain("Support", owner_id=1)
+    shared = store.create_domain("Shared", owner_id=1)
+    marketing = store.create_domain("Marketing", owner_id=1)
+    source = concept(
+        store, [support.id, shared.id],
+        section(
+            Language.EN,
+            term("work space"),
+            term("team space", UsageStatus.ADMITTED, ProcessStatus.CANDIDATE),
+            term("work area", UsageStatus.ADMITTED),
+            definition="Where work happens.",
+        ),
+        section(
+            Language.DE, term("Arbeitsraum"), definition="Bereich, in dem ein Team arbeitet."
+        ),
+        section(Language.FR, term("espace de travail")),
+    )
+    target = concept(
+        store, [shared.id, marketing.id],
+        section(
+            Language.EN,
+            term("workspace"),
+            term("work area", UsageStatus.ADMITTED),
+            term("team room", UsageStatus.FORBIDDEN),
+        ),
+        section(Language.DE, term("Arbeitsbereich"), definition="Eigene Definition."),
+    )
+    return support, marketing, source, target
+
+
+def test_merge_outcome(store):
+    support, marketing, source, target = _everything_at_once(store)
+    work_space, team_space = find(source, "work space"), find(source, "team space")
+    arbeitsraum, french = find(source, "Arbeitsraum"), find(source, "espace de travail")
+    duplicate, kept = find(source, "work area"), find(target, "work area")
+
+    outcome = merge(store, source.id, target.id)
+
+    assert outcome.source is None
+    assert store.get_concept(source.id, owner_id=1) is None
+    assert outcome.target == store.get_concept(target.id, owner_id=1)
+    assert outcome.moved == [
+        MovedTerm(id=work_space.id, text="work space", language=Language.EN,
+                  usage_before=UsageStatus.PREFERRED, usage_after=UsageStatus.ADMITTED),
+        MovedTerm(id=team_space.id, text="team space", language=Language.EN,
+                  usage_before=UsageStatus.ADMITTED, usage_after=UsageStatus.ADMITTED),
+        MovedTerm(id=arbeitsraum.id, text="Arbeitsraum", language=Language.DE,
+                  usage_before=UsageStatus.PREFERRED, usage_after=UsageStatus.ADMITTED),
+        MovedTerm(id=french.id, text="espace de travail", language=Language.FR,
+                  usage_before=UsageStatus.PREFERRED, usage_after=UsageStatus.PREFERRED),
+    ]
+    assert outcome.dropped_terms == [
+        DroppedTerm(text="work area", language=Language.EN, usage_status=UsageStatus.ADMITTED)
+    ]
+    assert outcome.dropped_definitions == [
+        DroppedDefinition(language=Language.DE, definition="Bereich, in dem ein Team arbeitet.")
+    ]
+    assert outcome.removed_languages == []
+    assert outcome.dropped_domains == [DomainRef(id=support.id, name="Support")]
+    assert outcome.added_domains == [DomainRef(id=marketing.id, name="Marketing")]
+    assert outcome.basis == TransferBasis(source=basis_of(source), target=basis_of(target))
+
+    assert part(outcome.target, Language.EN).definition == "Where work happens."
+    assert part(outcome.target, Language.DE).definition == "Eigene Definition."
+    assert part(outcome.target, Language.FR).revision == 1
+    assert part(outcome.target, Language.EN).revision == part(target, Language.EN).revision + 1
+    assert part(outcome.target, Language.DE).revision == part(target, Language.DE).revision + 1
+    assert outcome.target.revision == target.revision + 1
+    # The duplicate went with the source; the target's own term is untouched.
+    after = find(outcome.target, "work area")
+    assert (after.id, after.revision) == (kept.id, kept.revision)
+    assert after.id != duplicate.id
+    assert duplicate.id not in {t.id for s in outcome.target.sections for t in s.terms}
+
+
+def test_merge_raises_the_target_concept_by_one_for_several_new_languages(store):
+    d = store.create_domain("Cloud", owner_id=1)
+    source = concept(
+        store, [d.id],
+        section(Language.DE, term("Arbeitsraum")), section(Language.FR, term("espace")),
+        section(Language.IT, term("spazio")),
+    )
+    target = concept(store, [d.id], section(Language.EN, term("workspace")))
+
+    outcome = merge(store, source.id, target.id)
+
+    assert len(outcome.target.sections) == 4
+    assert outcome.target.revision == target.revision + 1
+    assert part(outcome.target, Language.EN).revision == part(target, Language.EN).revision
+
+
+def test_change_log_of_a_merge(store, db):
+    _, _, source, target = _everything_at_once(store)
+    moved_ids = {find(source, t).id for t in ("work space", "team space", "Arbeitsraum")}
+    moved_ids.add(find(source, "espace de travail").id)
+    duplicate = find(source, "work area")
+    start = len(changes(db))
+
+    merge(store, source.id, target.id, comment="tidy up")
+
+    entries = changes(db)[start:]
+    assert len({e["batch"] for e in entries}) == 1
+    assert all(e["comment"] == "tidy up" for e in entries)
+
+    [merged] = [e for e in entries if e["action"] == "merged"]
+    assert (merged["concept_id"], merged["concept_uid"], merged["term_id"]) == (
+        source.id, source.uid, None
+    )
+    assert merged["concept_labels"] == {"en": "work space", "de": "Arbeitsraum", "fr": "espace de travail"}
+    assert merged["changes"][0] == {"field": "merged_into", "old": None, "new": target.uid}
+
+    [deleted] = [e for e in entries if e["action"] == "deleted"]
+    assert deleted["term_id"] == duplicate.id
+    assert deleted["concept_id"] == source.id
+
+    moved = [e for e in entries if e["action"] == "moved"]
+    assert {e["term_id"] for e in moved} == moved_ids
+    assert all(e["concept_id"] == target.id for e in moved)
+    assert not [e for e in entries if e["term_id"] in moved_ids and e["action"] != "moved"]
+    assert not [
+        e for e in entries
+        if e["concept_id"] == source.id and e["action"] == "edited"
+    ]
+    assert not [e for e in entries if e["action"] == "created"]
+    assert len(entries) == 1 + 1 + len(moved) + len(
+        [e for e in entries if e["concept_id"] == target.id and e["action"] == "edited"]
+    )
+
+
+def test_merge_preview_writes_nothing_and_matches_the_real_run(store, db):
+    _, _, source, target = _everything_at_once(store)
+    before = stored(store, db, source, target)
+
+    seen = merge_preview(store, source.id, target.id)
+
+    assert stored(store, db, source, target) == before
+    real = store.merge_concept(source.id, target.id, basis=seen.basis, actor=ME)
+    assert comparable(real) == comparable(seen)
+
+
+def test_merge_is_refused_for_the_same_concept_and_a_stale_basis(store):
+    _, source, target = _pair(store)
+    for is_preview in (True, False):
+        with pytest.raises(TerminologyRuleError) as refused:
+            store.merge_concept(source.id, source.id, basis=None, preview=is_preview, actor=ME)
+        assert refused.value.rule == "same_concept"
+    basis = merge_preview(store, source.id, target.id).basis
+    _edit_definition(store, source, "changed")
+    with pytest.raises(TransferOutdatedError) as refused:
+        store.merge_concept(source.id, target.id, basis=basis, actor=ME)
+    assert refused.value.concept_id == source.id
+    assert store.merge_concept(999999, target.id, basis=None, preview=True, actor=ME) is None
+
+
+def _new_concept_setup(store):
+    a = store.create_domain("Alpha", owner_id=1)
+    b = store.create_domain("Beta", owner_id=1)
+    source = concept(
+        store, [a.id, b.id],
+        section(
+            Language.EN, term("login"), term("logon", UsageStatus.ADMITTED),
+            definition="Sign in.",
+        ),
+        section(Language.DE, term("Anmeldung"), definition="Anmelden."),
+    )
+    return a, b, source
+
+
+def test_move_to_a_new_concept(store, db):
+    a, b, source = _new_concept_setup(store)
+    login, logon = find(source, "login"), find(source, "logon")
+    concepts_before = _count_concepts(db)
+
+    outcome = move(store, login.id, None)
+
+    assert _count_concepts(db) == concepts_before + 1
+    new = outcome.target
+    assert new.id not in (source.id,)
+    assert new.owner_id == source.owner_id
+    assert sorted(new.domain_ids) == sorted([a.id, b.id])
+    assert new.revision == 1
+    assert [s.language for s in new.sections] == [Language.EN]
+    en = part(new, Language.EN)
+    assert en.revision == 1
+    assert en.definition == ""
+    moved = find(new, "login")
+    assert (moved.id, moved.uid) == (login.id, login.uid)
+    assert moved.usage_status == UsageStatus.PREFERRED
+    assert outcome.moved == [MovedTerm(
+        id=login.id, text="login", language=Language.EN,
+        usage_before=UsageStatus.PREFERRED, usage_after=UsageStatus.PREFERRED,
+    )]
+    assert outcome.dropped_domains == [] and outcome.added_domains == []
+    assert outcome.basis.target is None
+    assert outcome.basis.source == basis_of(source)
+    assert outcome.source is not None
+    assert part(outcome.source, Language.EN).definition == "Sign in."
+    assert [t.text for t in part(outcome.source, Language.EN).terms] == ["logon"]
+    assert outcome.target == store.get_concept(new.id, owner_id=1)
+    assert logon.id in {t.id for t in part(outcome.source, Language.EN).terms}
+
+    # Removing the source section gives the definition to the new section.
+    outcome = move(store, find(outcome.source, "Anmeldung").id, None)
+    de = part(outcome.target, Language.DE)
+    assert de.definition == "Anmelden."
+    assert de.revision == 1
+    assert outcome.dropped_definitions == []
+    assert sorted(outcome.target.domain_ids) == sorted([a.id, b.id])
+
+
+def _count_concepts(db) -> int:
+    with db.connect() as conn:
+        return conn.execute("SELECT COUNT(*) AS n FROM concepts").fetchone()["n"]
+
+
+def test_change_log_of_a_split(store, db):
+    _, _, source = _new_concept_setup(store)
+    login = find(source, "login")
+    start = len(changes(db))
+
+    outcome = move(store, login.id, None, comment="split")
+
+    entries = changes(db)[start:]
+    new = outcome.target
+    created = [e for e in entries if e["action"] == "created"]
+    assert len(created) == 1
+    assert (created[0]["concept_id"], created[0]["term_id"]) == (new.id, None)
+    assert created[0]["concept_labels"] == {"en": "login"}
+    moved = [e for e in entries if e["action"] == "moved"]
+    assert len(moved) == 1
+    assert (moved[0]["concept_id"], moved[0]["term_id"]) == (new.id, login.id)
+    assert moved[0]["changes"] == [{"field": "concept", "old": source.uid, "new": new.uid}]
+    assert not [e for e in entries if e["term_id"] == login.id and e["action"] != "moved"]
+    assert len({e["batch"] for e in entries}) == 1
+
+
+def test_preview_of_a_new_concept_leaves_no_concept(store, db):
+    _, _, source = _new_concept_setup(store)
+    login = find(source, "login")
+    before = stored(store, db, source)
+    count = _count_concepts(db)
+
+    seen = preview(store, login.id, None)
+
+    assert _count_concepts(db) == count
+    assert stored(store, db, source) == before
+    assert seen.basis.target is None
+    assert find(seen.target, "login").id == login.id
+    real = store.move_term(login.id, None, basis=seen.basis, actor=ME)
+    assert comparable(real) == comparable(seen)
+
+
+def test_new_concept_needs_a_basis_without_target(store):
+    _, source, target = _pair(store)
+    logon = find(source, "logon")
+    with_target = preview(store, logon.id, target.id).basis
+    with pytest.raises(TransferOutdatedError):
+        store.move_term(logon.id, None, basis=with_target, actor=ME)
+    with pytest.raises(TransferOutdatedError):
+        store.move_term(logon.id, None, basis=None, actor=ME)
+
+
+def test_source_whose_domains_changed_after_the_read_is_outdated(store, db):
+    a, _, source = _new_concept_setup(store)
+    login = find(source, "login")
+    before = stored(store, db, source)
+    count = _count_concepts(db)
+    with patch("app.services.terminology.rows.concept_domain_ids", return_value=[a.id]):
+        for is_preview in (True, False):
+            with pytest.raises(TransferOutdatedError) as refused:
+                store.move_term(login.id, None, basis=None, preview=is_preview, actor=ME)
+            assert refused.value.concept_id == source.id
+    assert stored(store, db, source) == before
+    assert _count_concepts(db) == count
