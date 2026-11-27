@@ -887,7 +887,7 @@ and 403.
 **`TerminologyView.tsx`**: `isAdmin` comes from the store; each domain computes
 `editable = !domain.is_global || isAdmin`, which gates the rename (✎) and delete (✕)
 buttons and the double-click-to-rename handler — a non-admin simply has no way to
-reach a mutation on a global domain. A `<span class="global-badge" title="…">Built-in
+reach a mutation on a global domain. A `<span class="global-badge" title="…">Shared
 </span>` renders immediately after the domain name whenever `domain.is_global` is true
 (admin or not — the badge states a fact about the row, not a permission the current
 viewer lacks). `ConceptList` and `ConceptEntry` take the whole `Domain` plus a `readOnly`
