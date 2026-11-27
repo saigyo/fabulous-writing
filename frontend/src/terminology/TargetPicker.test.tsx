@@ -151,6 +151,23 @@ describe('TargetPicker', () => {
     expect(onSubmit).not.toHaveBeenCalled()
   })
 
+  it('scrolls the newly active row into view', async () => {
+    const user = userEvent.setup()
+    const scroll = vi.fn()
+    Element.prototype.scrollIntoView = scroll
+    try {
+      render(<Harness onPick={vi.fn()} />)
+      await user.click(screen.getByRole('combobox', { name: 'Into' }))
+      await user.keyboard('{ArrowDown}')
+      expect(scroll).toHaveBeenCalledTimes(1)
+      expect(scroll.mock.contexts[0]).toBe(screen.getAllByRole('option')[1])
+      expect(scroll).toHaveBeenCalledWith({ block: 'nearest' })
+    } finally {
+      // @ts-expect-error happy-dom has no scrollIntoView
+      delete Element.prototype.scrollIntoView
+    }
+  })
+
   it('starts on the first row and does not run past the ends', async () => {
     const user = userEvent.setup()
     const onPick = vi.fn()
