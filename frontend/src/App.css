@@ -2707,3 +2707,116 @@ dialog.app-dialog h2 {
   color: var(--text-dim);
   font-style: italic;
 }
+
+/* Merge and move dialogs (shared by MergeDialog and MoveDialog) */
+.merge-dialog {
+  width: 520px;
+  font-size: 0.85rem;
+}
+
+.merge-dialog p {
+  margin: 0.25rem 0 0.75rem;
+}
+
+.transfer-result {
+  margin-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.transfer-result-row {
+  display: grid;
+  grid-template-columns: 2.2rem 1fr;
+  gap: 0.15rem 0.4rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.transfer-result-row .language-marker {
+  margin-top: 0.15rem;
+  justify-self: start;
+  align-self: start;
+}
+
+.transfer-result-note {
+  grid-column: 2;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.transfer-box {
+  margin-top: 0.75rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--held-back);
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+.transfer-box h3 {
+  margin: 0 0 0.25rem;
+  font-size: 0.8rem;
+  color: var(--held-back);
+}
+
+.transfer-box ul {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.transfer-box li {
+  margin: 0.15rem 0;
+}
+
+.transfer-quote {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.transfer-also {
+  margin-top: 0.6rem;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.transfer-wait {
+  margin-top: 0.75rem;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.transfer-error {
+  margin-top: 0.75rem;
+  color: var(--error-text);
+}
+
+.transfer-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.9rem;
+}
+
+.transfer-buttons button {
+  font-size: 0.85rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: 6px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.transfer-buttons button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.status-chip.incoming {
+  background: var(--accent-soft);
+}
+
+.status-chip-plus {
+  display: inline-block;
+  margin-right: 0.3rem;
+  font-weight: 700;
+  color: var(--accent);
+  text-decoration: none;
+}

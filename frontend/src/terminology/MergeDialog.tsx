@@ -1,0 +1,191 @@
+import { useMemo, useState } from 'react'
+import { HttpError, mergeConcept } from '../api/client'
+import { useMessages } from '../i18n'
+import { languageName } from '../languages'
+import { useStore } from '../state/store'
+import type { Concept, Language, TransferOutcome } from '../types'
+import { Dialog } from '../ui/Dialog'
+import { conceptLabel } from './labels'
+import { StatusChip } from './StatusChip'
+import { TargetPicker } from './TargetPicker'
+import { notices, resultRows } from './transfer'
+import { useTransferPreview } from './useTransferPreview'
+
+interface MergeDialogProps {
+  source: Concept
+  candidates: Concept[]
+  language: Language
+  order: Language[]
+  comment: string
+  onDone: (outcome: TransferOutcome) => void
+  onClose: () => void
+}
+
+function Quoted({ sentence, quote }: { sentence: string; quote: string }) {
+  const at = sentence.indexOf(quote)
+  if (at === -1) return <>{sentence}</>
+  return (
+    <>
+      {sentence.slice(0, at)}
+      <span className="transfer-quote">{quote}</span>
+      {sentence.slice(at + quote.length)}
+    </>
+  )
+}
+
+const messageOf = (error: HttpError) => error.detailMessage ?? error.message
+
+export function MergeDialog({
+  source,
+  candidates,
+  language,
+  order,
+  comment,
+  onDone,
+  onClose,
+}: MergeDialogProps) {
+  const m = useMessages()
+  const languages = useStore((s) => s.languages)
+  const [target, setTarget] = useState<Concept | null>(null)
+  const [running, setRunning] = useState(false)
+  const [runError, setRunError] = useState<string | null>(null)
+  const [outdatedId, setOutdatedId] = useState<number | null>(null)
+
+  const run = useMemo(
+    () =>
+      target === null ? null : () => mergeConcept(source.id, { target_id: target.id, preview: true }),
+    [source.id, target],
+  )
+  const { outcome, loading, error, reload } = useTransferPreview(run)
+
+  const label = (concept: Concept) => conceptLabel(concept, language, order).text
+  const sourceLabel = label(source)
+
+  const confirm = async () => {
+    if (target === null || outcome === null) return
+    setRunning(true)
+    setRunError(null)
+    setOutdatedId(null)
+    try {
+      const done = await mergeConcept(source.id, {
+        target_id: target.id,
+        basis: outcome.basis,
+        comment: comment || undefined,
+      })
+      onDone(done)
+    } catch (caught) {
+      setRunning(false)
+      const failure = caught as HttpError
+      if (failure.code === 'outdated') {
+        setOutdatedId(failure.conceptId ?? target.id)
+        reload()
+      } else {
+        setRunError(messageOf(failure))
+      }
+    }
+  }
+
+  const pick = (concept: Concept | null) => {
+    setTarget(concept)
+    setRunError(null)
+    setOutdatedId(null)
+  }
+
+  const taken = outcome === null ? [] : notices(outcome, 'merge')
+
+  return (
+    <Dialog
+      title={m.mergeTitle(sourceLabel)}
+      onClose={running ? () => {} : onClose}
+      className="merge-dialog"
+    >
+      <p>{m.mergeIntro(sourceLabel)}</p>
+      <TargetPicker
+        candidates={candidates}
+        language={language}
+        order={order}
+        target={target}
+        onPick={pick}
+        disabled={running}
+      />
+      {outdatedId !== null && target !== null && (
+        <div className="transfer-error">
+          {m.transferOutdated(label(outdatedId === source.id ? source : target))}
+        </div>
+      )}
+      {loading && <div className="transfer-wait">{m.transferWorking}</div>}
+      {error !== null && <div className="transfer-error">{messageOf(error)}</div>}
+      {runError !== null && <div className="transfer-error">{runError}</div>}
+      {outcome !== null && (
+        <>
+          <div className="transfer-result">
+            {resultRows(outcome, order).map((row) => (
+              <div key={row.language} className="transfer-result-row">
+                <span className="language-marker" title={languageName(row.language, languages)}>
+                  {row.language.toUpperCase()}
+                </span>
+                <div>
+                  {row.terms.map(({ term, incoming }) => (
+                    <StatusChip key={term.id} term={term} incoming={incoming} />
+                  ))}
+                </div>
+                {row.demoted.map((text) => (
+                  <div key={text} className="transfer-result-note">
+                    {m.transferDemoted(text)}
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+          {taken.length > 0 && (
+            <div className="transfer-box">
+              <h3>{m.transferNotTakenOver}</h3>
+              <ul>
+                {taken.map((notice, i) => (
+                  <li key={i}>
+                    {notice.kind === 'droppedTerm' &&
+                      m.transferDroppedTerm(
+                        notice.text,
+                        notice.language.toUpperCase(),
+                        m.statusName(notice.usageStatus),
+                        target ? label(target) : '',
+                      )}
+                    {notice.kind === 'droppedDefinition' && (
+                      <Quoted
+                        sentence={m.transferDroppedDefinition(
+                          languageName(notice.language, languages),
+                          `“${notice.definition}”`,
+                          target ? label(target) : '',
+                        )}
+                        quote={`“${notice.definition}”`}
+                      />
+                    )}
+                    {notice.kind === 'droppedDomain' && m.transferDroppedDomain(notice.name)}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {outcome.added_domains.map((domain) => (
+            <div key={domain.id} className="transfer-also">
+              {m.mergeAddedDomain(domain.name)}
+            </div>
+          ))}
+        </>
+      )}
+      <div className="transfer-buttons">
+        <button type="button" className="plain-button" disabled={running} onClick={onClose}>
+          {m.dialogCancel}
+        </button>
+        <button
+          type="button"
+          className="confirm-dialog-danger"
+          disabled={outcome === null || running}
+          onClick={confirm}
+        >
+          {m.mergeConfirm(sourceLabel)}
+        </button>
+      </div>
+    </Dialog>
+  )
+}

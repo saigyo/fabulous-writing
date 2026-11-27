@@ -157,6 +157,21 @@ export const fr: Messages = {
   transferInto: 'Dans',
   transferChange: 'Changer',
   noConceptMatches: 'Aucun concept ne correspond.',
+  statusIncoming: 'nouveau',
+  mergeTitle: (label) => `Fusionner « ${label} » avec un autre concept`,
+  mergeIntro: (label) => `« ${label} » est supprimé. Ses termes passent au concept que tu choisis.`,
+  mergeConfirm: (label) => `Fusionner et supprimer « ${label} »`,
+  transferWorking: 'Calcul du résultat…',
+  transferDemoted: (text) => `« ${text} » était préféré et devient admis.`,
+  transferNotTakenOver: 'Non repris',
+  transferDroppedTerm: (text, language, status, target) =>
+    `Le terme « ${text} » (${language}, ${status}) : « ${target} » a déjà cette forme.`,
+  transferDroppedDefinition: (language, quote, target) =>
+    `La définition (${language}) : ${quote} « ${target} » garde la sienne.`,
+  transferDroppedDomain: (name) => `Le domaine « ${name} » : les termes déplacés n’y valent plus.`,
+  mergeAddedDomain: (name) => `Les termes déplacés valent maintenant aussi dans le domaine « ${name} ».`,
+  transferOutdated: (label) =>
+    `« ${label} » a été modifié entre-temps. Voici le résultat tel qu’il serait maintenant.`,
   searchConceptsLabel: 'Rechercher des concepts',
   conceptLanguageTitle: 'Langue des libellés',
   newConcept: '+ Concept',
