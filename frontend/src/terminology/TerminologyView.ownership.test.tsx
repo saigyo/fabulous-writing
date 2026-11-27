@@ -1209,6 +1209,101 @@ describe('TerminologyView after a merge or a move', () => {
     vi.mocked(getDomains).mockResolvedValue([privateA])
   })
 
+  describe('a source changed elsewhere', () => {
+    const fresh: Concept = {
+      ...alpha,
+      revision: 2,
+      sections: [{ ...alpha.sections[0], revision: 3, definition: 'Fresh from the server' }],
+    }
+    const previewOfFresh: TransferOutcome = {
+      ...outcomeOf(withTerms(beta, [termOf(beta), termOf(alpha)]), null),
+      basis: { source: { concept_id: 201, revision: 2, sections: [{ id: 2010, revision: 3 }] }, target: null },
+    }
+    const definitionField = () => screen.getByRole('textbox', { name: en.definitionLabel }) as HTMLTextAreaElement
+
+    async function openStaleMerge() {
+      await open('alpha')
+      await userEvent.click(screen.getByRole('button', { name: en.mergeInto }))
+      await userEvent.click(await screen.findByRole('option', { name: /^beta/ }))
+      return (await screen.findByRole('button', { name: en.loadCurrentVersion })) as HTMLButtonElement
+    }
+
+    beforeEach(() => {
+      vi.mocked(mergeConcept).mockResolvedValue(previewOfFresh)
+    })
+
+    it('rebuilds the entry from the fetched concept, and a preview of it is accepted', async () => {
+      const reloads = lists([alpha, beta])
+      let answer!: (concept: Concept) => void
+      vi.mocked(getConcept).mockReturnValue(new Promise<Concept>((resolve) => (answer = resolve)))
+      vi.mocked(saveConceptLanguage).mockResolvedValue(fresh)
+      const load = await openStaleMerge()
+      await userEvent.click(load)
+      expect(getConcept).toHaveBeenCalledWith(201)
+      expect(load.disabled).toBe(true)
+
+      answer(fresh)
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+      expect(definitionField().value).toBe('Fresh from the server')
+      expect(reloads).toHaveLength(1)
+
+      await userEvent.click(screen.getByRole('button', { name: en.mergeInto }))
+      await userEvent.click(await screen.findByRole('option', { name: /^beta/ }))
+      const confirm = screen.getByRole('button', { name: en.mergeConfirmInto('beta') }) as HTMLButtonElement
+      await waitFor(() => expect(confirm.disabled).toBe(false))
+      expect(screen.queryByRole('button', { name: en.loadCurrentVersion })).toBeNull()
+      await userEvent.click(screen.getByRole('button', { name: en.dialogCancel }))
+
+      await userEvent.type(definitionField(), ', again')
+      await userEvent.click(screen.getByRole('button', { name: en.saveLanguage('English') }))
+      await waitFor(() => expect(saveConceptLanguage).toHaveBeenCalledTimes(1))
+      expect(saveConceptLanguage).toHaveBeenCalledWith(201, 'en', expect.objectContaining({ id: 2010, revision: 3 }))
+    })
+
+    it('closes the entry and reloads the list when the concept is gone', async () => {
+      const reloads = lists([alpha, beta])
+      vi.mocked(getConcept).mockRejectedValue(new HttpError(404, 'GET failed'))
+      await userEvent.click(await openStaleMerge())
+      await waitFor(() => expect(back()).toBeNull())
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(reloads).toHaveLength(1)
+    })
+
+    it('closes the entry when the fetched concept is no longer in the domain', async () => {
+      const reloads = lists([alpha, beta])
+      vi.mocked(getConcept).mockResolvedValue({ ...fresh, domain_ids: [9] })
+      await userEvent.click(await openStaleMerge())
+      await waitFor(() => expect(back()).toBeNull())
+      expect(heading(en.newConceptTitle)).toBeNull()
+      expect(reloads).toHaveLength(1)
+    })
+
+    it('only reloads the list of the domain then active when the entry was closed meanwhile', async () => {
+      useStore.setState({ domains: [privateA, privateB] })
+      vi.mocked(getDomains).mockResolvedValue([privateA, privateB])
+      const heldB: ((concepts: Concept[]) => void)[] = []
+      let callsB = 0
+      vi.mocked(getConcepts).mockImplementation((domainId: number) => {
+        if (domainId === privateA.id) return Promise.resolve([alpha, beta])
+        callsB += 1
+        if (callsB === 1) return Promise.resolve([conceptOf(203, 'gamma', [3])])
+        return new Promise<Concept[]>((resolve) => heldB.push(resolve))
+      })
+      let answer!: (concept: Concept) => void
+      vi.mocked(getConcept).mockReturnValue(new Promise<Concept>((resolve) => (answer = resolve)))
+      await userEvent.click(await openStaleMerge())
+
+      act(() => useStore.getState().setDomains([privateB]))
+      await screen.findByRole('button', { name: 'gamma' })
+      answer({ ...fresh, domain_ids: [2, 3] })
+      await waitFor(() => expect(heldB).toHaveLength(1))
+      await tick()
+      expect(screen.queryByRole('button', { name: 'alpha' })).toBeNull()
+      expect(screen.queryByRole('heading', { name: `← ${privateB.name} / alpha` })).toBeNull()
+      expect(vi.mocked(getConcepts).mock.calls.filter(([id]) => id === privateA.id)).toHaveLength(1)
+    })
+  })
+
   it('shows the merge target with the incoming term before the list reload answers, and reloads the list', async () => {
     const reloads = lists([alpha, beta])
     const merged = withTerms(beta, [termOf(beta), { ...termOf(alpha), usage_status: 'admitted' }])

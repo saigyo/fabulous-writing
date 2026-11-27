@@ -147,7 +147,7 @@ export interface Messages {
   transferDroppedDomain: (name: string) => string
   mergeAddedDomain: (name: string) => string
   transferOutdated: (label: string) => string
-  transferOutdatedPreview: (label: string) => string
+  transferStale: (label: string) => string
   moveTitle: (text: string) => string
   moveToConcept: string
   moveToNew: string

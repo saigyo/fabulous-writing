@@ -2856,6 +2856,13 @@ dialog.app-dialog h2 {
   color: var(--error-text);
 }
 
+.transfer-stale {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+
 .transfer-buttons {
   display: flex;
   justify-content: flex-end;

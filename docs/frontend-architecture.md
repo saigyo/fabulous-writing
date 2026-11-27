@@ -869,7 +869,7 @@ shows the preview the server computed.
   A preview is only shown when it was computed from the source as the entry holds it
   (`sourceIsCurrent` compares the concept, its revision and its sections' revisions with
   the preview's basis); otherwise the dialog says the concept changed in the meantime and
-  confirm stays unavailable. The picker ignores keys while an input method is composing,
+  confirm stays unavailable (see "A source changed elsewhere" below). The picker ignores keys while an input method is composing,
   so Enter commits the composition and the arrows move through its candidates.
 - **Languages appear under their own names in the notices** ("loses its section for
   Deutsch"), as everywhere in the app (`languageName`). The mockup's "The German
@@ -893,10 +893,19 @@ shows the preview the server computed.
   shows the sentence "was changed in the meantime" and reloads the preview, so the
   writer sees the new result and confirms again; any other refusal is shown and the
   buttons come back. A *preview* refused as `outdated` (the term has left the concept, or
-  the source changed under the dialog) is different: previewing again cannot help, so
-  both dialogs show "was changed in the meantime. Close this dialog and open the concept
-  again." naming the concept of `conceptId` (the target's, else the source's), and
-  confirm stays unavailable.
+  the source changed under the dialog) is different: previewing again cannot help.
+- **A source changed elsewhere.** For such a refused preview, and for a preview that
+  `sourceIsCurrent` rejects, both dialogs show `StaleSource` (`transferParts.tsx`): "“X”
+  was changed in the meantime." (naming the concept of `conceptId` for a refusal, the
+  target's, else the source's) and a "Load current version" button; confirm stays
+  unavailable, Cancel stays. Closing and reopening the concept would not help, because
+  the entry is built from the view's list, which still holds the old copy. The button
+  calls the dialog's `onReload`, which `ConceptEntry` passes up as `onReloadConcept` to
+  `conceptReloaded` in the view (see below). While it runs the button is disabled; a
+  failure other than 404 comes back as a rejected promise and is shown under the
+  sentence through `messageOf`, and the dialog stays open. On success the entry is
+  remounted, which closes the dialog. Both actions are only available without unsaved
+  changes, so the remount loses nothing but a typed reason.
 - `MergeDialog`: picker, then the result (the chips of the merged concept, new terms
   marked `incoming`), the "Not taken over" box and a line per added domain; the
   confirm button is red, reads "Merge" until a target is picked and "Merge into “target”"
@@ -932,6 +941,15 @@ the outcome may be older than the list or belong to another domain: only the lis
 reloaded and nothing is patched or opened. If the concept to show is not linked to the
 active domain any more (it was unlinked between preview and run), the entry closes
 instead of showing a concept the list does not have.
+
+`conceptReloaded` (the "Load current version" of a stale transfer dialog) is bound the
+same way. It fetches the concept with `getConcept`. If the entry is no longer the open
+one when the answer arrives, it only reloads the active domain's list. For the open
+entry, a concept that exists and is linked to the active domain replaces the old copy
+in the list, the transfer counter is raised and the entry is shown with a new object,
+so it remounts from the fresh concept; a 404, or a concept no longer linked to the
+active domain, closes the entry. Either way the list is reloaded. Any other failure is
+thrown back to the dialog.
 
 **Leaving with unsaved changes.** `ConceptEntry` reports `hasUnsaved(state)` through
 `onUnsavedChange`, and `TerminologyView` stores it in the store as `terminologyUnsaved`;

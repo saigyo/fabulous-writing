@@ -8,7 +8,7 @@ import { Dialog } from '../ui/Dialog'
 import { conceptLabel } from './labels'
 import { TargetPicker } from './TargetPicker'
 import { messageOf, notices, sourceIsCurrent, type Notice } from './transfer'
-import { Quoted, TransferButtons } from './transferParts'
+import { Quoted, StaleSource, TransferButtons } from './transferParts'
 import { useTransferPreview } from './useTransferPreview'
 import { useTransferRun } from './useTransferRun'
 
@@ -22,6 +22,8 @@ interface MoveDialogProps {
   canCreate: boolean
   onDone: (outcome: TransferOutcome) => void
   onClose: () => void
+  /** Loads the source's current version; the entry is remounted, which closes the dialog. */
+  onReload: () => Promise<void>
 }
 
 type Choice = 'concept' | 'new'
@@ -36,6 +38,7 @@ export function MoveDialog({
   canCreate,
   onDone,
   onClose,
+  onReload,
 }: MoveDialogProps) {
   const m = useMessages()
   const languages = useStore((s) => s.languages)
@@ -57,6 +60,12 @@ export function MoveDialog({
 
   const label = (concept: Concept) => conceptLabel(concept, language, order).text
   const sourceLabel = label(source)
+  const refusedAsOutdated = error?.code === 'outdated'
+  const staleLabel = stale
+    ? sourceLabel
+    : refusedAsOutdated
+      ? label(error.conceptId !== source.id && target ? target : source)
+      : null
   const termLanguage = source.sections.find((s) => s.terms.some((t) => t.id === term.id))?.language
   const named = (code: Language) => languageName(code, languages)
 
@@ -157,14 +166,8 @@ export function MoveDialog({
       {choice === 'new' && <div className="transfer-also">{m.moveNewConceptDomains(sourceLabel)}</div>}
       {outdatedLabel !== null && <div className="transfer-error">{m.transferOutdated(outdatedLabel)}</div>}
       {loading && <div className="transfer-wait">{m.transferWorking}</div>}
-      {error !== null && (
-        <div className="transfer-error">
-          {error.code === 'outdated'
-            ? m.transferOutdatedPreview(label(error.conceptId !== source.id && target ? target : source))
-            : failureText(error)}
-        </div>
-      )}
-      {stale && <div className="transfer-error">{m.transferOutdatedPreview(sourceLabel)}</div>}
+      {error !== null && !refusedAsOutdated && <div className="transfer-error">{failureText(error)}</div>}
+      {staleLabel !== null && <StaleSource sentence={m.transferStale(staleLabel)} onReload={onReload} />}
       {runError !== null && <div className="transfer-error">{runError}</div>}
       {also.length > 0 && (
         <div className="transfer-box">

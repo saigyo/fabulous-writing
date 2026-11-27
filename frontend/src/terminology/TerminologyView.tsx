@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createDomain, deleteDomain, getConcepts, getDomains, updateDomain } from '../api/client'
+import {
+  createDomain,
+  deleteDomain,
+  getConcept,
+  getConcepts,
+  getDomains,
+  HttpError,
+  updateDomain,
+} from '../api/client'
 import { hasFeature } from '../auth/policy'
 import { sessionGeneration } from '../auth/session'
 import { useCrudError } from '../hooks/useCrudError'
@@ -262,6 +270,36 @@ export function TerminologyView() {
     void loadConcepts(active)
   }
 
+  // A dialog's preview found the open concept changed elsewhere; the list
+  // still holds the old copy, so reopening alone would not help. Bound like
+  // conceptSaved. A failure other than 404 is thrown for the dialog to show.
+  async function conceptReloaded(entry: OpenConcept) {
+    const id = entry.conceptId
+    if (id === null) return
+    let fresh: Concept | null = null
+    try {
+      fresh = await getConcept(id)
+    } catch (e) {
+      const gone = e instanceof HttpError && e.status === 404
+      if (!gone && openRef.current === entry) throw e
+    }
+    const active = activeDomainRef.current
+    if (active === null) return
+    if (openRef.current !== entry) {
+      void loadConcepts(active)
+      return
+    }
+    if (fresh !== null && fresh.domain_ids.includes(active)) {
+      const current = fresh
+      setConcepts((list) => [...list.filter((c) => c.id !== id), current])
+      setTransfers((n) => n + 1)
+      showEntry({ ...entry })
+    } else {
+      showEntry(null)
+    }
+    void loadConcepts(active)
+  }
+
   const activeDomain = domains.find((domain) => domain.id === activeDomainId) ?? null
   const readOnly = activeDomain !== null && activeDomain.is_global && !isAdmin
 
@@ -392,6 +430,7 @@ export function TerminologyView() {
           onSaved={(saved) => conceptSaved(open, saved)}
           onGone={(deleted) => conceptGone(open, deleted, activeDomain.id)}
           onTransferred={(outcome, kind) => conceptTransferred(open, outcome, kind)}
+          onReloadConcept={() => conceptReloaded(open)}
           onUnsavedChange={setUnsaved}
         />
       )}

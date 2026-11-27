@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
+import { HttpError } from '../api/client'
 import { FALLBACK_LANGUAGES } from '../languages'
 import { useStore } from '../state/store'
 import type {
@@ -167,7 +168,7 @@ function serve(previewAnswers: Response[], real: (() => Promise<Response>) | nul
 }
 
 function renderDialog(props: Partial<Parameters<typeof MergeDialog>[0]> = {}) {
-  const handlers = { onDone: vi.fn(), onClose: vi.fn() }
+  const handlers = { onDone: vi.fn(), onClose: vi.fn(), onReload: vi.fn(async () => {}) }
   render(
     <MergeDialog
       source={SOURCE}
@@ -417,11 +418,45 @@ describe('MergeDialog', () => {
     await pick(user, 'workspace')
     expect(
       await screen.findByText(
-        '“work space” was changed in the meantime. Close this dialog and open the concept again.',
+        '“work space” was changed in the meantime.',
       ),
     ).toBeTruthy()
     expect(confirmButton().disabled).toBe(true)
     expect(document.querySelector('.transfer-result')).toBeNull()
+  })
+
+  it.each([
+    ['a preview about an older source', () => json(200, outcome({ basis: basis(1, 2) }))],
+    ['a preview refused as outdated', () => json(409, { detail: { code: 'outdated', message: 'changed', concept_id: 10 } })],
+  ])('offers to load the current version after %s', async (_name, answer) => {
+    const user = userEvent.setup()
+    serve([answer()])
+    const { onReload } = renderDialog()
+    await pick(user, 'workspace')
+    const load = (await screen.findByRole('button', { name: 'Load current version' })) as HTMLButtonElement
+    expect(load.closest('.transfer-error')!.textContent).toContain('“work space” was changed in the meantime.')
+    expect(confirmButton().disabled).toBe(true)
+    expect(cancelButton().disabled).toBe(false)
+    await user.click(load)
+    expect(onReload).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables "Load current version" while it loads and shows a failure in the dialog', async () => {
+    const user = userEvent.setup()
+    serve([json(200, outcome({ basis: basis(1, 2) }))])
+    let fail!: (error: Error) => void
+    const onReload = vi.fn(() => new Promise<void>((_resolve, reject) => (fail = reject)))
+    const { onClose } = renderDialog({ onReload })
+    await pick(user, 'workspace')
+    const load = (await screen.findByRole('button', { name: 'Load current version' })) as HTMLButtonElement
+    await user.click(load)
+    expect(load.disabled).toBe(true)
+
+    await act(async () => fail(new HttpError(500, 'GET failed', undefined, { detailMessage: 'Server down.' })))
+    expect(await screen.findByText('Change failed: Server down.')).toBeTruthy()
+    expect(load.disabled).toBe(false)
+    expect(confirmButton().disabled).toBe(true)
+    expect(onClose).not.toHaveBeenCalled()
   })
 
   it('shows the message of a failed preview and keeps confirm unavailable', async () => {
@@ -440,7 +475,7 @@ describe('MergeDialog', () => {
     await pick(user, 'workspace')
     expect(
       await screen.findByText(
-        '“workspace” was changed in the meantime. Close this dialog and open the concept again.',
+        '“workspace” was changed in the meantime.',
       ),
     ).toBeTruthy()
     expect(confirmButton().disabled).toBe(true)
@@ -453,7 +488,7 @@ describe('MergeDialog', () => {
     await pick(user, 'workspace')
     expect(
       await screen.findByText(
-        '“work space” was changed in the meantime. Close this dialog and open the concept again.',
+        '“work space” was changed in the meantime.',
       ),
     ).toBeTruthy()
     expect(confirmButton().disabled).toBe(true)
