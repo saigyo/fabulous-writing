@@ -162,6 +162,8 @@ export interface Messages {
   moveDuplicate: (target: string, text: string, language: string) => string
   mergeInto: string
   termMove: string
+  /** A passage, such as a definition, in the language's quotation marks. */
+  quoted: (text: string) => string
   searchConceptsLabel: string
   conceptLanguageTitle: string
   newConcept: string

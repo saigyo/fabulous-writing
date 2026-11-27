@@ -163,7 +163,7 @@ export const it: Messages = {
   transferDroppedTerm: (text, language, status, target) =>
     `Il termine «${text}» (${language}, ${status}): «${target}» ha già questa forma.`,
   transferDroppedDefinition: (language, quote, target) =>
-    `La definizione per ${language}:${quote} «${target}» mantiene la propria.`,
+    `La definizione per ${language}: ${quote} «${target}» mantiene la propria.`,
   transferDroppedDomain: (name) => `Il dominio «${name}»: i termini spostati non valgono più lì.`,
   mergeAddedDomain: (name) => `I termini spostati ora valgono anche nel dominio «${name}».`,
   transferOutdated: (label) =>
@@ -185,6 +185,7 @@ export const it: Messages = {
   moveDuplicate: (target, text, language) => `«${target}» ha già il termine «${text}» in ${language}.`,
   mergeInto: 'Unisci a…',
   termMove: 'Sposta…',
+  quoted: (text) => `«${text}»`,
   searchConceptsLabel: 'Cerca concetti',
   conceptLanguageTitle: 'Lingua delle etichette',
   newConcept: '+ Concetto',

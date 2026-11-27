@@ -321,6 +321,17 @@ describe('MergeDialog', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
+  it('quotes a definition the way the interface language does', async () => {
+    const user = userEvent.setup()
+    useStore.setState({ uiLocale: 'de' })
+    serve([json(200, everything())])
+    renderDialog()
+    await pick(user, 'workspace')
+    const quote = await screen.findByText(`„${DEFINITION}“`)
+    expect(quote.className).toBe('transfer-quote')
+    expect(quote.closest('li')!.textContent).toBe(`Die Definition für Deutsch: „${DEFINITION}“ „workspace“ behält ihre eigene.`)
+  })
+
   it('leaves out a reason of only spaces', async () => {
     const user = userEvent.setup()
     serve([json(200, outcome())], async () => json(200, outcome()))

@@ -267,6 +267,27 @@ describe('MoveDialog', () => {
     ])
   })
 
+  it('quotes a definition the way the interface language does', async () => {
+    const user = userEvent.setup()
+    useStore.setState({ uiLocale: 'de' })
+    serve([json(200, outcome({ source: null, dropped_definitions: [{ language: 'de', definition: DEFINITION }] }))])
+    renderDialog()
+    await pick(user, 'workspace')
+    const quote = await screen.findByText(`„${DEFINITION}“`)
+    expect(quote.className).toBe('transfer-quote')
+    expect(quote.closest('li')!.textContent).toBe(`Die Definition für Deutsch wird nicht übernommen: „${DEFINITION}“`)
+  })
+
+  it('quotes the definition of a lost language the way the interface language does', async () => {
+    const user = userEvent.setup()
+    useStore.setState({ uiLocale: 'fr' })
+    serve([json(200, outcome({ removed_languages: ['de'], dropped_definitions: [{ language: 'de', definition: DEFINITION }] }))])
+    renderDialog({ term: ARBEITSRAUM })
+    await pick(user, 'workspace')
+    const quote = await screen.findByText(`« ${DEFINITION} »`)
+    expect(quote.className).toBe('transfer-quote')
+  })
+
   it('names the concept on a red button when the source is deleted, and says plain Move otherwise', async () => {
     const user = userEvent.setup()
     serve([json(200, outcome({ source: null })), json(200, outcome())])
