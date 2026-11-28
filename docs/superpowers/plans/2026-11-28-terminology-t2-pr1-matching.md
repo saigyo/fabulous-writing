@@ -569,6 +569,33 @@ export function showsCompounds(language: Language): boolean     // 'de' only
 
 The logbook entry is written as the last commit of the branch, on the owner's cue, under the pull request's number.
 
+## Execution Plan
+
+Subagent-driven and sequential, one agent at a time. The controller (this session's model) dispatches, reads each report, and runs the gate itself before accepting a task: the backend gate on both backends for Tasks 1 to 6 and 9, the frontend gate for Tasks 7 and 8. Models are the `model` values of the Agent tool. A fix round goes back to the agent that did the task; after three rounds without a clean re-check the task moves to opus.
+
+| Step | What | Model | Why this model |
+|---|---|---|---|
+| Task 1 | The two switches in the store and the API | sonnet | The column list drives inserts, updates and the log; every effect is pinned by a named test. |
+| Task 2 | One analysis per request, shared token matcher | sonnet | A refactoring without a change in behaviour, guarded by the baseline and the Japanese and Chinese tests. |
+| Task 3 | Base-form pass | opus | The core of the milestone: base-form sequences, the cache shared between requests, token offsets, and a comparison that the first plan review already found two defects in. A wrong structure here is rebuilt in Tasks 4 to 6. |
+| Task 4 | Limits and overlaps | sonnet | Extends the structure of Task 3; each rule and each bullet of Reading 12 has its own test and mutation. |
+| **R1** | Review of Tasks 1 to 4 | opus | Every terminology finding passes through this code. Scope: spec 5, 6.1 to 6.4 and 6.6 and Readings 1 to 8 and 12 to 14 against the code; the baseline file untouched and green; findings for terms without a switch identical to `main`; when the analysis is requested; the cache under concurrent requests; evidence that the mutation checks were run. |
+| Task 5 | German compounds | sonnet | A pure rule pinned by 103 pairs, and a pass that reuses the filters of Task 4. |
+| Task 6 | Term check endpoint | opus | Six languages with different sources and rules, a measurement whose data the implementer writes and whose result decides code, and reuse of the hit generators without their filters. |
+| **R2** | Review of Tasks 5 and 6 | sonnet | Two new modules with tabulated expectations. Scope: spec 6.5 and 8.1 to 8.3 and Readings 9 to 11 and 15 to 18; the endpoint with hostile input (Review Focus 4); that the term check reads and writes no stored data; the two 200-term lists for plausibility. |
+| Task 7 | Switches and term check in the editor | sonnet | Pure functions with a numbered rule list, one hook with its late-answer test, and rendering from both. |
+| Task 8, Step 1 | Live test of the existing prompt | controller | Spends credits and reads the key; only on the owner's cue. The result decides whether Step 1's message sentence is added. |
+| Task 8, Steps 2 to 7 | Base-form suggestions in the sidebar | sonnet | One function and one branch of the suggestion area, with a test per state. |
+| **R3** | Review of Tasks 7 and 8 | sonnet | Scope: spec 7.5 and 8.4 and Reading 19; the texts in all seven catalogs and their register; late answers; that a finding without the flag looks as before. |
+| Scoped re-checks | After each fix round of R1, R2 and R3 | sonnet | They verify named fixes on a small diff. |
+| Trial | In the browser, by the controller, on its own scratch stack (own `config.yaml` with a scratch SQLite file, ports other than 5173 and 8000, placeholder provider keys): a German term with the first switch finds a plural and shows the note and "Suggest fix"; with the second switch a compound is found and offers "Suggest fix" only; an English multi-word term; a Japanese verb; the term details in a German, an English and a Chinese section; the notes with and without an example sentence, including a part of speech picked from a button; a term without a switch behaves as before. | controller | |
+| Task 9 | Measurements and documentation | sonnet | A measuring script and a description of finished code. The controller runs the script and records the numbers. |
+| Final review | Whole branch | opus | The pass order, the overlap rules and the editor support are only visible together; also checks that nothing outside "File Structure" changed and that no dependency was added. |
+
+Each review gets the spec, this plan, the task reports and the diff of its range, and returns findings with severity, location and a concrete fix. R1 comes before the compound pass and the term check are built, because both reuse the hit generators and filters of Tasks 3 and 4.
+
+Delivery is one pull request. The logbook entry is its last commit, on the owner's cue.
+
 ## Self-review
 
 - **Spec coverage.** Section 5: Task 1. 6.1 to 6.4: Tasks 2 to 4. 6.5: Task 5. 6.6: Task 3. 7.4: Task 3 (the flag). 7.5: Task 8. 8: Tasks 6 and 7. 9: Tasks 2, 3 and 9. 10: Task 9. 13: each bullet has its tests in the task that owns the code; the generators' tests belong to the second plan.
