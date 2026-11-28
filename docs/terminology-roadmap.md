@@ -20,7 +20,7 @@ span milestones; the specs settle everything else.
 | # | Milestone | Issue | Result for the writer |
 |---|---|---|---|
 | T1 | Concept and status model | #205 | Warnings as well as errors; one entry per concept across languages |
-| T2 | Morphology-aware matching | #206 | Plurals, inflected forms and German compounds are caught |
+| T2 | Morphology-aware matching | #206 | Plurals, inflected forms and German compounds are caught; the editor helps with the part of speech |
 | T3 | Term extraction | #207 | A termbase can be built from the writer's own texts |
 | T4 | Import and export | #208 | An existing term list can be brought in and taken out |
 | T5 | Governance and organisations | #209 | History view; later shared termbases with review |
@@ -60,15 +60,35 @@ To settle in the spec:
 
 ### T2 — Morphology-aware matching
 
-1. **Lemma matching**, opt-in per term, for English, German, French,
-   Spanish and Italian, using the tagger and lemmatizer of the spaCy
-   pipelines that are already loaded.
-2. **German compounds** via CharSplit (one new dependency; licence check
-   required).
-3. **Performance.** The checker currently runs tokenization only. Measure
-   check latency and test-suite runtime before and after, and decide
-   whether the fuller pipeline runs only when a domain contains opt-in
-   terms.
+Design:
+[`docs/superpowers/specs/2026-11-28-terminology-t2-morphology-design.md`](superpowers/specs/2026-11-28-terminology-t2-morphology-design.md).
+
+1. **Matching of inflected forms**, opt-in per term, for English, German,
+   French, Spanish, Italian and Japanese, using the pipelines that are
+   already loaded. Exact matching stays as it is.
+2. **German compounds**, opt-in per term, confirmed with the German
+   spelling dictionary the backend already ships. No new dependency.
+3. **Term check in the editor.** Suggests the part of speech from the
+   dictionary or the term's example sentence, and tests the term on that
+   sentence.
+4. **Replacements.** Inflected by rule for English and Japanese; base
+   form, marked as such, with the existing "Suggest fix" action for
+   German, French, Spanish and Italian.
+5. **Performance.** The fuller pipeline runs only when a domain contains
+   opt-in terms and the rules checker has not already run it. Check
+   latency and test-suite runtime are measured before and after.
+
+Delivered as two pull requests: matching with the editor support, then
+replacements.
+
+Follow-ups, each a sub-issue of #150 with its own spec, plan and PR:
+
+| Issue | Content |
+|---|---|
+| #227 | Japanese compounds: terms inside a compound the tokenizer keeps as one token |
+| #228 | Japanese spelling variants: one term covers all spellings of a word |
+| #229 | LLM-based replacements for German, French, Spanish and Italian: check of the result against the termbase, agreement of surrounding words |
+| #230 | Exact and casing matching for the western languages on token matching, replacing the per-term scan |
 
 ### T3 — Term extraction
 
