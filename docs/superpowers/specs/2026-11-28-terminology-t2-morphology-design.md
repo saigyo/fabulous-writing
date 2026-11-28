@@ -255,6 +255,9 @@ Passes 2 and 3 are skipped when the domain has no term that qualifies.
 - **Multi-word terms** are compared token by token: "parts of speech"
   has the base forms of "part of speech", "virtuellen Maschinen" those of
   "virtuelle Maschine". Measured in all five western languages.
+- **Punctuation and symbols.** A token without a letter or digit is
+  compared as written, because the pipelines give all such tokens the
+  same base form.
 - **Case.** Base forms are compared without regard to case. For a term
   with `case_sensitive`, the first letter of the hit must have the case of
   the term's first letter, with the existing sentence-start exception for
@@ -530,7 +533,7 @@ Example         [We filed the report on Monday.]
 | Situation | Message (English wording; the seven locales are left to the builder) |
 |---|---|
 | One or several parts of speech recognised, none selected | "Recognised as noun or verb." with one button each |
-| Selection is not among the recognised ones | "'X' is not known as a verb. Inflected verb forms may be missed. Add an example sentence to test it." |
+| Selection is not among the recognised ones | "'X' is not known as a verb. Inflected forms of that kind may be missed. Add an example sentence to test it." |
 | `known` is false | "'X' is not in the dictionary. Inflected forms are recognised by rule and may be missed." |
 | `base_form` present | "'Dateien' looks like an inflected form of 'Datei'." |
 | `needs_example` | "Add an example sentence so that the part of speech can be determined." |
