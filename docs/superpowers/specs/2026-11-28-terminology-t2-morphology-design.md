@@ -240,10 +240,13 @@ Passes 2 and 3 are skipped when the domain has no term that qualifies.
   whatever the number of terms. Measured: 0.02 to 0.03 ms for a document
   of 660 tokens with 100, 1,000 and 10,000 registered terms.
 - **Base forms of a term.** A term is compared through a sequence of base
-  forms, one per token. Three sequences are registered for a term, where
-  they differ: the term analysed on its own; the term's tokens as
-  written; and, if the term's example sentence (`context`) contains the
-  term, the base forms found there.
+  forms, one per token. Up to three sequences are registered for a term,
+  where they differ: the term's tokens as written; the term analysed on
+  its own, unless the term has a part of speech and that analysis reads
+  its head as a different one (the Spanish noun "cuenta" is read as a
+  form of the verb "contar" when it stands alone); and, if the term's
+  example sentence (`context`) contains the term as written, the base
+  forms of that occurrence.
 - **Cache.** Analysing a term costs about 0.17 ms. The sequences are kept
   in memory, keyed on language, pipeline model name, term text and
   example sentence, with an upper bound on the number of entries. The
@@ -516,6 +519,9 @@ Example         [We filed the report on Monday.]
 
 - The switch for inflected forms is shown for every language except
   Chinese, the switch for compounds for German only.
+- The field labelled "Context" today is relabelled "Example sentence",
+  so that the hints and the field use the same words. The stored field
+  stays `context`.
 - Each recognised part of speech is a button that sets the selection.
 - The check runs when the details are open and the term text, the part of
   speech, the example or a switch changes, after a short pause in typing.
