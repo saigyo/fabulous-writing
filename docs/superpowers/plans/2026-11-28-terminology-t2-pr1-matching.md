@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **Branch:** all work on `terminology-t2-pr1-matching`, created from `main` after the spec and this plan are merged. Never commit to `main`.
+- **Branch:** all work on `terminology-t2-pr1-matching`, which already holds the spec and this plan. Never commit to `main`.
 - **Unchanged behaviour.** `backend/tests/data/terminology_baseline.json` is not edited and `tests/test_terminology_baseline.py` stays green in every commit. A term with neither switch on gives exactly today's findings, messages and order. `_check_regex`, `_casing_regex`, `_check_substring` and `_casing_substring` keep their behaviour.
 - **No new dependency.** `pyproject.toml`, `uv.lock` and `THIRD-PARTY-NOTICES.md` do not change. If a task seems to need a package, stop: the plan is wrong.
 - **Nothing under `clients/` changes.**
